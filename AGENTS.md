@@ -5,9 +5,9 @@
 - Before pushing:
   1. Ensure `git` and `gh` are available in `PATH` (on Windows PowerShell, refresh `Machine` + `User` `Path` environment variables if needed).
   2. Run verification (`tests/engine_verify.html` via local server / headless check when engine, species, reactions, or physics files change) and confirm all tests pass.
-  3. If any new files were added or renamed, update the `ASSETS` precache list (and bump `CACHE_NAME`) in `sw.js` so PWA/GitHub Pages offline caching stays in sync.
+  3. Increment a monotonic build number using `<version>+build.<N>` (e.g., `virlab_beta_v1+build.3`), update the visible version string in `index.html` (`<title>`) and `src/data/i18n.js` (`vi` and `en` subtitles), and bump `CACHE_NAME` (plus `ASSETS` if files were added/renamed) in `sw.js` to match the new build so PWA/GitHub Pages caching and visible build tracking stay in sync.
   4. Never stage or commit secrets, tokens, or `.env`/credential files.
-  5. Use clear Conventional Commit messages (e.g., `feat: ...`, `fix: ...`) and report the commit hash + live GitHub Pages URL (`https://iamjulies.github.io/virtuallab/`) in the final reply.
+  5. Use clear Conventional Commit messages including the build tag (e.g., `feat: ... (virlab_beta_v1+build.3)`) and report the `<version>+build.<N>`, commit hash, and live GitHub Pages URL (`https://iamjulies.github.io/virtuallab/`) in the final reply.
 
 ## 2. Project Design & Chemistry Invariants
 - **Strict IUPAC Nomenclature:** All chemical names, element names, and foreign proper nouns in both `vi` and `en` UI strings (`src/data/i18n.js`, `src/data/species.js`, `src/data/reactions.js`) MUST use official IUPAC English spellings (never Vietnamese phonetic transliteration).
