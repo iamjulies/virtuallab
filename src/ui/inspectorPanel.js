@@ -243,7 +243,7 @@ export class InspectorPanel {
           <h3 class="text-xs font-bold uppercase tracking-wider text-muted mb-2">${t('speciesTableTitle')}</h3>
           ${
             activeSpecies.length === 0
-              ? `<p class="text-xs text-muted">${t('emptyVesselMsg')}</p>`
+              ? `<p class="text-xs text-muted">${item.isShattered ? t('shatteredEmptyMsg') : t('emptyVesselMsg')}</p>`
               : `
               <div class="overflow-x-auto max-h-44 overflow-y-auto">
                 <table class="w-full text-xs">

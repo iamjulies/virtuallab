@@ -77,15 +77,16 @@ export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
 }
 
 /**
- * Phenolphthalein fraction in pink basic dianion form (Henderson-Hasselbalch).
+ * Phenolphthalein fraction in pink basic dianion form (In^2-).
+ * Accounts for both alkaline transition (H2In -> In^2-, pKa ≈ 9.3)
+ * and excess-OH⁻ carbinol bleaching at high [OH⁻] (In^2- + OH⁻ ⇌ In(OH)^3-).
  */
-export function computePhenolphthaleinAlpha(ph) {
+export function computePhenolphthaleinAlpha(ph, cOH = null) {
   if (ph === null || ph === undefined) return 0;
-  const exponent = CONSTANTS.PHENOLPHTHALEIN_PKA - ph;
-  // Clamp exponent to avoid Infinity
-  if (exponent > 30) return 0;
-  if (exponent < -30) return 1;
-  return 1 / (1 + Math.pow(10, exponent));
+  const acidTerm = Math.pow(10, Math.max(-30, Math.min(30, CONSTANTS.PHENOLPHTHALEIN_PKA - ph)));
+  const effectiveOH = cOH !== null && cOH !== undefined ? Math.max(0, cOH) : Math.pow(10, Math.min(2, ph - 14));
+  const bleachTerm = Math.pow(effectiveOH / 0.45, 1.5);
+  return 1 / (1 + acidTerm + bleachTerm);
 }
 
 /**
@@ -104,11 +105,12 @@ export function computeSolutionVisuals(moles, liquidVolL, ph, opticalPathCm = 6.
     };
   }
 
-  // White light reference background normalized [0..255]
+  // White light reference background normalized [0..1]
   let tr = 1.0;
   let tg = 1.0;
   let tb = 1.0;
   let extraOpacity = 0;
+  let pinkBoost = 0;
 
   // 1. Copper(II) sky-blue absorption
   const nCu = moles.Cu2_aq || 0;
@@ -121,27 +123,33 @@ export function computeSolutionVisuals(moles, liquidVolL, ph, opticalPathCm = 6.
     extraOpacity += Math.min(0.45, cCu * 0.45);
   }
 
-  // 2. Phenolphthalein indicator absorption (vivid magenta/pink in base)
+  // 2. Phenolphthalein indicator absorption (rose/magenta-pink in base, fades in excess OH⁻)
   const nPhen = moles.Phenolphthalein_aq || 0;
   let alphaPink = 0;
   if (nPhen > 1e-9 && ph !== null) {
-    alphaPink = computePhenolphthaleinAlpha(ph);
-    if (alphaPink > 0.01) {
+    const cOH = (moles.OH_aq || 0) / liquidVolL;
+    alphaPink = computePhenolphthaleinAlpha(ph, cOH);
+    if (alphaPink > 0.005) {
       const cPhen = nPhen / liquidVolL;
-      // Scale effective optical strength so even 1 drop (0.05 mL in 100 mL = 1.3e-5 M) is clearly visible
-      const effStrength = Math.min(2.2, (cPhen / 1.2e-5) * 0.48) * alphaPink;
-      tr *= Math.exp(-0.08 * effStrength);
-      tg *= Math.exp(-2.65 * effStrength);
-      tb *= Math.exp(-0.62 * effStrength);
-      extraOpacity += Math.min(0.55, effStrength * 0.42);
+      // Scale effective optical strength by both indicator concentration and active In^2- fraction
+      const effStrength = Math.min(1.65, (cPhen / 1.0e-5) * 0.42) * alphaPink;
+      // Absorbs green strongly (~555 nm) while preserving red & blue/violet -> rose/fuchsia pink
+      tr *= Math.exp(-0.02 * effStrength);
+      tg *= Math.exp(-1.95 * effStrength);
+      tb *= Math.exp(-0.21 * effStrength);
+      pinkBoost = Math.min(1, effStrength);
+      extraOpacity += Math.min(0.5, effStrength * 0.36);
     }
   }
 
   // Base watery tint blended with Beer-Lambert transmission
-  const r = Math.round(Math.max(12, Math.min(255, 224 * tr)));
-  const g = Math.round(Math.max(12, Math.min(255, 240 * tg)));
-  const b = Math.round(Math.max(18, Math.min(255, 252 * tb)));
-  const alpha = Math.min(0.88, 0.34 + extraOpacity);
+  const rBase = 224 + 26 * pinkBoost;
+  const gBase = 240 + 4 * pinkBoost;
+  const bBase = 252;
+  const r = Math.round(Math.max(12, Math.min(255, rBase * tr)));
+  const g = Math.round(Math.max(12, Math.min(255, gBase * tg)));
+  const b = Math.round(Math.max(18, Math.min(255, bBase * tb)));
+  const alpha = Math.min(0.86, 0.34 + extraOpacity);
 
   return {
     css: `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`,
@@ -149,7 +157,7 @@ export function computeSolutionVisuals(moles, liquidVolL, ph, opticalPathCm = 6.
     g,
     b,
     alpha,
-    hasIndicatorPink: alphaPink > 0.05 && nPhen > 1e-9,
+    hasIndicatorPink: alphaPink > 0.03 && nPhen > 1e-9,
   };
 }
 

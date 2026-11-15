@@ -632,6 +632,44 @@ export class LabSimulation {
   }
 
   /**
+   * Shatter a vessel from overpressure or thermal/H2 explosion and spill all contents.
+   */
+  shatterVessel(vessel, logKey, alertKind) {
+    const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
+    const hadLiquid = liqL > 1e-6;
+    const vis = hadLiquid
+      ? computeSolutionVisuals(vessel.moles, liqL, computePH(vessel.moles, liqL, vessel.tempK))
+      : null;
+    const burstMeta = {
+      hadLiquid,
+      liquidColor: vis ? vis.css : null,
+      liquidMl: liqL * 1000,
+    };
+
+    for (const [gId, n] of Object.entries(vessel.headspaceGasMoles || {})) {
+      if (n > 0) {
+        vessel.escapedGasMoles[gId] = (vessel.escapedGasMoles[gId] || 0) + n;
+      }
+    }
+
+    vessel.isShattered = true;
+    vessel.isStoppered = false;
+    this.disconnectSyringe(vessel.id);
+    vessel.moles = {};
+    vessel.headspaceGasMoles = {};
+    vessel.precipitateSettle = {};
+    vessel.activeReactions = [];
+    vessel.wasBoiling = false;
+    vessel.internalPressureBar = this.environment.pressureBar;
+
+    this.addLog({ type: 'alert', key: logKey, vesselLabel: vessel.label });
+    this.recordHistorySnapshot(vessel, true);
+    if (this.visualHooks.onAlert) {
+      this.visualHooks.onAlert(alertKind, vessel, burstMeta);
+    }
+  }
+
+  /**
    * Main simulation tick called by animation loop (realDeltaSec).
    */
   step(realDeltaSec) {
@@ -656,6 +694,14 @@ export class LabSimulation {
 
       if (v.stirTimer > 0) {
         v.stirTimer = Math.max(0, v.stirTimer - realDeltaSec);
+      }
+
+      if (v.isShattered) {
+        v.activeReactions = [];
+        for (let s = 0; s < numSteps; s++) {
+          stepVesselThermodynamics(v, dt, this.environment, 0, 0);
+        }
+        continue;
       }
 
       // Check burner power if resting on an active burner
@@ -726,11 +772,14 @@ export class LabSimulation {
             this.addLog({ type: 'alert', key: 'alertOverpressurePop', vesselLabel: v.label });
             if (this.visualHooks.onAlert) this.visualHooks.onAlert('pop', v);
           } else if (ev.type === 'shatter') {
-            this.addLog({ type: 'alert', key: 'alertOverpressureShatter', vesselLabel: v.label });
-            if (this.visualHooks.onAlert) this.visualHooks.onAlert('shatter', v);
+            this.shatterVessel(v, 'alertOverpressureShatter', 'shatter');
+            break;
           }
         }
+        if (v.isShattered) break;
       }
+
+      if (v.isShattered) continue;
 
       v.activeReactions = Array.from(frameActiveMap.values());
 
@@ -744,11 +793,8 @@ export class LabSimulation {
         (v.moles.Na_s || 0) > 0.15 &&
         v.tempK >= 365.0
       ) {
-        v.isShattered = true;
-        v.isStoppered = false;
-        this.disconnectSyringe(v.id);
-        this.addLog({ type: 'alert', key: 'alertNaExplosion', vesselLabel: v.label });
-        if (this.visualHooks.onAlert) this.visualHooks.onAlert('explosion', v);
+        this.shatterVessel(v, 'alertNaExplosion', 'explosion');
+        continue;
       }
 
       // Boiling alert

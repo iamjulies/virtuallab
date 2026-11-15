@@ -177,9 +177,9 @@ sim.visualHooks.onParticlesNeeded = (vessel, metrics) => {
   particles.emitForVessel(vessel, metrics, lastFrameDt * sim.environment.speed);
 };
 
-sim.visualHooks.onAlert = (type, vessel) => {
+sim.visualHooks.onAlert = (type, vessel, meta) => {
   const t = getTranslator();
-  particles.emitBurst(type, vessel.x, vessel.y);
+  particles.emitBurst(type, vessel.x, vessel.y, meta);
   if (type === 'pop') showToast(`⚠️ ${t('alertOverpressurePop')}`);
   if (type === 'shatter') showToast(`💥 ${t('alertOverpressureShatter')}`);
   if (type === 'explosion') showToast(`💥 ${t('alertNaExplosion')}`);

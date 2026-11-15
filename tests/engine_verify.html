@@ -25,6 +25,7 @@
       computeLiquidVolumeL,
       computePH,
       computePhenolphthaleinAlpha,
+      computeSolutionVisuals,
     } from '../src/engine/equilibrium.js';
     import { computeSyringeGasVolumeMl } from '../src/engine/gasNetwork.js';
 
@@ -161,6 +162,16 @@
       const a2 = computePhenolphthaleinAlpha(ph2);
 
       assert('Water pH=7.00 (colorless) -> Base pH~12.0 (pink Phenolphthalein)', Math.abs(ph1 - 7.0) < 0.05 && a1 < 0.02 && ph2 > 11.5 && a2 > 0.99, `pH1=${ph1.toFixed(2)} (α=${a1.toFixed(3)}), pH2=${ph2.toFixed(2)} (α=${a2.toFixed(3)})`);
+
+      // Check pink RGB hue (high red & blue, absorbed green) and [OH-] concentration dependence
+      const visPink = computeSolutionVisuals(b.moles, liq2, ph2);
+      const aFaint = computePhenolphthaleinAlpha(8.8, 6.3e-6);
+      const aBleach = computePhenolphthaleinAlpha(14.3, 2.0);
+      assert(
+        'Phenolphthalein renders rose-pink (not crimson red) and scales/bleaches with [OH⁻]',
+        visPink.r > 200 && visPink.b > 150 && visPink.b > visPink.g * 2 && aFaint > 0.15 && aFaint < 0.40 && aBleach < 0.15,
+        `RGB(${visPink.r},${visPink.g},${visPink.b}), α(pH8.8)=${aFaint.toFixed(2)}, α(2M OH⁻)=${aBleach.toFixed(2)}`
+      );
     }
 
     // TEST 6: Overpressure pops rubber stopper
@@ -185,14 +196,20 @@
       assert('Extreme base pH at 298.15 K computes cleanly without cancellation', ph298 > 15.0 && ph298 <= 15.6, `pH(298K)=${ph298.toFixed(2)}`);
     }
 
-    // TEST 8: Dropping 50 g Na into 200 mL H2O triggers runaway H2 ignition explosion
+    // TEST 8: Dropping 50 g Na into 200 mL H2O triggers runaway H2 ignition explosion & spills all contents
     {
       const sim = new LabSimulation();
       const beaker = sim.createApparatus('beaker_250', 300, 350);
       sim.addReagentToVessel(beaker.id, 'h2o', 200);
       sim.addReagentToVessel(beaker.id, 'na', 50);
       stepSeconds(sim, 8.0);
-      assert('Huge 50g Na in 200 mL H2O triggers runaway explosion & shatters beaker', beaker.isShattered === true && beaker.tempK > 330 && sim.logs.some(l => l.key === 'alertNaExplosion'), `isShattered=${beaker.isShattered}, T=${(beaker.tempK-273.15).toFixed(1)}°C`);
+      const leftoverVolMl = computeLiquidVolumeL(beaker.moles, beaker.tempK) * 1000;
+      const leftoverMassG = computeContentsMassG(beaker.moles);
+      assert(
+        'Huge 50g Na in 200 mL H2O triggers runaway explosion, shatters beaker & spills all contents',
+        beaker.isShattered === true && beaker.tempK > 330 && leftoverVolMl === 0 && leftoverMassG === 0 && sim.logs.some(l => l.key === 'alertNaExplosion'),
+        `isShattered=${beaker.isShattered}, T=${(beaker.tempK-273.15).toFixed(1)}°C, leftMass=${leftoverMassG.toFixed(2)}g`
+      );
     }
 
     // Render test report

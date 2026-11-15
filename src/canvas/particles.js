@@ -144,7 +144,7 @@ export class ParticleSystem {
     }
   }
 
-  emitBurst(type, x, y) {
+  emitBurst(type, x, y, meta = null) {
     const count = type === 'explosion' ? 56 : type === 'shatter' ? 28 : 16;
     for (let i = 0; i < count; i++) {
       const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.35;
@@ -167,6 +167,26 @@ export class ParticleSystem {
           ? 'rgba(241, 245, 249, 0.5)'
           : 'rgba(186, 230, 253, 0.85)',
       });
+    }
+
+    // Emit liquid spill droplets when a shattered vessel empties onto the bench
+    if ((type === 'shatter' || type === 'explosion') && meta?.hadLiquid) {
+      const dropCount = Math.min(36, Math.max(12, Math.round((meta.liquidMl || 30) * 0.2)));
+      for (let i = 0; i < dropCount; i++) {
+        const angle = -Math.PI * (0.1 + Math.random() * 0.8);
+        const spd = 55 + Math.random() * 155;
+        this.particles.push({
+          kind: 'spark',
+          x: x + (Math.random() - 0.5) * 28,
+          y: y + 10,
+          vx: Math.cos(angle) * spd,
+          vy: Math.sin(angle) * spd,
+          r: 2.5 + Math.random() * 3.5,
+          life: 0,
+          maxLife: 0.6 + Math.random() * 0.45,
+          color: meta.liquidColor || 'rgba(186, 230, 253, 0.8)',
+        });
+      }
     }
   }
 
