@@ -5,6 +5,7 @@ import {
   computeContentsMassG,
   computeLiquidVolumeL,
   computePH,
+  computePhenolphthaleinBleachEq,
   computeSolidVolumeMl,
   computeSolutionVisuals,
 } from './equilibrium.js';
@@ -95,6 +96,7 @@ export class LabSimulation {
         seenReactions: {},
         history: [], // [{ t, moles: {...}, tempK, ph }]
         precipitateSettle: {}, // speciesId -> 0..1 settled fraction
+        phenBleachFrac: 0, // 0..1 fraction converted to colorless carbinol In(OH)^3-
         naVisualPhase: Math.random() * 6.28,
         naPosRatio: 0.5,
         naVel: 0.9,
@@ -353,6 +355,7 @@ export class LabSimulation {
     v.seenReactions = {};
     v.history = [];
     v.precipitateSettle = {};
+    v.phenBleachFrac = 0;
     v.wasBoiling = false;
     this.recomputeScaleReadings();
     this.emitChange();
@@ -377,6 +380,8 @@ export class LabSimulation {
     let dilutionHeatJ = 0;
 
     if (reg.kind === 'liquid') {
+      const oldPhen = v.moles.Phenolphthalein_aq || 0;
+      const oldBleach = v.phenBleachFrac || 0;
       // Check HCl heat of dilution before adding (diluting from ~12 M downwards is exothermic)
       if (reg.id === 'hcl_37') {
         const nH2OExisting = v.moles.H2O_l || 0;
@@ -399,6 +404,11 @@ export class LabSimulation {
         v.moles[spId] = (v.moles[spId] || 0) + addMol;
         const sp = SPECIES[spId];
         if (sp) addedHeatCap += addMol * Math.max(0, sp.cp || 0);
+      }
+      if (reg.perMl.Phenolphthalein_aq) {
+        const newPhen = v.moles.Phenolphthalein_aq || 0;
+        // Fresh indicator starts unbleached (In^2-) so dropping into conc. NaOH flashes pink first
+        v.phenBleachFrac = newPhen > 1e-14 ? (oldPhen * oldBleach) / newPhen : 0;
       }
     } else if (reg.kind === 'solid') {
       const sp = SPECIES[reg.speciesId];
@@ -441,6 +451,9 @@ export class LabSimulation {
     if (frac <= 0) return 0;
 
     const cDstBefore = computeHeatCapacityJK(dst);
+    const oldDstPhen = dst.moles.Phenolphthalein_aq || 0;
+    const oldDstBleach = dst.phenBleachFrac || 0;
+    let movedPhen = 0;
     let cMoved = 0;
 
     for (const [spId, n] of Object.entries(src.moles)) {
@@ -456,6 +469,7 @@ export class LabSimulation {
       if (!isTransferable) continue;
 
       const moveMol = n * frac;
+      if (spId === 'Phenolphthalein_aq') movedPhen = moveMol;
       src.moles[spId] = n - moveMol;
       if (src.moles[spId] < 1e-13) delete src.moles[spId];
       dst.moles[spId] = (dst.moles[spId] || 0) + moveMol;
@@ -464,6 +478,12 @@ export class LabSimulation {
       if (sp.isPrecipitate) {
         dst.precipitateSettle[spId] = 0.05; // Newly poured precipitate swirls
       }
+    }
+
+    if (movedPhen > 0) {
+      const totalPhen = oldDstPhen + movedPhen;
+      dst.phenBleachFrac =
+        totalPhen > 1e-14 ? (oldDstPhen * oldDstBleach + movedPhen * (src.phenBleachFrac || 0)) / totalPhen : 0;
     }
 
     if (cDstBefore + cMoved > 0) {
@@ -477,7 +497,13 @@ export class LabSimulation {
       fromY: src.y - 40,
       toX: dst.x,
       toY: dst.y - dstSpec.height * 0.25,
-      color: computeSolutionVisuals(src.moles, srcLiqL, computePH(src.moles, srcLiqL, src.tempK)).css,
+      color: computeSolutionVisuals(
+        src.moles,
+        srcLiqL,
+        computePH(src.moles, srcLiqL, src.tempK),
+        APPARATUS[src.typeId].opticalPathCm,
+        src.phenBleachFrac
+      ).css,
       timer: 0.25,
     };
 
@@ -543,15 +569,24 @@ export class LabSimulation {
     const actual = Math.min(this.pipette.volumeMl, dropMl);
     const frac = actual / this.pipette.volumeMl;
     const cOld = computeHeatCapacityJK(dst);
+    const oldDstPhen = dst.moles.Phenolphthalein_aq || 0;
+    const oldDstBleach = dst.phenBleachFrac || 0;
+    let movedPhen = 0;
     let cAdd = 0;
 
     for (const [spId, n] of Object.entries(this.pipette.moles)) {
       const move = n * frac;
+      if (spId === 'Phenolphthalein_aq') movedPhen = move;
       this.pipette.moles[spId] = n - move;
       if (this.pipette.moles[spId] < 1e-14) delete this.pipette.moles[spId];
       dst.moles[spId] = (dst.moles[spId] || 0) + move;
       const sp = SPECIES[spId];
       if (sp) cAdd += move * Math.max(0, sp.cp || 0);
+    }
+
+    if (movedPhen > 0) {
+      const totalPhen = oldDstPhen + movedPhen;
+      dst.phenBleachFrac = totalPhen > 1e-14 ? (oldDstPhen * oldDstBleach) / totalPhen : 0;
     }
 
     if (cOld + cAdd > 0) {
@@ -658,6 +693,7 @@ export class LabSimulation {
     vessel.moles = {};
     vessel.headspaceGasMoles = {};
     vessel.precipitateSettle = {};
+    vessel.phenBleachFrac = 0;
     vessel.activeReactions = [];
     vessel.wasBoiling = false;
     vessel.internalPressureBar = this.environment.pressureBar;
@@ -780,6 +816,25 @@ export class LabSimulation {
       }
 
       if (v.isShattered) continue;
+
+      // Advance reversible phenolphthalein carbinol fading / recovery kinetics
+      if ((v.moles.Phenolphthalein_aq || 0) > 1e-12) {
+        const liqL = computeLiquidVolumeL(v.moles, v.tempK);
+        if (liqL > 1e-7) {
+          const cOH = (v.moles.OH_aq || 0) / liqL;
+          const cH = (v.moles.H_aq || 0) / liqL;
+          const eqBleach = computePhenolphthaleinBleachEq(cOH);
+          const curBleach = v.phenBleachFrac || 0;
+          const tempFactor = Math.exp(Math.max(-1.5, Math.min(1.5, 0.025 * (v.tempK - CONSTANTS.T_STD_K))));
+          const rate =
+            curBleach < eqBleach
+              ? 0.28 * Math.max(0.2, cOH) * tempFactor
+              : (0.55 + Math.min(3.0, cH * 1.5)) * tempFactor;
+          v.phenBleachFrac = eqBleach + (curBleach - eqBleach) * Math.exp(-rate * scaledDt);
+        }
+      } else {
+        v.phenBleachFrac = 0;
+      }
 
       v.activeReactions = Array.from(frameActiveMap.values());
 

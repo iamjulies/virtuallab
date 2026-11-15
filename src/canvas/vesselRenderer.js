@@ -455,7 +455,13 @@ export function renderVessel(ctx, vessel, opts) {
   // Draw liquid body using Beer-Lambert + Phenolphthalein color
   if (hasWater) {
     const ph = computePH(vessel.moles, liqL, vessel.tempK);
-    const vis = computeSolutionVisuals(vessel.moles, liqL, ph, spec.opticalPathCm);
+    const vis = computeSolutionVisuals(
+      vessel.moles,
+      liqL,
+      ph,
+      spec.opticalPathCm,
+      vessel.phenBleachFrac
+    );
 
     ctx.fillStyle = vis.css;
     ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);

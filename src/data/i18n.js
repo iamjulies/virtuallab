@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.5',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.6',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envPress: 'Áp suất',
@@ -56,7 +56,7 @@ export const I18N = {
     reg_hcl_37: 'Hydrochloric acid (HCl 37%)',
     reg_hcl_37_desc: 'Dung dịch đậm đặc ~12.06 M · Bốc sương nhẹ',
     reg_phen: 'Phenolphthalein (1%)',
-    reg_phen_desc: 'Chất chỉ thị pH (không màu → hồng)',
+    reg_phen_desc: 'Chỉ thị pH: đỏ cam (<0) · không màu · hồng (8.2–12) · tắt ở kiềm đặc',
 
     // Workbench & Actions
     noSelection: 'Chưa chọn dụng cụ',
@@ -155,7 +155,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.5',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.6',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envPress: 'Pressure',
@@ -202,7 +202,7 @@ export const I18N = {
     reg_hcl_37: 'Hydrochloric acid (HCl 37%)',
     reg_hcl_37_desc: 'Concentrated ~12.06 M · Fuming slightly',
     reg_phen: 'Phenolphthalein (1%)',
-    reg_phen_desc: 'pH indicator (colorless → pink)',
+    reg_phen_desc: 'pH indicator: orange-red (<0) · colorless · pink (8.2–12) · fades in conc. OH⁻',
 
     noSelection: 'No apparatus selected',
     selectVesselTip: 'Click any vessel on the bench, or drag apparatus & reagents directly onto the workbench.',

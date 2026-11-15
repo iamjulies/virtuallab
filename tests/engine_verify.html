@@ -228,6 +228,54 @@
       );
     }
 
+    // TEST 10: Phenolphthalein 4th state (H3In+ orange-red at pH < 0 in conc. HCl 37%)
+    {
+      const sim = new LabSimulation();
+      const b = sim.createApparatus('beaker_250', 300, 350);
+      sim.addReagentToVessel(b.id, 'hcl_37', 20.0);
+      sim.addReagentToVessel(b.id, 'phen', 0.2);
+      const liq = computeLiquidVolumeL(b.moles, b.tempK);
+      const ph = computePH(b.moles, liq, b.tempK);
+      const vis = computeSolutionVisuals(b.moles, liq, ph, 6.5, b.phenBleachFrac);
+      assert(
+        'Concentrated HCl 37% (pH < 0) turns Phenolphthalein orange-red (H3In+)',
+        ph < -0.5 && vis.hasIndicatorOrange === true && vis.r > 180 && vis.g > 60 && vis.g < 155 && vis.b < 60,
+        `pH=${ph.toFixed(2)}, RGB(${vis.r},${vis.g},${vis.b})`
+      );
+    }
+
+    // TEST 11: Phenolphthalein flash-pink-then-fade in conc. NaOH (2 M) & reversible recovery on dilution
+    {
+      const sim = new LabSimulation();
+      const b = sim.createApparatus('beaker_250', 300, 350);
+      sim.addReagentToVessel(b.id, 'h2o', 50);
+      sim.addReagentToVessel(b.id, 'naoh', 4.0, { fine: true }); // ~2.0 M NaOH
+      stepSeconds(sim, 3.0); // Dissolve NaOH
+      sim.addReagentToVessel(b.id, 'phen', 0.15);
+
+      const liq1 = computeLiquidVolumeL(b.moles, b.tempK);
+      const ph1 = computePH(b.moles, liq1, b.tempK);
+      const cOH1 = (b.moles.OH_aq || 0) / liq1;
+      const alphaFlash = computePhenolphthaleinAlpha(ph1, cOH1, b.phenBleachFrac);
+
+      stepSeconds(sim, 8.0);
+      const alphaFaded = computePhenolphthaleinAlpha(ph1, cOH1, b.phenBleachFrac);
+
+      // Dilute strongly with distilled water (brings [OH-] down ~4x -> reversible recovery)
+      sim.addReagentToVessel(b.id, 'h2o', 200);
+      stepSeconds(sim, 6.0);
+      const liq2 = computeLiquidVolumeL(b.moles, b.tempK);
+      const ph2 = computePH(b.moles, liq2, b.tempK);
+      const cOH2 = (b.moles.OH_aq || 0) / liq2;
+      const alphaRecovered = computePhenolphthaleinAlpha(ph2, cOH2, b.phenBleachFrac);
+
+      assert(
+        'Phenolphthalein flashes pink then fades in ~2 M NaOH, and recovers pink upon water dilution',
+        alphaFlash > 0.85 && alphaFaded < 0.18 && alphaRecovered > 0.35 && alphaRecovered > alphaFaded * 2,
+        `flash=${alphaFlash.toFixed(2)} -> faded=${alphaFaded.toFixed(2)} -> diluted=${alphaRecovered.toFixed(2)}`
+      );
+    }
+
     // Render test report
     const passed = results.filter(r => r.pass).length;
     document.getElementById('summary').innerHTML = `<span class="${passed === results.length ? 'pass' : 'fail'}">${passed} / ${results.length} tests passed</span>`;
