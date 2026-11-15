@@ -46,10 +46,12 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     if (!hasWater) return 0;
     const nSolid = moles[rxn.solidId] || 0;
     const waterMassKg = (moles.H2O_l * SPECIES.H2O_l.molarMass) / 1000;
+    const etohMassKg = ((moles.C2H5OH_l || 0) * SPECIES.C2H5OH_l.molarMass) / 1000;
+    const effectiveSolventKg = waterMassKg + (rxn.etohRelSolubility || 0) * etohMassKg;
     const sTemp =
       rxn.solubilityMolPerKg298 *
       Math.exp(rxn.solubilityTempCoeff * (T - CONSTANTS.T_STD_K));
-    const maxSoluble = sTemp * waterMassKg;
+    const maxSoluble = sTemp * effectiveSolventKg;
     const currentIon = moles[rxn.ionCheckId] || 0;
     if (currentIon >= maxSoluble * 0.999) return 0;
 
@@ -144,6 +146,7 @@ function applySupersaturationCrystallization(vessel, dt) {
   const moles = vessel.moles;
   const nH2O = moles.H2O_l || 0;
   const waterMassKg = (nH2O * SPECIES.H2O_l.molarMass) / 1000;
+  const etohMassKg = ((moles.C2H5OH_l || 0) * SPECIES.C2H5OH_l.molarMass) / 1000;
   const T = vessel.tempK;
 
   const crystallizePairs = [
@@ -153,6 +156,7 @@ function applySupersaturationCrystallization(vessel, dt) {
       solid: 'AgNO3_s',
       sol298: 15.0,
       coeff: 0.018,
+      etohRel: 0.05,
       deltaHJ: -22600,
     },
     {
@@ -161,6 +165,7 @@ function applySupersaturationCrystallization(vessel, dt) {
       solid: 'NaOH_s',
       sol298: 27.5,
       coeff: 0.012,
+      etohRel: 0.12,
       // Differential enthalpy of crystallization from saturated liquor is modest (~8 kJ/mol)
       deltaHJ: +8000,
     },
@@ -171,9 +176,10 @@ function applySupersaturationCrystallization(vessel, dt) {
   for (const pair of crystallizePairs) {
     const nPair = Math.min(moles[pair.cat] || 0, moles[pair.an] || 0);
     if (nPair <= 1e-11) continue;
+    const effectiveSolventKg = waterMassKg + (pair.etohRel || 0) * etohMassKg;
     const maxSol =
-      waterMassKg > 1e-8
-        ? pair.sol298 * Math.exp(pair.coeff * (T - CONSTANTS.T_STD_K)) * waterMassKg
+      effectiveSolventKg > 1e-8
+        ? pair.sol298 * Math.exp(pair.coeff * (T - CONSTANTS.T_STD_K)) * effectiveSolventKg
         : 0;
     if (nPair > maxSol) {
       const excess = nPair - maxSol;

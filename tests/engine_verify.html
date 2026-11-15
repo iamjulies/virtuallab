@@ -212,6 +212,22 @@
       );
     }
 
+    // TEST 9: NaOH solubility saturation in 5 mL hydroalcoholic Phenolphthalein 1%
+    {
+      const sim = new LabSimulation();
+      const b = sim.createApparatus('beaker_250', 300, 350);
+      sim.addReagentToVessel(b.id, 'phen', 5.0);
+      sim.addReagentToVessel(b.id, 'naoh', 25.0);
+      stepSeconds(sim, 12.0);
+      const undissolvedG = (b.moles.NaOH_s || 0) * SPECIES.NaOH_s.molarMass;
+      const dissolvedMol = b.moles.Na_aq || 0;
+      assert(
+        '25 g NaOH in 5 mL Phenolphthalein 1% (60% EtOH/39% H2O) saturates & leaves excess solid NaOH(s)',
+        undissolvedG > 18.0 && dissolvedMol > 0.04 && dissolvedMol < 0.16,
+        `undissolved=${undissolvedG.toFixed(2)}g, dissolved=${(dissolvedMol * SPECIES.NaOH_s.molarMass).toFixed(2)}g`
+      );
+    }
+
     // Render test report
     const passed = results.filter(r => r.pass).length;
     document.getElementById('summary').innerHTML = `<span class="${passed === results.length ? 'pass' : 'fail'}">${passed} / ${results.length} tests passed</span>`;

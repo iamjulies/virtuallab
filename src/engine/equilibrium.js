@@ -8,10 +8,15 @@ import { SPECIES } from '../data/species.js';
  */
 export function computeLiquidVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
   const nH2O = moles.H2O_l || 0;
-  if (nH2O <= 1e-12) return 0;
+  const nEtOH = moles.C2H5OH_l || 0;
+  if (nH2O <= 1e-12 && nEtOH <= 1e-12) return 0;
 
   const rho = waterDensityGPerMl(tempK);
   const waterVolMl = (nH2O * SPECIES.H2O_l.molarMass) / rho;
+  const etohVolMl = (nEtOH * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density;
+  // Ethanol-water mixtures exhibit ~3% excess volume contraction
+  const mixFactor = nH2O > 1e-9 && nEtOH > 1e-9 ? 0.965 : 1.0;
+  const solventVolMl = (waterVolMl + etohVolMl) * mixFactor;
 
   let diluteVolDeltaMl = 0;
   let totalSoluteMoles = 0;
@@ -29,15 +34,17 @@ export function computeLiquidVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
     }
   }
 
-  // Smoothly blend toward positive effective solute volume (~m/2.15) at high molality
+  // Smoothly blend toward positive effective solute volume (~m/2.25) at high molality
   const waterKg = (nH2O * SPECIES.H2O_l.molarMass) / 1000;
-  const molality = waterKg > 1e-9 ? totalSoluteMoles / waterKg : 0;
+  const etohKg = (nEtOH * SPECIES.C2H5OH_l.molarMass) / 1000;
+  const solventKg = waterKg + etohKg;
+  const molality = solventKg > 1e-9 ? totalSoluteMoles / solventKg : 0;
   const highConcWeight = molality / (molality + 4.0);
   const concVolDeltaMl = totalSoluteMassG / 2.25;
   const blendedDeltaMl =
     (1 - highConcWeight) * diluteVolDeltaMl + highConcWeight * Math.max(diluteVolDeltaMl, concVolDeltaMl);
 
-  const totalMl = Math.max(waterVolMl * 0.96, waterVolMl + blendedDeltaMl);
+  const totalMl = Math.max(solventVolMl * 0.96, solventVolMl + blendedDeltaMl);
   return totalMl / 1000;
 }
 

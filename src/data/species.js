@@ -16,12 +16,13 @@ const AW = {
 };
 
 const M_H2O = 2 * AW.H + AW.O;
+const M_ETOH = 2 * AW.C + 6 * AW.H + AW.O;
 const M_OH = AW.O + AW.H;
 const M_SO4 = AW.S + 4 * AW.O;
 const M_NO3 = AW.N + 3 * AW.O;
 
 export const SPECIES = {
-  // Solvent / Liquid
+  // Solvents / Liquids
   H2O_l: {
     id: 'H2O_l',
     formula: 'H₂O',
@@ -32,6 +33,18 @@ export const SPECIES = {
     cp: 75.38,
     partialMolarVolMl: 18.069,
     color: '#e0f2fe',
+    visualType: 'liquid',
+  },
+  C2H5OH_l: {
+    id: 'C2H5OH_l',
+    formula: 'C₂H₅OH',
+    name: 'Ethanol',
+    phase: 'l',
+    molarMass: M_ETOH,
+    density: 0.789,
+    cp: 112.3,
+    partialMolarVolMl: 58.39,
+    color: '#f1f5f9',
     visualType: 'liquid',
   },
 
@@ -473,9 +486,11 @@ export const STARTER_REAGENTS = [
     swatch: '#f472b6',
     bottleType: 'dropper_bottle',
     densityGPerMl: 0.85,
+    // Hydroalcoholic 1% w/v Phenolphthalein (~60% Ethanol / ~39% H2O by mass)
     perMl: {
       Phenolphthalein_aq: 0.0000267,
-      H2O_l: 0.84 / M_H2O,
+      C2H5OH_l: 0.51 / M_ETOH,
+      H2O_l: 0.3315 / M_H2O,
     },
   },
 ];

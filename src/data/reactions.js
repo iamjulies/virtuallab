@@ -21,6 +21,7 @@ export const REACTIONS = [
     ionCheckId: 'Na_aq',
     solubilityMolPerKg298: 27.5,
     solubilityTempCoeff: 0.012,
+    etohRelSolubility: 0.12, // Much less soluble in ethanol cosolvent than in water
     k298: 0.28, // mol / (m^2 * s) scaling factor
     eaJ: 18000,
     deltaHJ: -44510, // Strongly exothermic!
@@ -75,6 +76,7 @@ export const REACTIONS = [
     ionCheckId: 'Ag_aq',
     solubilityMolPerKg298: 15.0,
     solubilityTempCoeff: 0.018,
+    etohRelSolubility: 0.05,
     k298: 0.30,
     eaJ: 20000,
     deltaHJ: +22600,
