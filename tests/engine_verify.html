@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>virlab_beta_v1 Engine Verification Suite</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; padding: 24px; max-width: 900px; margin: auto; }
+    .pass { color: #34d399; font-weight: 600; }
+    .fail { color: #f87171; font-weight: 700; }
+    pre { background: #1e293b; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>virlab_beta_v1 — Chemistry &amp; Physics Verification</h1>
+  <div id="summary">Running...</div>
+  <ul id="results"></ul>
+  <pre id="details"></pre>
+
+  <script type="module">
+    import { CONSTANTS, waterBoilingPointK } from '../src/data/constants.js';
+    import { SPECIES } from '../src/data/species.js';
+    import { LabSimulation } from '../src/engine/simulation.js';
+    import {
+      computeContentsMassG,
+      computeLiquidVolumeL,
+      computePH,
+      computePhenolphthaleinAlpha,
+    } from '../src/engine/equilibrium.js';
+    import { computeSyringeGasVolumeMl } from '../src/engine/gasNetwork.js';
+
+    const results = [];
+    const details = [];
+
+    function assert(name, cond, info = '') {
+      results.push({ name, pass: !!cond, info });
+    }
+
+    function stepSeconds(sim, sec, dt = 0.02) {
+      const steps = Math.round(sec / dt);
+      for (let i = 0; i < steps; i++) sim.step(dt);
+    }
+
+    // TEST 1: Na + AgNO3(aq) Cascade, Mass Conservation & Gas Syringe PV=nRT
+    {
+      const sim = new LabSimulation();
+      const flask = sim.createApparatus('erlenmeyer_250', 300, 380);
+      const syringe = sim.createApparatus('gas_syringe', 600, 340);
+      sim.connectSyringe(flask.id, syringe.id);
+
+      // Add 50 mL H2O + 1.70 g AgNO3 (~0.01 mol)
+      sim.addReagentToVessel(flask.id, 'h2o', 50);
+      sim.addReagentToVessel(flask.id, 'agno3', 1.70, { fine: true });
+      stepSeconds(sim, 3.0);
+
+      const dissolvedAg = flask.moles.Ag_aq || 0;
+      assert('AgNO3 dissolves completely in 50 mL H2O', dissolvedAg > 0.0099, `Ag⁺ = ${dissolvedAg.toFixed(5)} mol`);
+
+      const massBeforeNa = computeContentsMassG(flask.moles);
+      const naMass = 0.23;
+      sim.addReagentToVessel(flask.id, 'na', naMass);
+      const totalInputMass = massBeforeNa + naMass;
+
+      stepSeconds(sim, 10.0);
+
+      const nNaLeft = flask.moles.Na_s || 0;
+      const nAg2O = flask.moles.Ag2O_s || 0;
+      const nH2Collected = syringe.gasMoles.H2_g || 0;
+      const syrVolMl = computeSyringeGasVolumeMl(syringe, sim.environment);
+      const expectedVolMl = (nH2Collected * CONSTANTS.R_L_BAR_MOL_K * 298.15 / 1.0) * 1000;
+
+      const finalMassTotal =
+        computeContentsMassG(flask.moles) +
+        (syringe.gasMoles.H2_g || 0) * SPECIES.H2_g.molarMass +
+        (flask.escapedGasMoles.H2_g || 0) * SPECIES.H2_g.molarMass +
+        (flask.escapedGasMoles.H2O_g || 0) * SPECIES.H2O_g.molarMass;
+
+      assert('Na fully consumed in Na + AgNO3(aq)', nNaLeft < 1e-6, `Na_s left = ${nNaLeft}`);
+      assert('Ag2O(s) precipitate forms automatically (~0.005 mol)', Math.abs(nAg2O - 0.005) < 0.0002, `Ag2O = ${nAg2O.toFixed(5)} mol`);
+      assert('H2 collected stoichiometrically (~0.005 mol)', Math.abs(nH2Collected - 0.005) < 0.0002, `H2 = ${nH2Collected.toFixed(5)} mol`);
+      assert('Syringe PV=nRT matches IUPAC molar volume (~124 mL)', Math.abs(syrVolMl - expectedVolMl) < 0.01 && syrVolMl > 120 && syrVolMl < 128, `V = ${syrVolMl.toFixed(2)} mL`);
+      assert('Exact Mass Conservation holds (< 1e-5 g error)', Math.abs(totalInputMass - finalMassTotal) < 1e-5, `Δm = ${Math.abs(totalInputMass - finalMassTotal).toExponential(3)} g`);
+      details.push(`Test 1 (Na + AgNO3): Ag2O=${nAg2O.toFixed(5)} mol, H2=${nH2Collected.toFixed(5)} mol (${syrVolMl.toFixed(2)} mL), T=${flask.tempK.toFixed(2)} K`);
+
+      // Follow-up: Add excess HCl -> Ag2O turns into AgCl white precipitate!
+      sim.addReagentToVessel(flask.id, 'hcl_37', 3.0);
+      stepSeconds(sim, 3.0);
+      assert('Adding HCl converts Ag2O(s) into AgCl(s)', (flask.moles.Ag2O_s || 0) < 1e-5 && (flask.moles.AgCl_s || 0) > 0.0095, `AgCl = ${(flask.moles.AgCl_s || 0).toFixed(5)} mol`);
+    }
+
+    // TEST 2: Open Vessel on Scale Loses Mass Equal to Escaped H2
+    {
+      const sim = new LabSimulation();
+      const scale = sim.createApparatus('scale', 250, 440);
+      const beaker = sim.createApparatus('beaker_250', 250, 340);
+      sim.updateSupportAttachments();
+      sim.addReagentToVessel(beaker.id, 'h2o', 50);
+      sim.addReagentToVessel(beaker.id, 'hcl_37', 10);
+      sim.tareScale(scale.id);
+      sim.addReagentToVessel(beaker.id, 'zn', 0.6538, { fine: true }); // 0.01 mol Zn
+      const massStart = scale.measuredG;
+      stepSeconds(sim, 25.0);
+      const massEnd = scale.measuredG;
+      const escapedH2Mass = (beaker.escapedGasMoles.H2_g || 0) * SPECIES.H2_g.molarMass;
+      const escapedSteamMass = (beaker.escapedGasMoles.H2O_g || 0) * SPECIES.H2O_g.molarMass;
+      const totalEscaped = escapedH2Mass + escapedSteamMass;
+      assert('Open Zn + HCl loses scale weight equal to escaped H2 + vapor', escapedH2Mass > 0.015 && Math.abs((massStart - massEnd) - totalEscaped) < 1e-4, `Scale drop=${(massStart - massEnd).toFixed(4)} g, Escaped=${totalEscaped.toFixed(4)} g (H2=${escapedH2Mass.toFixed(4)} g)`);
+    }
+
+    // TEST 3: Amphoteric Zn(OH)2 -> [Zn(OH)4]2- -> Zn(OH)2
+    {
+      const sim = new LabSimulation();
+      const b = sim.createApparatus('beaker_250', 300, 350);
+      sim.addReagentToVessel(b.id, 'h2o', 40);
+      sim.addReagentToVessel(b.id, 'zn', 0.3269, { fine: true }); // 0.005 mol Zn
+      sim.addReagentToVessel(b.id, 'hcl_37', 1.5); // ~0.018 mol H+
+      stepSeconds(sim, 30.0);
+      // Add moderate NaOH to precipitate Zn(OH)2 (neutralizes ~0.008 mol excess H+ and adds ~0.01 mol OH-)
+      sim.addReagentToVessel(b.id, 'naoh', 0.72, { fine: true });
+      stepSeconds(sim, 4.0);
+      const pptPeak = b.moles.ZnOH2_s || 0;
+      // Add excess NaOH -> redissolves!
+      sim.addReagentToVessel(b.id, 'naoh', 2.0, { fine: true });
+      stepSeconds(sim, 8.0);
+      const pptAfterExcess = b.moles.ZnOH2_s || 0;
+      const zincate = b.moles.ZnOH4_2_aq || 0;
+      assert('Amphoteric Zn(OH)2 precipitates then dissolves in excess NaOH', pptPeak > 0.003 && pptAfterExcess < 1e-4 && zincate > 0.0045, `Peak Zn(OH)2=${pptPeak.toFixed(4)}, After=${pptAfterExcess.toFixed(5)}, [Zn(OH)4]2-=${zincate.toFixed(4)}`);
+    }
+
+    // TEST 4: Boiling Point at 1.00 bar vs 0.50 bar & Cu(OH)2 -> CuO Thermal Decomposition
+    {
+      const bp1 = waterBoilingPointK(1.0);
+      const bp05 = waterBoilingPointK(0.5);
+      assert('Antoine boiling point: ~99.6 °C at 1 bar, ~81.3 °C at 0.5 bar', Math.abs(bp1 - 372.76) < 0.3 && Math.abs(bp05 - 354.5) < 0.5, `bp(1bar)=${(bp1-273.15).toFixed(2)}°C, bp(0.5bar)=${(bp05-273.15).toFixed(2)}°C`);
+
+      const sim = new LabSimulation();
+      const burner = sim.createApparatus('burner', 300, 426);
+      const beaker = sim.createApparatus('beaker_250', 300, 302);
+      sim.updateSupportAttachments();
+      sim.setBurnerFlame(burner.id, 3);
+      sim.addReagentToVessel(beaker.id, 'h2o', 30);
+      sim.addReagentToVessel(beaker.id, 'cuso4_5h2o', 1.25, { fine: true });
+      sim.addReagentToVessel(beaker.id, 'naoh', 0.60, { fine: true });
+      stepSeconds(sim, 30.0);
+      assert('Heating Cu(OH)2 >= 80°C thermally decomposes to black CuO(s)', beaker.restingOnId === burner.id && (beaker.moles.CuO_s || 0) > 0.004 && (beaker.moles.CuOH2_s || 0) < 0.0005, `CuO=${(beaker.moles.CuO_s || 0).toFixed(5)} mol, T=${(beaker.tempK-273.15).toFixed(1)}°C`);
+    }
+
+    // TEST 5: Exact pH & Phenolphthalein Indicator
+    {
+      const sim = new LabSimulation();
+      const b = sim.createApparatus('beaker_250', 300, 350);
+      sim.addReagentToVessel(b.id, 'h2o', 100);
+      sim.addReagentToVessel(b.id, 'phen', 0.1);
+      const liq1 = computeLiquidVolumeL(b.moles, b.tempK);
+      const ph1 = computePH(b.moles, liq1, b.tempK);
+      const a1 = computePhenolphthaleinAlpha(ph1);
+
+      sim.addReagentToVessel(b.id, 'naoh', 0.04, { fine: true }); // ~0.01 M OH-
+      stepSeconds(sim, 2.0);
+      const liq2 = computeLiquidVolumeL(b.moles, b.tempK);
+      const ph2 = computePH(b.moles, liq2, b.tempK);
+      const a2 = computePhenolphthaleinAlpha(ph2);
+
+      assert('Water pH=7.00 (colorless) -> Base pH~12.0 (pink Phenolphthalein)', Math.abs(ph1 - 7.0) < 0.05 && a1 < 0.02 && ph2 > 11.5 && a2 > 0.99, `pH1=${ph1.toFixed(2)} (α=${a1.toFixed(3)}), pH2=${ph2.toFixed(2)} (α=${a2.toFixed(3)})`);
+    }
+
+    // TEST 6: Overpressure pops rubber stopper
+    {
+      const sim = new LabSimulation();
+      const tube = sim.createApparatus('test_tube_50', 300, 360);
+      sim.addReagentToVessel(tube.id, 'h2o', 15);
+      sim.addReagentToVessel(tube.id, 'hcl_37', 5);
+      sim.toggleStopper(tube.id);
+      sim.addReagentToVessel(tube.id, 'zn', 0.65, { fine: true });
+      stepSeconds(sim, 8.0);
+      assert('Sealed tube overpressure pops rubber stopper automatically', tube.isStoppered === false && sim.logs.some(l => l.key === 'alertOverpressurePop'), `isStoppered=${tube.isStoppered}`);
+    }
+
+    // Render test report
+    const passed = results.filter(r => r.pass).length;
+    document.getElementById('summary').innerHTML = `<span class="${passed === results.length ? 'pass' : 'fail'}">${passed} / ${results.length} tests passed</span>`;
+    document.getElementById('results').innerHTML = results.map(r =>
+      `<li class="${r.pass ? 'pass' : 'fail'}">${r.pass ? 'PASS' : 'FAIL'} — ${r.name} <span style="color:#94a3b8;font-weight:400">(${r.info})</span></li>`
+    ).join('');
+    document.getElementById('details').textContent = details.join('\n');
+    window.__TEST_RESULTS__ = { total: results.length, passed, results };
+  </script>
+</body>
+</html>

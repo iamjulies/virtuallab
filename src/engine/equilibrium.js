@@ -1,0 +1,161 @@
+import { CONSTANTS, waterDensityGPerMl } from '../data/constants.js';
+import { SPECIES } from '../data/species.js';
+
+/**
+ * Compute aqueous liquid volume in Liters.
+ */
+export function computeLiquidVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
+  const nH2O = moles.H2O_l || 0;
+  if (nH2O <= 1e-12) return 0;
+
+  const rho = waterDensityGPerMl(tempK);
+  const waterVolMl = (nH2O * SPECIES.H2O_l.molarMass) / rho;
+
+  let soluteVolMl = 0;
+  for (const [id, n] of Object.entries(moles)) {
+    if (n <= 0) continue;
+    const sp = SPECIES[id];
+    if (sp && sp.phase === 'aq' && typeof sp.partialMolarVolMl === 'number') {
+      soluteVolMl += n * sp.partialMolarVolMl;
+    }
+  }
+
+  const totalMl = Math.max(waterVolMl * 0.85, waterVolMl + soluteVolMl);
+  return totalMl / 1000;
+}
+
+/**
+ * Water auto-ionization constant Kw(T) using Van 't Hoff equation.
+ */
+export function computeKw(tempK = CONSTANTS.T_STD_K) {
+  const T = Math.max(250, Math.min(450, tempK));
+  const exponent =
+    (-CONSTANTS.DELTA_H_WATER_IONIZATION_J / CONSTANTS.R_J_MOL_K) *
+    (1 / T - 1 / CONSTANTS.T_STD_K);
+  return CONSTANTS.KW_298 * Math.exp(exponent);
+}
+
+/**
+ * Exact strong-electrolyte + water auto-ionization pH calculation.
+ * Returns null if vessel contains virtually no liquid water.
+ */
+export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
+  if (liquidVolL <= 1e-6) return null;
+
+  const nH = moles.H_aq || 0;
+  const nOH = moles.OH_aq || 0;
+  const cNet = (nH - nOH) / liquidVolL;
+  const kw = computeKw(tempK);
+
+  const hPlus = 0.5 * (cNet + Math.sqrt(cNet * cNet + 4 * kw));
+  if (hPlus <= 0) return 14;
+  const ph = -Math.log10(hPlus);
+  return Math.max(-1.2, Math.min(15.2, ph));
+}
+
+/**
+ * Phenolphthalein fraction in pink basic dianion form (Henderson-Hasselbalch).
+ */
+export function computePhenolphthaleinAlpha(ph) {
+  if (ph === null || ph === undefined) return 0;
+  const exponent = CONSTANTS.PHENOLPHTHALEIN_PKA - ph;
+  // Clamp exponent to avoid Infinity
+  if (exponent > 30) return 0;
+  if (exponent < -30) return 1;
+  return 1 / (1 + Math.pow(10, exponent));
+}
+
+/**
+ * Beer-Lambert RGB optical color calculation for aqueous solution.
+ * Returns { css, r, g, b, alpha, turbidity }
+ */
+export function computeSolutionVisuals(moles, liquidVolL, ph, opticalPathCm = 6.5) {
+  if (liquidVolL <= 1e-6) {
+    return {
+      css: 'rgba(200, 230, 250, 0.25)',
+      r: 200,
+      g: 230,
+      b: 250,
+      alpha: 0.25,
+      hasIndicatorPink: false,
+    };
+  }
+
+  // White light reference background normalized [0..255]
+  let tr = 1.0;
+  let tg = 1.0;
+  let tb = 1.0;
+  let extraOpacity = 0;
+
+  // 1. Copper(II) sky-blue absorption
+  const nCu = moles.Cu2_aq || 0;
+  if (nCu > 1e-9) {
+    const cCu = nCu / liquidVolL;
+    const ext = SPECIES.Cu2_aq.extinctionRGB;
+    tr *= Math.exp(-ext.r * cCu * opticalPathCm * 0.22);
+    tg *= Math.exp(-ext.g * cCu * opticalPathCm * 0.22);
+    tb *= Math.exp(-ext.b * cCu * opticalPathCm * 0.22);
+    extraOpacity += Math.min(0.45, cCu * 0.45);
+  }
+
+  // 2. Phenolphthalein indicator absorption (vivid magenta/pink in base)
+  const nPhen = moles.Phenolphthalein_aq || 0;
+  let alphaPink = 0;
+  if (nPhen > 1e-9 && ph !== null) {
+    alphaPink = computePhenolphthaleinAlpha(ph);
+    if (alphaPink > 0.01) {
+      const cPhen = nPhen / liquidVolL;
+      // Scale effective optical strength so even 1 drop (0.05 mL in 100 mL = 1.3e-5 M) is clearly visible
+      const effStrength = Math.min(2.2, (cPhen / 1.2e-5) * 0.48) * alphaPink;
+      tr *= Math.exp(-0.08 * effStrength);
+      tg *= Math.exp(-2.65 * effStrength);
+      tb *= Math.exp(-0.62 * effStrength);
+      extraOpacity += Math.min(0.55, effStrength * 0.42);
+    }
+  }
+
+  // Base watery tint blended with Beer-Lambert transmission
+  const r = Math.round(Math.max(12, Math.min(255, 224 * tr)));
+  const g = Math.round(Math.max(12, Math.min(255, 240 * tg)));
+  const b = Math.round(Math.max(18, Math.min(255, 252 * tb)));
+  const alpha = Math.min(0.88, 0.34 + extraOpacity);
+
+  return {
+    css: `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`,
+    r,
+    g,
+    b,
+    alpha,
+    hasIndicatorPink: alphaPink > 0.05 && nPhen > 1e-9,
+  };
+}
+
+/**
+ * Total condensed + trapped gas mass (g) excluding vessel tare mass.
+ */
+export function computeContentsMassG(moles) {
+  let mass = 0;
+  for (const [id, n] of Object.entries(moles)) {
+    if (n <= 0) continue;
+    const sp = SPECIES[id];
+    if (sp) {
+      mass += n * sp.molarMass;
+    }
+  }
+  return mass;
+}
+
+/**
+ * Total solid + precipitate volume in mL (contributes to visual fill height).
+ */
+export function computeSolidVolumeMl(moles) {
+  let vol = 0;
+  for (const [id, n] of Object.entries(moles)) {
+    if (n <= 0) continue;
+    const sp = SPECIES[id];
+    if (sp && sp.phase === 's' && sp.density) {
+      vol += (n * sp.molarMass) / sp.density;
+    }
+  }
+  return vol;
+}

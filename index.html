@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ChemLab Studio — virlab_beta_v1</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="./assets/icon.svg" />
+  <meta name="theme-color" content="#2563eb" />
+  <link rel="stylesheet" href="./styles/main.css" />
+</head>
+<body>
+  <div id="device-frame-wrap" class="device-frame-wrap" data-device="auto">
+    <div class="app-shell">
+      <!-- Top Environment & Controls Bar -->
+      <header id="env-bar"></header>
+
+      <!-- Mobile Tab Navigation -->
+      <nav class="mobile-tabs-bar">
+        <button type="button" class="mobile-tab-btn" data-tab="shelf"></button>
+        <button type="button" class="mobile-tab-btn" data-tab="bench"></button>
+        <button type="button" class="mobile-tab-btn" data-tab="inspector"></button>
+      </nav>
+
+      <!-- Main 3-Column Workbench -->
+      <main class="workspace-grid">
+        <!-- Left Panel: Apparatus & Pure Reagents Shelf -->
+        <aside id="panel-shelf" class="panel-card">
+          <div id="shelf-panel" class="h-full overflow-y-auto"></div>
+        </aside>
+
+        <!-- Center Panel: Interactive Physics/Chemistry Canvas Bench -->
+        <section id="panel-bench" class="panel-card workbench-panel active-mobile-tab gap-2">
+          <div class="flex items-center justify-between gap-2 px-1">
+            <span id="bench-hint-text" class="text-xs text-muted truncate"></span>
+            <button type="button" id="btn-reset-bench" class="px-2.5 py-1 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent shrink-0 transition"></button>
+          </div>
+          <div class="workbench-canvas-wrap">
+            <canvas id="workbench-canvas" class="workbench-canvas"></canvas>
+          </div>
+        </section>
+
+        <!-- Right Panel: Real-Time Telemetry, Species & Reaction Inspector -->
+        <aside id="panel-inspector" class="panel-card">
+          <div id="inspector-panel" class="h-full overflow-y-auto pr-1"></div>
+        </aside>
+      </main>
+    </div>
+  </div>
+
+  <!-- Precision Dosing & Pouring Modal -->
+  <div id="dosing-modal-root" class="hidden"></div>
+
+  <!-- Toast Alert Banner -->
+  <div id="toast-banner" class="toast-banner hidden"></div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
