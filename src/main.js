@@ -182,6 +182,7 @@ sim.visualHooks.onAlert = (type, vessel) => {
   particles.emitBurst(type, vessel.x, vessel.y);
   if (type === 'pop') showToast(`⚠️ ${t('alertOverpressurePop')}`);
   if (type === 'shatter') showToast(`💥 ${t('alertOverpressureShatter')}`);
+  if (type === 'explosion') showToast(`💥 ${t('alertNaExplosion')}`);
 };
 
 sim.subscribe(() => {

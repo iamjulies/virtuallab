@@ -175,6 +175,26 @@
       assert('Sealed tube overpressure pops rubber stopper automatically', tube.isStoppered === false && sim.logs.some(l => l.key === 'alertOverpressurePop'), `isStoppered=${tube.isStoppered}`);
     }
 
+    // TEST 7: Concentrated NaOH volume/density realism & stable extreme pH
+    {
+      const moles = { H2O_l: 50 / 18.01528, Na_aq: 1.25, OH_aq: 1.25 }; // 50g H2O + 50g NaOH (50% w/w)
+      const volMl = computeLiquidVolumeL(moles, 298.15) * 1000;
+      const density = 100 / volMl;
+      const ph298 = computePH(moles, volMl / 1000, 298.15);
+      assert('50% NaOH(aq) has realistic volume (~64-72 mL) & density (~1.4-1.56 g/mL)', volMl > 62 && volMl < 74 && density > 1.35 && density < 1.60, `V=${volMl.toFixed(1)} mL, ρ=${density.toFixed(2)} g/mL`);
+      assert('Extreme base pH at 298.15 K computes cleanly without cancellation', ph298 > 15.0 && ph298 <= 15.6, `pH(298K)=${ph298.toFixed(2)}`);
+    }
+
+    // TEST 8: Dropping 50 g Na into 200 mL H2O triggers runaway H2 ignition explosion
+    {
+      const sim = new LabSimulation();
+      const beaker = sim.createApparatus('beaker_250', 300, 350);
+      sim.addReagentToVessel(beaker.id, 'h2o', 200);
+      sim.addReagentToVessel(beaker.id, 'na', 50);
+      stepSeconds(sim, 8.0);
+      assert('Huge 50g Na in 200 mL H2O triggers runaway explosion & shatters beaker', beaker.isShattered === true && beaker.tempK > 330 && sim.logs.some(l => l.key === 'alertNaExplosion'), `isShattered=${beaker.isShattered}, T=${(beaker.tempK-273.15).toFixed(1)}°C`);
+    }
+
     // Render test report
     const passed = results.filter(r => r.pass).length;
     document.getElementById('summary').innerHTML = `<span class="${passed === results.length ? 'pass' : 'fail'}">${passed} / ${results.length} tests passed</span>`;

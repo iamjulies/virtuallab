@@ -161,7 +161,8 @@ function applySupersaturationCrystallization(vessel, dt) {
       solid: 'NaOH_s',
       sol298: 27.5,
       coeff: 0.012,
-      deltaHJ: +44510,
+      // Differential enthalpy of crystallization from saturated liquor is modest (~8 kJ/mol)
+      deltaHJ: +8000,
     },
   ];
 
@@ -176,7 +177,7 @@ function applySupersaturationCrystallization(vessel, dt) {
         : 0;
     if (nPair > maxSol) {
       const excess = nPair - maxSol;
-      const dXi = Math.min(excess, excess * Math.min(1, 6.0 * dt));
+      const dXi = Math.min(excess, excess * Math.min(1, 2.0 * dt));
       if (dXi > 1e-12) {
         moles[pair.cat] -= dXi;
         moles[pair.an] -= dXi;

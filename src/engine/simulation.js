@@ -734,6 +734,23 @@ export class LabSimulation {
 
       v.activeReactions = Array.from(frameActiveMap.values());
 
+      // Check runaway Sodium + H2 ignition / thermal shock explosion (large > ~3.5g Na reacting violently at high temp)
+      const naReactionRate =
+        (frameActiveMap.get('na_water')?.rateMolS || 0) +
+        (frameActiveMap.get('na_acid')?.rateMolS || 0);
+      if (
+        !v.isShattered &&
+        naReactionRate > 0.045 &&
+        (v.moles.Na_s || 0) > 0.15 &&
+        v.tempK >= 365.0
+      ) {
+        v.isShattered = true;
+        v.isStoppered = false;
+        this.disconnectSyringe(v.id);
+        this.addLog({ type: 'alert', key: 'alertNaExplosion', vesselLabel: v.label });
+        if (this.visualHooks.onAlert) this.visualHooks.onAlert('explosion', v);
+      }
+
       // Boiling alert
       if (frameBoiling && !v.wasBoiling) {
         this.addLog({ type: 'alert', key: 'alertBoiling', vesselLabel: v.label });

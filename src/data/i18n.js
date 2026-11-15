@@ -133,6 +133,7 @@ export const I18N = {
     // Status & Alerts
     alertOverpressurePop: 'Áp suất quá cao! Nút cao su trên bình đã bị đẩy bật ra ngoài.',
     alertOverpressureShatter: 'Quá áp nghiêm trọng! Bình thủy tinh đã nứt vỡ.',
+    alertNaExplosion: 'Phản ứng Sodium quá lớn gây bùng cháy khí H₂ & sốc nhiệt làm vỡ bình!',
     alertOverflow: 'Bình đã đầy! Dung dịch bị tràn ra ngoài.',
     alertNaVigorous: 'Sodium phản ứng mãnh liệt với nước, tỏa nhiệt cao và giải phóng Hydrogen (H₂)!',
     alertBoiling: 'Dung dịch đạt điểm sôi theo áp suất hiện tại.',
@@ -273,6 +274,7 @@ export const I18N = {
 
     alertOverpressurePop: 'Overpressure! Rubber stopper popped off the vessel.',
     alertOverpressureShatter: 'Severe overpressure! Glass vessel shattered.',
+    alertNaExplosion: 'Runaway Sodium + H₂ ignition & thermal shock shattered the vessel!',
     alertOverflow: 'Vessel overflowed! Excess liquid spilled.',
     alertNaVigorous: 'Sodium reacts vigorously with water, releasing heat and Hydrogen (H₂)!',
     alertBoiling: 'Solution reached its boiling point at ambient pressure.',

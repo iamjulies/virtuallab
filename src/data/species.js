@@ -128,7 +128,7 @@ export const SPECIES = {
     phase: 'aq',
     charge: -1,
     molarMass: M_OH,
-    cp: -148.5,
+    cp: 32.0,
     partialMolarVolMl: -4.0,
   },
   Na_aq: {
@@ -180,7 +180,7 @@ export const SPECIES = {
     phase: 'aq',
     charge: -1,
     molarMass: AW.Cl,
-    cp: -136.4,
+    cp: 30.0,
     partialMolarVolMl: 17.8,
   },
   SO4_2_aq: {

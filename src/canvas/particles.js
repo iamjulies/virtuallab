@@ -145,20 +145,27 @@ export class ParticleSystem {
   }
 
   emitBurst(type, x, y) {
-    const count = type === 'shatter' ? 28 : 16;
+    const count = type === 'explosion' ? 56 : type === 'shatter' ? 28 : 16;
     for (let i = 0; i < count; i++) {
-      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.3;
-      const spd = 60 + Math.random() * 130;
+      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.35;
+      const spd = type === 'explosion' ? 95 + Math.random() * 210 : 60 + Math.random() * 130;
+      const isFire = type === 'explosion' && i % 2 === 0;
       this.particles.push({
-        kind: type === 'shatter' ? 'shard' : 'mist',
+        kind: isFire ? 'flame' : type === 'pop' ? 'mist' : 'shard',
         x,
         y,
         vx: Math.cos(angle) * spd,
-        vy: Math.sin(angle) * spd - 45,
-        r: type === 'shatter' ? 3 + Math.random() * 4 : 6 + Math.random() * 6,
+        vy: Math.sin(angle) * spd - (type === 'explosion' ? 75 : 45),
+        r: isFire ? 7 + Math.random() * 8 : type === 'shatter' || type === 'explosion' ? 3 + Math.random() * 4 : 6 + Math.random() * 6,
         life: 0,
-        maxLife: 0.7 + Math.random() * 0.5,
-        color: type === 'shatter' ? 'rgba(186, 230, 253, 0.85)' : 'rgba(241, 245, 249, 0.5)',
+        maxLife: isFire ? 0.55 + Math.random() * 0.35 : 0.75 + Math.random() * 0.5,
+        color: isFire
+          ? Math.random() < 0.5
+            ? '#fbbf24'
+            : '#f97316'
+          : type === 'pop'
+          ? 'rgba(241, 245, 249, 0.5)'
+          : 'rgba(186, 230, 253, 0.85)',
       });
     }
   }

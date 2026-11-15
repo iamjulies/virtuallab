@@ -3,6 +3,8 @@ import { SPECIES } from '../data/species.js';
 
 /**
  * Compute aqueous liquid volume in Liters.
+ * Blends infinite-dilution partial molar volume into realistic finite-concentration
+ * apparent molar volume so concentrated solutions do not shrink unphysically.
  */
 export function computeLiquidVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
   const nH2O = moles.H2O_l || 0;
@@ -11,16 +13,31 @@ export function computeLiquidVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
   const rho = waterDensityGPerMl(tempK);
   const waterVolMl = (nH2O * SPECIES.H2O_l.molarMass) / rho;
 
-  let soluteVolMl = 0;
+  let diluteVolDeltaMl = 0;
+  let totalSoluteMoles = 0;
+  let totalSoluteMassG = 0;
+
   for (const [id, n] of Object.entries(moles)) {
     if (n <= 0) continue;
     const sp = SPECIES[id];
-    if (sp && sp.phase === 'aq' && typeof sp.partialMolarVolMl === 'number') {
-      soluteVolMl += n * sp.partialMolarVolMl;
+    if (sp && sp.phase === 'aq') {
+      totalSoluteMoles += n;
+      totalSoluteMassG += n * sp.molarMass;
+      if (typeof sp.partialMolarVolMl === 'number') {
+        diluteVolDeltaMl += n * sp.partialMolarVolMl;
+      }
     }
   }
 
-  const totalMl = Math.max(waterVolMl * 0.85, waterVolMl + soluteVolMl);
+  // Smoothly blend toward positive effective solute volume (~m/2.15) at high molality
+  const waterKg = (nH2O * SPECIES.H2O_l.molarMass) / 1000;
+  const molality = waterKg > 1e-9 ? totalSoluteMoles / waterKg : 0;
+  const highConcWeight = molality / (molality + 4.0);
+  const concVolDeltaMl = totalSoluteMassG / 2.25;
+  const blendedDeltaMl =
+    (1 - highConcWeight) * diluteVolDeltaMl + highConcWeight * Math.max(diluteVolDeltaMl, concVolDeltaMl);
+
+  const totalMl = Math.max(waterVolMl * 0.96, waterVolMl + blendedDeltaMl);
   return totalMl / 1000;
 }
 
@@ -47,10 +64,16 @@ export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
   const cNet = (nH - nOH) / liquidVolL;
   const kw = computeKw(tempK);
 
-  const hPlus = 0.5 * (cNet + Math.sqrt(cNet * cNet + 4 * kw));
+  let hPlus;
+  if (cNet >= 0) {
+    hPlus = 0.5 * (cNet + Math.sqrt(cNet * cNet + 4 * kw));
+  } else {
+    const ohMinus = 0.5 * (-cNet + Math.sqrt(cNet * cNet + 4 * kw));
+    hPlus = ohMinus > 0 ? kw / ohMinus : Math.sqrt(kw);
+  }
   if (hPlus <= 0) return 14;
   const ph = -Math.log10(hPlus);
-  return Math.max(-1.2, Math.min(15.2, ph));
+  return Math.max(-1.2, Math.min(15.6, ph));
 }
 
 /**
