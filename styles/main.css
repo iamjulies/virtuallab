@@ -96,11 +96,18 @@ button:disabled {
 .hover\:bg-sky-500:hover { background-color: #0ea5e9; }
 .text-amber-400 { color: #fbbf24; }
 .hover\:bg-amber-500\/10:hover { background-color: rgba(245, 158, 11, 0.14); }
-.border-sky-500\/35 { border-color: rgba(14, 165, 233, 0.42); }
+.hover\:bg-amber-500\/20:hover { background-color: rgba(245, 158, 11, 0.22); }
+.border-sky-500\/35, .border-sky-500\/40 { border-color: rgba(14, 165, 233, 0.42); }
 .bg-sky-500\/10 { background-color: rgba(14, 165, 233, 0.12); }
+.text-pink-400 { color: #f472b6; }
+.border-pink-500\/40 { border-color: rgba(236, 72, 153, 0.45); }
+.bg-pink-500\/10 { background-color: rgba(236, 72, 153, 0.12); }
+.border-slate-400\/50 { border-color: rgba(148, 163, 184, 0.5); }
+.bg-slate-500\/10 { background-color: rgba(100, 116, 139, 0.12); }
 [data-theme="light"] .text-sky-400 { color: #0284c7; }
 [data-theme="light"] .text-emerald-400 { color: #059669; }
 [data-theme="light"] .text-amber-400 { color: #b45309; }
+[data-theme="light"] .text-pink-400 { color: #be185d; }
 .text-red-400 { color: #f87171; }
 .hover\:bg-red-500\/10:hover { background-color: rgba(239, 68, 68, 0.12); }
 

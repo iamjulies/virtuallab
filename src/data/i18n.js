@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_v2+build.7',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_v2+build.8',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -341,10 +341,18 @@ export const I18N = {
     elCollectDetach: 'Tháo thu khí cực',
     elCollectorLabel: 'Thu khí điện cực:',
     alertCl2Extinguish: 'Khí Cl₂(g) không duy trì sự cháy, làm tắt ngọn lửa que đóm!',
+    dcSwapPolarity: '🔄 Đảo cực (+ / −)',
+    platedAgDendrite: '🌿 Cây tinh thể Silver (Dendrite Ag)',
+    badgeSupersaturated: '✨ Quá bão hòa giả bền',
+    supersatHint: 'Thả mầm CuSO₄·5H₂O hoặc bấm Khuấy / chạm đầu dò để kích hoạt kết tinh tỏa nhiệt',
+    badgeZnPassivated: '🛡️ Bề mặt Zinc bị thụ động hóa (màng Zn(OH)₂)',
+    badgePickeringFoam: '🫧 Cột bọt keo Pickering',
+    badgeLangmuirSat: '⏱️ Bão hòa tâm xúc tác Ag₂O (động học bậc 0)',
+    badgeFlameMasking: '⚡ Na⁺ (589 nm) đang che lấp màu Cu²⁺',
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_v2+build.7',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_v2+build.8',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -670,5 +678,13 @@ export const I18N = {
     elCollectDetach: 'Disconnect Collector',
     elCollectorLabel: 'Electrode Gas Collector:',
     alertCl2Extinguish: 'Dense Cl₂(g) does not support combustion and extinguished the splint!',
+    dcSwapPolarity: '🔄 Reverse Polarity (+ / −)',
+    platedAgDendrite: '🌿 Metallic Silver Dendrite Tree (Ag)',
+    badgeSupersaturated: '✨ Metastable Supersaturated',
+    supersatHint: 'Seed with CuSO₄·5H₂O or stir / probe to trigger exothermic crystallization',
+    badgeZnPassivated: '🛡️ Zinc Surface Passivated (Zn(OH)₂ film)',
+    badgePickeringFoam: '🫧 Pickering Colloidal Foam',
+    badgeLangmuirSat: '⏱️ Ag₂O Catalyst Surface Saturated (0th-order)',
+    badgeFlameMasking: '⚡ Na⁺ (589 nm) Masking Emerald Cu²⁺',
   }
 };

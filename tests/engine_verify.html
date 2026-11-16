@@ -44,10 +44,11 @@
       drawLabelPill,
       flushCanvasLabelFrame,
       getThemePalette,
+      renderVessel,
     } from '../src/canvas/vesselRenderer.js';
     import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
     import { ParticleSystem } from '../src/canvas/particles.js';
-    import { renderElectrodeCollectorTubes } from '../src/canvas/toolRenderer.js';
+    import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod } from '../src/canvas/toolRenderer.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
     import { DosingModal } from '../src/ui/dosingModal.js';
     import {
@@ -1959,7 +1960,7 @@
       bCryst.moles = { H2O_l: 2.0, Cu2_aq: 0.095, SO4_2_aq: 0.095 };
       bCryst.tempK = 318.15;
 
-      stepSeconds(sim, 8.0, 0.025);
+      stepSeconds(sim, 14.0, 0.025);
       const crystAmt = bCryst.moles.CuSO4_5H2O_s || 0;
 
       // Burner latent-heat melting plateau
@@ -2408,26 +2409,30 @@
       );
     }
 
-    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.7 Sync
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.8 Sync
     {
       const allTranslated = APPARATUS_ORDER.every((id) => {
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_v2+build.7';
+      const expectedBuild = 'virlab_v2+build.8';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
-        Boolean(I18N.vi.elCollectMountTube && I18N.en.elCollectMountTube) &&
-        Boolean(I18N.vi.elCollectPickTarget && I18N.en.elCollectPickTarget) &&
-        Boolean(I18N.vi.alertCl2Extinguish && I18N.en.alertCl2Extinguish);
+        Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
+        Boolean(I18N.vi.platedAgDendrite && I18N.en.platedAgDendrite) &&
+        Boolean(I18N.vi.badgeSupersaturated && I18N.en.badgeSupersaturated) &&
+        Boolean(I18N.vi.badgeZnPassivated && I18N.en.badgeZnPassivated) &&
+        Boolean(I18N.vi.badgePickeringFoam && I18N.en.badgePickeringFoam) &&
+        Boolean(I18N.vi.badgeLangmuirSat && I18N.en.badgeLangmuirSat);
       assert(
-        'Build virlab_v2+build.7 parity: All 27 apparatus translated in VI/EN, new pick/electrode/Cl2 keys present, IUPAC spellings enforced',
+        'Build virlab_v2+build.8 parity: All 27 apparatus translated in VI/EN, all Prompt 18 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 27 &&
           allTranslated &&
           newKeysPresent &&
           I18N.vi.appSubtitle.includes(expectedBuild) &&
           I18N.en.appSubtitle.includes(expectedBuild) &&
           I18N.vi.eq_burette_50.includes('Buret') &&
+          !I18N.vi.platedAgDendrite.toLowerCase().includes('bạc') &&
           !I18N.vi.reg_na.toLowerCase().includes('natri'),
         `count=${APPARATUS_ORDER.length}, allI18n=${allTranslated}, newKeys=${newKeysPresent}, sub=${I18N.vi.appSubtitle}`
       );
@@ -3248,6 +3253,301 @@
           visibleAfterPick &&
           selectedTarget === v2.id,
         `ribbons=${ribbonCount}, err=${drawErr}, selects=${selectCount}, hasPickBtn=${Boolean(pickBtn)}, hid=${hiddenDuringPick}, show=${visibleAfterPick}, target=${selectedTarget}`
+      );
+    }
+
+    // TEST 73: Prompt 18 #1 — Diffusion Tube Shatters on Drop Impact & Blocks Post-Break Operations
+    {
+      const sim = new LabSimulation();
+      const tube = sim.createApparatus('diffusion_tube', 360, 120);
+      sim.dropDiffusionReagent(tube.id, 'left', 'NH3_g');
+      sim.dropDiffusionReagent(tube.id, 'right', 'HCl_g');
+      sim.handleLandingImpact(tube, 280, 920, null);
+      const dropBlocked = sim.dropDiffusionReagent(tube.id, 'left', 'NH3_g') === false;
+
+      const cvs = document.createElement('canvas');
+      cvs.width = 400;
+      cvs.height = 160;
+      const ctx = cvs.getContext('2d');
+      let err = null;
+      try {
+        renderDiffusionTube(ctx, tube, true, false, true, 'vi');
+        renderDiffusionTube(ctx, tube, false, false, false, 'en');
+      } catch (e) {
+        err = e?.message || String(e);
+      }
+
+      assert(
+        'Diffusion tube shatters when dropped past threshold (>= 250 px), clears gases & renders broken glass shards cleanly',
+        tube.isBroken === true && tube.leftGasId === null && tube.rightGasId === null && dropBlocked && err === null,
+        `broken=${tube.isBroken}, blocked=${dropBlocked}, err=${err}`
+      );
+    }
+
+    // TEST 74: Exp 11 (Hydrate vs Anhydrous CuSO4 Heat of Solution Inversion) & Exp 14 (HCl–H2O Azeotrope 48°C -> 108.6°C at 20.24%)
+    {
+      const sim = new LabSimulation();
+      const bHyd = sim.createApparatus('beaker_250', 180, 427);
+      bHyd.moles = { H2O_l: 3.0, CuSO4_5H2O_s: 0.04 };
+      bHyd.particleCounts = { CuSO4_5H2O_s: 400 };
+      const tHyd0 = bHyd.tempK;
+
+      const bn = sim.createApparatus('burner', 360, 428);
+      sim.setBurnerFlame(bn.id, 3);
+      const dish = sim.createApparatus('porcelain_dish', 360, bn.y - APPARATUS.burner.height / 2 - 12);
+      dish.moles = { CuSO4_5H2O_s: 0.04 };
+      dish.particleCounts = { CuSO4_5H2O_s: 400 };
+      sim.updateSupportAttachments();
+      stepSeconds(sim, 34.0, 0.05);
+      const dehydOk = (dish.moles.CuSO4_s || 0) > 0.035 && (dish.moles.CuSO4_5H2O_s || 0) < 0.005;
+
+      const bAnh = sim.createApparatus('beaker_250', 540, 427);
+      bAnh.moles = { H2O_l: 3.0 };
+      const tAnh0 = bAnh.tempK;
+      sim.transferSolidsToVessel(dish.id, bAnh.id, 1.0);
+      bAnh.tempK = tAnh0; // Isolate enthalpy of anhydrous dissolution starting at 25C
+      bHyd.stirTimer = 3.0;
+      bAnh.stirTimer = 3.0;
+      stepSeconds(sim, 4.0, 0.05);
+
+      const bp37 = solutionBoilingPointK({ H2O_l: 3.5, H_aq: 1.01, Cl_aq: 1.01 }, 1.0) - CONSTANTS.KELVIN_OFFSET;
+      const bp20 = solutionBoilingPointK({ H2O_l: 4.43, H_aq: 0.554, Cl_aq: 0.554 }, 1.0) - CONSTANTS.KELVIN_OFFSET;
+
+      assert(
+        'CuSO4·5H2O cools water on dissolution; burning it dry yields white CuSO4(s) which strongly heats water; HCl–H2O bp climbs 48°C -> 108.6°C azeotrope',
+        dehydOk && bHyd.tempK < tHyd0 - 0.5 && bAnh.tempK > tAnh0 + 3.5 && bp37 < 52 && Math.abs(bp20 - 108.6) < 0.6,
+        `dehyd=${dehydOk}, dT_hyd=${(bHyd.tempK - tHyd0).toFixed(2)}K, dT_anh=${(bAnh.tempK - tAnh0).toFixed(2)}K, bp37=${bp37.toFixed(1)}C, bp20=${bp20.toFixed(1)}C`
+      );
+    }
+
+    // TEST 75: Exp 12 — Langmuir–Hinshelwood Surface Saturation (Ag2O_s + H2O2 0th-order plateau -> 1st-order dilute & linear catalyst scaling)
+    {
+      const simL = new LabSimulation();
+      const fHigh = simL.createApparatus('erlenmeyer_250', 220, 399);
+      // ~9.0 M H2O2 (30%) saturated over 2 mmol Ag2O_s
+      fHigh.moles = { H2O_l: 2.0, H2O2_aq: 0.50, Ag2O_s: 0.002 };
+      stepSeconds(simL, 0.2, 0.025);
+      const thetaHigh = fHigh.langmuirCoverage || 0;
+      const ordHigh = fHigh.langmuirOrder ?? 1;
+      const o2Start = fHigh.escapedGasMoles.O2_g || 0;
+      stepSeconds(simL, 2.0, 0.025);
+      const rateHigh1 = ((fHigh.escapedGasMoles.O2_g || 0) - o2Start) / 2.0;
+
+      // Same flask diluted ~2x less H2O2 (~4.5 M): still near saturation plateau -> rate nearly invariant!
+      const fMid = simL.createApparatus('erlenmeyer_250', 420, 399);
+      fMid.moles = { H2O_l: 2.3, H2O2_aq: 0.25, Ag2O_s: 0.002 };
+      stepSeconds(simL, 0.2, 0.025);
+      const o2Mid0 = fMid.escapedGasMoles.O2_g || 0;
+      stepSeconds(simL, 2.0, 0.025);
+      const rateMid = ((fMid.escapedGasMoles.O2_g || 0) - o2Mid0) / 2.0;
+
+      // Double Ag2O_s catalyst (0.004 mol) at saturated [H2O2]: rate doubles ~2x!
+      const fDbl = simL.createApparatus('erlenmeyer_250', 620, 399);
+      fDbl.moles = { H2O_l: 2.0, H2O2_aq: 0.50, Ag2O_s: 0.004 };
+      stepSeconds(simL, 0.2, 0.025);
+      const o2Dbl0 = fDbl.escapedGasMoles.O2_g || 0;
+      stepSeconds(simL, 2.0, 0.025);
+      const rateDbl = ((fDbl.escapedGasMoles.O2_g || 0) - o2Dbl0) / 2.0;
+
+      // Very dilute [H2O2] (~0.05 M) drops to first-order regime (theta << 0.2, order > 0.8)
+      const fDil = simL.createApparatus('erlenmeyer_250', 800, 399);
+      fDil.moles = { H2O_l: 5.5, H2O2_aq: 0.005, Ag2O_s: 0.002 };
+      stepSeconds(simL, 0.1, 0.025);
+      const ordDil = fDil.langmuirOrder ?? 0;
+
+      assert(
+        'Ag2O-catalyzed H2O2 shows Langmuir–Hinshelwood 0th-order saturation plateau (rate invariant ~9M vs ~4.5M), scales linearly (~2x) with Ag2O area, and turns 1st-order when dilute',
+        thetaHigh > 0.88 &&
+          ordHigh < 0.12 &&
+          ordDil > 0.82 &&
+          rateMid > rateHigh1 * 0.82 &&
+          rateDbl > rateHigh1 * 1.65 &&
+          (fHigh.moles.Ag2O_s || 0) > 0.00199,
+        `thetaH=${thetaHigh.toFixed(2)}, ordH=${ordHigh.toFixed(2)}, ordD=${ordDil.toFixed(2)}, rH=${rateHigh1.toFixed(5)}, rM=${rateMid.toFixed(5)}, r2x=${rateDbl.toFixed(5)}`
+      );
+    }
+
+    // TEST 76: Exp 13 (Zn U-Curve Passivation at pH 7–12) & Exp 16 (Cu2+ vs Zn2+ Selective Ksp Fractional Precipitation)
+    {
+      const sim = new LabSimulation();
+      // U-curve check: (1) acid active, (2) neutral/weak base passivated ~0, (3) strong base pH>13 roaring back!
+      const bAcid = sim.createApparatus('beaker_250', 180, 427);
+      bAcid.moles = { H2O_l: 3.0, H_aq: 0.15, Cl_aq: 0.15, Zn_s: 0.05 };
+      const bPass = sim.createApparatus('beaker_250', 360, 427);
+      bPass.moles = { H2O_l: 3.0, Na_aq: 0.0005, OH_aq: 0.0005, Zn_s: 0.05 }; // pH ~ 12.0 mild alkaline passivation zone
+      const bStrong = sim.createApparatus('beaker_250', 540, 427);
+      bStrong.moles = { H2O_l: 3.0, Na_aq: 0.2, OH_aq: 0.2, Zn_s: 0.05 }; // pH ~ 13.6
+      bStrong.znPassivationFrac = 0.85; // prove pre-passivated skin depassivates above pH 13!
+      stepSeconds(sim, 3.0, 0.05);
+      const h2Acid = bAcid.escapedGasMoles.H2_g || 0;
+      const h2Pass = bPass.escapedGasMoles.H2_g || 0;
+      const h2Strong = bStrong.escapedGasMoles.H2_g || 0;
+
+      // Fractional precipitation: Cu2+ + Zn2+ slowly titrated -> Cu(OH)2 completes around pH 5.0-5.8 while >95% Zn2+ stays soluble!
+      const bFrac = sim.createApparatus('beaker_250', 740, 427);
+      bFrac.moles = { H2O_l: 5.55, Cu2_aq: 0.02, SO4_2_aq: 0.02, Zn2_aq: 0.02, Cl_aq: 0.04 };
+      for (let i = 0; i < 40; i++) {
+        bFrac.moles.Na_aq = (bFrac.moles.Na_aq || 0) + 0.001;
+        bFrac.moles.OH_aq = (bFrac.moles.OH_aq || 0) + 0.001; // exact 0.040 mol OH- -> matches 2*Cu2+!
+        sim.step(0.05);
+      }
+      const cuPpt = bFrac.moles.CuOH2_s || 0;
+      const znStillDissolved = bFrac.moles.Zn2_aq || 0;
+      const prematureZnPpt = bFrac.moles.ZnOH2_s || 0;
+
+      // Now titrate extra OH- dropwise to push pH past 6.5 -> white Zn(OH)2 precipitates!
+      for (let i = 0; i < 32; i++) {
+        bFrac.moles.Na_aq += 0.001;
+        bFrac.moles.OH_aq += 0.001;
+        sim.step(0.05);
+      }
+      stepSeconds(sim, 1.0, 0.05);
+      const znLatePpt = bFrac.moles.ZnOH2_s || 0;
+
+      assert(
+        'Zn exhibits U-shaped H2 rate (active in acid -> passivated at pH 7–12 -> bursts back >pH 13); Cu(OH)2 precipitates cleanly before Zn(OH)2',
+        h2Acid > 0.002 &&
+          bPass.znPassivationFrac > 0.75 &&
+          h2Pass < 0.0001 &&
+          bStrong.znPassivationFrac < 0.25 &&
+          h2Strong > 0.001 &&
+          cuPpt > 0.018 &&
+          znStillDissolved > 0.0185 &&
+          prematureZnPpt < 0.001 &&
+          znLatePpt > 0.015,
+        `h2(acid=${h2Acid.toFixed(4)},pass=${h2Pass.toFixed(5)},str=${h2Strong.toFixed(4)}), pFrac=(p=${bPass.znPassivationFrac.toFixed(2)},s=${bStrong.znPassivationFrac.toFixed(2)}), cuPpt=${cuPpt.toFixed(4)}, znAqMid=${znStillDissolved.toFixed(4)}, znPptMid=${prematureZnPpt.toFixed(5)}, znPptLate=${znLatePpt.toFixed(4)}`
+      );
+    }
+
+    // TEST 77: Exp 15 — Metastable Supersaturated CuSO4·5H2O & Stir/Seed Exothermic Trigger
+    {
+      const sim = new LabSimulation();
+      sim.setAmbientTempK(293.15); // 20 C room
+      const bSup = sim.createApparatus('beaker_250', 260, 427);
+      // 80 g CuSO4·5H2O dissolved completely in 100 g H2O (~0.32 mol in 7.15 mol H2O ~ 2.48 mol/kg at 20C => S ~ 1.91!)
+      bSup.moles = { H2O_l: 7.15, Cu2_aq: 0.32, SO4_2_aq: 0.32 };
+      bSup.tempK = 293.15;
+      stepSeconds(sim, 3.0, 0.05);
+      const stillMetastable = bSup.isSupersaturated === true && (bSup.moles.CuSO4_5H2O_s || 0) === 0;
+      const tBeforeTrig = bSup.tempK;
+
+      // Trigger crystallization by stirring (no seed crystals added yet!)
+      sim.stirVessel(bSup.id);
+      stepSeconds(sim, 2.0, 0.05);
+      const crystAmt = bSup.moles.CuSO4_5H2O_s || 0;
+      const dTWarm = bSup.tempK - tBeforeTrig;
+
+      assert(
+        'Metastable supersaturated CuSO4 solution (S~1.9x at 20°C) stays crystal-free until stirred/seeded, then crystallizes exothermically',
+        stillMetastable && crystAmt > 0.08 && dTWarm > 0.8,
+        `metastable=${stillMetastable}, cryst=${crystAmt.toFixed(4)}mol, dT=+${dTWarm.toFixed(2)}K`
+      );
+    }
+
+    // TEST 78: Exp 17 (Trace Na+ 589 nm Spectral Masking of Cu2+) & Exp 18 (Marangoni Na Propulsion + Pink Wake)
+    {
+      const sim = new LabSimulation();
+      const bMix = sim.createApparatus('beaker_250', 200, 427);
+      bMix.moles = { H2O_l: 2.0, Cu2_aq: 0.25, Cl_aq: 0.55, Na_aq: 0.02 };
+      const bCuOnly = sim.createApparatus('beaker_250', 400, 427);
+      bCuOnly.moles = { H2O_l: 2.0, Cu2_aq: 0.25, Cl_aq: 0.5 };
+      const bn = sim.createApparatus('burner', 600, 428);
+      sim.setBurnerFlame(bn.id, 3);
+
+      const loop = sim.createApparatus('flame_loop', 250, 427); // tip inside bCu/bMix -> adjust exact
+      loop.x = bCuOnly.x + 50;
+      loop.y = bCuOnly.y;
+      sim.step(0.05);
+      const pureCuCol = loop.sampledColor;
+
+      loop.x = bMix.x + 50;
+      loop.y = bMix.y;
+      sim.step(0.05);
+      const mixedCol = loop.sampledColor;
+      const maskedFlag = loop.maskedCuByNa === true;
+
+      // Marangoni Sodium sphere on water + Phenolphthalein trough
+      const trough = sim.createApparatus('water_trough', 800, 449);
+      trough.moles = { H2O_l: 12.0, Phenolphthalein_aq: 0.002, Na_s: 0.025 };
+      trough.naTempK = 390.0; // molten!
+      const pos0 = trough.naPosRatio ?? 0.5;
+      stepSeconds(sim, 0.8, 0.025);
+      const movedDist = Math.abs((trough.naPosRatio ?? 0.5) - pos0);
+      const wakeLen = (trough.naWakeTrail || []).length;
+
+      const cvs = document.createElement('canvas');
+      cvs.width = 400;
+      cvs.height = 240;
+      const ctx = cvs.getContext('2d');
+      let err = null;
+      try {
+        renderVesselSolids(ctx, trough, { left: 20, right: 380, top: 20, bottom: 200, width: 360, surfaceY: 90, hasWater: true }, true, 90);
+      } catch (e) {
+        err = e?.message || String(e);
+      }
+
+      assert(
+        'Trace Na+ (589 nm) masks green Cu2+ emission turning flame golden-yellow; molten Na skitters along water meniscus drawing Phenolphthalein wake',
+        pureCuCol === '#10b981' && mixedCol === '#facc15' && maskedFlag && wakeLen >= 3 && (movedDist > 0.01 || wakeLen > 4) && err === null,
+        `cuOnly=${pureCuCol}, mix=${mixedCol}(masked=${maskedFlag}), wakeLen=${wakeLen}, move=${movedDist.toFixed(3)}, err=${err}`
+      );
+    }
+
+    // TEST 79: Exp 19 (Silver DLA Dendrite Tree + Polarity Reversal Dissolution/Regrowth) & Exp 20 (Pickering Colloidal Foam)
+    {
+      const sim = new LabSimulation();
+      const beaker = sim.createApparatus('beaker_250', 260, 427);
+      beaker.moles = { H2O_l: 6.0, Ag_aq: 0.12, NO3_aq: 0.12 };
+      const elA = sim.createApparatus('electrode_rod', beaker.x - 24, 340);
+      elA.material = 'C';
+      elA.dockedVesselId = beaker.id;
+      const elB = sim.createApparatus('electrode_rod', beaker.x + 24, 340);
+      elB.material = 'C';
+      elB.dockedVesselId = beaker.id;
+      const dc = sim.createApparatus('dc_power', 500, 400);
+      dc.posElectrodeId = elA.id;
+      dc.negElectrodeId = elB.id;
+      sim.updateSupportAttachments();
+
+      sim.setDcPowerState(dc.id, { voltageV: 4.5, powerOn: true });
+      stepSeconds(sim, 6.0, 0.05);
+      const agOnB_before = elB.platedAgMol || 0;
+      const agOnA_before = elA.platedAgMol || 0;
+
+      // Swap polarity (+/-): B becomes Anode and dissolves its Ag dendrites back into Ag+, while A grows new Ag dendrites!
+      sim.swapDcPolarity(dc.id);
+      stepSeconds(sim, 4.0, 0.05);
+      const agOnB_after = elB.platedAgMol || 0;
+      const agOnA_after = elA.platedAgMol || 0;
+
+      // Exp 20: Pickering colloidal foam from Cu(OH)2 floc + H2O2 + Phenolphthalein in graduated cylinder
+      const cyl = sim.createApparatus('cylinder_100', 740, 390);
+      cyl.moles = { H2O_l: 1.8, CuOH2_s: 0.025, H2O2_aq: 0.08, Na_aq: 0.05, OH_aq: 0.05, Phenolphthalein_aq: 0.001 };
+      stepSeconds(sim, 3.0, 0.05);
+      const foamMl = cyl.pickeringFoamMl || 0;
+
+      const cvs = document.createElement('canvas');
+      cvs.width = 400;
+      cvs.height = 300;
+      const ctx = cvs.getContext('2d');
+      let err = null;
+      try {
+        renderElectrodeRod(ctx, elA, true, true, 1.0);
+        renderVessel(ctx, cyl, { isDark: true, langCode: 'vi', timeNow: 1.0 });
+        renderVessel(ctx, cyl, { isDark: false, langCode: 'en', timeNow: 1.0 });
+      } catch (e) {
+        err = e?.message || String(e);
+      }
+
+      assert(
+        'Ag+ grows metallic Silver dendrites at Cathode & reverses dissolution/regrowth upon swapDcPolarity; Cu(OH)2 colloid builds rising pink-lavender Pickering O2 foam',
+        agOnB_before > 3e-5 &&
+          agOnA_before === 0 &&
+          agOnB_after < agOnB_before * 0.65 &&
+          agOnA_after > 2e-5 &&
+          foamMl > 8.0 &&
+          err === null,
+        `Ag_B:${(agOnB_before*1000).toFixed(2)}->${(agOnB_after*1000).toFixed(2)}mmol, Ag_A:${(agOnA_before*1000).toFixed(2)}->${(agOnA_after*1000).toFixed(2)}mmol, foam=${foamMl.toFixed(1)}mL, err=${err}`
       );
     }
 

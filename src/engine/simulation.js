@@ -1347,6 +1347,9 @@ export class LabSimulation {
     if (!v || v.kind !== 'vessel' || v.isShattered || v.isFrozenSolid) return;
     v.stirTimer = 3.0;
     v.suspensionLevel = 1.0;
+    if (v.isSupersaturated) {
+      v.crystallizeTriggered = true;
+    }
     // Re-suspend precipitates when stirred (decays back toward 0 over ~13s of standing still)
     for (const key of Object.keys(v.precipitateSettle)) {
       v.precipitateSettle[key] = 0.0;
@@ -1372,6 +1375,12 @@ export class LabSimulation {
     v.history = [];
     v.precipitateSettle = {};
     v.suspensionLevel = 0;
+    v.znPassivationFrac = 0;
+    v.isSupersaturated = false;
+    v.crystallizeTriggered = false;
+    v.pickeringFoamMl = 0;
+    v.pickeringOverflowActive = false;
+    v.naWakeTrail = [];
     v.phenBleachFrac = 0;
     v.phenIrrevFrac = 0;
     v.gardenActive = false;
@@ -2064,6 +2073,20 @@ export class LabSimulation {
     this.emitChange();
   }
 
+  swapDcPolarity(supplyId) {
+    const s = this.getItem(supplyId);
+    if (!s || s.kind !== 'dc_power') return;
+    const prevPos = s.posElectrodeId;
+    s.posElectrodeId = s.negElectrodeId;
+    s.negElectrodeId = prevPos;
+    // Update polarity labels on swapped electrodes immediately
+    const newPos = this.getItem(s.posElectrodeId);
+    const newNeg = this.getItem(s.negElectrodeId);
+    if (newPos) newPos.polarityLabel = '+ Anode';
+    if (newNeg) newNeg.polarityLabel = '- Cathode';
+    this.emitChange();
+  }
+
   setVoltAmmeterState(meterId, patch = {}) {
     const m = this.getItem(meterId);
     if (!m || m.kind !== 'volt_ammeter') return;
@@ -2081,6 +2104,7 @@ export class LabSimulation {
     el.platedMaterial = null;
     el.platedQuality = null;
     el.platedCuMol = 0;
+    el.platedAgMol = 0;
     this.emitChange();
   }
 
@@ -3016,6 +3040,15 @@ export class LabSimulation {
       item.mountedOnVesselId = null;
       item.isFiltering = false;
     }
+    if (item.kind === 'diffusion_tube') {
+      item.leftGasId = null;
+      item.rightGasId = null;
+      item.leftFront = 0;
+      item.rightFront = 1;
+      item.ringPosFrac = null;
+      item.ringGrowth = 0;
+      item.nh4clMoles = 0;
+    }
     item.clampedToId = null;
     item.restingOnId = null;
     item.isBroken = true;
@@ -3056,11 +3089,19 @@ export class LabSimulation {
         this.breakPipetteOnDrop(item);
       } else if (
         !item.isBroken &&
-        (item.kind === 'burette' || item.kind === 'condenser' || item.kind === 'salt_bridge' || item.kind === 'filter_funnel')
+        (item.kind === 'burette' ||
+          item.kind === 'condenser' ||
+          item.kind === 'salt_bridge' ||
+          item.kind === 'filter_funnel' ||
+          item.kind === 'diffusion_tube')
       ) {
         this.breakToolOnDrop(item);
       }
       return;
+    }
+
+    if (item.kind === 'vessel' && dropDistPx >= 18 && item.isSupersaturated) {
+      item.crystallizeTriggered = true;
     }
 
     // Medium drop (112 .. shatterThreshold px): rock violently & slosh-spill open liquid

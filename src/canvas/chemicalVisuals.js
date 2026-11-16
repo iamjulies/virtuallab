@@ -190,6 +190,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         const hasGammaBrass = (moles.Cu3Zn_gamma_s || 0) > 1e-6;
         const hasCuPlate = (moles.Cu_s || 0) > 1e-6;
         const hasAgPlate = (moles.Ag_s || 0) > 1e-6;
+        const znPassiv = sp.id === 'Zn_s' ? vessel.znPassivationFrac || 0 : 0;
         ctx.beginPath();
         ctx.moveTo(-r, 0);
         ctx.lineTo(-r * 0.4, -r * 0.8);
@@ -205,6 +206,8 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
           ? '#b45309'
           : hasAgPlate
           ? '#e2e8f0'
+          : znPassiv > 0.25
+          ? '#cbd5e1'
           : sp.color || '#94a3b8';
         ctx.fill();
         ctx.strokeStyle = hasAlphaBrass
@@ -215,8 +218,10 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
           ? '#f59e0b'
           : hasAgPlate
           ? '#ffffff'
+          : znPassiv > 0.25
+          ? `rgba(248, 250, 252, ${Math.min(0.95, 0.35 + znPassiv * 0.6).toFixed(2)})`
           : '#475569';
-        ctx.lineWidth = 0.9;
+        ctx.lineWidth = znPassiv > 0.25 ? 1.5 : 0.9;
         ctx.stroke();
       } else {
         // Fallback polygon crystal/grain for any future solid visualType
@@ -273,7 +278,32 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     ctx.restore();
   }
 
-  // 3. Sodium (Na) — floats on water meniscus or rests atop frozen H2O(s) ice with melting film
+  // 3. Sodium (Na) — Marangoni skittering droplet + Phenolphthalein wake trail on water meniscus
+  const wakeTrail = vessel.naWakeTrail;
+  if (hasWater && Array.isArray(wakeTrail) && wakeTrail.length > 1 && surfaceY < bottom - 4) {
+    const hasPhenTrail = (moles.Phenolphthalein_aq || 0) > 1e-9;
+    ctx.save();
+    for (let i = 1; i < wakeTrail.length; i++) {
+      const pA = wakeTrail[i - 1];
+      const pB = wakeTrail[i];
+      const lifeFrac = Math.max(0, 1 - pB.age / Math.max(0.1, pB.maxLife));
+      if (lifeFrac <= 0.02) continue;
+      const wxA = left + 8 + pA.pos * Math.max(10, width - 16);
+      const wxB = left + 8 + pB.pos * Math.max(10, width - 16);
+      const wy = surfaceY + 2 + (1 - lifeFrac) * 6 + Math.sin(i * 1.4) * 1.5;
+      ctx.strokeStyle = hasPhenTrail
+        ? `rgba(236, 72, 153, ${(0.72 * lifeFrac).toFixed(2)})`
+        : `rgba(226, 232, 240, ${(0.45 * lifeFrac).toFixed(2)})`;
+      ctx.lineWidth = hasPhenTrail ? 2.6 * lifeFrac + 1.0 : 1.8 * lifeFrac + 0.6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(wxA, wy);
+      ctx.lineTo(wxB, wy);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   const nNa = moles.Na_s || 0;
   if (nNa > 1e-7) {
     const massNa = nNa * SPECIES.Na_s.molarMass;

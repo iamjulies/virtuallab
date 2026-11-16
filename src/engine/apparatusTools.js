@@ -662,16 +662,22 @@ export function checkFlameLoopInteractions(sim, loop) {
     if (v.kind !== 'vessel' || v.isShattered) continue;
     const spec = APPARATUS[v.typeId];
     if (Math.abs(tipX - v.x) <= spec.width * 0.48 && Math.abs(tipY - v.y) <= spec.height * 0.52) {
-      const hasCu = (v.moles.Cu2_aq || 0) + (v.moles.CuCl4_2_aq || 0) + (v.moles.CuSO4_5H2O_s || 0) + (v.moles.CuCl2_s || 0) > 1e-6;
+      if (v.isSupersaturated) {
+        v.crystallizeTriggered = true;
+      }
       const hasNa = (v.moles.Na_aq || 0) + (v.moles.Na_s || 0) + (v.moles.NaOH_s || 0) + (v.moles.NaCl_s || 0) > 1e-6;
-      if (hasCu) {
+      const hasCu = (v.moles.Cu2_aq || 0) + (v.moles.CuCl4_2_aq || 0) + (v.moles.CuSO4_5H2O_s || 0) + (v.moles.CuCl2_s || 0) > 1e-6;
+      if (hasNa) {
+        // Exp 17: 589 nm Na D-doublet quantum emission overwhelms & completely masks emerald Cu2+ green!
+        loop.sampledIon = 'Na⁺';
+        loop.sampledColor = '#facc15';
+        loop.sampleLabel = hasCu ? 'Na⁺ (che Cu²⁺)' : 'Na⁺';
+        loop.maskedCuByNa = hasCu;
+      } else if (hasCu) {
         loop.sampledIon = 'Cu²⁺';
         loop.sampledColor = '#10b981';
         loop.sampleLabel = 'Cu²⁺';
-      } else if (hasNa) {
-        loop.sampledIon = 'Na⁺';
-        loop.sampledColor = '#facc15';
-        loop.sampleLabel = 'Na⁺';
+        loop.maskedCuByNa = false;
       }
     }
   }
@@ -689,11 +695,21 @@ export function checkFlameLoopInteractions(sim, loop) {
           loop.logCooldown = 5.0;
           sim.addLog({
             type: 'reaction',
-            equation: `${loop.sampledIon}* → ${loop.sampledIon} + hν (${loop.sampleLabel})`,
-            nameVi: `Thử màu ngọn lửa: Ion ${loop.sampledIon} phát quang đặc trưng`,
-            nameEn: `Flame Test: Characteristic ${loop.sampleLabel} emission`,
-            descVi: `Ion ${loop.sampledIon} kích thích nhiệt trong ngọn lửa đèn cồn phát xạ bước sóng đặc trưng.`,
-            descEn: `Thermal excitation of ${loop.sampledIon} emits its characteristic atomic flame line.`,
+            equation: loop.maskedCuByNa
+              ? 'Na⁺* (589 nm) >> Cu²⁺* (510 nm) → Che lấp quang phổ vàng rực!'
+              : `${loop.sampledIon}* → ${loop.sampledIon} + hν (${loop.sampleLabel})`,
+            nameVi: loop.maskedCuByNa
+              ? 'Thử màu ngọn lửa: Na⁺ (589 nm) che lấp hoàn toàn màu xanh Cu²⁺'
+              : `Thử màu ngọn lửa: Ion ${loop.sampledIon} phát quang đặc trưng`,
+            nameEn: loop.maskedCuByNa
+              ? 'Flame Test Spectral Masking: Trace Na⁺ (589 nm) masks emerald Cu²⁺!'
+              : `Flame Test: Characteristic ${loop.sampleLabel} emission`,
+            descVi: loop.maskedCuByNa
+              ? 'Vạch D vàng của Sodium (589 nm) có cường độ lượng tử vượt trội làm khuất hoàn toàn ánh xanh lục của Copper.'
+              : `Ion ${loop.sampledIon} kích thích nhiệt trong ngọn lửa đèn cồn phát xạ bước sóng đặc trưng.`,
+            descEn: loop.maskedCuByNa
+              ? 'Intense 589 nm Sodium D-line emission overwhelms and masks the weaker green Copper flame band.'
+              : `Thermal excitation of ${loop.sampledIon} emits its characteristic atomic flame line.`,
             vesselLabel: `${loop.label} → ${b.label}`,
           });
         }

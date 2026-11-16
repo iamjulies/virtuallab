@@ -1591,6 +1591,55 @@ export function renderVessel(ctx, vessel, opts) {
         ctx.lineWidth = 1.6;
         ctx.stroke();
       }
+      // Exp 15: Subtle crystalline shimmer along meniscus when solution is metastable supersaturated
+      if (vessel.isSupersaturated && !hasIce) {
+        ctx.save();
+        const shimmer = 0.22 + 0.14 * Math.sin(timeNow * 4.5);
+        ctx.strokeStyle = `rgba(125, 211, 252, ${shimmer.toFixed(2)})`;
+        ctx.lineWidth = 2.6;
+        ctx.beginPath();
+        ctx.moveTo(x - surfaceHalfWPx, surfaceY + 1.5);
+        ctx.quadraticCurveTo(x, surfaceY + 4.5, x + surfaceHalfWPx, surfaceY + 1.5);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    // Exp 20: Pickering Colloidal Foam column (Cu(OH)2 floc + O2 microbubbles, rose-lavender with Phenolphthalein)
+    if ((vessel.pickeringFoamMl || 0) > 0.3 && !vessel.isInverted && !vessel.isFrozenSolid) {
+      const foamTopY = Math.max(top - 6, volumeMlToY(liqMl + solMl + vessel.pickeringFoamMl));
+      const foamH = Math.max(2, surfaceY - foamTopY);
+      const hasPhenBasic = (vessel.moles.Phenolphthalein_aq || 0) > 1e-9 && ph >= 8.2 && (vessel.phenBleachFrac || 0) < 0.7;
+      ctx.save();
+      const foamGrad = ctx.createLinearGradient(0, surfaceY, 0, foamTopY);
+      if (hasPhenBasic) {
+        foamGrad.addColorStop(0, 'rgba(219, 39, 119, 0.56)');
+        foamGrad.addColorStop(0.55, 'rgba(244, 114, 182, 0.68)');
+        foamGrad.addColorStop(1, 'rgba(251, 207, 232, 0.80)');
+      } else {
+        foamGrad.addColorStop(0, 'rgba(56, 189, 248, 0.42)');
+        foamGrad.addColorStop(0.6, 'rgba(186, 230, 253, 0.56)');
+        foamGrad.addColorStop(1, 'rgba(241, 245, 249, 0.72)');
+      }
+      ctx.fillStyle = foamGrad;
+      ctx.fillRect(x - w / 2, foamTopY, w, foamH + 3);
+
+      const cellCount = Math.min(48, Math.max(8, Math.round(foamH * 0.9)));
+      for (let c = 0; c < cellCount; c++) {
+        const s1 = ((c * 73 + 19) % 100) / 100;
+        const s2 = ((c * 137 + 41) % 100) / 100;
+        const cx = x - w * 0.42 + s1 * w * 0.84;
+        const cy = foamTopY + 2 + s2 * Math.max(2, foamH - 4);
+        const cr = 2.0 + ((c * 29) % 3) * 1.1;
+        ctx.beginPath();
+        ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+        ctx.fillStyle = hasPhenBasic ? 'rgba(253, 242, 248, 0.34)' : 'rgba(255, 255, 255, 0.36)';
+        ctx.fill();
+        ctx.strokeStyle = hasPhenBasic ? 'rgba(244, 114, 182, 0.58)' : 'rgba(148, 163, 184, 0.45)';
+        ctx.lineWidth = 0.7;
+        ctx.stroke();
+      }
+      ctx.restore();
     }
   }
 

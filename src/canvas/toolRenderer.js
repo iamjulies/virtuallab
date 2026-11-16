@@ -840,6 +840,50 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
     ctx.restore();
   }
 
+  // Exp 19: Silver DLA Dendrite crystal tree branches growing cathode -> anode (& retracting on polarity reversal)
+  if (item.platedMaterial === 'Ag' && (item.platedAgMol || 0) > 1e-7) {
+    const growFrac = Math.min(1.0, Math.sqrt((item.platedAgMol || 0) / 0.0012));
+    const dir = item.dendriteSide === -1 ? -1 : 1;
+    const coatH = (spec.height - 20) * 0.52;
+    const baseTipY = botY - 6;
+    ctx.save();
+    // Bright specular metallic Silver coating sleeve
+    ctx.fillStyle = '#e2e8f0';
+    ctx.fillRect(x - 5.2, baseTipY - coatH * growFrac * 0.65, 10.4, coatH * growFrac * 0.65);
+
+    const boughCount = 4;
+    for (let b = 0; b < boughCount; b++) {
+      const fracB = Math.max(0, Math.min(1, growFrac * 1.25 - b * 0.14));
+      if (fracB <= 0.05) continue;
+      const sy = baseTipY - 4 - b * 9;
+      const len1 = (8 + b * 2.2) * fracB;
+      const tx = x + dir * len1;
+      const ty = sy - 3.5 * fracB;
+
+      ctx.strokeStyle = isDark ? '#f8fafc' : '#64748b';
+      ctx.lineWidth = 1.6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x + dir * 4, sy);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+
+      // Secondary crystalline twigs
+      if (fracB > 0.35) {
+        const subLen = len1 * 0.52;
+        ctx.strokeStyle = isDark ? '#cbd5e1' : '#94a3b8';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(tx * 0.65 + (x + dir * 4) * 0.35, (sy + ty) * 0.5);
+        ctx.lineTo(tx + dir * subLen * 0.4, ty - subLen * 0.65);
+        ctx.moveTo(tx * 0.8 + (x + dir * 4) * 0.2, (sy + ty * 2) / 3);
+        ctx.lineTo(tx + dir * subLen * 0.55, ty + subLen * 0.45);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
   // Cathodic sacrificial protection emerald halo ring
   if (item.cathodicProtectedActive) {
     ctx.save();

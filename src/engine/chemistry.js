@@ -2,7 +2,7 @@ import { CONSTANTS } from '../data/constants.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { createZeroGasMap, SPECIES } from '../data/species.js';
 import { REACTIONS } from '../data/reactions.js';
-import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
+import { computeLiquidVolumeL, computePH, computeSolidVolumeMl } from './equilibrium.js';
 
 /**
  * Arrhenius factor relative to 298.15 K: exp((-Ea / R) * (1/T - 1/298.15)).
@@ -114,9 +114,22 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
   if (rxn.type === 'ionic_fast') {
     if (!hasWater || iceMob <= 0) return 0;
     if (rxn.id === 'dissolve_cuso4_2hcl' && liquidVolL < 0.0004) return 0;
+    const ohConc = (moles.OH_aq || 0) / liquidVolL;
     if (rxn.maxOhConc !== undefined) {
-      const ohConc = (moles.OH_aq || 0) / liquidVolL;
       if (ohConc > rxn.maxOhConc) return 0;
+    }
+    // Strict Ksp fractional precipitation competition: Ksp(Cu(OH)2)=2.2e-20 << Ksp(Zn(OH)2)=3.0e-17
+    if (rxn.id === 'precipitate_cuoh2' || rxn.id === 'precipitate_znoh2') {
+      const cH = (moles.H_aq || 0) / liquidVolL;
+      const cCu = (moles.Cu2_aq || 0) / liquidVolL;
+      const phEq = options.phNow ?? 7.0;
+      if (cH > 0.015 && (moles.OH_aq || 0) < (moles.H_aq || 0) * 0.98) return 0;
+      if (rxn.id === 'precipitate_cuoh2') {
+        if (phEq < 4.2 && ohConc < 5e-5) return 0;
+      } else {
+        if (cCu > 1.5e-4 && (moles.OH_aq || 0) < 2.1 * (moles.Cu2_aq || 0)) return 0;
+        if (phEq < 6.05 && ohConc < 2e-4) return 0;
+      }
     }
     // Limiting reactant extent in moles
     let minExtent = Infinity;
@@ -210,8 +223,17 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
       const cuRatio = (moles.Cu_s || 0) / Math.max(1e-5, moles.Zn_s);
       microCellBoost = 1.0 + Math.min(4.8, 3.6 * Math.sqrt(cuRatio * 20));
     }
+    let passFactor = 1.0;
+    if (rxn.id === 'zn_acid' || rxn.id === 'zn_base') {
+      const passiv = vessel.znPassivationFrac || 0;
+      passFactor = Math.max(0.002, 1.0 - 0.998 * passiv);
+      if (rxn.id === 'zn_base') {
+        // Passive Zn(OH)2 layer resists weak alkali until pH > ~12.4 ([OH-] >= 0.025 M -> zincate [Zn(OH)4]2-)
+        passFactor *= aqConc < 0.02 ? 0.02 : Math.min(1.0, (aqConc - 0.015) / 0.08);
+      }
+    }
     // Series diffusion ceiling (via getEffectiveRateConstant) handles still vs stirred boundary layer
-    return k * area * concFactor * microCellBoost * (rxn.isHeterogeneous ? 1.0 : (vessel.stirTimer > 0 ? 2.6 : 1.0)) * iceMob * 3.5;
+    return k * area * concFactor * microCellBoost * passFactor * (rxn.isHeterogeneous ? 1.0 : (vessel.stirTimer > 0 ? 2.6 : 1.0)) * iceMob * 3.5;
   }
 
   if (rxn.type === 'thermal_decomposition') {
@@ -342,6 +364,24 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     return Math.min(moles.H2O2_aq / 2, k * area * Math.min(4.0, cH2O2 * 0.6) * autoBoost * 24.0) * iceMob;
   }
 
+  if (rxn.type === 'peroxide_decomp_langmuir') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nCat = moles[rxn.solidId] || 0;
+    const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
+    if (nCat <= 1e-10 || cH2O2 <= 1e-5) return 0;
+    // Langmuir-Hinshelwood adsorption isotherm: theta = (K_L * C) / (1 + K_L * C)
+    // At high [H2O2] (30% ~ 9.8 M): theta -> 1 (strict zero-order constant rate ~ S_cat);
+    // At low [H2O2]: theta ~ K_L * C (shifts smoothly to 1st-order decay).
+    const K_L = rxn.kLangmuir || 1.85;
+    const theta = (K_L * cH2O2) / (1 + K_L * cH2O2);
+    vessel.langmuirCoverage = theta;
+    vessel.langmuirOrder = 1 - theta;
+    // Effective exposed catalyst area scales linearly with fine precipitated Ag2O mass/particle count
+    const catArea = Math.min(0.18, nCat * 18.0);
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T) * (vessel.stirTimer > 0 ? 1.18 : 1.0);
+    return Math.min(moles.H2O2_aq / 2, k * catArea * theta * 1.45) * iceMob;
+  }
+
   if (rxn.type === 'peroxide_decomp_base') {
     if (!hasWater || iceMob <= 0) return 0;
     const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
@@ -454,7 +494,10 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
 
   // 1. CuSO4 crystallization (lowest solubility ~1.43 -> 0.89 mol/kg at 0 C):
   // Forms pentahydrate CuSO4·5H2O below 110 C, anhydrous white CuSO4 above 110 C; salted out by Ethanol.
+  // Models metastable supersaturation zone (1.03 < S < 2.45): stays liquid until seeded, stirred, or mechanically shocked!
   const nCuPair = Math.min(moles.Cu2_aq || 0, moles.SO4_2_aq || 0);
+  vessel.isSupersaturated = false;
+  vessel.supersatRatio = 1.0;
   if (nCuPair > 1e-11) {
     const totalSolvKg = waterMassKg + etohMassKg;
     const etohWtFrac = totalSolvKg > 1e-9 ? etohMassKg / totalSolvKg : 0;
@@ -463,44 +506,58 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
       waterMassKg > 1e-8
         ? 1.43 * saltingFactor * Math.exp(0.019 * (T - CONSTANTS.T_STD_K)) * waterMassKg
         : 0;
+    const satRatio = maxSolCu > 1e-11 ? nCuPair / maxSolCu : 999;
+    vessel.supersatRatio = satRatio;
     if (nCuPair > maxSolCu) {
-      const excess = nCuPair - maxSolCu;
-      const rateScale = (waterMassKg < 0.01 ? 10.0 : 5.0) * iceMob;
-      let dXi = Math.min(excess, excess * Math.min(1, rateScale * dt));
-      if (T < 383.15) {
-        dXi = Math.min(dXi, (moles.H2O_l || 0) / 5.001);
-        if (dXi > 1e-12) {
+      const hasSeed = (moles.CuSO4_5H2O_s || 0) > 1e-7 || (moles.CuSO4_s || 0) > 1e-7;
+      const isDisturbed = (vessel.stirTimer || 0) > 0 || (vessel.magStirRpm || 0) > 0 || Boolean(vessel.crystallizeTriggered);
+      const exceedsLabileLimit = satRatio >= 2.02 || etohWtFrac > 0.05 || waterMassKg < 0.01 || T >= 383.15;
+      const canNucleate = hasSeed || isDisturbed || exceedsLabileLimit;
+      if (!canNucleate) {
+        vessel.isSupersaturated = satRatio > 1.04;
+      } else {
+        const excess = nCuPair - maxSolCu;
+        const rateScale = (hasSeed || isDisturbed ? 12.0 : waterMassKg < 0.01 ? 10.0 : 5.0) * iceMob;
+        let dXi = Math.min(excess, excess * Math.min(1, rateScale * dt));
+        if (T < 383.15) {
+          dXi = Math.min(dXi, (moles.H2O_l || 0) / 5.001);
+          if (dXi > 1e-12) {
+            moles.Cu2_aq -= dXi;
+            moles.SO4_2_aq -= dXi;
+            moles.H2O_l -= 5 * dXi;
+            if (moles.Cu2_aq < 1e-13) delete moles.Cu2_aq;
+            if (moles.SO4_2_aq < 1e-13) delete moles.SO4_2_aq;
+            if (moles.H2O_l < 1e-13) delete moles.H2O_l;
+            moles.CuSO4_5H2O_s = (moles.CuSO4_5H2O_s || 0) + dXi;
+            heatJ += 11700 * dXi;
+            if (activeReactions && dXi / Math.max(1e-4, dt) > 1e-4) {
+              activeReactions.push({
+                id: 'crystallize_cuso4_5h2o',
+                equation: 'Cu²⁺(aq) + SO₄²⁻(aq) + 5H₂O(l) → CuSO₄·5H₂O(s)↓ + Q',
+                nameVi: 'Kết tinh tỏa nhiệt Copper(II) sulfate pentahydrate',
+                nameEn: 'Exothermic crystallization of Copper(II) sulfate pentahydrate',
+                descVi: 'Dung dịch quá bão hòa khi có mầm tinh thể hoặc khuấy kích thích kết tinh ồ ạt tỏa nhiệt.',
+                descEn: 'Triggered supersaturated solution rapidly precipitates blue CuSO₄·5H₂O crystals while releasing heat of crystallization.',
+                rateMolS: dXi / Math.max(1e-4, dt),
+                vigorousGas: false,
+                dXi,
+              });
+            }
+          }
+        } else if (dXi > 1e-12) {
           moles.Cu2_aq -= dXi;
           moles.SO4_2_aq -= dXi;
-          moles.H2O_l -= 5 * dXi;
           if (moles.Cu2_aq < 1e-13) delete moles.Cu2_aq;
           if (moles.SO4_2_aq < 1e-13) delete moles.SO4_2_aq;
-          if (moles.H2O_l < 1e-13) delete moles.H2O_l;
-          moles.CuSO4_5H2O_s = (moles.CuSO4_5H2O_s || 0) + dXi;
-          heatJ += 11700 * dXi;
-          if (activeReactions && dXi / Math.max(1e-4, dt) > 1e-4) {
-            activeReactions.push({
-              id: 'crystallize_cuso4_5h2o',
-              equation: 'Cu²⁺(aq) + SO₄²⁻(aq) + 5H₂O(l) → CuSO₄·5H₂O(s)↓',
-              nameVi: 'Kết tinh Copper(II) sulfate pentahydrate',
-              nameEn: 'Crystallization of Copper(II) sulfate pentahydrate',
-              descVi: 'Dung dịch quá bão hòa khi làm lạnh hoặc cô đặc tách tinh thể xanh lam CuSO₄·5H₂O.',
-              descEn: 'Cooling or concentrating past saturation precipitates blue CuSO₄·5H₂O crystals.',
-              rateMolS: dXi / Math.max(1e-4, dt),
-              vigorousGas: false,
-              dXi,
-            });
-          }
+          moles.CuSO4_s = (moles.CuSO4_s || 0) + dXi;
+          heatJ += -66500 * dXi;
         }
-      } else if (dXi > 1e-12) {
-        moles.Cu2_aq -= dXi;
-        moles.SO4_2_aq -= dXi;
-        if (moles.Cu2_aq < 1e-13) delete moles.Cu2_aq;
-        if (moles.SO4_2_aq < 1e-13) delete moles.SO4_2_aq;
-        moles.CuSO4_s = (moles.CuSO4_s || 0) + dXi;
-        heatJ += -66500 * dXi;
       }
+    } else {
+      vessel.crystallizeTriggered = false;
     }
+  } else {
+    vessel.crystallizeTriggered = false;
   }
 
   // 2. Remaining soluble salts ordered from least soluble to most soluble
@@ -1195,6 +1252,31 @@ export function enforceDryPhaseBoundary(vessel) {
  */
 export function stepVesselChemistry(vessel, dt, options = {}) {
   const liquidVolL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
+  const phNow = liquidVolL > 1e-6 && !vessel.isFrozenSolid ? (computePH(vessel.moles, liquidVolL, vessel.tempK) ?? 7.0) : 7.0;
+  options = { ...options, phNow };
+
+  // Advance Zinc amphoteric surface passivation film across neutral–weak alkali window (pH 6.4 .. 12.2)
+  if ((vessel.moles.Zn_s || 0) > 1e-9 && liquidVolL > 1e-6 && computeIceMobilityFactor(vessel) > 0) {
+    const cOH = (vessel.moles.OH_aq || 0) / liquidVolL;
+    let pFrac = vessel.znPassivationFrac || 0;
+    if (phNow >= 6.4 && phNow <= 12.18 && cOH < 0.016) {
+      const kPass = phNow >= 7.0 && phNow <= 11.6 ? 3.2 : 1.4;
+      pFrac = Math.min(1.0, pFrac + (1 - pFrac) * (1 - Math.exp(-kPass * dt)));
+    } else if (phNow < 5.2) {
+      const kDepass = 2.8 * (5.2 - phNow);
+      pFrac = Math.max(0, pFrac * Math.exp(-kDepass * dt));
+    } else if (phNow >= 12.4 || cOH >= 0.025) {
+      const excessOH = Math.max(0.01, cOH - 0.02);
+      const kDepass = 2.6 * Math.min(4.5, excessOH * 15);
+      pFrac = Math.max(0, pFrac * Math.exp(-kDepass * dt));
+    }
+    vessel.znPassivationFrac = pFrac < 0.002 ? 0 : pFrac;
+  } else {
+    vessel.znPassivationFrac = 0;
+  }
+
+  vessel.langmuirCoverage = 0;
+  vessel.langmuirOrder = 1.0;
 
   // Track live galvanic micro-cell & sacrificial cathodic protection flags for telemetry / rendering
   vessel.znCuMicroActive =
@@ -1367,6 +1449,36 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     vessel.naIgnited = newTNa >= 680.0 && xEtOH <= 0.35;
     vessel.localH2Mol = newLocalH2;
 
+    // Exp 18: Asymmetric H2 jetting + surface-tension Marangoni propulsion & Phenolphthalein wake trail
+    vessel.naWakeTrail = vessel.naWakeTrail || [];
+    for (const wp of vessel.naWakeTrail) wp.age += dt;
+    vessel.naWakeTrail = vessel.naWakeTrail.filter((wp) => wp.age < wp.maxLife);
+    if (liquidVolL > 1e-6 && newTNa >= 340.0) {
+      const spanScale = vessel.naPinned ? 0.38 : Math.min(2.8, Math.max(0.85, Math.sqrt(areaSurfCm2 / 25.0)));
+      if (typeof vessel.naVelX !== 'number' || Math.abs(vessel.naVelX) < 0.25) {
+        vessel.naVelX = (Math.random() < 0.5 ? -1 : 1) * (1.2 + Math.random() * 0.9);
+      }
+      if (Math.random() < 4.5 * dt) {
+        vessel.naVelX = (Math.random() < 0.5 ? -1 : 1) * (1.1 + Math.random() * 1.9);
+      }
+      let nextPos = (vessel.naPosRatio ?? 0.5) + vessel.naVelX * spanScale * dt;
+      if (nextPos < 0.09) {
+        nextPos = 0.09 + (0.09 - nextPos) * 0.5;
+        vessel.naVelX = Math.abs(vessel.naVelX);
+      } else if (nextPos > 0.91) {
+        nextPos = 0.91 - (nextPos - 0.91) * 0.5;
+        vessel.naVelX = -Math.abs(vessel.naVelX);
+      }
+      vessel.naPosRatio = nextPos;
+      vessel._naWakeAccum = (vessel._naWakeAccum || 0) + dt;
+      const prevWake = vessel.naWakeTrail[vessel.naWakeTrail.length - 1];
+      if (vessel._naWakeAccum >= 0.035 || !prevWake || Math.abs(nextPos - prevWake.pos) >= 0.015) {
+        vessel._naWakeAccum = 0;
+        vessel.naWakeTrail.push({ pos: nextPos, age: 0, maxLife: 1.8 });
+        if (vessel.naWakeTrail.length > 26) vessel.naWakeTrail.shift();
+      }
+    }
+
     if (vessel.naIgnited || isDirectHazard) {
       const confinement = Math.max(1.0, 22.0 / Math.max(areaSurfCm2, 1.0));
       const blastEnergyJ = newLocalH2 * 241800 * Math.min(confinement, 5.0);
@@ -1387,6 +1499,10 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     vessel.naPinned = false;
     vessel.naIgnited = false;
     vessel.localH2Mol = 0;
+    if (Array.isArray(vessel.naWakeTrail) && vessel.naWakeTrail.length > 0) {
+      for (const wp of vessel.naWakeTrail) wp.age += dt;
+      vessel.naWakeTrail = vessel.naWakeTrail.filter((wp) => wp.age < wp.maxLife);
+    }
   }
 
   // 4. Reversible [CuCl4]2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, ammine complexes & chemisorption/garden equilibria
@@ -1403,6 +1519,30 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
 
   // 5. Supersaturation & cryo-cooling crystallization (including ethanol salting-out)
   reactionHeatJ += applySupersaturationCrystallization(vessel, dt, activeReactions);
+
+  // 6. Exp 20: Pickering Colloidal Foam — Cu(OH)2 nanoparticles stabilize ascending O2 microbubbles
+  const nColloidCu = vessel.moles.CuOH2_s || 0;
+  const maxVesselMl = APPARATUS[vessel.typeId]?.maxVolumeMl || 250;
+  const curLiqMl = liquidVolL * 1000;
+  let foamMl = vessel.pickeringFoamMl || 0;
+  if (liquidVolL > 1e-5 && !vessel.isFrozenSolid && !vessel.isShattered) {
+    if (nColloidCu > 2e-5 && (gasProduced.O2_g || 0) > 1e-11) {
+      const trapEff = Math.min(0.92, 0.32 + (nColloidCu / Math.max(0.015, liquidVolL)) * 3.5);
+      const gainMl = gasProduced.O2_g * 24500 * trapEff;
+      foamMl += gainMl;
+      vessel.pickeringOverflowActive = curLiqMl + foamMl > maxVesselMl * 1.04;
+      foamMl = Math.min(maxVesselMl * 1.15 - curLiqMl, foamMl);
+      foamMl = Math.max(0, foamMl);
+    } else {
+      vessel.pickeringOverflowActive = false;
+    }
+    const drainRate = nColloidCu > 2e-5 ? 0.055 : 0.45;
+    foamMl *= Math.exp(-drainRate * dt);
+  } else {
+    foamMl = 0;
+    vessel.pickeringOverflowActive = false;
+  }
+  vessel.pickeringFoamMl = foamMl < 0.05 ? 0 : foamMl;
 
   return {
     reactionHeatJ,

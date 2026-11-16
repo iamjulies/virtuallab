@@ -140,7 +140,8 @@ export class InspectorPanel {
         .join(',');
       const rxnKeys = item.activeReactions.map((r) => r.id).join(',');
       const hasFrost = (item.escapedFrostH2OMol || 0) > 1e-6 ? 1 : 0;
-      return `v|${item.id}|${item.isStoppered}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
+      const phenFlags = `${item.isSupersaturated ? 1 : 0}${(item.znPassivationFrac || 0) > 0.35 ? 1 : 0}${(item.pickeringFoamMl || 0) > 0.5 ? 1 : 0}${(item.langmuirCoverage || 0) > 0.55 ? 1 : 0}`;
+      return `v|${item.id}|${item.isStoppered}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'burner') {
       return `b|${item.id}|${langCode}|${logLen}`;
@@ -167,7 +168,7 @@ export class InspectorPanel {
       return `${item.kind}|${item.id}|${item.isBroken ? 1 : 0}|${item.clampedToId}|${item.valveRateMlS || 0}|${item.isFiltering ? 1 : 0}|${item.uvMaskHalf ? 1 : 0}|${spKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'dc_power') {
-      return `dc|${item.id}|${item.powerOn ? 1 : 0}|${item.circuitMode}|${Math.round((item.rheostatOhm ?? 2) * 10)}|${langCode}|${logLen}`;
+      return `dc|${item.id}|${item.powerOn ? 1 : 0}|${item.circuitMode}|${item.posElectrodeId || ''}|${item.negElectrodeId || ''}|${Math.round((item.rheostatOhm ?? 2) * 10)}|${langCode}|${logLen}`;
     }
     if (item.kind === 'volt_ammeter') {
       const elCnt = this.sim.items.filter((i) => i.kind === 'electrode' && i.dockedVesselId).length;
@@ -179,7 +180,8 @@ export class InspectorPanel {
     if (item.kind === 'electrode') {
       const mountedTube = this.sim.items.find((i) => i.mountedOverElectrodeId === item.id);
       const colCnt = this.sim.items.filter((i) => !i.isBroken && !i.isShattered && (i.kind === 'gas_syringe' || i.kind === 'vessel')).length;
-      return `el|${item.id}|${item.material}|${item.dockedVesselId || ''}|${item.polarityLabel || ''}|${item.platedMaterial || ''}|${item.platedQuality || ''}|${item.cathodicProtectedActive ? 1 : 0}|${item.gasTargetId || ''}|${mountedTube?.id || ''}|${colCnt}|${langCode}|${logLen}`;
+      const hasAg = (item.platedAgMol || 0) > 1e-7 ? 1 : 0;
+      return `el|${item.id}|${item.material}|${item.dockedVesselId || ''}|${item.polarityLabel || ''}|${item.platedMaterial || ''}|${item.platedQuality || ''}|${hasAg}|${item.cathodicProtectedActive ? 1 : 0}|${item.gasTargetId || ''}|${mountedTube?.id || ''}|${colCnt}|${langCode}|${logLen}`;
     }
     if (item.kind === 'splint') {
       return `sp|${item.id}|${item.flippedX ? 1 : 0}|${item.mode}|${langCode}|${logLen}`;
@@ -720,9 +722,12 @@ export class InspectorPanel {
             </div>
             <input id="dc-rheostat-slider" type="range" min="0.5" max="25" step="0.5" value="${item.rheostatOhm ?? 2.0}" class="w-full accent-amber-500" />
           </div>
-          <button type="button" id="ins-dc-toggle" class="py-2 rounded-lg text-xs font-bold text-white transition ${
-            item.powerOn ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-sky-600 hover:bg-sky-500'
-          }">${item.powerOn ? t('dcPowerOn') : t('dcPowerOff')}</button>
+          <div class="grid grid-cols-2 gap-1.5">
+            <button type="button" id="ins-dc-toggle" class="py-2 rounded-lg text-xs font-bold text-white transition ${
+              item.powerOn ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-sky-600 hover:bg-sky-500'
+            }">${item.powerOn ? t('dcPowerOn') : t('dcPowerOff')}</button>
+            <button type="button" id="ins-dc-swap" class="py-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:bg-amber-500/20">${t('dcSwapPolarity')}</button>
+          </div>
         </div>
       `;
     } else if (item.kind === 'volt_ammeter') {
@@ -773,13 +778,17 @@ export class InspectorPanel {
             <div class="flex justify-between"><span>Right (100 cm):</span><strong>${item.rightGasId || 'Empty'} (${((item.rightFront ?? 1) * 100).toFixed(0)}%)</strong></div>
             <div class="flex justify-between text-emerald-400"><span>${t('diffRingPosLabel')}</span><strong id="live-diff-ring">${ringPct}</strong></div>
           </div>
-          <div class="grid grid-cols-2 gap-1.5">
-            <button type="button" id="diff-left-nh3" class="py-1.5 px-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs font-semibold hover:opacity-90">${t('diffDropLeftNH3')}</button>
-            <button type="button" id="diff-right-hcl" class="py-1.5 px-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90">${t('diffDropRightHCl')}</button>
-            <button type="button" id="diff-left-hcl" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('diffDropLeftHCl')}</button>
-            <button type="button" id="diff-right-nh3" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('diffDropRightNH3')}</button>
-          </div>
-          <button type="button" id="diff-clear" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('diffClearTube')}</button>
+          ${
+            item.isBroken
+              ? `<p class="text-xs text-red-400 font-medium">${t('alertToolBreak')}</p>`
+              : `<div class="grid grid-cols-2 gap-1.5">
+                  <button type="button" id="diff-left-nh3" class="py-1.5 px-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs font-semibold hover:opacity-90">${t('diffDropLeftNH3')}</button>
+                  <button type="button" id="diff-right-hcl" class="py-1.5 px-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90">${t('diffDropRightHCl')}</button>
+                  <button type="button" id="diff-left-hcl" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('diffDropLeftHCl')}</button>
+                  <button type="button" id="diff-right-nh3" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('diffDropRightNH3')}</button>
+                </div>
+                <button type="button" id="diff-clear" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('diffClearTube')}</button>`
+          }
           <p class="text-[11px] text-muted leading-relaxed">${t('diffHint')}</p>
         </div>
       `;
@@ -808,6 +817,7 @@ export class InspectorPanel {
           <div class="text-[11px] text-muted">${(ELECTRODE_MATERIALS[item.material]?.[langCode === 'en' ? 'nameEn' : 'nameVi']) || item.material}</div>
           ${item.polarityLabel ? `<div class="p-2 rounded border border-theme bg-surface text-xs font-mono text-center">${item.polarityLabel}</div>` : ''}
           ${item.platedMaterial === 'Cu' && (item.platedCuMol || 0) > 1e-7 ? `<div class="p-2 rounded border border-amber-500/40 bg-amber-500/10 text-xs flex items-center justify-between gap-2"><span>${t(item.platedQuality === 'burned' ? 'platedCuBurned' : 'platedCuSmooth')} (${((item.platedCuMol || 0) * 63.546 * 1000).toFixed(1)} mg)</span><button type="button" id="ins-el-strip" class="px-2 py-0.5 rounded border border-theme bg-surface text-[11px]">${t('actionClearElectrodes')}</button></div>` : ''}
+          ${item.platedMaterial === 'Ag' && (item.platedAgMol || 0) > 1e-7 ? `<div class="p-2 rounded border border-slate-400/50 bg-slate-500/10 text-xs flex items-center justify-between gap-2"><span>${t('platedAgDendrite')} (${((item.platedAgMol || 0) * 107.87 * 1000).toFixed(1)} mg)</span><button type="button" id="ins-el-strip" class="px-2 py-0.5 rounded border border-theme bg-surface text-[11px]">${t('actionClearElectrodes')}</button></div>` : ''}
           ${item.cathodicProtectedActive ? `<div class="p-2 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs font-semibold text-center">${t('dmmCathProtBadge')}</div>` : ''}
           ${item.dockedVesselId ? `
             <div class="pt-2 border-t border-theme/50 flex flex-col gap-1.5 text-xs">
@@ -945,6 +955,10 @@ export class InspectorPanel {
             </div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
           </div>
+          ${item.isSupersaturated && !item.isShattered ? `<div class="p-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs"><div class="font-semibold">${t('badgeSupersaturated')} (S=${(item.supersatRatio || 1).toFixed(2)}×)</div><div class="text-[11px] opacity-85">${t('supersatHint')}</div></div>` : ''}
+          ${(item.znPassivationFrac || 0) > 0.35 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-medium">${t('badgeZnPassivated')} (${Math.round((item.znPassivationFrac || 0) * 100)}%)</div>` : ''}
+          ${(item.pickeringFoamMl || 0) > 0.5 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-pink-500/40 bg-pink-500/10 text-pink-400 text-xs font-medium">${t('badgePickeringFoam')}: +${(item.pickeringFoamMl || 0).toFixed(1)} mL</div>` : ''}
+          ${(item.langmuirCoverage || 0) > 0.55 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs font-medium">${t('badgeLangmuirSat')} (θ=${Math.round((item.langmuirCoverage || 0) * 100)}%, n≈${(item.langmuirOrder ?? 0).toFixed(2)})</div>` : ''}
 
           ${
             item.isShattered
@@ -1414,6 +1428,9 @@ export class InspectorPanel {
       });
       this.container.querySelector('#ins-dc-toggle')?.addEventListener('click', () => {
         this.sim.setDcPowerState(item.id, { powerOn: !item.powerOn });
+      });
+      this.container.querySelector('#ins-dc-swap')?.addEventListener('click', () => {
+        this.sim.swapDcPolarity(item.id);
       });
     } else if (item.kind === 'volt_ammeter') {
       this.container.querySelectorAll('.vm-mode-btn').forEach((btn) => {

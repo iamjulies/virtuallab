@@ -202,7 +202,16 @@ export function stepElectrochemistry(sim, dt) {
       const cCu = ((v.moles.Cu2_aq || 0) + 0.65 * (v.moles.CuNH3_4_2_aq || 0)) / liqL;
       const cAg = (v.moles.Ag_aq || 0) / liqL;
       const cCl = (v.moles.Cl_aq || 0) / liqL;
-      const decompV = elPos.material === 'Cu' && cCu > 0.01 ? 0.15 : cCu > 0.005 || cAg > 0.005 ? 1.15 : 1.55;
+      const hasPlatedAgAnode = elPos.platedMaterial === 'Ag' && (elPos.platedAgMol || 0) > 1e-8;
+      const decompV = hasPlatedAgAnode
+        ? 0.12
+        : elPos.material === 'Cu' && cCu > 0.01
+        ? 0.15
+        : cAg > 0.002
+        ? 0.85
+        : cCu > 0.005
+        ? 1.15
+        : 1.55;
       const ionConductivity = Math.max(
         0.04,
         Math.min(
@@ -212,6 +221,8 @@ export function stepElectrochemistry(sim, dt) {
               ((v.moles.H_aq || 0) +
                 (v.moles.OH_aq || 0) +
                 (v.moles.Cu2_aq || 0) +
+                (v.moles.Ag_aq || 0) +
+                (v.moles.NO3_aq || 0) +
                 (v.moles.Na_aq || 0) +
                 (v.moles.SO4_2_aq || 0) +
                 (v.moles.Cl_aq || 0)) /
@@ -240,7 +251,11 @@ export function stepElectrochemistry(sim, dt) {
         const dAg = Math.min(v.moles.Ag_aq, neMol);
         addMolSafe(v.moles, 'Ag_aq', -dAg);
         addMolSafe(v.moles, 'Ag_s', dAg);
-        cathDesc = 'Ag⁺ + e⁻ → Ag(s)↓';
+        elNeg.platedMaterial = 'Ag';
+        elNeg.platedAgMol = (elNeg.platedAgMol || 0) + dAg;
+        elNeg.platedQuality = jADm2 <= 5.0 ? 'dendrite' : 'spongy';
+        elNeg.dendriteSide = elPos.x >= elNeg.x ? 1 : -1;
+        cathDesc = 'Ag⁺ + e⁻ → Ag(s) (Cây tinh thể Dendrite)';
       } else if ((v.moles.Cu2_aq || 0) > 1e-7) {
         const isBurned = jADm2 > 6.5;
         const cuFrac = isBurned ? 0.85 : 1.0;
@@ -288,9 +303,20 @@ export function stepElectrochemistry(sim, dt) {
         elNeg.gasBubbleRate = dH2 / Math.max(1e-4, dt);
       }
 
-      // Anode (+) oxidation: Cu/Zn active dissolution, Cl- -> Cl2(g), or 2H2O -> O2(g) + 4H+
+      // Anode (+) oxidation: Stripping plated Silver dendrites, Cu/Zn active dissolution, Cl- -> Cl2(g), or 2H2O -> O2(g) + 4H+
       let anDesc = '2H₂O → O₂(g)↑ + 4H⁺ + 4e⁻';
-      if (elPos.material === 'Cu') {
+      if (elPos.platedMaterial === 'Ag' && (elPos.platedAgMol || 0) > 1e-8) {
+        const dAgDiss = Math.min(elPos.platedAgMol, neMol);
+        elPos.platedAgMol -= dAgDiss;
+        if (elPos.platedAgMol < 1e-9) {
+          elPos.platedAgMol = 0;
+          elPos.platedMaterial = null;
+          elPos.platedQuality = null;
+        }
+        addMolSafe(v.moles, 'Ag_s', -Math.min(v.moles.Ag_s || 0, dAgDiss));
+        addMolSafe(v.moles, 'Ag_aq', dAgDiss);
+        anDesc = 'Ag(s dendrite) → Ag⁺(aq) + e⁻ (Hòa tan đảo cực)';
+      } else if (elPos.material === 'Cu') {
         const dCuDiss = neMol / 2;
         addMolSafe(v.moles, 'Cu2_aq', dCuDiss);
         anDesc = 'Cu(s) → Cu²⁺(aq) + 2e⁻';
