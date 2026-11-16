@@ -69,24 +69,33 @@ export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
   const nH = moles.H_aq || 0;
   const nOH = moles.OH_aq || 0;
   const nEthoxide = moles.C2H5O_aq || 0;
-  const cNH3 = (moles.NH3_aq || 0) / liquidVolL;
+  const cNH3 = Math.max(0, moles.NH3_aq || 0) / liquidVolL;
+  const cNH4 = Math.max(0, moles.NH4_aq || 0) / liquidVolL;
   const cNet = (nH - nOH - nEthoxide) / liquidVolL;
   const kw = computeKw(tempK);
-  const kbNH3 = 1.77e-5;
 
   let hPlus;
-  if (cNet >= 0) {
-    const netAcid = Math.max(0, cNet - cNH3 * 0.99);
-    const baseTail = cNet <= 1e-7 && cNH3 > 1e-10 ? 4 * kbNH3 * cNH3 : 0;
-    if (netAcid > 1e-7) {
-      hPlus = 0.5 * (netAcid + Math.sqrt(netAcid * netAcid + 4 * kw));
+  if (cNH3 <= 1e-12 && cNH4 <= 1e-12) {
+    if (cNet >= 0) {
+      hPlus = 0.5 * (cNet + Math.sqrt(cNet * cNet + 4 * kw));
     } else {
-      const ohMinus = 0.5 * (-netAcid + Math.sqrt(netAcid * netAcid + 4 * kw + baseTail));
+      const ohMinus = 0.5 * (-cNet + Math.sqrt(cNet * cNet + 4 * kw));
       hPlus = ohMinus > 0 ? kw / ohMinus : Math.sqrt(kw);
     }
   } else {
-    const ohMinus = 0.5 * (-cNet + Math.sqrt(cNet * cNet + 4 * kw + 4 * kbNH3 * cNH3));
-    hPlus = ohMinus > 0 ? kw / ohMinus : Math.sqrt(kw);
+    // Exact monotonic charge-balance bisection over log10([H+]) handling NH3/NH4+ buffer (pKa ~ 9.25)
+    const kbNH3 = 1.77e-5;
+    const kaNH4 = kw / kbNH3;
+    let lo = -16.0;
+    let hi = 2.0;
+    for (let i = 0; i < 44; i++) {
+      const mid = 0.5 * (lo + hi);
+      const h = Math.pow(10, mid);
+      const f = h - kw / h + (cNH3 * h - cNH4 * kaNH4) / (h + kaNH4) - cNet;
+      if (f > 0) hi = mid;
+      else lo = mid;
+    }
+    hPlus = Math.pow(10, 0.5 * (lo + hi));
   }
   if (hPlus <= 0) return 14;
   const ph = -Math.log10(hPlus);

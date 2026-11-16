@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.20',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_v2+build.1',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envPress: 'Áp suất',
@@ -58,6 +58,10 @@ export const I18N = {
     reg_naoh_desc: 'Viên rắn trắng · Tan tỏa nhiệt mạnh',
     reg_hcl_37: 'Hydrochloric acid (HCl 37%)',
     reg_hcl_37_desc: 'Dung dịch đậm đặc ~12.06 M · Bốc sương nhẹ',
+    reg_nh3_25: 'Ammonia solution (NH₃ 25%)',
+    reg_nh3_25_desc: 'Dung dịch ~13.31 M · Tạo phức [Cu(NH₃)₄]²⁺, [Ag(NH₃)₂]⁺ & dễ bay hơi',
+    reg_h2o2_30: 'Hydrogen peroxide (H₂O₂ 30%)',
+    reg_h2o2_30_desc: 'Chất oxi hóa ~9.79 M · Giải phóng O₂ khi có xúc tác Cu²⁺/Ag/kiềm/nhiệt',
     reg_phen: 'Phenolphthalein (1%)',
     reg_phen_desc: 'Chỉ thị pH: đỏ cam (<0) · không màu · hồng (8.2–12) · tắt ở kiềm đặc',
 
@@ -208,7 +212,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.20',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_v2+build.1',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envPress: 'Pressure',
@@ -257,6 +261,10 @@ export const I18N = {
     reg_naoh_desc: 'White pellets · Strongly exothermic dissolution',
     reg_hcl_37: 'Hydrochloric acid (HCl 37%)',
     reg_hcl_37_desc: 'Concentrated ~12.06 M · Fuming slightly',
+    reg_nh3_25: 'Ammonia solution (NH₃ 25%)',
+    reg_nh3_25_desc: 'Concentrated ~13.31 M · Forms [Cu(NH₃)₄]²⁺, [Ag(NH₃)₂]⁺ & degasses NH₃',
+    reg_h2o2_30: 'Hydrogen peroxide (H₂O₂ 30%)',
+    reg_h2o2_30_desc: 'Oxidizer ~9.79 M · Decomposes to O₂ with Cu²⁺/Ag/alkali/heat',
     reg_phen: 'Phenolphthalein (1%)',
     reg_phen_desc: 'pH indicator: orange-red (<0) · colorless · pink (8.2–12) · fades in conc. OH⁻',
 

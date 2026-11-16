@@ -749,6 +749,25 @@ export class ParticleSystem {
           splashed: false,
         });
       }
+    } else if (type === 'nh3_hcl_smoke') {
+      const intensity = Math.max(0.35, Math.min(2.0, meta?.intensity ?? 1.0));
+      const puffCount = Math.max(2, Math.round(3 * intensity));
+      for (let i = 0; i < puffCount; i++) {
+        this.particles.push({
+          kind: 'gas_cloud',
+          x: x + (Math.random() - 0.5) * 34,
+          y: y + (Math.random() - 0.5) * 18,
+          vx: (Math.random() - 0.5) * 26,
+          vy: -(22 + Math.random() * 26),
+          phase: Math.random() * Math.PI * 2,
+          r: 7 + Math.random() * 7,
+          growR: 16,
+          alphaScale: 0.58 * Math.min(1.2, intensity),
+          life: 0,
+          maxLife: 1.45 + Math.random() * 0.75,
+          color: this.isDark ? 'rgba(248, 250, 252, 0.82)' : 'rgba(148, 163, 184, 0.72)',
+        });
+      }
     }
   }
 

@@ -5,12 +5,28 @@ import { REACTIONS } from '../data/reactions.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
 
 /**
- * Arrhenius factor relative to 298.15 K.
+ * Arrhenius factor relative to 298.15 K: exp((-Ea / R) * (1/T - 1/298.15)).
  */
 function arrheniusFactor(eaJ, tempK) {
   const T = Math.max(240, Math.min(1200, tempK));
   const expo = (-eaJ / CONSTANTS.R_J_MOL_K) * (1 / T - 1 / CONSTANTS.T_STD_K);
-  return Math.exp(Math.max(-20, Math.min(20, expo)));
+  return Math.exp(Math.max(-40, Math.min(25, expo)));
+}
+
+/**
+ * Compute effective kinetic rate constant coupling Arrhenius activation with
+ * Nernst diffusion boundary-layer resistance (1/k_eff = 1/k_chem + 1/k_diff)
+ * for heterogeneous solid-liquid reactions.
+ */
+export function getEffectiveRateConstant(rxn, tempK, isStirred = false, overrideKBase = null) {
+  const kBase = overrideKBase ?? rxn.k298 ?? rxn.kRelax298 ?? 0;
+  const kChem = kBase * arrheniusFactor(rxn.eaJ ?? 0, tempK);
+  if (!rxn.isHeterogeneous) {
+    return kChem;
+  }
+  const kDiffBase = isStirred ? (rxn.kDiffStir ?? 12.0) : (rxn.kDiffStill ?? 1.8);
+  const kDiff = kDiffBase * arrheniusFactor(rxn.eaDiffJ ?? 15000, tempK);
+  return (kChem * kDiff) / Math.max(1e-12, kChem + kDiff);
 }
 
 /**
@@ -93,7 +109,7 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     if (minExtent <= 1e-12 || !Number.isFinite(minExtent)) return 0;
 
     // Homogeneous ionic reactions are activation/collision controlled -> unaffected by stirring
-    const kRelax = rxn.kRelax298 * arrheniusFactor(rxn.eaJ, T);
+    const kRelax = getEffectiveRateConstant(rxn, T, false);
     return minExtent * kRelax;
   }
 
@@ -152,14 +168,14 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
       return k * area * concFactor * (vessel.stirTimer > 0 ? 2.4 : 1.0) * 3.5;
     }
 
-    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
+    const k = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
     const aqConc = (moles[rxn.aqueousId] || 0) / liquidVolL;
     if (rxn.minAqConc && aqConc < rxn.minAqConc) return 0;
 
     // Effective kinetic order with mild saturation at very high acid molarity
     const concFactor = Math.pow(Math.min(14.0, aqConc), 1.05);
-    // Noyes-Whitney diffusion boundary layer thinning when stirred
-    return k * area * concFactor * (vessel.stirTimer > 0 ? 2.6 : 1.0) * 3.5;
+    // Series diffusion ceiling (via getEffectiveRateConstant) handles still vs stirred boundary layer
+    return k * area * concFactor * (rxn.isHeterogeneous ? 1.0 : (vessel.stirTimer > 0 ? 2.6 : 1.0)) * 3.5;
   }
 
   if (rxn.type === 'thermal_decomposition') {
@@ -249,12 +265,70 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
   }
 
   if (rxn.type === 'alkali_nitrate_red') {
-    if (!hasWater || T < rxn.minTempK) return 0;
+    if (!hasWater) return 0;
     const cOH = (moles.OH_aq || 0) / liquidVolL;
     const cNO3 = (moles.NO3_aq || 0) / liquidVolL;
     if (cOH < rxn.minOhConc || cNO3 < 0.005) return 0;
     const area = computeSolidSurfaceAreaM2('Zn_s', moles.Zn_s || 0, vessel.particleCounts?.Zn_s ?? 8);
-    return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * area * Math.min(4.0, cNO3 * 3.0) * Math.min(3.0, cOH / 2.5) * stirBoost * 8.0;
+    const kEff = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
+    const stirFactor = rxn.isHeterogeneous ? 1.0 : stirBoost;
+    return kEff * area * Math.min(4.0, cNO3 * 3.0) * Math.min(3.0, cOH / 2.5) * stirFactor * 8.0;
+  }
+
+  if (rxn.type === 'peroxide_decomp_cat') {
+    if (!hasWater) return 0;
+    const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    const nCuCat =
+      (moles.Cu2_aq || 0) +
+      (moles.CuNH3_4_2_aq || 0) +
+      0.35 * (moles.CuOH2_s || 0) +
+      0.35 * (moles.CuO_s || 0) +
+      0.5 * (moles.CuCl4_2_aq || 0);
+    if (nCuCat <= 1e-8 || cH2O2 <= 1e-5) return 0;
+    const cCuCat = nCuCat / liquidVolL;
+    // Free H+ stabilizes H2O2 against Cu(II)-aqua disproportionation; neutral/ammoniacal Cu(II) catalyzes vigorously
+    const acidSuppress = cH > 0.25 ? 0.04 : 1.0;
+    const k = getEffectiveRateConstant(rxn, T);
+    return (moles.H2O2_aq / 2) * k * acidSuppress * Math.min(3.5, cCuCat * 12.0) * Math.min(2.0, 0.4 + cH2O2 * 0.2);
+  }
+
+  if (rxn.type === 'peroxide_decomp_metal') {
+    if (!hasWater) return 0;
+    const nSolid = moles[rxn.solidId] || 0;
+    const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
+    if (nSolid <= 1e-9 || cH2O2 <= 1e-5) return 0;
+    const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, vessel.particleCounts?.[rxn.solidId] ?? 8);
+    const k = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
+    return Math.min(moles.H2O2_aq / 2, k * area * Math.min(4.0, cH2O2 * 0.6) * 18.0);
+  }
+
+  if (rxn.type === 'peroxide_decomp_base') {
+    if (!hasWater) return 0;
+    const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
+    if (cH2O2 <= 1e-5) return 0;
+    const cBase = ((moles.OH_aq || 0) + 0.15 * (moles.NH3_aq || 0)) / liquidVolL;
+    const kThermal = getEffectiveRateConstant(rxn, T);
+    const kBase =
+      cBase > 1e-3
+        ? (rxn.kBase298 || 0.025) * arrheniusFactor(rxn.eaBaseJ || 42000, T) * Math.min(4.0, cBase * 1.5)
+        : 0;
+    return (moles.H2O2_aq / 2) * (kThermal + kBase);
+  }
+
+  if (rxn.type === 'peroxide_metal_ox') {
+    if (!hasWater) return 0;
+    const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    const cCl = rxn.reactants.Cl_aq ? (moles.Cl_aq || 0) / liquidVolL : 1.0;
+    if (cH2O2 < 0.02 || cH < 0.05 || cCl < 0.05) return 0;
+    const area = computeSolidSurfaceAreaM2(rxn.solidId, moles[rxn.solidId] || 0, vessel.particleCounts?.[rxn.solidId] ?? 8);
+    const k = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
+    const drive =
+      Math.min(3.5, cH2O2 * 0.45) *
+      Math.min(2.5, cH * 0.45) *
+      (rxn.reactants.Cl_aq ? Math.min(2.0, cCl * 0.4) : 1.0);
+    return k * area * drive * 3.5;
   }
 
   if (rxn.type === 'moist_solid_redox') {
@@ -661,6 +735,204 @@ function stepChlorocuprateEquilibrium(vessel, liquidVolL, dt, activeReactions) {
 }
 
 /**
+ * Reversible Ammonia coordination equilibria:
+ * - Cu(OH)2(s) + 4NH3(aq) <-> [Cu(NH3)4]2+(aq) + 2OH-(aq) (deep royal violet-blue)
+ * - AgCl(s) + 2NH3(aq) <-> [Ag(NH3)2]+(aq) + Cl-(aq)
+ * - Ag2O(s) + 4NH3(aq) + H2O(l) <-> 2[Ag(NH3)2]+(aq) + 2OH-(aq)
+ */
+function stepAmmineComplexEquilibria(vessel, liquidVolL, dt, activeReactions) {
+  const moles = vessel.moles;
+  if ((moles.H2O_l || 0) <= 1e-7 || liquidVolL <= 1e-6) return 0;
+
+  let heatJ = 0;
+  const cNH3 = (moles.NH3_aq || 0) / liquidVolL;
+  const cH = (moles.H_aq || 0) / liquidVolL;
+  const relax = Math.min(1, 5.5 * dt);
+
+  // 1. Copper(II) hydroxide <-> Tetraamminecopper(II)
+  const nCuOH2 = moles.CuOH2_s || 0;
+  const nCuAmm = moles.CuNH3_4_2_aq || 0;
+  if (nCuOH2 + nCuAmm > 1e-11) {
+    const fracCu = cNH3 > 0.15 ? Math.min(1.0, (cNH3 - 0.15) / 0.30) : 0;
+    const targetCu = (nCuOH2 + nCuAmm) * fracCu;
+    let dXi = (targetCu - nCuAmm) * relax;
+    if (dXi > 1e-11 && cH < 1e-4) {
+      dXi = Math.min(dXi, nCuOH2, (moles.NH3_aq || 0) / 4);
+      heatJ += applyEquilibriumShift({
+        moles,
+        dXi,
+        deltas: { CuOH2_s: -1, NH3_aq: -4, CuNH3_4_2_aq: 1, OH_aq: 2 },
+        heatPerMolJ: -22000,
+        dt,
+        activeReactions,
+        buildMeta: () => ({
+          id: 'cu_ammine_complex',
+          equation: 'Cu(OH)₂(s) + 4NH₃(aq) ⇌ [Cu(NH₃)₄]²⁺(aq) + 2OH⁻(aq)',
+          nameVi: 'Tạo phức xanh thẫm [Cu(NH₃)₄]²⁺ trong NH₃ dư',
+          nameEn: 'Formation of deep violet-blue [Cu(NH₃)₄]²⁺ in excess NH₃',
+          descVi: 'Kết tủa Cu(OH)₂ tan trong NH₃ dư tạo phức xanh tím đặc trưng [Cu(NH₃)₄]²⁺.',
+          descEn: 'Blue Cu(OH)₂ precipitate dissolves in excess NH₃ forming deep royal violet-blue [Cu(NH₃)₄]²⁺.',
+        }),
+      });
+    } else if (dXi < -1e-11 && cH < 1e-4) {
+      if ((moles.OH_aq || 0) >= 2 * Math.abs(dXi)) {
+        dXi = Math.max(dXi, -nCuAmm, -(moles.OH_aq || 0) / 2);
+        heatJ += applyEquilibriumShift({
+          moles,
+          dXi,
+          deltas: { CuOH2_s: -1, NH3_aq: -4, CuNH3_4_2_aq: 1, OH_aq: 2 },
+          heatPerMolJ: -22000,
+          dt,
+          activeReactions,
+          buildMeta: () => ({
+            id: 'cu_ammine_complex',
+            equation: '[Cu(NH₃)₄]²⁺(aq) + 2OH⁻(aq) → Cu(OH)₂(s)↓ + 4NH₃(aq)',
+            nameVi: 'Tái kết tủa Cu(OH)₂ khi giảm NH₃',
+            nameEn: 'Reprecipitation of Cu(OH)₂ upon NH₃ depletion',
+            descVi: 'Giảm nồng độ NH₃ làm phức [Cu(NH₃)₄]²⁺ tách lại kết tủa Cu(OH)₂.',
+            descEn: 'Depleting NH₃ shifts [Cu(NH₃)₄]²⁺ back into blue Cu(OH)₂ precipitate.',
+          }),
+        });
+      } else {
+        dXi = Math.max(dXi, -nCuAmm, -(moles.H2O_l || 0) / 2);
+        heatJ += applyEquilibriumShift({
+          moles,
+          dXi,
+          deltas: { CuNH3_4_2_aq: 1, H2O_l: 2, CuOH2_s: -1, NH3_aq: -2, NH4_aq: -2 },
+          heatPerMolJ: 0,
+          dt,
+          activeReactions,
+          buildMeta: () => ({
+            id: 'cu_ammine_complex',
+            equation: '[Cu(NH₃)₄]²⁺(aq) + 2H₂O(l) → Cu(OH)₂(s)↓ + 2NH₃(aq) + 2NH₄⁺(aq)',
+            nameVi: 'Thủy phân [Cu(NH₃)₄]²⁺ tái tạo Cu(OH)₂',
+            nameEn: 'Hydrolysis of [Cu(NH₃)₄]²⁺ upon NH₃ loss',
+            descVi: 'NH₃ bay hơi làm phức [Cu(NH₃)₄]²⁺ phân hủy tái tạo kết tủa xanh lam Cu(OH)₂.',
+            descEn: 'Loss of free NH₃ decomposes [Cu(NH₃)₄]²⁺ back into blue Cu(OH)₂.',
+          }),
+        });
+      }
+    }
+  }
+
+  // 2. Silver chloride <-> Diamminesilver(I)
+  const nAgCl = moles.AgCl_s || 0;
+  const nAgAmm = moles.AgNH3_2_aq || 0;
+  const nCl = moles.Cl_aq || 0;
+  const fracAg = cNH3 > 0.12 ? Math.min(1.0, (cNH3 - 0.12) / 0.25) : 0;
+  if (nAgCl + nAgAmm > 1e-11 && (nAgCl > 1e-11 || nCl > 1e-11)) {
+    const targetAgClComp = (nAgCl + Math.min(nAgAmm, nCl + nAgCl)) * fracAg;
+    let dXi = (targetAgClComp - nAgAmm) * relax;
+    if (dXi > 1e-11 && cH < 1e-4) {
+      dXi = Math.min(dXi, nAgCl, (moles.NH3_aq || 0) / 2);
+      heatJ += applyEquilibriumShift({
+        moles,
+        dXi,
+        deltas: { AgCl_s: -1, NH3_aq: -2, AgNH3_2_aq: 1, Cl_aq: 1 },
+        heatPerMolJ: -14000,
+        dt,
+        activeReactions,
+        buildMeta: () => ({
+          id: 'agcl_ammine_complex',
+          equation: 'AgCl(s) + 2NH₃(aq) ⇌ [Ag(NH₃)₂]⁺(aq) + Cl⁻(aq)',
+          nameVi: 'Hòa tan kết tủa trắng AgCl trong dung dịch NH₃',
+          nameEn: 'Dissolution of white AgCl precipitate in NH₃',
+          descVi: 'NH₃ tạo phức tan không màu [Ag(NH₃)₂]⁺ làm tan hoàn toàn kết tủa trắng AgCl.',
+          descEn: 'Ammonia coordinates Ag⁺ to dissolve white AgCl into colorless [Ag(NH₃)₂]⁺.',
+        }),
+      });
+    } else if (dXi < -1e-11 && cH < 1e-4 && nCl > 1e-11) {
+      dXi = Math.max(dXi, -nAgAmm, -nCl);
+      heatJ += applyEquilibriumShift({
+        moles,
+        dXi,
+        deltas: { AgCl_s: -1, NH3_aq: -2, AgNH3_2_aq: 1, Cl_aq: 1 },
+        heatPerMolJ: -14000,
+        dt,
+        activeReactions,
+        buildMeta: () => ({
+          id: 'agcl_ammine_complex',
+          equation: '[Ag(NH₃)₂]⁺(aq) + Cl⁻(aq) → AgCl(s)↓ + 2NH₃(aq)',
+          nameVi: 'Tái kết tủa trắng AgCl khi giảm NH₃',
+          nameEn: 'Reprecipitation of AgCl upon NH₃ depletion',
+          descVi: 'Mất NH₃ làm tách trở lại kết tủa trắng AgCl.',
+          descEn: 'Depleting NH₃ shifts equilibrium back to white AgCl(s).',
+        }),
+      });
+    }
+  }
+
+  // 3. Silver oxide <-> Diamminesilver(I)
+  const nAg2O = moles.Ag2O_s || 0;
+  const nAgAmmNow = moles.AgNH3_2_aq || 0;
+  const nClNow = moles.Cl_aq || 0;
+  if (nAg2O > 1e-11 || (nAgAmmNow > 1e-11 && nClNow < 1e-11)) {
+    const totalAgAtoms = 2 * nAg2O + nAgAmmNow;
+    const targetComp = totalAgAtoms * fracAg;
+    let dXi = ((targetComp - nAgAmmNow) / 2) * relax;
+    if (dXi > 1e-11 && cH < 1e-4 && nAg2O > 1e-11) {
+      dXi = Math.min(dXi, nAg2O, (moles.NH3_aq || 0) / 4, moles.H2O_l || 0);
+      heatJ += applyEquilibriumShift({
+        moles,
+        dXi,
+        deltas: { Ag2O_s: -1, NH3_aq: -4, H2O_l: -1, AgNH3_2_aq: 2, OH_aq: 2 },
+        heatPerMolJ: -18000,
+        dt,
+        activeReactions,
+        buildMeta: () => ({
+          id: 'ag2o_ammine_complex',
+          equation: 'Ag₂O(s) + 4NH₃(aq) + H₂O(l) ⇌ 2[Ag(NH₃)₂]⁺(aq) + 2OH⁻(aq)',
+          nameVi: 'Hòa tan Ag₂O trong NH₃ tạo thuốc thử Tollens [Ag(NH₃)₂]⁺',
+          nameEn: 'Dissolution of Ag₂O in NH₃ forming [Ag(NH₃)₂]⁺',
+          descVi: 'Kết tủa nâu Ag₂O tan hết trong NH₃ dư tạo phức bạc ammine trong suốt.',
+          descEn: 'Dark Ag₂O dissolves completely in excess NH₃ giving clear [Ag(NH₃)₂]⁺ solution.',
+        }),
+      });
+    } else if (dXi < -1e-11 && cH < 1e-4 && nClNow < 1e-11) {
+      if ((moles.OH_aq || 0) >= 2 * Math.abs(dXi)) {
+        dXi = Math.max(dXi, -nAgAmmNow / 2, -(moles.OH_aq || 0) / 2);
+        heatJ += applyEquilibriumShift({
+          moles,
+          dXi,
+          deltas: { Ag2O_s: -1, NH3_aq: -4, H2O_l: -1, AgNH3_2_aq: 2, OH_aq: 2 },
+          heatPerMolJ: -18000,
+          dt,
+          activeReactions,
+          buildMeta: () => ({
+            id: 'ag2o_ammine_complex',
+            equation: '2[Ag(NH₃)₂]⁺(aq) + 2OH⁻(aq) → Ag₂O(s)↓ + 4NH₃(aq) + H₂O(l)',
+            nameVi: 'Tái kết tủa Ag₂O khi mất NH₃',
+            nameEn: 'Reprecipitation of Ag₂O upon NH₃ loss',
+            descVi: 'Bay hơi hết NH₃ làm tách lại kết tủa nâu đen Ag₂O.',
+            descEn: 'Depleting NH₃ shifts [Ag(NH₃)₂]⁺ back into Ag₂O(s).',
+          }),
+        });
+      } else {
+        dXi = Math.max(dXi, -nAgAmmNow / 2, -(moles.H2O_l || 0));
+        heatJ += applyEquilibriumShift({
+          moles,
+          dXi,
+          deltas: { AgNH3_2_aq: 2, H2O_l: 1, Ag2O_s: -1, NH3_aq: -2, NH4_aq: -2 },
+          heatPerMolJ: 0,
+          dt,
+          activeReactions,
+          buildMeta: () => ({
+            id: 'ag2o_ammine_complex',
+            equation: '2[Ag(NH₃)₂]⁺(aq) + H₂O(l) → Ag₂O(s)↓ + 2NH₃(aq) + 2NH₄⁺(aq)',
+            nameVi: 'Thủy phân [Ag(NH₃)₂]⁺ khi mất NH₃',
+            nameEn: 'Hydrolysis of [Ag(NH₃)₂]⁺ upon NH₃ loss',
+            descVi: 'Bay hơi NH₃ làm phức [Ag(NH₃)₂]⁺ tách lại kết tủa Ag₂O.',
+            descEn: 'Loss of NH₃ precipitates dark Ag₂O(s).',
+          }),
+        });
+      }
+    }
+  }
+
+  return heatJ;
+}
+
+/**
  * Declarative complex dissociations & ion salt pairings enforced at zero-liquid dry phase boundaries.
  * Adding a new aqueous ion or complex to SPECIES should include its dry fate here.
  */
@@ -670,6 +942,9 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   AgOH2_aq: { Ag2O_s: 0.5, H2O_g: 0.5, OH_aq: 1 },
   AgCl2_aq: { AgCl_s: 1, Cl_aq: 1 },
   CuCl2_comp_aq: { CuCl_s: 1, Cl_aq: 1 },
+  CuNH3_4_2_aq: { Cu2_aq: 1, NH3_g: 4 },
+  AgNH3_2_aq: { Ag_aq: 1, NH3_g: 2 },
+  H2O2_aq: { H2O_g: 1, O2_g: 0.5 },
   NH3_aq: { NH3_g: 1 },
 };
 
@@ -689,6 +964,9 @@ export const DRY_SALT_PAIRINGS = [
   ['Na_aq', 1, 'NO3_aq', 1, 'NaNO3_s', 1, false],
   ['Na_aq', 1, 'C2H5O_aq', 1, 'C2H5ONa_s', 1, false],
   ['Na_aq', 1, 'OH_aq', 1, 'NaOH_s', 1, false],
+  ['NH4_aq', 1, 'Cl_aq', 1, 'NH4Cl_s', 1, false],
+  ['NH4_aq', 1, 'NO3_aq', 1, 'NH4NO3_s', 1, false],
+  ['NH4_aq', 2, 'SO4_2_aq', 1, 'NH4_2_SO4_s', 1, false],
   ['H_aq', 1, 'OH_aq', 1, 'H2O_g', 1, true],
   ['H_aq', 1, 'Cl_aq', 1, 'HCl_g', 1, true],
   ['H_aq', 1, 'NO3_aq', 1, 'HNO3_g', 1, true],
@@ -762,6 +1040,17 @@ export function enforceDryPhaseBoundary(vessel) {
       if ((moles.ZnOH4_2_aq || 0) < 1e-13) delete moles.ZnOH4_2_aq;
       if ((moles.H_aq || 0) < 1e-13) delete moles.H_aq;
     }
+  }
+
+  // Deprotonate NH4+ + OH- -> NH3(g) + H2O(g) at dry boundary
+  if ((moles.NH4_aq || 0) > 0 && (moles.OH_aq || 0) > 0) {
+    const xNh4 = Math.min(moles.NH4_aq, moles.OH_aq);
+    moles.NH4_aq -= xNh4;
+    moles.OH_aq -= xNh4;
+    gasProduced.NH3_g += xNh4;
+    gasProduced.H2O_g += xNh4;
+    if (moles.NH4_aq < 1e-13) delete moles.NH4_aq;
+    if (moles.OH_aq < 1e-13) delete moles.OH_aq;
   }
 
   for (const [a, cA, b, cB, outId, cOut, isGas] of DRY_SALT_PAIRINGS) {
@@ -947,10 +1236,11 @@ export function stepVesselChemistry(vessel, dt) {
     vessel.localH2Mol = 0;
   }
 
-  // 4. Reversible [CuCl4]2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, & chemisorption/garden equilibria
+  // 4. Reversible [CuCl4]2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, ammine complexes & chemisorption/garden equilibria
   reactionHeatJ += stepChlorocuprateEquilibrium(vessel, liquidVolL, dt, activeReactions);
   reactionHeatJ += stepAmphotericHydroxideEquilibria(vessel, liquidVolL, dt, activeReactions);
   reactionHeatJ += stepChloroSilverAndCuprousEquilibria(vessel, liquidVolL, dt, activeReactions);
+  reactionHeatJ += stepAmmineComplexEquilibria(vessel, liquidVolL, dt, activeReactions);
   reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
 
   // 5. Supersaturation crystallization (including ethanol salting-out)

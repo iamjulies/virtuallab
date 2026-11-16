@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>virlab_beta_v1 Engine Verification Suite</title>
+  <title>virlab_v2 Engine Verification Suite</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; padding: 24px; max-width: 900px; margin: auto; }
     .pass { color: #34d399; font-weight: 600; }
@@ -11,13 +11,13 @@
   </style>
 </head>
 <body>
-  <h1>virlab_beta_v1 — Chemistry &amp; Physics Verification</h1>
+  <h1>virlab_v2 — Chemistry &amp; Physics Verification</h1>
   <div id="summary">Running...</div>
   <ul id="results"></ul>
   <pre id="details"></pre>
 
   <script type="module">
-    import { CONSTANTS, solutionBoilingPointK, waterBoilingPointK } from '../src/data/constants.js';
+    import { CONSTANTS, nonVolatileSoluteMoles, solutionBoilingPointK, waterBoilingPointK } from '../src/data/constants.js';
     import { APPARATUS, clampItemToStandY, getClampNeckOffsetY } from '../src/data/apparatus.js';
     import {
       GAS_DISPLAY_META,
@@ -31,7 +31,12 @@
     import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
     import { ParticleSystem } from '../src/canvas/particles.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
-    import { enforceDryPhaseBoundary, DRY_COMPLEX_DISSOCIATIONS, DRY_SALT_PAIRINGS } from '../src/engine/chemistry.js';
+    import {
+      enforceDryPhaseBoundary,
+      getEffectiveRateConstant,
+      DRY_COMPLEX_DISSOCIATIONS,
+      DRY_SALT_PAIRINGS,
+    } from '../src/engine/chemistry.js';
     import { LabSimulation } from '../src/engine/simulation.js';
     import { calcEvaporationRateMol, computeSteamOpacity } from '../src/engine/thermodynamics.js';
     import {
@@ -1466,13 +1471,17 @@
         Zn2_aq: 0.05,
         Na_aq: 0.60, // Balances OH-(0.10), C2H5O-(0.05), ZnOH4^2-(0.05), CuCl4^2-(0.05), CuOH4^2-(0.05), AgOH2-(0.05), AgCl2-(0.05), CuCl2-(0.05)
         H_aq: 0.05,
-        Cl_aq: 0.05,
-        SO4_2_aq: 0.05,
+        Cl_aq: 0.10,
+        SO4_2_aq: 0.10,
         NO3_aq: 0.15,
-        OH_aq: 0.10,
+        OH_aq: 0.20,
         C2H5O_aq: 0.05,
+        NH4_aq: 0.10,
+        H2O2_aq: 0.05,
         CuCl4_2_aq: 0.05,
         CuOH4_2_aq: 0.05,
+        CuNH3_4_2_aq: 0.05,
+        AgNH3_2_aq: 0.05,
         AgOH2_aq: 0.05,
         AgCl2_aq: 0.05,
         CuCl2_comp_aq: 0.05,
@@ -1627,6 +1636,196 @@
           etohLeftFrac < h2oLeftFrac &&
           condensedEtOH > 0.02,
         `bp(EtOH=${bpPureEtOH.toFixed(2)}°C, Az=${bpAz.toFixed(2)}°C, Phen=${bpPhen60.toFixed(1)}°C), leftFrac(EtOH=${(etohLeftFrac*100).toFixed(1)}% < H2O=${(h2oLeftFrac*100).toFixed(1)}%), distEtOH=${(condensedEtOH*1000).toFixed(1)}mmol`
+      );
+    }
+
+    // TEST 47: v2 4-Class Arrhenius Kinetics (Ionic Group 1, Diffusion-capped Hetero Group 2, Thermal-locked Group 3, Volatile NH3 Group 4)
+    {
+      const neut = REACTIONS.find((r) => r.id === 'neutralization');
+      const znHCl = REACTIONS.find((r) => r.id === 'zn_acid');
+      const znNO3 = REACTIONS.find((r) => r.id === 'zn_nitrate_nh3');
+
+      const g1_298 = getEffectiveRateConstant(neut, 298.15, false);
+      const g1_348 = getEffectiveRateConstant(neut, 348.15, false);
+      const g2_still85 = getEffectiveRateConstant(znHCl, 358.15, false);
+      const g2_stir85 = getEffectiveRateConstant(znHCl, 358.15, true);
+      const g2_unbounded85 = znHCl.k298 * Math.exp((-znHCl.eaJ / CONSTANTS.R_J_MOL_K) * (1 / 358.15 - 1 / 298.15));
+      const g3_298 = getEffectiveRateConstant(znNO3, 298.15, false);
+      const g3_355 = getEffectiveRateConstant(znNO3, 355.15, false);
+
+      // Group 4: Open heated NH3 burner vessel outgasses significantly compared to cool NH3
+      const sim = new LabSimulation();
+      const burner = sim.createApparatus('burner', 220, 428);
+      sim.setBurnerFlame(burner.id, 3);
+      const hotB = sim.createApparatus('beaker_250', 220, 310);
+      const coolB = sim.createApparatus('beaker_250', 460, 429);
+      sim.addReagentToVessel(hotB.id, 'h2o', 40);
+      sim.addReagentToVessel(hotB.id, 'nh3_25', 10);
+      sim.addReagentToVessel(coolB.id, 'h2o', 40);
+      sim.addReagentToVessel(coolB.id, 'nh3_25', 10);
+      hotB.tempK = 358.15;
+      sim.updateSupportAttachments();
+      const nh3Init = hotB.moles.NH3_aq;
+      stepSeconds(sim, 12.0, 0.05);
+
+      assert(
+        'v2 Arrhenius 4-class kinetics: Group 1 gentle, Group 2 diffusion-capped unless stirred, Group 3 locked at 25°C / unlocked at 82°C, Group 4 volatile NH3 loss',
+        g1_348 / g1_298 < 1.6 &&
+          g2_still85 < g2_unbounded85 * 0.4 &&
+          g2_stir85 > g2_still85 * 2.5 &&
+          g3_298 < 0.005 &&
+          g3_355 / g3_298 > 200 &&
+          (hotB.moles.NH3_aq || 0) < nh3Init * 0.90 &&
+          (hotB.moles.NH3_aq || 0) < (coolB.moles.NH3_aq || 0),
+        `G1=${(g1_348/g1_298).toFixed(2)}x, G2(still85=${g2_still85.toFixed(2)} vs uncap=${g2_unbounded85.toFixed(1)}, stir85=${g2_stir85.toFixed(2)}), G3(355/298=${(g3_355/g3_298).toFixed(0)}x), NH3_hot=${((hotB.moles.NH3_aq||0)*1000).toFixed(1)}<cool=${((coolB.moles.NH3_aq||0)*1000).toFixed(1)}mmol`
+      );
+    }
+
+    // TEST 48: Ammonia (NH3 25%) Buffer pH, [Cu(NH3)4]2+ & [Ag(NH3)2]+ Equilibria, and Adjacent HCl + NH3 White Smoke
+    {
+      // 1) Exact charge-balance pH solver for NH3/NH4+ buffer (~9.25) & NH4Cl (~4.6)
+      const phBuffer = computePH({ H2O_l: 5.5, NH3_aq: 0.05, NH4_aq: 0.05 }, 0.1, 298.15);
+      const phNH4Salt = computePH({ H2O_l: 5.5, NH4_aq: 0.10, Cl_aq: 0.10 }, 0.1, 298.15);
+
+      // 2) CuSO4 -> deep royal violet-blue [Cu(NH3)4]2+, destroyed back to Cu2+ by HCl
+      const simCu = new LabSimulation();
+      const bCu = simCu.createApparatus('beaker_250', 220, 429);
+      simCu.addReagentToVessel(bCu.id, 'h2o', 40);
+      simCu.addReagentToVessel(bCu.id, 'cuso4_5h2o', 2.5); // ~10 mmol CuSO4
+      stepSeconds(simCu, 4.0, 0.05);
+      simCu.addReagentToVessel(bCu.id, 'nh3_25', 15); // ~200 mmol NH3
+      stepSeconds(simCu, 4.0, 0.05);
+      const cuAmmMol = bCu.moles.CuNH3_4_2_aq || 0;
+      const cuVis = computeSolutionVisuals(bCu.moles, 0.055, bCu.tempK);
+      simCu.addReagentToVessel(bCu.id, 'hcl_37', 30); // excess acid destroys ammine complex
+      stepSeconds(simCu, 3.0, 0.05);
+      const cuAmmAfterHCl = bCu.moles.CuNH3_4_2_aq || 0;
+
+      // 3) AgCl dissolves in excess NH3 to [Ag(NH3)2]+ and re-precipitates upon HCl addition
+      const simAg = new LabSimulation();
+      const bAg = simAg.createApparatus('beaker_250', 220, 429);
+      simAg.addReagentToVessel(bAg.id, 'h2o', 30);
+      simAg.addReagentToVessel(bAg.id, 'agno3', 1.7); // 10 mmol AgNO3
+      stepSeconds(simAg, 3.0, 0.05);
+      simAg.addReagentToVessel(bAg.id, 'hcl_37', 1.2); // ~14.5 mmol HCl -> AgCl(s) + Cl-
+      stepSeconds(simAg, 2.0, 0.05);
+      simAg.addReagentToVessel(bAg.id, 'nh3_25', 15);
+      stepSeconds(simAg, 4.0, 0.05);
+      const agAmmMol = bAg.moles.AgNH3_2_aq || 0;
+      const agClLeft = bAg.moles.AgCl_s || 0;
+      simAg.addReagentToVessel(bAg.id, 'hcl_37', 25);
+      stepSeconds(simAg, 2.0, 0.05);
+      const agClReppt = bAg.moles.AgCl_s || 0;
+
+      // 4) Adjacent open HCl 37% + NH3 25% vessels emit NH4Cl white smoke
+      const simSmoke = new LabSimulation();
+      const bHCl = simSmoke.createApparatus('beaker_250', 220, 429);
+      const bNH3 = simSmoke.createApparatus('beaker_250', 340, 429);
+      simSmoke.addReagentToVessel(bHCl.id, 'hcl_37', 20);
+      simSmoke.addReagentToVessel(bNH3.id, 'nh3_25', 20);
+      stepSeconds(simSmoke, 0.5, 0.05);
+
+      assert(
+        'Ammonia 25% chemistry: NH3/NH4+ buffer pH~9.25, deep violet-blue [Cu(NH3)4]2+ & acid reset, AgCl/NH3/[Ag(NH3)2]+ cycle, adjacent HCl+NH3 smoke',
+        Math.abs(phBuffer - 9.25) < 0.08 &&
+          phNH4Salt > 4.2 &&
+          phNH4Salt < 5.0 &&
+          cuAmmMol > 0.008 &&
+          cuVis.css &&
+          cuAmmAfterHCl < 1e-4 &&
+          agAmmMol > 0.008 &&
+          agClLeft < 5e-4 &&
+          agClReppt > 0.008 &&
+          simSmoke.lastWhiteSmokePairs.length >= 1,
+        `pH(buf=${phBuffer.toFixed(2)}, NH4Cl=${phNH4Salt.toFixed(2)}), CuAmm=${(cuAmmMol*1000).toFixed(1)}->${(cuAmmAfterHCl*1000).toFixed(2)}mmol, AgAmm=${(agAmmMol*1000).toFixed(1)}/reppt=${(agClReppt*1000).toFixed(1)}mmol, smokePairs=${simSmoke.lastWhiteSmokePairs.length}`
+      );
+    }
+
+    // TEST 49: Hydrogen Peroxide (H2O2 30%) Catalysis (Cu2+ / Ag), Noble Metal Oxidation (Cu, Ag), & Alkaline Phen Bleaching
+    {
+      // 1) Pure H2O2 shelf-stable vs Cu2+ & Ag(s) catalyzed O2 evolution + exothermic heating
+      const simCat = new LabSimulation();
+      const bPure = simCat.createApparatus('beaker_250', 180, 429);
+      const bCu = simCat.createApparatus('beaker_250', 340, 429);
+      const bAg = simCat.createApparatus('beaker_250', 500, 429);
+      simCat.addReagentToVessel(bPure.id, 'h2o2_30', 15);
+      simCat.addReagentToVessel(bCu.id, 'h2o', 15);
+      simCat.addReagentToVessel(bCu.id, 'cuso4_5h2o', 0.5);
+      stepSeconds(simCat, 2.0, 0.05);
+      simCat.addReagentToVessel(bCu.id, 'h2o2_30', 15);
+      simCat.addReagentToVessel(bAg.id, 'h2o2_30', 15);
+      bAg.moles.Ag_s = 0.01;
+      const pureStart = bPure.moles.H2O2_aq;
+      stepSeconds(simCat, 5.0, 0.05);
+
+      // 2) Cu(s) and Ag(s) oxidation in HCl + H2O2
+      const simOx = new LabSimulation();
+      const bCuOx = simOx.createApparatus('beaker_250', 220, 429);
+      const bAgOx = simOx.createApparatus('beaker_250', 420, 429);
+      bCuOx.moles.Cu_s = 0.02;
+      simOx.addReagentToVessel(bCuOx.id, 'hcl_37', 10);
+      simOx.addReagentToVessel(bCuOx.id, 'h2o2_30', 10);
+      bAgOx.moles.Ag_s = 0.02;
+      simOx.addReagentToVessel(bAgOx.id, 'hcl_37', 10);
+      simOx.addReagentToVessel(bAgOx.id, 'h2o2_30', 10);
+      stepSeconds(simOx, 6.0, 0.05);
+
+      // 3) Irreversible alkaline peroxide bleaching of Phenolphthalein
+      const simBl = new LabSimulation();
+      const bBl = simBl.createApparatus('beaker_250', 220, 429);
+      simBl.addReagentToVessel(bBl.id, 'h2o', 30);
+      simBl.addReagentToVessel(bBl.id, 'nh3_25', 5);
+      simBl.addReagentToVessel(bBl.id, 'phen', 0.5);
+      simBl.addReagentToVessel(bBl.id, 'h2o2_30', 10);
+      stepSeconds(simBl, 5.0, 0.05);
+
+      assert(
+        'H2O2 30% reactivity: shelf-stable alone, rapid O2 evolution & heat with Cu2+ or Ag(s), dissolves Cu & oxidizes Ag to AgCl in HCl, bleaches alkaline Phenolphthalein',
+        (bPure.moles.H2O2_aq || 0) > pureStart * 0.98 &&
+          (bCu.escapedGasMoles.O2_g || 0) > 0.02 &&
+          bCu.tempK > 305 &&
+          (bAg.escapedGasMoles.O2_g || 0) > 0.01 &&
+          (bCuOx.moles.Cu2_aq || 0) + (bCuOx.moles.CuCl4_2_aq || 0) > 0.005 &&
+          (bAgOx.moles.AgCl_s || 0) > 0.002 &&
+          (bBl.phenIrrevFrac || 0) > 0.5,
+        `pureLeft=${(((bPure.moles.H2O2_aq||0)/pureStart)*100).toFixed(1)}%, O2_Cu=${((bCu.escapedGasMoles.O2_g||0)*1000).toFixed(1)}mmol(${(bCu.tempK-273.15).toFixed(1)}°C), O2_Ag=${((bAg.escapedGasMoles.O2_g||0)*1000).toFixed(1)}mmol, CuDiss=${(((bCuOx.moles.Cu2_aq||0)+(bCuOx.moles.CuCl4_2_aq||0))*1000).toFixed(1)}mmol, AgCl=${((bAgOx.moles.AgCl_s||0)*1000).toFixed(1)}mmol, phenBleach=${(bBl.phenIrrevFrac||0).toFixed(2)}`
+      );
+    }
+
+    // TEST 50: v2 Starter Shelf Parity, Dynamic nonVolatileSoluteMoles, & Dry Boundary on Ammonia/Peroxide Systems
+    {
+      const hasNh3 = STARTER_REAGENTS.some((r) => r.id === 'nh3_25');
+      const hasH2O2 = STARTER_REAGENTS.some((r) => r.id === 'h2o2_30');
+      const nvTest = nonVolatileSoluteMoles({
+        NH3_aq: 0.5,
+        C2H5OH_aq: 0.5,
+        NH4_aq: 0.1,
+        H2O2_aq: 0.2,
+        CuNH3_4_2_aq: 0.05,
+        AgNH3_2_aq: 0.05,
+      });
+
+      const dryCheck = {
+        CuNH3_4_2_aq: 0.05,
+        SO4_2_aq: 0.05,
+        NH4_aq: 0.10,
+        Cl_aq: 0.10,
+        H2O2_aq: 0.10,
+      };
+      const dryOut = enforceDryPhaseBoundary({ moles: dryCheck });
+      const aqLeft = Object.entries(dryCheck).filter(([id, n]) => SPECIES[id]?.phase === 'aq' && n > 1e-10);
+
+      assert(
+        'v2 Registry & dry conservation: 10 starter reagents incl. nh3_25 & h2o2_30, dynamic nonVolatileSoluteMoles excludes NH3_aq, dry NH4Cl & H2O2 decomposition clean',
+        hasNh3 &&
+          hasH2O2 &&
+          STARTER_REAGENTS.length === 10 &&
+          Math.abs(nvTest - 0.4) < 1e-9 &&
+          aqLeft.length === 0 &&
+          Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
+          Math.abs((dryOut.gasProduced.O2_g || 0) - 0.05) < 1e-9 &&
+          Math.abs((dryOut.gasProduced.NH3_g || 0) - 0.20) < 1e-9,
+        `reagents=${STARTER_REAGENTS.length}, nvSolute=${nvTest.toFixed(2)}, aqLeft=${aqLeft.length}, NH4Cl_s=${(dryCheck.NH4Cl_s||0).toFixed(2)}, O2_dry=${(dryOut.gasProduced.O2_g||0).toFixed(3)}`
       );
     }
 

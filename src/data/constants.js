@@ -75,27 +75,16 @@ export function waterVaporPressureBar(T_K) {
 }
 
 /**
- * Non-volatile dissolved solute moles (ions & indicator; excludes volatile co-solvent Ethanol).
+ * Non-volatile dissolved solute moles (ions & indicator; excludes volatile co-solvents & NH3 gas solute).
  */
 export function nonVolatileSoluteMoles(moles) {
-  return (
-    (moles.Na_aq || 0) +
-    (moles.OH_aq || 0) +
-    (moles.H_aq || 0) +
-    (moles.Cl_aq || 0) +
-    (moles.Cu2_aq || 0) +
-    (moles.Zn2_aq || 0) +
-    (moles.Ag_aq || 0) +
-    (moles.SO4_2_aq || 0) +
-    (moles.NO3_aq || 0) +
-    (moles.CuCl4_2_aq || 0) +
-    (moles.CuOH4_2_aq || 0) +
-    (moles.ZnOH4_2_aq || 0) +
-    (moles.AgOH2_aq || 0) +
-    (moles.AgCl2_aq || 0) +
-    (moles.CuCl2_comp_aq || 0) +
-    (moles.C2H5O_aq || 0)
-  );
+  let sum = 0;
+  for (const [id, n] of Object.entries(moles)) {
+    if (n > 0 && id.endsWith('_aq') && id !== 'NH3_aq' && id !== 'C2H5OH_aq') {
+      sum += n;
+    }
+  }
+  return sum;
 }
 
 /**

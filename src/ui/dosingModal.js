@@ -22,7 +22,8 @@ function formatReagentMolPreview(reg, amount) {
   }
   const entries = Object.entries(reg.perMl || {});
   const [firstId, perMlVal] = entries[0] || ['H2O_l', 0];
-  return `${SPECIES[firstId]?.formula || firstId}: ${(perMlVal * amount * 1000).toFixed(2)} mmol`;
+  const concNote = reg.molarityLabel ? ` (${reg.molarityLabel})` : '';
+  return `${SPECIES[firstId]?.formula || firstId}: ${(perMlVal * amount * 1000).toFixed(2)} mmol${concNote}`;
 }
 
 export class DosingModal {

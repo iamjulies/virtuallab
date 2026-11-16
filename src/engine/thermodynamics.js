@@ -134,13 +134,15 @@ export function stepVesselThermodynamics(
     flameLevel
   );
 
-  // Sub-boiling surface evaporation & concentrated HCl(g) fuming
+  // Sub-boiling surface evaporation & concentrated HCl(g) / NH3(g) outgassing
   let steamProducedMol = 0;
   let ethanolProducedMol = 0;
   let hclProducedMol = 0;
+  let nh3ProducedMol = 0;
   let evapCoolingJ = 0;
   const nWater = vessel.moles.H2O_l || 0;
   const nEthanol = vessel.moles.C2H5OH_l || 0;
+  const nAmmonia = vessel.moles.NH3_aq || 0;
 
   const hasOpenTube = !!(vessel.connectedTargetId || vessel.connectedSyringeId);
   const effectivePressureBar =
@@ -155,7 +157,7 @@ export function stepVesselThermodynamics(
   // and fuming conc. HCl (>21.2%) continuously outgasses dry HCl(g) through an open delivery tube.
   const canSubBoilVent = !vessel.isStoppered || (hasOpenTube && vessel.tempK >= 351.0);
   const canVentFumingHCl = !vessel.isStoppered || hasOpenTube;
-  if ((nWater > 1e-7 || nEthanol > 1e-7) && (canSubBoilVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
+  if ((nWater > 1e-7 || nEthanol > 1e-7 || nAmmonia > 1e-8) && (canSubBoilVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
     const vle = computeEthanolWaterVLE(vessel.moles, vessel.tempK, false);
     const volMl =
       computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000 +
@@ -227,6 +229,31 @@ export function stepVesselThermodynamics(
       hclProducedMol += subBoilHCl;
       evapCoolingJ -= subBoilHCl * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
     }
+
+    // 1d) Group 4 volatile reactant outgassing: NH3(aq) -> NH3(g)
+    if (nAmmonia > 1e-10) {
+      const liqVolL = Math.max(1e-5, volMl / 1000);
+      const cNH3 = nAmmonia / liqVolL;
+      const outgasNH3MolS =
+        2.4e-5 *
+        (effAreaCm2 / 4.0) *
+        Math.pow(cNH3 / 10.0, 1.25) *
+        Math.exp(0.052 * Math.max(-20, vessel.tempK - CONSTANTS.T_STD_K)) *
+        (isStirred ? 1.75 : 1.0);
+      let subBoilNH3 = Math.min(
+        nAmmonia,
+        outgasNH3MolS * dt + subBoilEvap * (nAmmonia / Math.max(1e-6, nWater)) * 3.0
+      );
+      if (subBoilEvap >= nWater * 0.9999) {
+        subBoilNH3 = nAmmonia;
+      }
+      if (subBoilNH3 > 1e-12) {
+        vessel.moles.NH3_aq = Math.max(0, nAmmonia - subBoilNH3);
+        if (vessel.moles.NH3_aq < 1e-13) delete vessel.moles.NH3_aq;
+        nh3ProducedMol += subBoilNH3;
+        evapCoolingJ -= subBoilNH3 * 23350;
+      }
+    }
   }
 
   // Update temperature
@@ -295,6 +322,18 @@ export function stepVesselThermodynamics(
         if (vessel.moles.Cl_aq < 1e-13) delete vessel.moles.Cl_aq;
         hclProducedMol += boilHCl;
       }
+      const nNH3Now = vessel.moles.NH3_aq || 0;
+      if (nNH3Now > 1e-12) {
+        const boilNH3 =
+          remainingWater - boilMol <= 1e-7
+            ? nNH3Now
+            : Math.min(nNH3Now, (nNH3Now / Math.max(1e-6, remainingWater)) * boilMol * 6.5);
+        if (boilNH3 > 1e-12) {
+          vessel.moles.NH3_aq = Math.max(0, nNH3Now - boilNH3);
+          if (vessel.moles.NH3_aq < 1e-13) delete vessel.moles.NH3_aq;
+          nh3ProducedMol += boilNH3;
+        }
+      }
 
       const actualUsedJ =
         boilMol * CONSTANTS.DELTA_H_VAP_WATER_J +
@@ -317,6 +356,7 @@ export function stepVesselThermodynamics(
     steamProducedMol,
     ethanolProducedMol,
     hclProducedMol,
+    nh3ProducedMol,
     isBoiling,
     boilingPointK,
     steamOpacity,

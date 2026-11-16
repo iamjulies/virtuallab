@@ -1086,6 +1086,13 @@ export class LabSimulation {
           const dilutionExtent = Math.min(1, nH2OExisting / (nHAdded * 20 + 0.1));
           dilutionHeatJ += 17500 * nHAdded * dilutionExtent;
         }
+      } else if (reg.id === 'nh3_25') {
+        const nH2OExisting = v.moles.H2O_l || 0;
+        const nNH3Added = reg.perMl.NH3_aq * amt;
+        if (nH2OExisting > 0.05) {
+          const dilutionExtent = Math.min(1, nH2OExisting / (nNH3Added * 16 + 0.1));
+          dilutionHeatJ += 3400 * nNH3Added * dilutionExtent;
+        }
       } else if (reg.id === 'h2o' && (v.moles.H_aq || 0) > 0.05) {
         const liqL = computeLiquidVolumeL(v.moles, v.tempK);
         const cH = (v.moles.H_aq || 0) / Math.max(1e-4, liqL);
@@ -2500,6 +2507,7 @@ export class LabSimulation {
           combinedGas[gId] = (chemRes.gasProduced[gId] || 0) + (dryRes.gasProduced[gId] || 0);
         }
         combinedGas.HCl_g += thermRes.hclProducedMol || 0;
+        combinedGas.NH3_g += thermRes.nh3ProducedMol || 0;
         combinedGas.C2H5OH_g += thermRes.ethanolProducedMol || 0;
 
         const gasEvents = stepVesselGasAndPressure(
@@ -2605,6 +2613,33 @@ export class LabSimulation {
                 descEn: 'Hot super-concentrated OH⁻ destroys the triphenylmethane skeleton; pink never recovers.',
                 vesselLabel: v.label,
               });
+            }
+          }
+
+          // Irreversible alkaline peroxide quinonoid cleavage of Phenolphthalein (H2O2 + OH-/NH3)
+          const cH2O2 = (v.moles.H2O2_aq || 0) / liqL;
+          if (cH2O2 >= 0.05) {
+            const phNow = computePH(v.moles, liqL, v.tempK) ?? 7.0;
+            if (phNow >= 8.3) {
+              const kBleachOx =
+                0.28 *
+                Math.min(4.0, cH2O2 * 0.45) *
+                Math.min(3.0, Math.pow(10, Math.min(2, phNow - 9.0))) *
+                tempFactor;
+              const prevIrrevOx = v.phenIrrevFrac || 0;
+              v.phenIrrevFrac = Math.min(1.0, prevIrrevOx + (1 - prevIrrevOx) * (1 - Math.exp(-kBleachOx * scaledDt)));
+              if (prevIrrevOx < 0.35 && v.phenIrrevFrac >= 0.35 && (this.timeSec - (v.seenReactions.phen_h2o2_bleach ?? -99)) > 6.0) {
+                v.seenReactions.phen_h2o2_bleach = this.timeSec;
+                this.addLog({
+                  type: 'reaction',
+                  equation: 'Phenolphthalein (In²⁻ hồng) + H₂O₂ —(OH⁻/NH₃)→ Sản phẩm oxi hóa không màu',
+                  nameVi: 'H₂O₂ kiềm tẩy màu bất thuận nghịch Phenolphthalein',
+                  nameEn: 'Irreversible alkaline H₂O₂ bleaching of Phenolphthalein',
+                  descVi: 'Trong môi trường kiềm, H₂O₂ oxi hóa cắt vòng quinonoid làm phai mất màu hồng chỉ thị vĩnh viễn.',
+                  descEn: 'In alkaline solution, Hydrogen peroxide oxidatively cleaves the pink quinonoid dianion permanently.',
+                  vesselLabel: v.label,
+                });
+              }
             }
           }
         }
@@ -2817,6 +2852,8 @@ export class LabSimulation {
         v.tubeLiquidFlowTimer = Math.max(0, v.tubeLiquidFlowTimer - realDeltaSec);
       }
 
+      v.lastGasRateMap = rateMap;
+
       // Emit visual particle request
       if (this.visualHooks.onParticlesNeeded) {
         this.visualHooks.onParticlesNeeded(v, {
@@ -2846,6 +2883,48 @@ export class LabSimulation {
       }
 
       this.recordHistorySnapshot(v, false);
+    }
+
+    // Gas-phase NH3(g) + HCl(g) -> NH4Cl(s) dense white smoke between adjacent open vessels
+    this.lastWhiteSmokePairs = [];
+    const openVessels = this.items.filter((v) => v.kind === 'vessel' && !v.isShattered && !v.isStoppered);
+    for (let i = 0; i < openVessels.length; i++) {
+      for (let j = i + 1; j < openVessels.length; j++) {
+        const a = openVessels[i];
+        const b = openVessels[j];
+        const hclA = a.lastGasRateMap?.HCl_g || 0;
+        const nh3A = a.lastGasRateMap?.NH3_g || 0;
+        const hclB = b.lastGasRateMap?.HCl_g || 0;
+        const nh3B = b.lastGasRateMap?.NH3_g || 0;
+        const crossPair = (hclA > 8e-6 && nh3B > 8e-6) || (hclB > 8e-6 && nh3A > 8e-6);
+        if (!crossPair) continue;
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        if (dist <= 220) {
+          const hclRate = Math.max(hclA, hclB);
+          const nh3Rate = Math.max(nh3A, nh3B);
+          const mx = 0.5 * (a.x + b.x);
+          const my = Math.min(a.y, b.y) - 42;
+          const intensity = Math.min(1.6, Math.sqrt(hclRate * nh3Rate) * 2800 + 0.35);
+          this.lastWhiteSmokePairs.push({ aId: a.id, bId: b.id, x: mx, y: my, intensity });
+          if (this.visualHooks.onAlert) {
+            this.visualHooks.onAlert('nh3_hcl_smoke', { x: mx, y: my }, { intensity });
+          }
+          const smokeKey = `smoke_${Math.min(a.id, b.id)}_${Math.max(a.id, b.id)}`;
+          this._seenSmokeLog = this._seenSmokeLog || {};
+          if (this.timeSec - (this._seenSmokeLog[smokeKey] ?? -99) > 10.0) {
+            this._seenSmokeLog[smokeKey] = this.timeSec;
+            this.addLog({
+              type: 'reaction',
+              equation: 'NH₃(g) + HCl(g) → NH₄Cl(s) (khói trắng)',
+              nameVi: 'Khói trắng Ammonium chloride giữa hai bình HCl và NH₃',
+              nameEn: 'White Ammonium chloride smoke between adjacent HCl & NH₃ vessels',
+              descVi: 'Hơi HCl(g) gặp hơi NH₃(g) trên không trung tạo ngay đám khói trắng tinh thể NH₄Cl(s).',
+              descEn: 'Escaping HCl(g) and NH₃(g) react in the air forming dense white NH₄Cl(s) aerosol smoke.',
+              vesselLabel: `${a.label} ↔ ${b.label}`,
+            });
+          }
+        }
+      }
     }
 
     // Advance thermal exchange, Antoine condensation, gravity discharge & overflow inside all Gas Syringes
