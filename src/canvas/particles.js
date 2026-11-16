@@ -25,6 +25,52 @@ export class ParticleSystem {
    * Spawn bubbles, steam, sparks, syringe spray, and overflow droplets.
    */
   emitForVessel(item, metrics, dt) {
+    if (item.kind === 'filter_funnel' || item.kind === 'burette' || item.kind === 'condenser') {
+      const rate = metrics.rateMlS || 0;
+      if (rate > 0.05 && Math.random() < Math.min(0.85, rate * dt * 8)) {
+        const dropX = item.kind === 'condenser' ? item.x + 68 : item.x;
+        const dropY =
+          item.kind === 'condenser'
+            ? item.y + 18
+            : item.y + (APPARATUS[item.typeId]?.height || 92) / 2;
+        this.particles.push({
+          kind: 'drip',
+          x: dropX,
+          y: dropY,
+          vx: (Math.random() - 0.5) * 4,
+          vy: 28,
+          r: item.kind === 'burette' ? 2.0 : 2.3,
+          life: 0,
+          maxLife: 0.45,
+          color: metrics.color || 'rgba(186, 230, 253, 0.88)',
+          splashed: false,
+        });
+      }
+      return;
+    }
+
+    if (item.kind === 'electrode') {
+      const rateMolS = metrics.rateMolS || 0;
+      if (rateMolS > 1e-7) {
+        const nBub = Math.random() < 0.65 ? 1 : 0;
+        for (let k = 0; k < nBub; k++) {
+          this.particles.push({
+            kind: 'bubble',
+            x: item.x + (Math.random() - 0.5) * 10,
+            y: item.y + 24 + Math.random() * 14,
+            vx: (Math.random() - 0.5) * 8,
+            vy: -(36 + Math.random() * 24),
+            r: 1.4 + Math.random() * 1.4,
+            minY: item.y - 24,
+            life: 0,
+            maxLife: 0.9,
+            color: metrics.gasId === 'Cl2_g' ? 'rgba(163, 230, 53, 0.72)' : 'rgba(241, 245, 249, 0.85)',
+          });
+        }
+      }
+      return;
+    }
+
     if (item.kind === 'gas_syringe') {
       const sSpec = APPARATUS.gas_syringe;
       const nozzle = getSyringeNozzlePos(item);
@@ -748,6 +794,60 @@ export class ParticleSystem {
           maxLife: 1.2 + Math.random() * 0.5,
           color: meta.liquidColor || 'rgba(186, 230, 253, 0.85)',
           splashed: false,
+        });
+      }
+    } else if (type === 'h2_pop') {
+      this.particles.push({
+        kind: 'flash',
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        r: 26,
+        life: 0,
+        maxLife: 0.28,
+        color: 'rgba(125, 211, 252, 0.92)',
+      });
+      for (let i = 0; i < 12; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = 45 + Math.random() * 90;
+        this.particles.push({
+          kind: 'spark',
+          x,
+          y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          r: 2.0 + Math.random() * 1.5,
+          life: 0,
+          maxLife: 0.35 + Math.random() * 0.2,
+          color: i % 2 === 0 ? '#7dd3fc' : '#fde047',
+        });
+      }
+    } else if (type === 'o2_relight') {
+      this.particles.push({
+        kind: 'flash',
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        r: 32,
+        life: 0,
+        maxLife: 0.42,
+        color: 'rgba(253, 224, 71, 0.95)',
+      });
+      for (let i = 0; i < 16; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = 30 + Math.random() * 80;
+        this.particles.push({
+          kind: 'spark',
+          x,
+          y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd - 20,
+          r: 1.8 + Math.random() * 1.6,
+          life: 0,
+          maxLife: 0.45 + Math.random() * 0.25,
+          color: '#fbbf24',
         });
       }
     } else if (type === 'nh3_hcl_smoke') {

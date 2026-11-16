@@ -38,8 +38,13 @@ export class DosingModal {
   openReagent(reagentId, targetVesselId) {
     const reg = STARTER_REAGENTS.find((r) => r.id === reagentId);
     if (!reg) return;
-    const vessels = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered);
-    const target = vessels.find((v) => v.id === targetVesselId) || vessels[0];
+    const containers = this.sim.items.filter(
+      (i) =>
+        !i.isShattered &&
+        !i.isBroken &&
+        (i.kind === 'vessel' || i.kind === 'filter_funnel' || (i.kind === 'burette' && reg.kind === 'liquid'))
+    );
+    const target = containers.find((v) => v.id === targetVesselId) || containers[0];
     if (!target) return;
 
     this.state = {
@@ -56,21 +61,39 @@ export class DosingModal {
 
   openTransfer(sourceVesselId) {
     const src = this.sim.getItem(sourceVesselId);
-    if (!src || src.kind !== 'vessel') return;
+    if (!src || (src.kind !== 'vessel' && src.kind !== 'filter_funnel')) return;
     const others = this.sim.items.filter(
-      (i) => i.kind === 'vessel' && i.id !== sourceVesselId && !i.isShattered
+      (i) =>
+        i.id !== sourceVesselId &&
+        !i.isShattered &&
+        !i.isBroken &&
+        (i.kind === 'vessel' || i.kind === 'filter_funnel' || i.kind === 'burette')
     );
     if (others.length === 0) return;
 
     const liqMl = computeLiquidVolumeL(src.moles, src.tempK) * 1000;
+    const hasSolidsOnly = liqMl <= 0.05 && Object.values(src.moles || {}).some((n) => n > 1e-8);
     this.state = {
-      mode: 'transfer',
+      mode: hasSolidsOnly ? 'solid_transfer' : 'transfer',
       sourceVesselId,
-      targetVesselId: others[0].id,
+      targetVesselId: (others.find((o) => o.kind === 'vessel') || others[0]).id,
       amount: Math.min(25, Math.max(0.5, Number((liqMl * 0.5).toFixed(2)))),
       rateMlS: 10,
       includePpt: false, // Default to physical Decantation (Gạn), unchecked "Shake before pour"
       pouredLive: 0,
+    };
+    this.render();
+  }
+
+  openSolidTransfer(sourceId) {
+    const src = this.sim.getItem(sourceId);
+    const vessels = this.sim.items.filter((i) => i.id !== sourceId && i.kind === 'vessel' && !i.isShattered);
+    if (!src || vessels.length === 0) return;
+    this.state = {
+      mode: 'solid_transfer',
+      sourceVesselId: sourceId,
+      targetVesselId: vessels[0].id,
+      amount: 100,
     };
     this.render();
   }
@@ -92,7 +115,15 @@ export class DosingModal {
   openSyringeTransfer(syringeId) {
     const syr = this.sim.getItem(syringeId);
     if (!syr || syr.kind !== 'gas_syringe' || syr.isBroken) return;
-    const vessels = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered);
+    const regForTarget = st.mode === 'reagent' ? STARTER_REAGENTS.find((r) => r.id === st.reagentId) : null;
+    const vessels = this.sim.items.filter(
+      (i) =>
+        !i.isShattered &&
+        !i.isBroken &&
+        (i.kind === 'vessel' ||
+          ((st.mode === 'reagent' || st.mode === 'transfer') &&
+            (i.kind === 'filter_funnel' || (i.kind === 'burette' && (!regForTarget || regForTarget.kind === 'liquid')))))
+    );
     if (vessels.length === 0) return;
 
     const totMl = computeSyringeTotalVolumeMl(syr, this.sim.environment);
@@ -125,10 +156,18 @@ export class DosingModal {
       return;
     }
     const t = this.getLang();
+    const st = this.state;
     this.container.classList.remove('hidden');
 
-    const vessels = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered);
-    const st = this.state;
+    const regForTarget = st.mode === 'reagent' ? STARTER_REAGENTS.find((r) => r.id === st.reagentId) : null;
+    const vessels = this.sim.items.filter(
+      (i) =>
+        !i.isShattered &&
+        !i.isBroken &&
+        (i.kind === 'vessel' ||
+          ((st.mode === 'reagent' || st.mode === 'transfer') &&
+            (i.kind === 'filter_funnel' || (i.kind === 'burette' && (!regForTarget || regForTarget.kind === 'liquid')))))
+    );
 
     if (st.mode === 'reagent') {
       const reg = STARTER_REAGENTS.find((r) => r.id === st.reagentId);
@@ -329,6 +368,36 @@ export class DosingModal {
           </div>
         </div>
       `;
+    } else if (st.mode === 'solid_transfer') {
+      const src = this.sim.getItem(st.sourceVesselId);
+      const validVessels = this.sim.items.filter((i) => i.id !== st.sourceVesselId && i.kind === 'vessel' && !i.isShattered);
+      this.container.innerHTML = `
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="dosing-backdrop">
+          <div class="w-full max-w-md rounded-2xl border border-theme bg-surface p-5 shadow-2xl flex flex-col gap-3.5 text-main">
+            <div class="flex items-start justify-between gap-2">
+              <h3 class="text-sm font-bold">${t('actionTransferSolid')}</h3>
+              <button type="button" id="dosing-close-x" class="px-2 py-1 rounded text-xs text-muted hover:text-main border border-theme">✕</button>
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <label class="text-xs font-medium text-muted">${t('targetVessel')}</label>
+              <select id="dosing-target-select" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium">
+                ${validVessels
+                  .map(
+                    (v) =>
+                      `<option value="${v.id}" ${v.id === st.targetVesselId ? 'selected' : ''}>${t(
+                        APPARATUS[v.typeId].i18nKey
+                      )} ${v.label}</option>`
+                  )
+                  .join('')}
+              </select>
+            </div>
+            <div class="flex items-center justify-end gap-2 pt-2">
+              <button type="button" id="dosing-cancel" class="px-3 py-2 rounded-lg border border-theme text-xs font-medium text-muted hover:text-main">${t('btnClose')}</button>
+              <button type="button" id="dosing-confirm" class="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 transition">${t('btnAddExact')}</button>
+            </div>
+          </div>
+        </div>
+      `;
     } else if (st.mode === 'tube_target') {
       const src = this.sim.getItem(st.sourceVesselId);
       const targets = this.sim.getTubeTargetsForVessel(st.sourceVesselId);
@@ -347,7 +416,7 @@ export class DosingModal {
                 .map((tgt) => {
                   const tSpec = APPARATUS[tgt.typeId];
                   const geom = computeTubingGeometry(src, tgt);
-                  const icon = tgt.kind === 'gas_syringe' ? '💉' : '🧪';
+                  const icon = tgt.kind === 'gas_syringe' ? '💉' : tgt.kind === 'condenser' ? '❄️' : '🧪';
                   return `
                     <button type="button" class="tube-pick-btn w-full p-2.5 rounded-xl border border-theme bg-surface-alt hover:border-accent flex items-center justify-between text-left transition" data-tid="${tgt.id}">
                       <span class="text-xs font-semibold">${icon} ${t(tSpec.i18nKey)} ${tgt.label}</span>
@@ -526,6 +595,8 @@ export class DosingModal {
           this.state.targetVesselId,
           this.state.amount
         );
+      } else if (this.state.mode === 'solid_transfer') {
+        this.sim.transferSolidsToVessel(this.state.sourceVesselId, this.state.targetVesselId, 1.0);
       } else {
         this.sim.startTimedVesselPour(
           this.state.sourceVesselId,

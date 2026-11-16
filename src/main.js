@@ -99,9 +99,14 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
   },
   onSelectReagent: (reagentId) => {
     const sel = sim.getItem(sim.selectedId);
-    let target = sel && sel.kind === 'vessel' && !sel.isShattered ? sel : null;
+    const validKind = (it) =>
+      it &&
+      !it.isShattered &&
+      !it.isBroken &&
+      (it.kind === 'vessel' || it.kind === 'filter_funnel' || it.kind === 'burette');
+    let target = validKind(sel) ? sel : null;
     if (!target) {
-      target = sim.items.find((i) => i.kind === 'vessel' && !i.isShattered) || null;
+      target = sim.items.find((i) => validKind(i)) || null;
     }
     if (!target) {
       // Auto-create a beaker so user isn't stuck
@@ -109,10 +114,32 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
     }
     dosingModal.openReagent(reagentId, target.id);
   },
+  onExternalDragMove: (clientX, clientY, kind, id) => {
+    workbench.setExternalDropPreview(clientX, clientY, kind, id);
+  },
+  onExternalDrop: (clientX, clientY, kind, id) => {
+    const rect = canvasEl.getBoundingClientRect();
+    const pad = 24;
+    if (
+      clientX >= rect.left - pad &&
+      clientX <= rect.right + pad &&
+      clientY >= rect.top - pad &&
+      clientY <= rect.bottom + pad
+    ) {
+      const clampedX = Math.max(rect.left + 2, Math.min(rect.right - 2, clientX));
+      const clampedY = Math.max(rect.top + 2, Math.min(rect.bottom - 2, clientY));
+      workbench.dropFromShelf(clampedX, clampedY, kind, id);
+      if (isMobileViewActive()) setMobileTab('bench');
+      refreshChrome();
+    } else {
+      workbench.setExternalDropPreview(0, 0, null, null);
+    }
+  },
 });
 
 const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
   onOpenTransfer: (sourceId) => dosingModal.openTransfer(sourceId),
+  onOpenSolidTransfer: (sourceId) => dosingModal.openSolidTransfer(sourceId),
   onOpenTubeTarget: (sourceId) => dosingModal.openTubeTarget(sourceId),
   onOpenSyringeTransfer: (syringeId) => dosingModal.openSyringeTransfer(syringeId),
   onNotify: (msg) => showToast(msg),
@@ -206,6 +233,10 @@ sim.visualHooks.onAlert = (type, vessel, meta) => {
     showToast(`💧 ${t('alertOverflow')}`);
   } else if (type === 'syringe_overflow') {
     showToast(`💧 ${t('alertSyringeOverflow')}`);
+  } else if (type === 'h2_pop') {
+    showToast(`💥 ${t('alertH2Pop')}`);
+  } else if (type === 'o2_relight') {
+    showToast(`🔥 ${t('alertO2Relight')}`);
   }
 };
 

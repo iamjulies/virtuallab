@@ -37,6 +37,9 @@ export const CONSTANTS = {
     MMHG_PER_BAR: 750.061683,
   },
 
+  // Physical electrochemical constant
+  FARADAY_C_MOL: 96485.33212,        // C/mol (F)
+
   // Phenolphthalein pKa (colorless -> pink transition centered around 9.3)
   PHENOLPHTHALEIN_PKA: 9.3,
 

@@ -227,7 +227,16 @@ button:disabled {
 .inset-0 { inset: 0; }
 .z-50 { z-index: 50; }
 .inline-block { display: inline-block; }
-.select-none { user-select: none; }
+.select-none { user-select: none; -webkit-user-select: none; }
+.pointer-events-none { pointer-events: none; }
+.touch-none { touch-action: none; }
+.drag-ghost-card {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  transform: translate(-50%, -62%);
+  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.35));
+}
 .cursor-grab { cursor: grab; }
 .cursor-pointer { cursor: pointer; }
 .active\:cursor-grabbing:active { cursor: grabbing; }

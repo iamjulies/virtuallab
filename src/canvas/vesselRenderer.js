@@ -35,7 +35,7 @@ function cylinderFillHeightFraction(areaFrac) {
   return Math.max(0, Math.min(1, 0.5 * (1 - Math.cos(theta * 0.5))));
 }
 
-function getThemePalette(isDark) {
+export function getThemePalette(isDark) {
   return isDark
     ? {
         glassStroke: 'rgba(148, 163, 184, 0.82)',
@@ -143,7 +143,7 @@ function xFallback() {
   return 0;
 }
 
-function drawLabelPill(ctx, cx, cy, text, opts = {}) {
+export function drawLabelPill(ctx, cx, cy, text, opts = {}) {
   const { pal, borderColor, font = '600 11px system-ui, sans-serif', alpha = 1.0, height = 20 } = opts;
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -357,11 +357,17 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
     const fW = 10.5 * scale;
 
     const isBeilstein = (item.beilsteinTimer || 0) > 0;
-    const outerGrad = ctx.createRadialGradient(x, fBaseY - fH * 0.35, 2, x, fBaseY - fH * 0.35, fH * (isBeilstein ? 1.05 : 0.8));
+    const isFlameTest = !isBeilstein && (item.flameTestTimer || 0) > 0 && item.flameTestColor;
+    const outerGrad = ctx.createRadialGradient(x, fBaseY - fH * 0.35, 2, x, fBaseY - fH * 0.35, fH * (isBeilstein || isFlameTest ? 1.05 : 0.8));
     if (isBeilstein) {
       outerGrad.addColorStop(0, 'rgba(110, 231, 183, 0.96)');
       outerGrad.addColorStop(0.5, 'rgba(16, 185, 129, 0.88)');
       outerGrad.addColorStop(1, 'rgba(5, 150, 105, 0.0)');
+    } else if (isFlameTest) {
+      const fCol = item.flameTestColor;
+      outerGrad.addColorStop(0, '#ffffff');
+      outerGrad.addColorStop(0.35, fCol);
+      outerGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
     } else {
       outerGrad.addColorStop(0, 'rgba(253, 224, 71, 0.95)');
       outerGrad.addColorStop(0.55, 'rgba(249, 115, 22, 0.78)');
@@ -369,9 +375,9 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
     }
 
     ctx.beginPath();
-    ctx.moveTo(x - fW * (isBeilstein ? 1.18 : 1), fBaseY);
-    ctx.quadraticCurveTo(x - fW * 1.15, fBaseY - fH * 0.5, x + wobble, fBaseY - fH * (isBeilstein ? 1.18 : 1));
-    ctx.quadraticCurveTo(x + fW * 1.15, fBaseY - fH * 0.5, x + fW * (isBeilstein ? 1.18 : 1), fBaseY);
+    ctx.moveTo(x - fW * (isBeilstein || isFlameTest ? 1.18 : 1), fBaseY);
+    ctx.quadraticCurveTo(x - fW * 1.15, fBaseY - fH * 0.5, x + wobble, fBaseY - fH * (isBeilstein || isFlameTest ? 1.18 : 1));
+    ctx.quadraticCurveTo(x + fW * 1.15, fBaseY - fH * 0.5, x + fW * (isBeilstein || isFlameTest ? 1.18 : 1), fBaseY);
     ctx.closePath();
     ctx.fillStyle = outerGrad;
     ctx.fill();
@@ -381,13 +387,18 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
     ctx.moveTo(x - fW * 0.5, fBaseY);
     ctx.quadraticCurveTo(x, fBaseY - fH * 0.55, x + fW * 0.5, fBaseY);
     ctx.closePath();
-    ctx.fillStyle = isBeilstein ? 'rgba(52, 211, 153, 0.92)' : 'rgba(56, 189, 248, 0.88)';
+    ctx.fillStyle = isBeilstein ? 'rgba(52, 211, 153, 0.92)' : isFlameTest ? item.flameTestColor : 'rgba(56, 189, 248, 0.88)';
     ctx.fill();
 
-    // Compact live power badge (+ Beilstein badge when green) on burner base
-    drawLabelPill(ctx, x, bottom + 6, isBeilstein ? `🔥 ${Math.round(powerW)} W · CuCl₂*` : `🔥 ${Math.round(powerW)} W`, {
+    // Compact live power badge (+ Beilstein / Flame Test ion)
+    const flameBadge = isBeilstein
+      ? `🔥 ${Math.round(powerW)} W · CuCl₂*`
+      : isFlameTest
+      ? `🔥 ${Math.round(powerW)} W · ${item.flameTestIon}`
+      : `🔥 ${Math.round(powerW)} W`;
+    drawLabelPill(ctx, x, bottom + 6, flameBadge, {
       pal,
-      borderColor: isBeilstein ? '#10b981' : powerFrac > 0.6 ? '#f97316' : '#f59e0b',
+      borderColor: isBeilstein ? '#10b981' : isFlameTest ? item.flameTestColor : powerFrac > 0.6 ? '#f97316' : '#f59e0b',
       font: '600 10.5px system-ui, sans-serif',
       height: 18,
     });
@@ -1373,11 +1384,12 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.restore();
   }
 
-  // Apply pour tilt + impact drop wobble around vessel center
+  // Apply pour tilt + impact drop wobble + inverted orientation around vessel center
   const effTilt = (vessel.tiltAngle || 0) + (vessel.landingTilt || 0);
-  if (effTilt) {
+  if (effTilt || vessel.isInverted) {
     ctx.translate(x, y);
-    ctx.rotate(effTilt);
+    if (effTilt) ctx.rotate(effTilt);
+    if (vessel.isInverted) ctx.scale(1, -1);
     ctx.translate(-x, -y);
   }
 
@@ -1390,10 +1402,15 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.shadowBlur = 12;
   }
 
-  // Draw subtle glass interior fill first
+  // Draw porcelain opaque interior glaze for dishes/mortars, or subtle glass interior fill
   ctx.save();
   traceVesselInteriorClip(ctx, spec, x, y);
-  ctx.fillStyle = pal.glassFill;
+  const isPorcelain = spec.shape === 'dish' || spec.shape === 'mortar';
+  ctx.fillStyle = isPorcelain
+    ? isDark
+      ? 'rgba(241, 245, 249, 0.72)'
+      : 'rgba(255, 255, 255, 0.92)'
+    : pal.glassFill;
   ctx.fill();
   ctx.clip();
 
@@ -1421,17 +1438,47 @@ export function renderVessel(ctx, vessel, opts) {
     );
 
     ctx.fillStyle = vis.css;
-    ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
-
-    if (!hasIce) {
-      // Concave meniscus highlight sized accurately to the vessel's radial slice width
+    if (vessel.isInverted) {
+      // Inverted pneumatic vessel: water occupies mouth section upward cleanly, leaving top dome for collected gas
+      const liqFillFrac = Math.max(0.05, Math.min(0.98, liqMl / Math.max(1, spec.maxVolumeMl)));
+      const divY = top + (interiorBottom - top) * liqFillFrac;
+      ctx.fillRect(x - w / 2, top - 4, w, divY - top + 4);
       ctx.beginPath();
-      ctx.moveTo(x - surfaceHalfWPx, surfaceY);
-      ctx.quadraticCurveTo(x, surfaceY + 3.2, x + surfaceHalfWPx, surfaceY);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
-      ctx.lineWidth = 1.6;
+      ctx.moveTo(x - w * 0.45, divY);
+      ctx.lineTo(x + w * 0.45, divY);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+      ctx.lineWidth = 1.4;
       ctx.stroke();
+    } else {
+      ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
+
+      if (!hasIce) {
+        // Concave meniscus (or deeper vortex funnel when magnetic stir bar spins rapidly)
+        const vortexDip = (vessel.magStirRpm || 0) > 0 && vessel.hasStirBar && !vessel.isFrozenSolid
+          ? 3.5 + Math.min(10, (vessel.magStirRpm / 1200) * 9) + Math.sin(timeNow * 24) * 1.2
+          : 3.2;
+        ctx.beginPath();
+        ctx.moveTo(x - surfaceHalfWPx, surfaceY);
+        ctx.quadraticCurveTo(x, surfaceY + vortexDip, x + surfaceHalfWPx, surfaceY);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+      }
     }
+  }
+
+  // Draw rotating PTFE magnetic stir bar on vessel bottom
+  if (vessel.hasStirBar) {
+    const spinHalf = 11 * Math.max(0.28, Math.abs(Math.cos(vessel.stirBarPhase || 0)));
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x - spinHalf, interiorBottom - 7, spinHalf * 2, 5.5, 2.5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
   }
 
   // Draw floating slush or solid frozen H2O(s) ice matrix with trapped solute tint & crystalline facets
@@ -1593,8 +1640,26 @@ export function renderVessel(ctx, vessel, opts) {
     : isSelected
     ? '#3b82f6'
     : pal.glassStroke;
-  ctx.lineWidth = isSelected || isDropTarget ? 2.5 : spec.wallThicknessMm >= 1.1 ? 2.1 : 1.75;
+  ctx.lineWidth = isSelected || isDropTarget ? 2.5 : spec.wallThicknessMm >= 1.1 || spec.shape === 'dish' || spec.shape === 'mortar' ? 2.3 : 1.75;
   ctx.stroke();
+
+  // Porcelain Pestle resting inside Mortar & Pestle (animates grinding circle on crush)
+  if (spec.isMortar) {
+    const gT = vessel.grindAnimTimer || 0;
+    const gx = gT > 0 ? Math.sin(timeNow * 22) * 10 : 4;
+    ctx.save();
+    ctx.strokeStyle = isDark ? '#e2e8f0' : '#475569';
+    ctx.lineWidth = 7.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x + gx, interiorBottom - 7);
+    ctx.lineTo(x + gx + 18, top - 20);
+    ctx.stroke();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 4.5;
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Glass vertical specular highlight & bottom heavy-base tint
   ctx.strokeStyle = pal.glassHighlight;
@@ -1800,7 +1865,11 @@ export function renderVessel(ctx, vessel, opts) {
   const tempC = kelvinToCelsius(vessel.tempK);
   const tDisp = Math.abs(tempC) < 0.05 ? 0 : tempC;
   const ph = hasWater && !vessel.isFrozenSolid ? computePH(vessel.moles, liqL, vessel.tempK) : null;
-  const pillParts = [vessel.label];
+  const pillParts = [vessel.isInverted ? `🙃 ${vessel.label}` : vessel.label];
+  if (vessel.isInverted) {
+    const colGasMol = Object.values(vessel.headspaceGasMoles || {}).reduce((s, n) => s + (n || 0), 0);
+    if (colGasMol > 1e-6) pillParts.push(`💨 ${(colGasMol * 1000).toFixed(2)}mmol`);
+  }
   if (vessel.isFrozenSolid && hasIce) {
     pillParts.push(`❄️ ${iceMl.toFixed(1)}mL`);
   } else if (hasIce && hasWater) {

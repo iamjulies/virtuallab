@@ -1,6 +1,7 @@
 import { APPARATUS } from '../data/apparatus.js';
 import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
-import { GAS_DISPLAY_META, SPECIES } from '../data/species.js';
+import { GAS_DISPLAY_META, SPECIES, STARTER_REAGENTS } from '../data/species.js';
+import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
 import {
   computeContentsMassG,
   computeLiquidVolumeL,
@@ -102,7 +103,7 @@ export class InspectorPanel {
         .join(',');
       const rxnKeys = item.activeReactions.map((r) => r.id).join(',');
       const hasFrost = (item.escapedFrostH2OMol || 0) > 1e-6 ? 1 : 0;
-      return `v|${item.id}|${item.isStoppered}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
+      return `v|${item.id}|${item.isStoppered}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'burner') {
       return `b|${item.id}|${langCode}|${logLen}`;
@@ -120,6 +121,28 @@ export class InspectorPanel {
     if (item.kind === 'gas_syringe') {
       const hasIce = (item.frozenWaterMol || 0) > 1e-5 ? 1 : 0;
       return `g|${item.id}|${hasIce}|${item.connectedFromId}|${item.clampedToId}|${standCount}|${item.isBroken}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'filter_funnel' || item.kind === 'burette') {
+      const spKeys = Object.keys(item.moles || {}).filter((k) => item.moles[k] > 1e-10).sort().join(',');
+      return `${item.kind}|${item.id}|${item.clampedToId}|${item.valveRateMlS || 0}|${item.isFiltering ? 1 : 0}|${spKeys}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'dc_power') {
+      return `dc|${item.id}|${item.powerOn ? 1 : 0}|${item.circuitMode}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'electrode') {
+      return `el|${item.id}|${item.material}|${item.dockedVesselId}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'splint') {
+      return `sp|${item.id}|${item.mode}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'condenser') {
+      return `co|${item.id}|${item.waterFlowOn ? 1 : 0}|${item.clampedToId}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'flame_loop') {
+      return `fl|${item.id}|${item.sampledIon || ''}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'indicator_strip') {
+      return `ind|${item.id}|${item.tipColor}|${item.isBleached ? 1 : 0}|${langCode}|${logLen}`;
     }
     return `other|${item.id}|${langCode}|${logLen}`;
   }
@@ -363,6 +386,225 @@ export class InspectorPanel {
           }
         </div>
       `;
+    } else if (item.kind === 'filter_funnel') {
+      const fSpec = APPARATUS.filter_funnel;
+      const stands = this.sim.items.filter((i) => i.kind === 'stand');
+      const solids = Object.entries(item.moles || {}).filter(([id, n]) => n > 1e-8 && SPECIES[id]?.phase === 's');
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t('eq_filter_funnel')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${fSpec.materialSpec} · ${fSpec.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs">
+            <div class="text-muted mb-1 font-medium">${langCode === 'en' ? 'Filter Paper Residue (Retained (s)):' : 'Bã rắn trên giấy lọc ((s)):'}</div>
+            ${
+              solids.length === 0
+                ? `<div class="text-muted">${langCode === 'en' ? '— Empty filter paper —' : '— Giấy lọc đang sạch —'}</div>`
+                : solids
+                    .map(([id, n]) => `<div class="font-mono flex justify-between"><span>${SPECIES[id]?.formula || id}</span><span>${(n * 1000).toFixed(2)} mmol</span></div>`)
+                    .join('')
+            }
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            ${solids.length > 0 ? `<button type="button" id="ins-solid-xfer" class="px-2.5 py-1.5 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">${t('actionTransferSolid')}</button>` : ''}
+            ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
+          </div>
+        </div>
+      `;
+    } else if (item.kind === 'wash_bottle') {
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm font-bold">${t('eq_wash_bottle')} ${item.label}</div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface flex justify-between items-center">
+            <span class="text-xs text-muted">H₂O(l)</span>
+            <strong class="text-sm font-mono text-sky-400" id="live-wb-vol">${(item.waterMl || 0).toFixed(1)} / 250 mL</strong>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <button type="button" id="ins-wb-squirt" class="py-1.5 px-2 rounded-lg bg-sky-600 text-white text-xs font-semibold hover:bg-sky-500">${t('actionSquirtWash')}</button>
+            <button type="button" id="ins-wb-refill" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionRefillWash')}</button>
+          </div>
+        </div>
+      `;
+    } else if (item.kind === 'condenser') {
+      const stands = this.sim.items.filter((i) => i.kind === 'stand');
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm font-bold">${t('eq_liebig_condenser')} ${item.label}</div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface flex justify-between items-center text-xs">
+            <span class="text-muted">${langCode === 'en' ? 'Distillate Condensed:' : 'Dịch chưng cất thu được:'}</span>
+            <strong class="font-mono text-sky-400" id="live-cond-ml">${(item.totalCondensedMl || 0).toFixed(2)} mL</strong>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" id="ins-cond-water" class="flex-1 py-1.5 px-2.5 rounded-lg border ${item.waterFlowOn ? 'border-sky-500/40 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface text-muted'} text-xs font-semibold">${t('actionToggleWaterFlow')} ${item.waterFlowOn ? (langCode === 'en' ? 'ON' : 'BẬT') : (langCode === 'en' ? 'OFF' : 'TẮT')}</button>
+            ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
+          </div>
+        </div>
+      `;
+    } else if (item.kind === 'burette') {
+      const liqMl = computeLiquidVolumeL(item.moles, item.tempK) * 1000;
+      const stands = this.sim.items.filter((i) => i.kind === 'stand');
+      const liqReagents = STARTER_REAGENTS.filter((r) => r.kind === 'liquid');
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm font-bold">${t('eq_burette_50')} ${item.label}</div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="p-2.5 rounded-lg border border-theme bg-surface">
+              <div class="text-xs text-muted">${t('metricVol')}</div>
+              <div class="text-sm font-bold font-mono" id="live-bur-vol">${liqMl.toFixed(2)} / 50.0 mL</div>
+            </div>
+            <div class="p-2.5 rounded-lg border border-theme bg-surface">
+              <div class="text-xs text-muted">${langCode === 'en' ? 'Dispensed (ΔV)' : 'Đã nhỏ (ΔV)'}</div>
+              <div class="text-sm font-bold font-mono text-emerald-400" id="live-bur-disp">${(item.dispensedMl || 0).toFixed(2)} mL</div>
+            </div>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <span class="text-xs text-muted font-medium">${t('buretteValveLabel')}</span>
+            <div class="grid grid-cols-4 gap-1.5">
+              ${[0, 0.15, 0.8, 3.0]
+                .map(
+                  (r) => `<button type="button" class="bur-rate-btn py-1.5 rounded border text-xs font-mono ${
+                    Math.abs((item.valveRateMlS || 0) - r) < 0.05 ? 'border-accent bg-accent/15 font-bold text-accent' : 'border-theme bg-surface text-muted'
+                  }" data-rate="${r}">${r === 0 ? (langCode === 'en' ? 'Closed' : 'Đóng') : `${r}`}</button>`
+                )
+                .join('')}
+            </div>
+            <button type="button" id="ins-bur-drop" class="py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500">${t('buretteAddDrop')}</button>
+          </div>
+          <div class="flex flex-col gap-1.5 pt-1 border-t border-theme/50">
+            <span class="text-[11px] text-muted">${t('buretteFillTitle')}</span>
+            <div class="flex gap-1.5">
+              <select id="bur-fill-sel" class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs">
+                ${liqReagents.map((r) => `<option value="${r.id}">${t(r.i18nKey)}</option>`).join('')}
+              </select>
+              <button type="button" id="ins-bur-fill" class="px-2.5 py-1 rounded bg-accent text-white text-xs font-semibold">+25 mL</button>
+            </div>
+          </div>
+          ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
+        </div>
+      `;
+    } else if (item.kind === 'splint') {
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm font-bold">${t('eq_splint')} ${item.label}</div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="text-xs text-muted">${t('splintModeLabel')}</div>
+          <div class="grid grid-cols-3 gap-1.5">
+            ${[
+              ['burning', langCode === 'en' ? '🔥 Burning' : '🔥 Đang cháy'],
+              ['glowing', langCode === 'en' ? '🔴 Glowing' : '🔴 Tàn hồng'],
+              ['unlit', langCode === 'en' ? 'Unlit' : 'Chưa đốt'],
+            ]
+              .map(
+                ([m, lbl]) => `<button type="button" class="splint-mode-btn py-1.5 rounded-lg border text-xs font-semibold ${
+                  item.mode === m ? 'border-orange-500 bg-orange-500/20 text-orange-400' : 'border-theme bg-surface text-muted'
+                }" data-mode="${m}">${lbl}</button>`
+              )
+              .join('')}
+          </div>
+        </div>
+      `;
+    } else if (item.kind === 'flame_loop') {
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm font-bold">${t('eq_flame_loop')} ${item.label}</div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs font-mono flex justify-between">
+            <span class="text-muted">${langCode === 'en' ? 'Adsorbed Ion:' : 'Ion hấp phụ:'}</span>
+            <strong>${item.sampledIon ? item.sampleLabel : langCode === 'en' ? 'Clean (NiCr)' : 'Sạch (NiCr)'}</strong>
+          </div>
+          <button type="button" id="ins-loop-wash" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionWashLoop')}</button>
+        </div>
+      `;
+    } else if (item.kind === 'indicator_strip') {
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm font-bold">${t(item.stripKind === 'litmus' ? 'eq_litmus_paper' : 'eq_ph_strip')} ${item.label}</div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface flex items-center justify-between text-xs">
+            <span class="text-muted">${langCode === 'en' ? 'Reading:' : 'Kết quả đo:'}</span>
+            <span class="flex items-center gap-2 font-mono font-bold">
+              <span class="inline-block w-4 h-4 rounded border border-theme" style="background:${item.tipColor}"></span>
+              ${item.isBleached ? (langCode === 'en' ? 'Cl₂ Bleached' : 'Bị Cl₂ tẩy trắng') : item.sampledPH != null ? `pH ≈ ${item.sampledPH.toFixed(1)} (${item.sampledFrom})` : (langCode === 'en' ? 'Untouched' : 'Chưa nhúng')}
+            </span>
+          </div>
+          <button type="button" id="ins-strip-reset" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetStrip')}</button>
+        </div>
+      `;
+    } else if (item.kind === 'dc_power') {
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm font-bold">${t('eq_dc_power')} ${item.label}</div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-3 rounded-lg border border-theme bg-slate-950 font-mono text-center">
+            <div class="text-lg font-bold text-emerald-400" id="live-dc-readout">${(item.measuredV || 0).toFixed(2)} V · ${(item.measuredCurrentA || 0).toFixed(2)} A</div>
+            <div class="text-[11px] text-sky-400 uppercase" id="live-dc-mode">${item.circuitMode || 'idle'}</div>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <div class="flex justify-between text-xs">
+              <span class="text-muted">${t('dcVoltageLabel')}</span>
+              <strong class="font-mono">${(item.voltageV ?? 6).toFixed(1)} V</strong>
+            </div>
+            <input id="dc-voltage-slider" type="range" min="0" max="12" step="0.5" value="${item.voltageV ?? 6}" class="w-full accent-blue-500" />
+          </div>
+          <button type="button" id="ins-dc-toggle" class="py-2 rounded-lg text-xs font-bold text-white transition ${
+            item.powerOn ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-sky-600 hover:bg-sky-500'
+          }">${item.powerOn ? t('dcPowerOn') : t('dcPowerOff')}</button>
+        </div>
+      `;
+    } else if (item.kind === 'electrode') {
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm font-bold">${t('eq_electrode_rod')} ${item.label}</div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="text-xs text-muted">${t('electrodeMatLabel')}</div>
+          <div class="grid grid-cols-3 gap-1.5">
+            ${Object.values(ELECTRODE_MATERIALS)
+              .map(
+                (m) => `<button type="button" class="el-mat-btn py-1.5 px-2 rounded-lg border text-xs font-semibold ${
+                  item.material === m.id ? 'border-accent bg-accent/15 text-accent' : 'border-theme bg-surface text-muted'
+                }" data-mat="${m.id}">${m.id}</button>`
+              )
+              .join('')}
+          </div>
+          ${item.polarityLabel ? `<div class="p-2 rounded border border-theme bg-surface text-xs font-mono text-center">${item.polarityLabel}</div>` : ''}
+        </div>
+      `;
+    } else if (item.kind === 'stir_bar' || item.kind === 'salt_bridge') {
+      const spc = APPARATUS[item.typeId];
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t(spc.i18nKey)} ${item.label}</div>
+              <div class="text-[11px] text-muted">${spc.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+        </div>
+      `;
     } else if (item.kind === 'vessel') {
       const spec = APPARATUS[item.typeId];
       const liqL = computeLiquidVolumeL(item.moles, item.tempK);
@@ -445,6 +687,21 @@ export class InspectorPanel {
                 : ''
             }
             ${
+              spec.invertible && !item.isStoppered
+                ? `<button type="button" id="ins-invert" class="px-2.5 py-1.5 rounded-lg border ${
+                    item.isInverted ? 'border-sky-500/60 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface'
+                  } text-xs font-medium hover:border-accent">${
+                    item.isInverted ? t('actionUprightTube') : t('actionInvertTube')
+                  }</button>`
+                : ''
+            }
+            ${
+              spec.isMortar
+                ? `<button type="button" id="ins-grind" class="px-2.5 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90">${t('actionGrindMortar')}</button>
+                   <button type="button" id="ins-solid-xfer" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionTransferSolid')}</button>`
+                : ''
+            }
+            ${
               stands.length > 0
                 ? `<button type="button" id="ins-toggle-clamp" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${
                     item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')
@@ -453,6 +710,22 @@ export class InspectorPanel {
             }
             <button type="button" id="ins-rinse" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium text-muted hover:text-main">${t('actionRinse')}</button>
           </div>
+          ${
+            item.hasStirBar
+              ? `<div class="pt-2 border-t border-theme/50 flex flex-wrap items-center justify-between gap-1.5">
+                  <span class="text-[11px] text-muted">${t('magStirLabel')}</span>
+                  <div class="flex gap-1">
+                    ${[0, 400, 800, 1200]
+                      .map(
+                        (rpm) => `<button type="button" class="mag-rpm-btn px-2 py-0.5 rounded border text-[11px] font-mono ${
+                          (item.magStirRpm || 0) === rpm ? 'border-accent bg-accent/15 font-semibold text-accent' : 'border-theme bg-surface text-muted'
+                        }" data-rpm="${rpm}">${rpm === 0 ? 'OFF' : `${rpm}`}</button>`
+                      )
+                      .join('')}
+                  </div>
+                </div>`
+              : ''
+          }
           <div class="text-[10px] font-mono text-muted">${t('pressureLimitNote')} ${popStr}${shatterStr}</div>`
           }
         </div>
@@ -690,7 +963,7 @@ export class InspectorPanel {
       });
     } else if (item.kind === 'vessel') {
       this.container.querySelector('#ins-pour')?.addEventListener('click', () => {
-        const vessels = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered);
+        const vessels = this.sim.items.filter((i) => !i.isShattered && !i.isBroken && (i.kind === 'vessel' || i.kind === 'filter_funnel' || i.kind === 'burette'));
         if (vessels.length < 2) {
           this.callbacks.onNotify?.(t('alertTransferNeedSecond'));
           return;
@@ -701,6 +974,12 @@ export class InspectorPanel {
       this.container.querySelector('#ins-rinse')?.addEventListener('click', () => this.sim.rinseVessel(item.id));
       this.container.querySelector('#ins-stopper')?.addEventListener('click', () => this.sim.toggleStopper(item.id));
       this.container.querySelector('#ins-phen-cotton')?.addEventListener('click', () => this.sim.togglePhenCotton(item.id));
+      this.container.querySelector('#ins-invert')?.addEventListener('click', () => this.sim.toggleVesselInverted(item.id));
+      this.container.querySelector('#ins-grind')?.addEventListener('click', () => this.sim.grindMortar(item.id));
+      this.container.querySelector('#ins-solid-xfer')?.addEventListener('click', () => this.callbacks.onOpenSolidTransfer?.(item.id));
+      this.container.querySelectorAll('.mag-rpm-btn').forEach((btn) => {
+        btn.addEventListener('click', () => this.sim.toggleMagneticStir(item.id, Number(btn.dataset.rpm)));
+      });
       this.container.querySelector('#ins-toggle-clamp')?.addEventListener('click', () => {
         if (item.clampedToId) {
           this.sim.detachFromStand(item.id);
@@ -727,12 +1006,107 @@ export class InspectorPanel {
           }
         }
       });
+    } else if (item.kind === 'filter_funnel' || item.kind === 'condenser' || item.kind === 'burette') {
+      this.container.querySelector('#ins-toggle-clamp')?.addEventListener('click', () => {
+        if (item.clampedToId) {
+          this.sim.detachFromStand(item.id);
+        } else {
+          const st = this.sim.items.find((i) => i.kind === 'stand');
+          if (st) {
+            item.x = st.x - 28;
+            item.y = Math.min(item.y, 320);
+            this.sim.attachToStand(item.id, st.id);
+          }
+        }
+      });
+      this.container.querySelector('#ins-solid-xfer')?.addEventListener('click', () => this.callbacks.onOpenSolidTransfer?.(item.id));
+      this.container.querySelector('#ins-cond-water')?.addEventListener('click', () => {
+        item.waterFlowOn = !item.waterFlowOn;
+        this.sim.emitChange();
+      });
+      this.container.querySelectorAll('.bur-rate-btn').forEach((btn) => {
+        btn.addEventListener('click', () => this.sim.setBuretteValveRate(item.id, Number(btn.dataset.rate)));
+      });
+      this.container.querySelector('#ins-bur-drop')?.addEventListener('click', () => this.sim.buretteDispenseDrop(item.id, 0.05));
+      this.container.querySelector('#ins-bur-fill')?.addEventListener('click', () => {
+        const regId = this.container.querySelector('#bur-fill-sel')?.value;
+        if (regId) {
+          this.sim.addReagentToVessel(item.id, regId, 25, { silentAnim: true });
+          this.sim.emitChange();
+        }
+      });
+    } else if (item.kind === 'wash_bottle') {
+      this.container.querySelector('#ins-wb-squirt')?.addEventListener('click', () => this.sim.washBottleSquirt(item.id, null, 5.0));
+      this.container.querySelector('#ins-wb-refill')?.addEventListener('click', () => {
+        item.waterMl = 250;
+        this.sim.recomputeScaleReadings();
+        this.sim.emitChange();
+      });
+    } else if (item.kind === 'splint') {
+      this.container.querySelectorAll('.splint-mode-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          item.mode = btn.dataset.mode;
+          this.sim.emitChange();
+        });
+      });
+    } else if (item.kind === 'flame_loop') {
+      this.container.querySelector('#ins-loop-wash')?.addEventListener('click', () => {
+        item.sampledIon = null;
+        item.sampledColor = null;
+        item.sampleLabel = '';
+        this.sim.emitChange();
+      });
+    } else if (item.kind === 'indicator_strip') {
+      this.container.querySelector('#ins-strip-reset')?.addEventListener('click', () => {
+        item.sampledPH = null;
+        item.isBleached = false;
+        item.sampledFrom = '';
+        item.tipColor = item.stripKind === 'universal' ? '#eab308' : '#8b5cf6';
+        this.sim.emitChange();
+      });
+    } else if (item.kind === 'dc_power') {
+      this.container.querySelector('#dc-voltage-slider')?.addEventListener('input', (e) => {
+        this.sim.setDcPowerState(item.id, { voltageV: Number(e.target.value) });
+      });
+      this.container.querySelector('#ins-dc-toggle')?.addEventListener('click', () => {
+        this.sim.setDcPowerState(item.id, { powerOn: !item.powerOn });
+      });
+    } else if (item.kind === 'electrode') {
+      this.container.querySelectorAll('.el-mat-btn').forEach((btn) => {
+        btn.addEventListener('click', () => this.sim.setElectrodeMaterial(item.id, btn.dataset.mat));
+      });
     }
   }
 
   updateLiveNumbers(t) {
     const item = this.sim.getItem(this.sim.selectedId);
     if (!item) return;
+
+    if (item.kind === 'dc_power') {
+      const rEl = this.container.querySelector('#live-dc-readout');
+      const mEl = this.container.querySelector('#live-dc-mode');
+      if (rEl) rEl.textContent = `${(item.measuredV || 0).toFixed(2)} V · ${(item.measuredCurrentA || 0).toFixed(2)} A`;
+      if (mEl) mEl.textContent = item.circuitMode || 'idle';
+      return;
+    }
+    if (item.kind === 'burette') {
+      const liqMl = computeLiquidVolumeL(item.moles, item.tempK) * 1000;
+      const vEl = this.container.querySelector('#live-bur-vol');
+      const dEl = this.container.querySelector('#live-bur-disp');
+      if (vEl) vEl.textContent = `${liqMl.toFixed(2)} / 50.0 mL`;
+      if (dEl) dEl.textContent = `${(item.dispensedMl || 0).toFixed(2)} mL`;
+      return;
+    }
+    if (item.kind === 'wash_bottle') {
+      const wEl = this.container.querySelector('#live-wb-vol');
+      if (wEl) wEl.textContent = `${(item.waterMl || 0).toFixed(1)} / 250 mL`;
+      return;
+    }
+    if (item.kind === 'condenser') {
+      const cEl = this.container.querySelector('#live-cond-ml');
+      if (cEl) cEl.textContent = `${(item.totalCondensedMl || 0).toFixed(2)} mL`;
+      return;
+    }
 
     if (item.kind === 'scale') {
       const el = this.container.querySelector('#live-scale-readout');

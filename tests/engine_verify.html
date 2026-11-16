@@ -18,7 +18,7 @@
 
   <script type="module">
     import { CONSTANTS, nonVolatileSoluteMoles, solutionBoilingPointK, waterBoilingPointK } from '../src/data/constants.js';
-    import { APPARATUS, clampItemToStandY, getClampNeckOffsetY } from '../src/data/apparatus.js';
+    import { APPARATUS, APPARATUS_ORDER, clampItemToStandY, getClampNeckOffsetY } from '../src/data/apparatus.js';
     import {
       GAS_DISPLAY_META,
       SORTED_BOTTOM_SOLID_SPECIES,
@@ -49,6 +49,8 @@
       solutionFreezingPointK,
     } from '../src/engine/equilibrium.js';
     import { EnvironmentBar } from '../src/ui/environmentBar.js';
+    import { ShelfPanel } from '../src/ui/shelfPanel.js';
+    import { LabWorkbenchCanvas } from '../src/canvas/workbench.js';
     import { I18N } from '../src/data/i18n.js';
     import {
       NON_STEAM_GASES,
@@ -2074,10 +2076,333 @@
           badgeCustomEn === 'Non-standard' &&
           badgeCryoEn === '❄️ Cryo' &&
           badgeCryoVi === '❄️ Cryo' &&
-          I18N.vi.appSubtitle.includes('virlab_v2+build.2') &&
-          I18N.en.appSubtitle.includes('virlab_v2+build.2') &&
+          I18N.vi.appSubtitle.includes('virlab_v2+') &&
+          I18N.en.appSubtitle.includes('virlab_v2+') &&
           I18N.vi.reg_cuso4_5h2o.includes('Copper(II)'),
         `min=${minAttr}, badges=${badgeSatp}|${badgeCustomEn}|${badgeCryoEn}|${badgeCryoVi}, subVi=${I18N.vi.appSubtitle}`
+      );
+    }
+
+    // TEST 56: Drag & Drop Fix (Unified Shelf Pointer Drag + Workbench Drop for Apparatus & Reagents)
+    {
+      const shelfHost = document.createElement('div');
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:500px;pointer-events:none;opacity:0.01;';
+      const canvas = document.createElement('canvas');
+      canvas.style.cssText = 'width:800px;height:500px;display:block;';
+      wrap.appendChild(canvas);
+      document.body.appendChild(wrap);
+      document.body.appendChild(shelfHost);
+
+      const sim = new LabSimulation();
+      const ps = new ParticleSystem();
+      let dosedReagent = null;
+      let dosedTarget = null;
+      const wb = new LabWorkbenchCanvas(canvas, sim, ps, {
+        onRequestDosing: (rid, tid) => {
+          dosedReagent = rid;
+          dosedTarget = tid;
+        },
+      });
+      wb.resize();
+
+      const shelf = new ShelfPanel(shelfHost, sim, () => (k) => I18N.vi[k] || k, {
+        onExternalDragMove: (cx, cy, kind, id) => wb.setExternalDropPreview(cx, cy, kind, id),
+        onExternalDrop: (cx, cy, kind, id) => wb.dropFromShelf(cx, cy, kind, id),
+      });
+      shelf.render((k) => I18N.vi[k] || k);
+
+      const hasNativeBrokenBtns = shelfHost.querySelectorAll('button[draggable="true"]').length;
+      const appCard = shelfHost.querySelector('.apparatus-card[data-apparatus-id="beaker_250"]');
+      appCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 20, clientY: 20, button: 0, pointerType: 'mouse' }));
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 300, clientY: 260, pointerType: 'mouse' }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 300, clientY: 260, pointerType: 'mouse' }));
+
+      const droppedBeaker = sim.items.find((i) => i.typeId === 'beaker_250');
+      const rect = canvas.getBoundingClientRect();
+      const targetClientX = rect.left + (droppedBeaker ? droppedBeaker.x * wb.viewScale + wb.viewOffsetX : 300);
+      const targetClientY = rect.top + (droppedBeaker ? droppedBeaker.y * wb.viewScale + wb.viewOffsetY : 260);
+
+      const regCard = shelfHost.querySelector('.reagent-card[data-reagent-id="cuso4_5h2o"]');
+      regCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 120, button: 0, pointerType: 'mouse' }));
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: targetClientX, clientY: targetClientY, pointerType: 'mouse' }));
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: targetClientX, clientY: targetClientY, pointerType: 'mouse' }));
+
+      wrap.remove();
+      shelfHost.remove();
+
+      assert(
+        'Shelf pointer drag & drop works cleanly for both apparatus & reagents onto workbench without native button drag blocks',
+        hasNativeBrokenBtns === 0 &&
+          Boolean(droppedBeaker) &&
+          dosedReagent === 'cuso4_5h2o' &&
+          dosedTarget === droppedBeaker?.id,
+        `brokenBtns=${hasNativeBrokenBtns}, beaker=${droppedBeaker?.id}, dosed=${dosedReagent}->${dosedTarget}`
+      );
+    }
+
+    // TEST 57: Group 1 Separation (Filter Funnel retains 100% solids & passes aq filtrate; Wash Bottle rinses; solid residue transfer)
+    {
+      const sim = new LabSimulation();
+      const bSrc = sim.createApparatus('erlenmeyer_250', 220, 399);
+      const bRecv = sim.createApparatus('beaker_250', 420, 427);
+      const funnel = sim.createApparatus('filter_funnel', 420, 354);
+      funnel.mountedOnVesselId = bRecv.id;
+      const wb = sim.createApparatus('wash_bottle', 540, 422);
+
+      bSrc.moles = { H2O_l: 3.0, Cu2_aq: 0.03, SO4_2_aq: 0.03, AgCl_s: 0.02 };
+      sim.stirVessel(bSrc.id);
+      sim.pourBetweenVessels(bSrc.id, funnel.id, 60, true);
+      stepSeconds(sim, 8.0, 0.04);
+
+      const washUsed = sim.washBottleSquirt(wb.id, funnel.id, 10.0);
+      stepSeconds(sim, 4.0, 0.04);
+
+      const agOnFilter = funnel.moles.AgCl_s || 0;
+      const agInRecv = bRecv.moles.AgCl_s || 0;
+      const cuInRecv = bRecv.moles.Cu2_aq || 0;
+
+      const bSolidDest = sim.createApparatus('beaker_250', 620, 427);
+      const xferMol = sim.transferSolidsToVessel(funnel.id, bSolidDest.id, 1.0);
+
+      assert(
+        'Filter Funnel + Wash Bottle: retains 100% AgCl(s) on filter paper while filtering aqueous Cu2+ into beaker & transferring washed solid cleanly',
+        Math.abs(agOnFilter - 0.02) < 1e-4 &&
+          agInRecv < 1e-6 &&
+          cuInRecv > 0.025 &&
+          washUsed === 10.0 &&
+          Math.abs(xferMol - 0.02) < 1e-4 &&
+          Math.abs((bSolidDest.moles.AgCl_s || 0) - 0.02) < 1e-4,
+        `agFilter=${agOnFilter.toFixed(4)}, agRecv=${agInRecv}, cuRecv=${cuInRecv.toFixed(4)}, wash=${washUsed}mL, xfer=${xferMol.toFixed(4)}`
+      );
+    }
+
+    // TEST 58: Group 2 Thermal/Porcelain/Splint/Flame/Pneumatic Trough/Liebig Condenser
+    {
+      const sim = new LabSimulation();
+      const dish = sim.createApparatus('porcelain_dish', 160, 459);
+      dish.moles = { H2O_l: 1.0, Na_s: 0.15 }; // Large vigorous Na flare on high thermal stress porcelain (1200 K)
+      dish.naTempK = 900;
+      stepSeconds(sim, 3.0, 0.04);
+
+      // Glowing Splint relights on real Cu2+-catalyzed H2O2 O2 evolution; Burning Splint pops on real Zn + HCl H2 evolution
+      const bO2 = sim.createApparatus('beaker_250', 300, 427);
+      bO2.moles = { H2O_l: 1.5, H2O2_aq: 0.25, Cu2_aq: 0.05, SO4_2_aq: 0.05 };
+      const splintO2 = sim.createApparatus('splint', 350, 372);
+      splintO2.mode = 'glowing';
+      splintO2.isDragging = true;
+
+      const bH2 = sim.createApparatus('beaker_250', 460, 427);
+      bH2.moles = { H2O_l: 1.5, H_aq: 0.3, Cl_aq: 0.3, Zn_s: 0.05 };
+      const splintH2 = sim.createApparatus('splint', 510, 372);
+      splintH2.mode = 'burning';
+      splintH2.isDragging = true;
+      stepSeconds(sim, 0.25, 0.05);
+
+      // Flame Loop: Na+ golden yellow & Cu2+ emerald green
+      const bNa = sim.createApparatus('beaker_250', 600, 427);
+      bNa.moles = { H2O_l: 1.0, Na_aq: 0.5, Cl_aq: 0.5 };
+      const bn = sim.createApparatus('burner', 740, 426);
+      sim.setBurnerFlame(bn.id, 3);
+      const loop = sim.createApparatus('flame_loop', 650, 427); // tip at 600 inside bNa
+      sim.step(0.05);
+      const ionSeen = loop.sampledIon;
+      loop.x = 790;
+      loop.y = bn.y - APPARATUS.burner.height / 2 - 16; // tip at 740 inside flame
+      sim.step(0.05);
+      const flameCol = bn.flameTestColor;
+
+      // Pneumatic Trough + Inverted Tube H2 collection & Liebig Condenser EtOH distillation
+      const trough = sim.createApparatus('water_trough', 240, 449);
+      const invTube = sim.createApparatus('test_tube_50', 240, 370);
+      sim.toggleVesselInverted(invTube.id);
+      const genFlask = sim.createApparatus('erlenmeyer_250', 120, 399);
+      genFlask.moles = { H2O_l: 2.0, H_aq: 0.2, Cl_aq: 0.2, Zn_s: 0.04 };
+      sim.connectTube(genFlask.id, invTube.id);
+      stepSeconds(sim, 3.0, 0.04);
+
+      const simDist = new LabSimulation();
+      const bnD = simDist.createApparatus('burner', 220, 426);
+      simDist.setBurnerFlame(bnD.id, 3);
+      const fBoil = simDist.createApparatus('erlenmeyer_250', 220, 310);
+      fBoil.moles = { H2O_l: 1.5, C2H5OH_l: 0.5 };
+      simDist.updateSupportAttachments();
+      const cond = simDist.createApparatus('liebig_condenser', 380, 220);
+      const stand = simDist.createApparatus('retort_stand', 380, 327);
+      simDist.attachToStand(cond.id, stand.id);
+      const fRecv = simDist.createApparatus('beaker_250', cond.x + 68, 427);
+      simDist.connectTube(fBoil.id, cond.id);
+      stepSeconds(simDist, 32.0, 0.05);
+
+      assert(
+        'Group 2 tools: Porcelain dish survives Na flare, Splint O2-relight & H2-pop trigger, Flame Loop emits Na+ #facc15, Inverted tube collects H2 in trough, Liebig Condenser distills EtOH/H2O',
+        !dish.isShattered &&
+          splintO2.mode === 'burning' &&
+          splintH2.lastTestEvent === 'h2_pop' &&
+          ionSeen === 'Na⁺' &&
+          flameCol === '#facc15' &&
+          (invTube.headspaceGasMoles?.H2_g || 0) > 0.0005 &&
+          (cond.totalCondensedMl || 0) > 2.0 &&
+          (fRecv.moles.C2H5OH_l || 0) > 0.01,
+        `dishShatter=${dish.isShattered}, splintO2=${splintO2.mode}, h2Event=${splintH2.lastTestEvent}, flame=${ionSeen}:${flameCol}, troughH2=${((invTube.headspaceGasMoles?.H2_g||0)*1000).toFixed(2)}mmol, condMl=${(cond.totalCondensedMl||0).toFixed(1)}, distEtOH=${((fRecv.moles.C2H5OH_l||0)*1000).toFixed(1)}mmol`
+      );
+    }
+
+    // TEST 59: Group 3 Titration & Indicators (Burette 50 mL vertical drip + Litmus & Universal pH strips)
+    {
+      const sim = new LabSimulation();
+      const bur = sim.createApparatus('burette_50', 300, 260);
+      const stand = sim.createApparatus('retort_stand', 328, 327);
+      sim.attachToStand(bur.id, stand.id);
+      sim.addReagentToVessel(bur.id, 'hcl_37', 10, { silentAnim: true });
+      const bBase = sim.createApparatus('beaker_250', 300, 427);
+      bBase.moles = { H2O_l: 3.0, Na_aq: 0.04, OH_aq: 0.04, Phenolphthalein_aq: 1e-4 };
+
+      const phStart = computePH(bBase.moles, computeLiquidVolumeL(bBase.moles, 298.15), 298.15);
+      sim.setBuretteValveRate(bur.id, 0.8);
+      stepSeconds(sim, 8.0, 0.04);
+      sim.setBuretteValveRate(bur.id, 0);
+      const phEnd = computePH(bBase.moles, computeLiquidVolumeL(bBase.moles, 298.15), 298.15);
+      const dropAdded = sim.buretteDispenseDrop(bur.id, 0.05);
+
+      const stripLit = sim.createApparatus('litmus_paper', 324, 430); // tip inside acidic bBase (x=300)
+      const bNH3 = sim.createApparatus('beaker_250', 520, 427);
+      bNH3.moles = { H2O_l: 2.0, NH3_aq: 1.0 };
+      bNH3.lastGasRateMap = { NH3_g: 0.0005 };
+      const stripUni = sim.createApparatus('ph_strip', 544, 380); // tip at open NH3 mouth
+      sim.step(0.05);
+
+      assert(
+        'Burette vertical drip titration neutralizes base (pH 13+ -> <3) with 0.05 mL drop precision; Litmus turns red & Universal strip senses NH3(g) basic vapor',
+        phStart > 12.5 &&
+          phEnd < 3.0 &&
+          (bur.dispensedMl || 0) > 6.0 &&
+          Math.abs(dropAdded - 0.05) < 1e-4 &&
+          stripLit.tipColor === '#ef4444' &&
+          (stripUni.sampledPH || 0) > 9.0,
+        `pH(${phStart.toFixed(1)}->${phEnd.toFixed(1)}), burDisp=${(bur.dispensedMl||0).toFixed(2)}mL, lit=${stripLit.tipColor}, uniPH=${stripUni.sampledPH}`
+      );
+    }
+
+    // TEST 60: Group 4 Mechanics (Mortar & Pestle crushing increases Noyes-Whitney rate; Stir Bar sustains suspension vortex)
+    {
+      const sim = new LabSimulation();
+      const mortar = sim.createApparatus('mortar_pestle', 180, 451);
+      sim.addReagentToVessel(mortar.id, 'cuso4_5h2o', 2.5, { silentAnim: true, fine: false });
+      const beforeCount = mortar.particleCounts.CuSO4_5H2O_s;
+      sim.grindMortar(mortar.id);
+      const afterCount = mortar.particleCounts.CuSO4_5H2O_s;
+
+      const bFine = sim.createApparatus('beaker_250', 340, 427);
+      bFine.moles = { H2O_l: 5.0 };
+      sim.transferSolidsToVessel(mortar.id, bFine.id, 1.0);
+
+      const bCoarse = sim.createApparatus('beaker_250', 480, 427);
+      bCoarse.moles = { H2O_l: 5.0 };
+      sim.addReagentToVessel(bCoarse.id, 'cuso4_5h2o', 2.5, { silentAnim: true, fine: false });
+
+      // Measure initial dissolution velocity cleanly at t = 0.24s under identical unstirred conditions
+      stepSeconds(sim, 0.24, 0.04);
+      const cuFine = bFine.moles.Cu2_aq || 0;
+      const cuCoarse = bCoarse.moles.Cu2_aq || 0;
+
+      // Dock Magnetic Stir Bar and run continuous stirring over precipitated AgCl(s)
+      const bar = sim.createApparatus('stir_bar', 480, 427);
+      bar.inVesselId = bCoarse.id;
+      bCoarse.hasStirBar = true;
+      bCoarse.moles.AgCl_s = 0.01;
+      bCoarse.precipitateSettle = { AgCl_s: 0.9 };
+      sim.toggleMagneticStir(bCoarse.id, 800);
+
+      stepSeconds(sim, 1.5, 0.04);
+
+      assert(
+        'Mortar crushing multiplies solid surface area (dissolving fine CuSO4 faster), and Magnetic Stir Bar keeps continuous suspension',
+        afterCount > beforeCount * 10 &&
+          cuFine > cuCoarse * 1.6 &&
+          bCoarse.magStirRpm === 800 &&
+          bCoarse.stirTimer > 0 &&
+          (bCoarse.suspensionLevel || 0) > 0.5,
+        `particles(${beforeCount}->${afterCount}), Cu_fine=${(cuFine*1000).toFixed(2)}mmol > coarse=${(cuCoarse*1000).toFixed(2)}mmol, susp=${(bCoarse.suspensionLevel||0).toFixed(2)}`
+      );
+    }
+
+    // TEST 61: Group 5 Electrochemistry (Faraday CuSO4 Electrolysis + Daniell Zn-Cu 1.10 V Galvanic Cell with Salt Bridge)
+    {
+      // Part A: Electrolysis CuSO4 -> Cu(s) cathode + O2(g) anode + H2SO4 (acidic)
+      const simEl = new LabSimulation();
+      const bEl = simEl.createApparatus('beaker_250', 300, 427);
+      bEl.moles = { H2O_l: 5.5, Cu2_aq: 0.05, SO4_2_aq: 0.05 };
+      const eAn = simEl.createApparatus('electrode_rod', 280, 412);
+      eAn.material = 'C';
+      eAn.dockedVesselId = bEl.id;
+      const eCa = simEl.createApparatus('electrode_rod', 320, 412);
+      eCa.material = 'C';
+      eCa.dockedVesselId = bEl.id;
+      const dcEl = simEl.createApparatus('dc_power', 500, 441);
+      dcEl.posElectrodeId = eAn.id;
+      dcEl.negElectrodeId = eCa.id;
+      simEl.setDcPowerState(dcEl.id, { voltageV: 6.0, powerOn: true });
+
+      stepSeconds(simEl, 25.0, 0.05);
+      const cuPlated = bEl.moles.Cu_s || 0;
+      const o2Evolved = bEl.escapedGasMoles.O2_g || 0;
+      const hProduced = bEl.moles.H_aq || 0;
+
+      // Part B: Daniell Cell Zn | ZnSO4 || CuSO4 | Cu -> ~1.10 V EMF + spontaneous discharge
+      const simGal = new LabSimulation();
+      const bZn = simGal.createApparatus('beaker_250', 220, 427);
+      bZn.moles = { H2O_l: 5.5, Zn2_aq: 0.1, SO4_2_aq: 0.1 };
+      const bCu = simGal.createApparatus('beaker_250', 320, 427);
+      bCu.moles = { H2O_l: 5.5, Cu2_aq: 0.1, SO4_2_aq: 0.1 };
+      const sb = simGal.createApparatus('salt_bridge', 270, 390);
+      const elZn = simGal.createApparatus('electrode_rod', 210, 412);
+      elZn.material = 'Zn';
+      elZn.dockedVesselId = bZn.id;
+      const elCu = simGal.createApparatus('electrode_rod', 330, 412);
+      elCu.material = 'Cu';
+      elCu.dockedVesselId = bCu.id;
+      const dcGal = simGal.createApparatus('dc_power', 500, 441);
+      dcGal.posElectrodeId = elZn.id;
+      dcGal.negElectrodeId = elCu.id;
+      simGal.setDcPowerState(dcGal.id, { voltageV: 0, powerOn: false });
+      simGal.step(0.05);
+      const openEmfV = dcGal.measuredV;
+
+      simGal.setDcPowerState(dcGal.id, { powerOn: true });
+      stepSeconds(simGal, 45.0, 0.05);
+
+      assert(
+        'Electrochemistry: Faraday CuSO4 electrolysis plates Cu(s) + O2(g) + H+, and Daniell Zn–Cu cell measures ~1.10 V EMF across Salt Bridge & discharges spontaneously',
+        dcEl.measuredCurrentA > 0.4 &&
+          cuPlated > 1e-4 &&
+          o2Evolved > 5e-5 &&
+          hProduced > 2e-4 &&
+          Math.abs(openEmfV - 1.10) < 0.04 &&
+          dcGal.circuitMode === 'galvanic' &&
+          dcGal.measuredCurrentA > 0.3 &&
+          (bCu.moles.Cu_s || 0) > 1e-4 &&
+          bZn.moles.Zn2_aq > 0.1001,
+        `I_el=${(dcEl.measuredCurrentA||0).toFixed(2)}A, Cu=${(cuPlated*1000).toFixed(3)}mmol, O2=${(o2Evolved*1000).toFixed(3)}mmol, EMF=${openEmfV.toFixed(3)}V, Cu_gal=${((bCu.moles.Cu_s||0)*1000).toFixed(3)}mmol`
+      );
+    }
+
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.3 Sync
+    {
+      const allTranslated = APPARATUS_ORDER.every((id) => {
+        const key = APPARATUS[id]?.i18nKey;
+        return Boolean(key && I18N.vi[key] && I18N.en[key]);
+      });
+      const expectedBuild = 'virlab_v2+build.3';
+      assert(
+        'Build virlab_v2+build.3 parity: All 25 apparatus translated in VI/EN, IUPAC spellings enforced',
+        APPARATUS_ORDER.length === 25 &&
+          allTranslated &&
+          I18N.vi.appSubtitle.includes(expectedBuild) &&
+          I18N.en.appSubtitle.includes(expectedBuild) &&
+          I18N.vi.eq_burette_50.includes('Buret') &&
+          !I18N.vi.reg_na.toLowerCase().includes('natri'),
+        `count=${APPARATUS_ORDER.length}, allI18n=${allTranslated}, sub=${I18N.vi.appSubtitle}`
       );
     }
 

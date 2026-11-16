@@ -1,10 +1,11 @@
 import { CONSTANTS, ethanolVaporPressureBar, waterBoilingPointK, waterVaporPressureBar } from '../data/constants.js';
-import { ALL_GAS_IDS, NON_STEAM_GAS_IDS, SPECIES } from '../data/species.js';
+import { ALL_GAS_IDS, createZeroGasMap, NON_STEAM_GAS_IDS, SPECIES } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, solutionFreezingPointK } from './equilibrium.js';
 
 export const NON_STEAM_GASES = NON_STEAM_GAS_IDS;
 export const ALL_GASES = ALL_GAS_IDS;
+const createEmptyGasMap = createZeroGasMap;
 
 export function getSyringeNozzlePos(syringe) {
   const sSpec = APPARATUS.gas_syringe;
@@ -105,6 +106,10 @@ export function computeTubingGeometry(vessel, target) {
   const p3 =
     target.kind === 'gas_syringe'
       ? { x: target.x - tSpec.width / 2 + 2, y: target.y }
+      : target.kind === 'condenser'
+      ? { x: target.x - tSpec.width / 2 + 4, y: target.y - 12 }
+      : target.isInverted
+      ? { x: target.x, y: target.y + tSpec.height / 2 - 4 }
       : { x: target.x, y: target.y - tSpec.height / 2 + (target.isStoppered ? -8 : 12) };
 
   const archTopY = Math.min(p0.y, p3.y) - 66;
@@ -112,6 +117,10 @@ export function computeTubingGeometry(vessel, target) {
   const p2 =
     target.kind === 'gas_syringe'
       ? { x: (p0.x + p3.x) * 0.5, y: Math.min(p0.y, p3.y) - 45 }
+      : target.kind === 'condenser'
+      ? { x: p3.x - 24, y: p3.y - 36 }
+      : target.isInverted
+      ? { x: p3.x - 16, y: p3.y + 38 }
       : { x: p3.x, y: archTopY };
 
   const steps = 28;
@@ -480,6 +489,58 @@ export function stepVesselGasAndPressure(
       }
       // Syringe maxed out (>= 250 mL) -> remaining gas equilibrates pressure across flask + syringe
       maxedSyringe = target;
+    } else if (target && target.kind === 'condenser' && !target.isBroken) {
+      target.vaporInMoles = target.vaporInMoles || createEmptyGasMap();
+      for (const g of NON_STEAM_GASES) {
+        if (produced[g] > 0) {
+          target.vaporInMoles[g] = (target.vaporInMoles[g] || 0) + produced[g];
+        }
+      }
+      if (totalSteam > 0) {
+        target.vaporInMoles.H2O_g = (target.vaporInMoles.H2O_g || 0) + totalSteam;
+      }
+      vessel.internalPressureBar = env.pressureBar;
+      return events;
+    } else if (target && target.kind === 'vessel' && target.isInverted && !target.isShattered) {
+      // Pneumatic water-trough displacement: collect gas in inverted dome & push water out to trough
+      target.headspaceGasMoles = target.headspaceGasMoles || createEmptyGasMap();
+      let newPermMol = 0;
+      for (const g of NON_STEAM_GASES) {
+        if (produced[g] > 0) {
+          if (g === 'HCl_g' || g === 'NH3_g') {
+            // Highly soluble gases dissolve into inverted water column
+            const dSol = produced[g];
+            if (g === 'HCl_g') {
+              target.moles.H_aq = (target.moles.H_aq || 0) + dSol;
+              target.moles.Cl_aq = (target.moles.Cl_aq || 0) + dSol;
+            } else {
+              target.moles.NH3_aq = (target.moles.NH3_aq || 0) + dSol;
+            }
+          } else {
+            target.headspaceGasMoles[g] = (target.headspaceGasMoles[g] || 0) + produced[g];
+            newPermMol += produced[g];
+          }
+        }
+      }
+      if (totalSteam > 0 && target.tempK < waterBoilingPointK(env.pressureBar)) {
+        target.moles.H2O_l = (target.moles.H2O_l || 0) + totalSteam;
+      }
+      if (newPermMol > 0) {
+        target.gasDisplacedRate = (newPermMol / 0.02);
+        const dispL = (newPermMol * CONSTANTS.R_L_BAR_MOL_K * (target.tempK || env.tempK)) / Math.max(0.1, env.pressureBar);
+        const dispMol = (dispL * 1000 * 0.997) / SPECIES.H2O_l.molarMass;
+        const actualOut = Math.min(target.moles.H2O_l || 0, dispMol);
+        if (actualOut > 0) {
+          target.moles.H2O_l -= actualOut;
+          if (target.moles.H2O_l < 1e-12) delete target.moles.H2O_l;
+          const trough = target.submergedInTroughId ? getApparatusById(target.submergedInTroughId) : null;
+          if (trough) {
+            trough.moles.H2O_l = (trough.moles.H2O_l || 0) + actualOut;
+          }
+        }
+      }
+      vessel.internalPressureBar = env.pressureBar;
+      return events;
     } else if (target && target.kind === 'vessel' && !target.isShattered && !target.isStoppered) {
       // Condense steam, scrub HCl(g) onto dry CuSO4(s) or water, dissolve NH3(g) into water, vent permanent gases
       let heatAddedJ = 0;
