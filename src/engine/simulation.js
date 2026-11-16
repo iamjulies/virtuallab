@@ -1,4 +1,4 @@
-import { CONSTANTS } from '../data/constants.js';
+import { CONSTANTS, waterBoilingPointK } from '../data/constants.js';
 import { SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
 import {
@@ -14,6 +14,8 @@ import { computeHeatCapacityJK, stepVesselThermodynamics } from './thermodynamic
 import {
   ALL_GASES,
   NON_STEAM_GASES,
+  buildCombinedSyringeLiquidMoles,
+  computeSyringeDischargeArc,
   computeSyringeGasVolumeMl,
   computeSyringeHeatCapacityJK,
   computeSyringeLiquidVolumeMl,
@@ -22,6 +24,8 @@ import {
   stepSyringeThermodynamics,
   stepVesselGasAndPressure,
 } from './gasNetwork.js';
+
+const SIM_BENCH_FLOOR_Y = 482;
 
 function createEmptyGasMap() {
   const obj = {};
@@ -57,6 +61,34 @@ function moveFluidFraction(srcMoles, srcSettleMap, fracRemove, dstMoles = null, 
     }
     if (spId === 'Phenolphthalein_aq') movedPhenMol += moveMol;
     movedHeatCapJK += moveMol * Math.max(0, sp.cp || 0);
+  }
+  return { movedHeatCapJK, movedPhenMol };
+}
+
+/**
+ * Shared stoichiometric fraction transfer from a Gas Syringe's liquid reservoir (condensed H2O + overflowed solution).
+ */
+function extractSyringeLiquidFraction(syringe, frac, dstMoles = null) {
+  const f = Math.max(0, Math.min(1, frac));
+  if (f <= 0) return { movedHeatCapJK: 0, movedPhenMol: 0 };
+
+  let movedHeatCapJK = 0;
+  let movedPhenMol = 0;
+
+  if ((syringe.condensedWaterMol || 0) > 1e-12) {
+    const moveW = syringe.condensedWaterMol * f;
+    syringe.condensedWaterMol = Math.max(0, syringe.condensedWaterMol - moveW);
+    if (syringe.condensedWaterMol < 1e-13) syringe.condensedWaterMol = 0;
+    if (dstMoles) {
+      dstMoles.H2O_l = (dstMoles.H2O_l || 0) + moveW;
+    }
+    movedHeatCapJK += moveW * CONSTANTS.CP_H2O_J_MOL_K;
+  }
+
+  if (syringe.overflowMoles) {
+    const res = moveFluidFraction(syringe.overflowMoles, null, f, dstMoles, true);
+    movedHeatCapJK += res.movedHeatCapJK;
+    movedPhenMol += res.movedPhenMol;
   }
   return { movedHeatCapJK, movedPhenMol };
 }
@@ -123,7 +155,13 @@ export class LabSimulation {
       label: `#${this.nextId - 1}`,
       x,
       y,
+      vy: 0,
+      isDragging: false,
+      fallStartY: y,
+      landingTilt: 0,
+      landingTiltVel: 0,
       restingOnId: null,
+      clampedToId: null,
     };
 
     if (spec.kind === 'vessel') {
@@ -201,6 +239,7 @@ export class LabSimulation {
         dispenseAnimColor: null,
         dispenseToX: x,
         dispenseToY: y,
+        isBroken: false,
       });
     } else if (spec.kind === 'gas_syringe') {
       Object.assign(base, {
@@ -210,6 +249,7 @@ export class LabSimulation {
         overflowBleachFrac: 0,
         tempK: this.environment.tempK,
         inflowTempK: this.environment.tempK,
+        internalPressureBar: this.environment.pressureBar,
         lastCondenseRateMolS: 0,
         inflowLiquidRateMlS: 0,
         inflowLiquidTimer: 0,
@@ -218,7 +258,18 @@ export class LabSimulation {
         overflowOutColor: null,
         wasOverflowing: false,
         connectedFromId: null,
+        isDischarging: false,
+        autoDischargeTimer: 0,
+        dischargeRateMlS: 0,
+        dischargeLiquidRateMlS: 0,
+        dischargeColor: null,
+        dischargeArc: null,
+        spilledPuddleColor: null,
         isBroken: false,
+      });
+    } else if (spec.kind === 'stand') {
+      Object.assign(base, {
+        clampY: y - 45,
       });
     }
 
@@ -245,13 +296,45 @@ export class LabSimulation {
       }
       if (other.restingOnId === id) {
         other.restingOnId = null;
+        if (!other.clampedToId) other.fallStartY = other.y;
+      }
+      if (other.clampedToId === id) {
+        other.clampedToId = null;
+        other.fallStartY = other.y;
       }
     }
     this.items = this.items.filter((it) => it.id !== id);
     if (this.selectedId === id) {
       this.selectedId = this.items[0]?.id || null;
     }
+    this.updateSupportAttachments();
     this.emitChange();
+  }
+
+  attachToStand(itemId, standId) {
+    const item = this.getItem(itemId);
+    const stand = this.getItem(standId);
+    if (!item || !stand || stand.kind !== 'stand') return false;
+    if (item.kind !== 'vessel' && item.kind !== 'gas_syringe') return false;
+    const standTop = stand.y - APPARATUS.retort_stand.height / 2;
+    const spec = APPARATUS[item.typeId];
+    item.clampedToId = stand.id;
+    item.restingOnId = null;
+    item.vy = 0;
+    item.fallStartY = null;
+    item.y = Math.max(standTop + 18, Math.min(SIM_BENCH_FLOOR_Y - spec.height / 2 - 6, item.y));
+    this.recomputeScaleReadings();
+    this.emitChange();
+    return true;
+  }
+
+  detachFromStand(itemId) {
+    const item = this.getItem(itemId);
+    if (!item || !item.clampedToId) return false;
+    item.clampedToId = null;
+    item.fallStartY = item.y;
+    this.emitChange();
+    return true;
   }
 
   setupPreset(presetName) {
@@ -261,52 +344,96 @@ export class LabSimulation {
     this.nextId = 1;
 
     if (presetName === 'gas_collect') {
-      const flask = this.createApparatus('erlenmeyer_250', 300, 482 - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      const syringe = this.createApparatus('gas_syringe', 620, 345);
-      const burner = this.createApparatus('burner', 140, 482 - APPARATUS.burner.height / 2 + 2);
+      const flask = this.createApparatus('erlenmeyer_250', 290, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      const stand = this.createApparatus('retort_stand', 685, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
+      const syringe = this.createApparatus('gas_syringe', 625, 325);
+      this.attachToStand(syringe.id, stand.id);
+      const burner = this.createApparatus('burner', 135, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
       this.connectSyringe(flask.id, syringe.id);
       this.selectedId = flask.id;
     } else {
       // Default clean bench: Scale + ISO Beaker + Burner + ISO Erlenmeyer
-      const scale = this.createApparatus('scale', 220, 482 - APPARATUS.scale.height / 2);
-      const beaker = this.createApparatus('beaker_250', 220, 482 - APPARATUS.scale.height - APPARATUS.beaker_250.height / 2 + 2);
-      const burner = this.createApparatus('burner', 560, 482 - APPARATUS.burner.height / 2 + 2);
-      const flask = this.createApparatus('erlenmeyer_250', 760, 482 - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      const scale = this.createApparatus('scale', 220, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height / 2 + 2);
+      const beaker = this.createApparatus('beaker_250', 220, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height - APPARATUS.beaker_250.height / 2 + 2);
+      const burner = this.createApparatus('burner', 560, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
+      const flask = this.createApparatus('erlenmeyer_250', 760, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
       this.updateSupportAttachments();
       this.selectedId = beaker.id;
     }
     this.emitChange();
   }
 
+  getSupportSurfaceForItem(item) {
+    const spec = APPARATUS[item.typeId];
+    const floorCenterY = SIM_BENCH_FLOOR_Y - spec.height / 2 + 2;
+    let bestCenterY = floorCenterY;
+    let bestSupport = null;
+
+    if (item.kind === 'scale' || item.kind === 'burner' || item.kind === 'stand') {
+      return { centerY: floorCenterY, support: null };
+    }
+
+    const itemBottom = item.y + spec.height / 2;
+    for (const sup of this.items) {
+      if (sup.id === item.id) continue;
+      if (sup.kind !== 'scale' && sup.kind !== 'burner') continue;
+      const supSpec = APPARATUS[sup.typeId];
+      const dx = Math.abs(item.x - sup.x);
+
+      const alreadyOnSup = item.restingOnId === sup.id;
+
+      if (sup.kind === 'scale') {
+        const scTop = sup.y - supSpec.height / 2 + 2;
+        const candY = scTop - spec.height / 2;
+        const panHalf = (supSpec.panWidth || 128) * 0.5 + 4;
+        if (dx <= panHalf && (alreadyOnSup || itemBottom <= scTop + 16) && candY < bestCenterY) {
+          bestCenterY = candY;
+          bestSupport = sup;
+        }
+      } else if (sup.kind === 'burner' && spec.heatable && item.kind === 'vessel') {
+        const bnTop = sup.y - supSpec.height / 2 + 10;
+        const candY = bnTop - spec.height / 2;
+        if (dx <= 46 && (alreadyOnSup || itemBottom <= bnTop + 16) && candY < bestCenterY) {
+          bestCenterY = candY;
+          bestSupport = sup;
+        }
+      }
+    }
+    return { centerY: bestCenterY, support: bestSupport };
+  }
+
   /**
-   * Automatically snap vessels onto scales or burners below them,
-   * and align resting Y coordinates.
+   * Automatically snap items gently touching scales or burners below them,
+   * and detach supports that were slid away from underneath an item.
    */
   updateSupportAttachments() {
     for (const it of this.items) {
-      if (it.kind !== 'vessel') continue;
+      if (it.kind === 'scale' || it.kind === 'burner' || it.kind === 'stand') continue;
+      if (it.clampedToId) {
+        const stand = this.getItem(it.clampedToId);
+        if (stand && stand.kind === 'stand') {
+          it.restingOnId = null;
+          continue;
+        }
+        it.clampedToId = null;
+      }
+
+      const prevSupId = it.restingOnId;
       it.restingOnId = null;
-      const spec = APPARATUS[it.typeId];
-      const vesselBottom = it.y + spec.height / 2;
-
-      for (const sup of this.items) {
-        if (sup.kind !== 'scale' && sup.kind !== 'burner') continue;
-        const supSpec = APPARATUS[sup.typeId];
-        const dx = Math.abs(it.x - sup.x);
-        const supTop = sup.y - supSpec.height / 2;
-
-        if (sup.kind === 'scale' && dx < 72 && Math.abs(vesselBottom - supTop) < 56) {
-          it.restingOnId = sup.id;
-          it.x = sup.x;
-          it.y = supTop - spec.height / 2 + 2;
-          break;
-        }
-        if (sup.kind === 'burner' && spec.heatable && dx < 68 && Math.abs(vesselBottom - (supTop + 10)) < 64) {
-          it.restingOnId = sup.id;
-          it.x = sup.x;
-          it.y = supTop + 10 - spec.height / 2;
-          break;
-        }
+      const { centerY, support } = this.getSupportSurfaceForItem(it);
+      if (support && Math.abs(it.y - centerY) <= 18) {
+        it.restingOnId = support.id;
+        it.y = centerY;
+        if (Math.abs(it.x - support.x) < 28) it.x = support.x;
+        it.vy = 0;
+        it.fallStartY = null;
+      } else if (!support && Math.abs(it.y - centerY) <= 10) {
+        it.y = centerY;
+        it.vy = 0;
+        it.fallStartY = null;
+      } else if (prevSupId && !support && !it.isDragging) {
+        // Support beneath was moved away -> begin real freefall
+        it.fallStartY = it.fallStartY ?? it.y;
       }
     }
     this.recomputeScaleReadings();
@@ -316,10 +443,16 @@ export class LabSimulation {
     for (const sc of this.items) {
       if (sc.kind !== 'scale') continue;
       let loadG = 0;
-      for (const v of this.items) {
-        if (v.kind === 'vessel' && v.restingOnId === sc.id) {
-          const spec = APPARATUS[v.typeId];
-          loadG += spec.tareMassG + computeContentsMassG(v.moles);
+      for (const it of this.items) {
+        if (it.restingOnId !== sc.id) continue;
+        const spec = APPARATUS[it.typeId];
+        if (it.kind === 'vessel') {
+          loadG += (spec.tareMassG || 0) + computeContentsMassG(it.moles);
+        } else if (it.kind === 'gas_syringe') {
+          const syrMoles = buildCombinedSyringeLiquidMoles(it);
+          loadG += 185.0 + computeContentsMassG(syrMoles);
+        } else if (it.kind === 'pipette') {
+          loadG += 18.0 + computeContentsMassG(it.moles || {});
         }
       }
       sc.measuredG = loadG - sc.tareG;
@@ -549,21 +682,262 @@ export class LabSimulation {
     this.emitChange();
   }
 
-  ventSyringe(syringeId) {
+  ventSyringe(syringeId, immediate = false) {
     const syr = this.getItem(syringeId);
-    if (!syr || syr.kind !== 'gas_syringe') return;
-    syr.gasMoles = createEmptyGasMap();
-    syr.condensedWaterMol = 0;
-    syr.overflowMoles = {};
-    syr.overflowBleachFrac = 0;
-    syr.lastCondenseRateMolS = 0;
-    syr.inflowLiquidRateMlS = 0;
-    syr.inflowLiquidTimer = 0;
-    syr.inflowLiquidColor = null;
-    syr.overflowOutRateMlS = 0;
-    syr.overflowOutColor = null;
-    syr.wasOverflowing = false;
+    if (!syr || syr.kind !== 'gas_syringe' || syr.isBroken) return false;
+    if (syr.connectedFromId) {
+      this.disconnectSyringe(syr.connectedFromId);
+    }
+    if (immediate) {
+      syr.gasMoles = createEmptyGasMap();
+      syr.condensedWaterMol = 0;
+      syr.overflowMoles = {};
+      syr.overflowBleachFrac = 0;
+      syr.lastCondenseRateMolS = 0;
+      syr.inflowLiquidRateMlS = 0;
+      syr.inflowLiquidTimer = 0;
+      syr.inflowLiquidColor = null;
+      syr.overflowOutRateMlS = 0;
+      syr.overflowOutColor = null;
+      syr.wasOverflowing = false;
+      syr.isDischarging = false;
+      syr.autoDischargeTimer = 0;
+      syr.dischargeLiquidRateMlS = 0;
+      syr.dischargeArc = null;
+      this.emitChange();
+      return true;
+    }
+
+    const totMl = computeSyringeTotalVolumeMl(syr, this.environment);
+    if (totMl <= 0.005) return false;
+    syr.autoDischargeTimer = Math.max(0.55, Math.min(2.2, totMl / 55.0 + 0.45));
     this.emitChange();
+    return true;
+  }
+
+  setSyringeDischarge(syringeId, active, mode = 'both') {
+    const syr = this.getItem(syringeId);
+    if (!syr || syr.kind !== 'gas_syringe' || syr.isBroken) return false;
+    if (active && syr.connectedFromId) {
+      this.disconnectSyringe(syr.connectedFromId);
+    }
+    syr.isDischarging = !!active;
+    syr.dischargeMode = mode || 'both';
+    if (!active) {
+      syr.dischargeLiquidRateMlS = 0;
+    }
+    this.emitChange();
+    return true;
+  }
+
+  pumpSyringeToVessel(syringeId, targetVesselId, targetVolMl = null) {
+    const syr = this.getItem(syringeId);
+    const dst = this.getItem(targetVesselId);
+    if (!syr || syr.kind !== 'gas_syringe' || syr.isBroken) return 0;
+    if (!dst || dst.kind !== 'vessel' || dst.isShattered) return 0;
+    if (syr.connectedFromId) this.disconnectSyringe(syr.connectedFromId);
+
+    const syrT = syr.tempK ?? this.environment.tempK;
+    const liqMl = computeSyringeLiquidVolumeMl(syr, this.environment);
+    const gasMl = computeSyringeGasVolumeMl(syr, this.environment);
+    const totMl = liqMl + gasMl;
+    if (totMl <= 0.005) return 0;
+
+    const reqMl = targetVolMl == null ? totMl : Math.min(totMl, Math.max(0, Number(targetVolMl) || 0));
+    const fracTotal = Math.min(1, reqMl / totMl);
+    let transferredMl = 0;
+
+    // 1. Transfer stoichiometric aqueous liquid + solutes first
+    if (liqMl > 0.005) {
+      const liqMoveFrac = targetVolMl == null ? 1.0 : Math.min(1, reqMl / liqMl);
+      const combMoles = buildCombinedSyringeLiquidMoles(syr);
+      const combL = computeLiquidVolumeL(combMoles, syrT);
+      const vis = combL > 1e-8
+        ? computeSolutionVisuals(combMoles, combL, computePH(combMoles, combL, syrT), 2.5, syr.overflowBleachFrac || 0)
+        : null;
+      const cDstOld = computeHeatCapacityJK(dst);
+      const oldDstPhen = dst.moles.Phenolphthalein_aq || 0;
+      const oldDstBleach = dst.phenBleachFrac || 0;
+
+      const { movedHeatCapJK, movedPhenMol } = extractSyringeLiquidFraction(syr, liqMoveFrac, dst.moles);
+      if (movedPhenMol > 0) {
+        const totP = oldDstPhen + movedPhenMol;
+        dst.phenBleachFrac =
+          totP > 1e-14 ? (oldDstPhen * oldDstBleach + movedPhenMol * (syr.overflowBleachFrac || 0)) / totP : 0;
+      }
+      if (cDstOld + movedHeatCapJK > 0) {
+        dst.tempK = (cDstOld * dst.tempK + movedHeatCapJK * syrT) / (cDstOld + movedHeatCapJK);
+      }
+      transferredMl += liqMl * liqMoveFrac;
+      this.activePourStream = {
+        fromX: syr.x - (APPARATUS.gas_syringe.width / 2 - 2),
+        fromY: syr.y,
+        toX: dst.x,
+        toY: dst.y - APPARATUS[dst.typeId].height * 0.28,
+        color: vis ? vis.css : 'rgba(186, 230, 253, 0.85)',
+        timer: 0.35,
+        pouredMl: liqMl * liqMoveFrac,
+      };
+    }
+
+    // 2. Inject gas fraction: steam condenses & soluble HCl(g) dissolves into dst water; insoluble gases bubble out
+    if (gasMl > 0.01 && (targetVolMl == null || transferredMl < reqMl)) {
+      const remGasFrac = targetVolMl == null ? 1.0 : Math.min(1, (reqMl - transferredMl) / gasMl);
+      let heatAddedJ = 0;
+      let addedCapJK = 0;
+      const steamMol = (syr.gasMoles.H2O_g || 0) * remGasFrac;
+      if (steamMol > 1e-10) {
+        syr.gasMoles.H2O_g = Math.max(0, (syr.gasMoles.H2O_g || 0) - steamMol);
+        if (dst.tempK < waterBoilingPointK(this.environment.pressureBar)) {
+          dst.moles.H2O_l = (dst.moles.H2O_l || 0) + steamMol;
+          heatAddedJ += steamMol * CONSTANTS.DELTA_H_VAP_WATER_J;
+          addedCapJK += steamMol * CONSTANTS.CP_H2O_J_MOL_K;
+        } else {
+          dst.escapedGasMoles.H2O_g = (dst.escapedGasMoles.H2O_g || 0) + steamMol;
+        }
+      }
+      const hclMol = (syr.gasMoles.HCl_g || 0) * remGasFrac;
+      if (hclMol > 1e-10) {
+        syr.gasMoles.HCl_g = Math.max(0, (syr.gasMoles.HCl_g || 0) - hclMol);
+        if ((dst.moles.H2O_l || 0) > 1e-4) {
+          dst.moles.H_aq = (dst.moles.H_aq || 0) + hclMol;
+          dst.moles.Cl_aq = (dst.moles.Cl_aq || 0) + hclMol;
+          heatAddedJ += hclMol * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
+        } else {
+          dst.escapedGasMoles.HCl_g = (dst.escapedGasMoles.HCl_g || 0) + hclMol;
+        }
+      }
+      for (const g of NON_STEAM_GASES) {
+        if (g === 'HCl_g') continue;
+        const m = (syr.gasMoles[g] || 0) * remGasFrac;
+        if (m > 1e-10) {
+          syr.gasMoles[g] = Math.max(0, (syr.gasMoles[g] || 0) - m);
+          dst.escapedGasMoles[g] = (dst.escapedGasMoles[g] || 0) + m;
+        }
+      }
+      if (heatAddedJ > 0) {
+        const cDst = computeHeatCapacityJK(dst);
+        dst.tempK = Math.min(waterBoilingPointK(this.environment.pressureBar), dst.tempK + heatAddedJ / Math.max(30, cDst + addedCapJK));
+      }
+      transferredMl += gasMl * remGasFrac;
+    }
+
+    this.checkOverflow(dst);
+    this.recomputeScaleReadings();
+    this.emitChange();
+    return transferredMl;
+  }
+
+  stepSyringeDischarge(syringe, dt) {
+    if (!syringe || syringe.isBroken) return;
+    const isAuto = (syringe.autoDischargeTimer || 0) > 0;
+    const isActive = syringe.isDischarging || isAuto;
+    if (!isActive) {
+      syringe.dischargeLiquidRateMlS = 0;
+      syringe.dischargeArc = null;
+      return;
+    }
+    if (isAuto) {
+      syringe.autoDischargeTimer = Math.max(0, syringe.autoDischargeTimer - dt);
+    }
+
+    const liqMl = computeSyringeLiquidVolumeMl(syringe, this.environment);
+    const gasMl = computeSyringeGasVolumeMl(syringe, this.environment);
+    const totalMl = liqMl + gasMl;
+    if (totalMl <= 0.002) {
+      syringe.isDischarging = false;
+      syringe.autoDischargeTimer = 0;
+      syringe.dischargeLiquidRateMlS = 0;
+      syringe.dischargeArc = null;
+      return;
+    }
+
+    const syrT = syringe.tempK ?? this.environment.tempK;
+    const arc = computeSyringeDischargeArc(
+      syringe,
+      this.items,
+      SIM_BENCH_FLOOR_Y,
+      CONSTANTS.GRAVITY_PX_S2 || 1800
+    );
+    syringe.dischargeArc = arc;
+
+    // Rate scales so both 1 mL condensate and 200 mL gas finish smoothly in ~0.6..2.2s
+    const rateMlS = isAuto
+      ? Math.max(14, totalMl / Math.max(0.25, syringe.autoDischargeTimer + dt))
+      : Math.max(18, Math.min(115, 22 + totalMl * 0.45));
+    const pushTotalMl = Math.min(totalMl, rateMlS * dt);
+
+    let pushLiqMl = 0;
+    let pushGasMl = 0;
+    if (liqMl > 0.002) {
+      pushLiqMl = Math.min(liqMl, pushTotalMl * (liqMl / totalMl > 0.08 ? 0.85 : 0.35 + (gasMl < 1 ? 0.65 : 0)));
+      if (gasMl <= 0.05) pushLiqMl = Math.min(liqMl, pushTotalMl);
+      pushGasMl = Math.min(gasMl, Math.max(0, pushTotalMl - pushLiqMl));
+    } else {
+      pushGasMl = Math.min(gasMl, pushTotalMl);
+    }
+
+    let liqColor = 'rgba(186, 230, 253, 0.86)';
+    if (pushLiqMl > 1e-4 && liqMl > 1e-5) {
+      const combMoles = buildCombinedSyringeLiquidMoles(syringe);
+      const combL = computeLiquidVolumeL(combMoles, syrT);
+      if (combL > 1e-8) {
+        liqColor = computeSolutionVisuals(
+          combMoles,
+          combL,
+          computePH(combMoles, combL, syrT),
+          2.5,
+          syringe.overflowBleachFrac || 0
+        ).css;
+      }
+      const fracLiq = Math.min(1, pushLiqMl / liqMl);
+      const catchDst = arc.hitTargetVessel;
+      if (catchDst && !catchDst.isShattered && !catchDst.isStoppered) {
+        const cOld = computeHeatCapacityJK(catchDst);
+        const oldPhen = catchDst.moles.Phenolphthalein_aq || 0;
+        const oldBleach = catchDst.phenBleachFrac || 0;
+        const { movedHeatCapJK, movedPhenMol } = extractSyringeLiquidFraction(syringe, fracLiq, catchDst.moles);
+        if (movedPhenMol > 0) {
+          const totP = oldPhen + movedPhenMol;
+          catchDst.phenBleachFrac =
+            totP > 1e-14 ? (oldPhen * oldBleach + movedPhenMol * (syringe.overflowBleachFrac || 0)) / totP : 0;
+        }
+        if (cOld + movedHeatCapJK > 0) {
+          catchDst.tempK = (cOld * catchDst.tempK + movedHeatCapJK * syrT) / (cOld + movedHeatCapJK);
+        }
+        this.checkOverflow(catchDst);
+      } else {
+        extractSyringeLiquidFraction(syringe, fracLiq, null);
+        syringe.spilledPuddleColor = liqColor;
+      }
+      syringe.dischargeLiquidRateMlS = pushLiqMl / Math.max(1e-4, dt);
+      syringe.dischargeColor = liqColor;
+    } else {
+      syringe.dischargeLiquidRateMlS = 0;
+    }
+
+    const gasRates = {};
+    if (pushGasMl > 1e-4 && gasMl > 1e-5) {
+      const fracGas = Math.min(1, pushGasMl / gasMl);
+      for (const g of ALL_GASES) {
+        const n = syringe.gasMoles[g] || 0;
+        if (n <= 1e-12) continue;
+        const dm = n * fracGas;
+        syringe.gasMoles[g] = Math.max(0, n - dm);
+        if (syringe.gasMoles[g] < 1e-12) syringe.gasMoles[g] = 0;
+        gasRates[g] = dm / Math.max(1e-4, dt);
+      }
+    }
+
+    if (this.visualHooks.onParticlesNeeded && (pushLiqMl > 1e-4 || pushGasMl > 1e-4)) {
+      this.visualHooks.onParticlesNeeded(syringe, {
+        dischargeLiquidRateMlS: syringe.dischargeLiquidRateMlS || 0,
+        dischargeColor: liqColor,
+        dischargeArc: arc,
+        dischargeGasRates: gasRates,
+        gasTempK: syrT,
+      });
+    }
   }
 
   stirVessel(vesselId) {
@@ -772,7 +1146,7 @@ export class LabSimulation {
   pipetteDrawFromVessel(vesselId, drawMl = 10.0, targetPipette = null) {
     const src = this.getItem(vesselId);
     const pip = targetPipette || this.pipette;
-    if (!src || src.kind !== 'vessel' || src.isShattered || !pip) return 0;
+    if (!src || src.kind !== 'vessel' || src.isShattered || !pip || pip.isBroken) return 0;
     const cap = pip.capacityMl || 10.0;
     const availRoom = cap - (pip.volumeMl || 0);
     if (availRoom <= 0.01) return 0;
@@ -834,6 +1208,60 @@ export class LabSimulation {
     return actual;
   }
 
+  pipetteDrawFromSyringe(syringeId, drawMl = 10.0, targetPipette = null) {
+    const syr = this.getItem(syringeId);
+    const pip = targetPipette || this.pipette;
+    if (!syr || syr.kind !== 'gas_syringe' || syr.isBroken || !pip || pip.isBroken) return 0;
+    const cap = pip.capacityMl || 10.0;
+    const availRoom = cap - (pip.volumeMl || 0);
+    if (availRoom <= 0.01) return 0;
+
+    const syrT = syr.tempK ?? this.environment.tempK;
+    const syrLiqMl = computeSyringeLiquidVolumeMl(syr, this.environment);
+    if (syrLiqMl <= 0.01) return 0;
+
+    const combMoles = buildCombinedSyringeLiquidMoles(syr);
+    const combL = computeLiquidVolumeL(combMoles, syrT);
+    const vis = combL > 1e-8
+      ? computeSolutionVisuals(combMoles, combL, computePH(combMoles, combL, syrT), 2.5, syr.overflowBleachFrac || 0)
+      : { css: 'rgba(186, 230, 253, 0.85)' };
+
+    const actual = Math.min(availRoom, syrLiqMl, drawMl);
+    const frac = Math.min(1, actual / syrLiqMl);
+    const oldVol = pip.volumeMl || 0;
+    const oldPhen = pip.moles.Phenolphthalein_aq || 0;
+    const oldBleach = pip.phenBleachFrac || 0;
+
+    const { movedPhenMol } = extractSyringeLiquidFraction(syr, frac, pip.moles);
+    if (movedPhenMol > 0) {
+      const totP = oldPhen + movedPhenMol;
+      pip.phenBleachFrac =
+        totP > 1e-14 ? (oldPhen * oldBleach + movedPhenMol * (syr.overflowBleachFrac || 0)) / totP : 0;
+    }
+    pip.tempK = oldVol + actual > 0 ? (oldVol * (pip.tempK || syrT) + actual * syrT) / (oldVol + actual) : syrT;
+    pip.volumeMl = oldVol + actual;
+    pip.sourceLabel = `syringe ${syr.label}`;
+    pip.liquidColor = vis.css;
+
+    if (pip.kind === 'pipette') {
+      pip.drawAnimTimer = 0.68;
+      pip.drawAnimColor = vis.css;
+      pip.drawFromX = syr.x - (APPARATUS.gas_syringe.width / 2 - 4);
+      pip.drawFromY = syr.y;
+      if (this.visualHooks.onAlert) {
+        this.visualHooks.onAlert('pipette_suck', { x: pip.drawFromX, y: pip.drawFromY }, {
+          pipette: pip,
+          color: vis.css,
+          liquidMl: actual,
+        });
+      }
+    }
+
+    this.recomputeScaleReadings();
+    this.emitChange();
+    return actual;
+  }
+
   pipetteDrawFromReagent(reagentId, drawMl = 2.0) {
     const reg = STARTER_REAGENTS.find((r) => r.id === reagentId && r.kind === 'liquid');
     if (!reg) return 0;
@@ -866,7 +1294,7 @@ export class LabSimulation {
   pipetteDispenseToVessel(vesselId, dropMl = 0.05, sourcePipette = null) {
     const dst = this.getItem(vesselId);
     const pip = sourcePipette || this.pipette;
-    if (!dst || dst.kind !== 'vessel' || dst.isShattered || !pip) return 0;
+    if (!dst || dst.kind !== 'vessel' || dst.isShattered || !pip || pip.isBroken) return 0;
     if ((pip.volumeMl || 0) <= 1e-5) return 0;
 
     const dstSpec = APPARATUS[dst.typeId];
@@ -1321,6 +1749,279 @@ export class LabSimulation {
     }
   }
 
+  shatterSyringe(syringe, logKey = 'alertSyringeOverpressureShatter') {
+    if (!syringe || syringe.isBroken) return;
+    const sSpec = APPARATUS[syringe.typeId] || APPARATUS.gas_syringe;
+    const syrT = syringe.tempK ?? this.environment.tempK;
+    const liqMl = computeSyringeLiquidVolumeMl(syringe, this.environment);
+    const combMoles = buildCombinedSyringeLiquidMoles(syringe);
+    const combL = computeLiquidVolumeL(combMoles, syrT);
+    const vis = combL > 1e-7
+      ? computeSolutionVisuals(combMoles, combL, computePH(combMoles, combL, syrT), 2.5, syringe.overflowBleachFrac || 0)
+      : null;
+
+    if (syringe.connectedFromId) {
+      this.disconnectSyringe(syringe.connectedFromId);
+    }
+    syringe.isBroken = true;
+    syringe.isDischarging = false;
+    syringe.autoDischargeTimer = 0;
+    syringe.dischargeLiquidRateMlS = 0;
+    syringe.gasMoles = createEmptyGasMap();
+    syringe.condensedWaterMol = 0;
+    syringe.overflowMoles = {};
+    syringe.overflowBleachFrac = 0;
+    syringe.internalPressureBar = this.environment.pressureBar;
+    syringe.spilledPuddleColor = vis ? vis.css : null;
+
+    this.addLog({ type: 'alert', key: logKey, vesselLabel: syringe.label });
+    if (this.visualHooks.onAlert) {
+      this.visualHooks.onAlert('shatter', syringe, {
+        hadLiquid: liqMl > 0.02,
+        liquidColor: vis ? vis.css : null,
+        liquidMl: liqMl,
+        vesselWidth: sSpec.width * 0.72,
+        vesselHeight: sSpec.height,
+      });
+    }
+  }
+
+  popSyringePlunger(vessel, syringe) {
+    if (!syringe || syringe.isBroken) return;
+    const syrT = syringe.tempK ?? this.environment.tempK;
+    const liqMl = computeSyringeLiquidVolumeMl(syringe, this.environment);
+    const combMoles = buildCombinedSyringeLiquidMoles(syringe);
+    const combL = computeLiquidVolumeL(combMoles, syrT);
+    const vis = combL > 1e-7
+      ? computeSolutionVisuals(combMoles, combL, computePH(combMoles, combL, syrT), 2.5, syringe.overflowBleachFrac || 0)
+      : null;
+
+    if (vessel) {
+      vessel.isStoppered = false;
+      this.disconnectSyringe(vessel.id);
+      for (const g of ALL_GASES) {
+        vessel.escapedGasMoles[g] = (vessel.escapedGasMoles[g] || 0) + (vessel.headspaceGasMoles[g] || 0);
+        vessel.headspaceGasMoles[g] = 0;
+      }
+      vessel.sealedAirMoles = null;
+      vessel.internalPressureBar = this.environment.pressureBar;
+    }
+    syringe.gasMoles = createEmptyGasMap();
+    syringe.condensedWaterMol = 0;
+    syringe.overflowMoles = {};
+    syringe.overflowBleachFrac = 0;
+    syringe.internalPressureBar = this.environment.pressureBar;
+
+    this.addLog({ type: 'alert', key: 'alertSyringePlungerPop', vesselLabel: syringe.label });
+    if (this.visualHooks.onAlert) {
+      this.visualHooks.onAlert('syringe_plunger_pop', syringe, {
+        hadLiquid: liqMl > 0.05,
+        liquidColor: vis ? vis.css : null,
+        liquidMl: liqMl,
+      });
+    }
+  }
+
+  breakPipetteOnDrop(pip) {
+    if (!pip || pip.isBroken) return;
+    const hadLiq = (pip.volumeMl || 0) > 0.02;
+    const color = pip.liquidColor || 'rgba(186, 230, 253, 0.85)';
+    pip.isBroken = true;
+    pip.volumeMl = 0;
+    pip.moles = {};
+    pip.sourceLabel = '';
+    pip.liquidColor = null;
+    this.addLog({ type: 'alert', key: 'alertPipetteBreak', vesselLabel: pip.label });
+    if (this.visualHooks.onAlert) {
+      this.visualHooks.onAlert('shatter', pip, {
+        hadLiquid: hadLiq,
+        liquidColor: color,
+        liquidMl: 8,
+        vesselWidth: 28,
+        vesselHeight: 90,
+      });
+    }
+  }
+
+  handleLandingImpact(item, dropDistPx, impactVy, support) {
+    if (!item || item.isDragging) return;
+    const spec = APPARATUS[item.typeId];
+    if (!spec) return;
+
+    // Supports (scales/burners/stands) thud & damp without shattering
+    if (item.kind === 'scale' || item.kind === 'burner' || item.kind === 'stand') {
+      if (dropDistPx >= 95) {
+        item.landingTiltVel = (Math.random() < 0.5 ? -1 : 1) * 1.4;
+      }
+      return;
+    }
+
+    const shatterThreshold = spec.fragilityDropPx || 195;
+    if (dropDistPx >= shatterThreshold) {
+      if (item.kind === 'vessel' && !item.isShattered) {
+        this.shatterVessel(item, 'alertDropShatter', 'shatter');
+      } else if (item.kind === 'gas_syringe' && !item.isBroken) {
+        this.shatterSyringe(item, 'alertSyringeDropShatter');
+      } else if (item.kind === 'pipette' && !item.isBroken) {
+        this.breakPipetteOnDrop(item);
+      }
+      return;
+    }
+
+    // Medium drop (112 .. shatterThreshold px): rock violently & slosh-spill open liquid
+    if (dropDistPx >= 112) {
+      const sign = Math.random() < 0.5 ? -1 : 1;
+      item.landingTiltVel = sign * Math.min(5.2, 2.0 + (dropDistPx - 112) * 0.032);
+
+      if (item.kind === 'vessel' && !item.isShattered) {
+        const liqL = computeLiquidVolumeL(item.moles, item.tempK);
+        const liqMl = liqL * 1000;
+        if (!item.isStoppered && liqMl > 0.2) {
+          const fillFrac = Math.min(1, liqMl / Math.max(1, spec.maxVolumeMl));
+          const spillFrac = Math.min(0.65, 0.14 + (dropDistPx - 112) * 0.0028 + fillFrac * 0.25);
+          const vis = computeSolutionVisuals(
+            item.moles,
+            liqL,
+            computePH(item.moles, liqL, item.tempK),
+            spec.opticalPathCm,
+            item.phenBleachFrac
+          );
+          moveFluidFraction(item.moles, item.precipitateSettle, spillFrac, null, true);
+          item.spilledPuddleColor = vis.css;
+          this.addLog({ type: 'alert', key: 'alertDropSpill', vesselLabel: `${spec.id} ${item.label}` });
+          if (this.visualHooks.onAlert) {
+            this.visualHooks.onAlert('drop_spill', item, {
+              liquidColor: vis.css,
+              liquidMl: liqMl * spillFrac,
+              vesselWidth: spec.width,
+              vesselHeight: spec.height,
+            });
+          }
+        } else if (item.isStoppered && dropDistPx >= 145 && liqMl > spec.maxVolumeMl * 0.85) {
+          this.popStopper(item, 'alertHydroOverflowPop', { hydraulic: true });
+        }
+      } else if (item.kind === 'gas_syringe' && !item.isBroken) {
+        const syrLiqMl = computeSyringeLiquidVolumeMl(item, this.environment);
+        if (syrLiqMl > 0.2) {
+          const syrT = item.tempK ?? this.environment.tempK;
+          const combMoles = buildCombinedSyringeLiquidMoles(item);
+          const combL = computeLiquidVolumeL(combMoles, syrT);
+          const vis = combL > 1e-8
+            ? computeSolutionVisuals(combMoles, combL, computePH(combMoles, combL, syrT), 2.5, item.overflowBleachFrac || 0)
+            : { css: 'rgba(186, 230, 253, 0.85)' };
+          extractSyringeLiquidFraction(item, 0.28, null);
+          item.spilledPuddleColor = vis.css;
+          if (this.visualHooks.onAlert) {
+            this.visualHooks.onAlert('drop_spill', item, {
+              liquidColor: vis.css,
+              liquidMl: syrLiqMl * 0.28,
+              vesselWidth: spec.width * 0.5,
+              vesselHeight: spec.height,
+            });
+          }
+        }
+      } else if (item.kind === 'pipette' && !item.isBroken && (item.volumeMl || 0) > 0.05) {
+        const col = item.liquidColor || 'rgba(186, 230, 253, 0.85)';
+        const lostMl = (item.volumeMl || 0) * 0.65;
+        for (const [k, n] of Object.entries(item.moles)) {
+          item.moles[k] = n * 0.35;
+        }
+        item.volumeMl = (item.volumeMl || 0) * 0.35;
+        if (this.visualHooks.onAlert) {
+          this.visualHooks.onAlert('drop_spill', item, {
+            liquidColor: col,
+            liquidMl: lostMl,
+            vesselWidth: 26,
+            vesselHeight: spec.height,
+          });
+        }
+      }
+    }
+  }
+
+  stepGravityPhysics(dt, realDeltaSec) {
+    const gPx = CONSTANTS.GRAVITY_PX_S2 || 1800;
+
+    // 1. Update rotational impact wobble recovery cleanly even when resting
+    for (const item of this.items) {
+      if (Math.abs(item.landingTilt || 0) > 1e-4 || Math.abs(item.landingTiltVel || 0) > 1e-4) {
+        const kSpring = 115;
+        const cDamp = 9.5;
+        const acc = -kSpring * (item.landingTilt || 0) - cDamp * (item.landingTiltVel || 0);
+        item.landingTiltVel = (item.landingTiltVel || 0) + acc * realDeltaSec;
+        item.landingTilt = (item.landingTilt || 0) + item.landingTiltVel * realDeltaSec;
+        if (Math.abs(item.landingTilt) < 0.002 && Math.abs(item.landingTiltVel) < 0.02) {
+          item.landingTilt = 0;
+          item.landingTiltVel = 0;
+        }
+      }
+    }
+
+    // 2. Step vertical gravitational fall (process support bases before items resting on them)
+    const gravityOrder = [
+      ...this.items.filter((it) => it.kind === 'scale' || it.kind === 'burner' || it.kind === 'stand'),
+      ...this.items.filter((it) => it.kind !== 'scale' && it.kind !== 'burner' && it.kind !== 'stand'),
+    ];
+    for (const item of gravityOrder) {
+      if (item.isDragging) {
+        item.vy = 0;
+        item.fallStartY = item.y;
+        continue;
+      }
+
+      if (item.clampedToId) {
+        const stand = this.getItem(item.clampedToId);
+        if (stand && stand.kind === 'stand') {
+          item.vy = 0;
+          item.fallStartY = null;
+          item.restingOnId = null;
+          continue;
+        }
+        item.clampedToId = null;
+      }
+
+      const { centerY, support } = this.getSupportSurfaceForItem(item);
+      if (support && item.restingOnId === support.id) {
+        // Keep items already seated on a scale/burner riding smoothly if the support itself settles
+        item.y = centerY;
+        item.vy = support.vy || 0;
+        item.fallStartY = null;
+        continue;
+      }
+
+      const isFloating = item.y < centerY - 1.5;
+
+      if (!isFloating && (item.vy || 0) <= 0) {
+        item.y = centerY;
+        item.restingOnId = support ? support.id : null;
+        item.fallStartY = null;
+        item.vy = 0;
+        continue;
+      }
+
+      // Item is airborne -> apply downward acceleration
+      if (item.fallStartY == null) {
+        item.fallStartY = item.y;
+      }
+      item.restingOnId = null;
+      item.vy = (item.vy || 0) + gPx * dt;
+      item.y += item.vy * dt;
+
+      if (item.y >= centerY) {
+        const dropDist = Math.max(0, centerY - (item.fallStartY ?? centerY));
+        const impactVy = item.vy;
+        item.y = centerY;
+        item.vy = 0;
+        item.fallStartY = null;
+        item.restingOnId = support ? support.id : null;
+        if (support && Math.abs(item.x - support.x) < 28) {
+          item.x = support.x;
+        }
+        this.handleLandingImpact(item, dropDist, impactVy, support);
+      }
+    }
+  }
+
   /**
    * Main simulation tick called by animation loop (realDeltaSec).
    */
@@ -1349,6 +2050,9 @@ export class LabSimulation {
     // Sub-step for numerical accuracy & smooth fast ionic kinetics
     const numSteps = Math.max(1, Math.ceil(scaledDt / CONSTANTS.SUBSTEP_MAX_DT));
     const dt = scaledDt / numSteps;
+
+    // Advance rigid-body workbench gravity & landing impact physics
+    this.stepGravityPhysics(scaledDt, realDeltaSec);
 
     const getApp = (id) => this.getItem(id);
 
@@ -1457,10 +2161,20 @@ export class LabSimulation {
 
         for (const ev of gasEvents) {
           if (ev.type === 'stopper_pop') {
-            this.popStopper(v, 'alertOverpressurePop');
+            this.popStopper(v, ev.implosion ? 'alertOverpressurePop' : 'alertOverpressurePop');
           } else if (ev.type === 'shatter') {
-            this.shatterVessel(v, 'alertOverpressureShatter', 'shatter');
+            this.shatterVessel(
+              v,
+              ev.implosion ? 'alertVacuumImplosion' : 'alertOverpressureShatter',
+              'shatter'
+            );
             break;
+          } else if (ev.type === 'syringe_shatter') {
+            const badSyr = this.getItem(ev.syringeId);
+            if (badSyr) this.shatterSyringe(badSyr, 'alertSyringeOverpressureShatter');
+          } else if (ev.type === 'syringe_plunger_pop') {
+            const badSyr = this.getItem(ev.syringeId);
+            if (badSyr) this.popSyringePlunger(v, badSyr);
           }
         }
         if (v.isShattered) break;
@@ -1615,9 +2329,9 @@ export class LabSimulation {
       this.recordHistorySnapshot(v, false);
     }
 
-    // Advance thermal exchange, Antoine condensation, & liquid overflow inside all Gas Syringes
+    // Advance thermal exchange, Antoine condensation, gravity discharge & overflow inside all Gas Syringes
     for (const item of this.items) {
-      if (item.kind !== 'gas_syringe') continue;
+      if (item.kind !== 'gas_syringe' || item.isBroken) continue;
       for (let s = 0; s < numSteps; s++) {
         stepSyringeThermodynamics(item, dt, this.environment);
       }
@@ -1625,6 +2339,7 @@ export class LabSimulation {
         item.inflowLiquidTimer = Math.max(0, item.inflowLiquidTimer - realDeltaSec);
         if (item.inflowLiquidTimer === 0) item.inflowLiquidRateMlS = 0;
       }
+      this.stepSyringeDischarge(item, scaledDt);
       this.stepSyringeOverflow(item, scaledDt);
       if (this.visualHooks.onParticlesNeeded && ((item.inflowLiquidTimer || 0) > 0 || (item.overflowOutRateMlS || 0) > 0.5)) {
         this.visualHooks.onParticlesNeeded(item, {

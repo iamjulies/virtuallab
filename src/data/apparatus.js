@@ -26,7 +26,11 @@ export const APPARATUS = {
     heatable: true,
     stopperable: false,
     popPressureBar: null,
-    shatterPressureBar: null,
+    popOverpressureBar: null,
+    shatterPressureBar: 1.85,
+    shatterOverpressureBar: 0.85,      // Flat-bottomed Borosilicate 3.3 beaker (not pressure-rated: ~50-100 kPa failure)
+    implosionUnderpressureBar: 0.75,   // Vacuum differential limit on flat base
+    fragilityDropPx: 190,
     heatLossCoeffWK: 0.45,
     surfaceAreaCm2: 39.6,
     opticalPathCm: 6.78,
@@ -58,7 +62,11 @@ export const APPARATUS = {
     heatable: true,
     stopperable: false,
     popPressureBar: null,
-    shatterPressureBar: null,
+    popOverpressureBar: null,
+    shatterPressureBar: 1.90,
+    shatterOverpressureBar: 0.90,
+    implosionUnderpressureBar: 0.78,
+    fragilityDropPx: 190,
     heatLossCoeffWK: 0.43,
     surfaceAreaCm2: 26.8,
     opticalPathCm: 5.78,
@@ -89,8 +97,12 @@ export const APPARATUS = {
     neckRadius: 18.5, // ~32 mm OD neck (37 px)
     heatable: true,
     stopperable: true,
-    popPressureBar: 1.55,
-    shatterPressureBar: 2.8,
+    popPressureBar: 1.38,              // Rubber bung dry friction blow-out (~35-40 kPa gauge; wet neck drops to ~12 kPa)
+    popOverpressureBar: 0.38,
+    shatterPressureBar: 1.90,          // Standard flat-bottom Erlenmeyer (ASTM E1404) burst ~70-100 kPa gauge (0.90 bar overpressure)
+    shatterOverpressureBar: 0.90,
+    implosionUnderpressureBar: 0.75,   // Non-heavy-wall conical flat base implodes under strong vacuum
+    fragilityDropPx: 195,
     heatLossCoeffWK: 0.38,
     surfaceAreaCm2: 12.5,
     opticalPathCm: 7.2,
@@ -121,8 +133,12 @@ export const APPARATUS = {
     neckRadius: 14.5,
     heatable: true,
     stopperable: true,
-    popPressureBar: 1.45,
-    shatterPressureBar: 2.5,
+    popPressureBar: 1.35,              // Narrow smooth-neck bung pops around +0.35 bar dry (~0.12 bar wet)
+    popOverpressureBar: 0.35,
+    shatterPressureBar: 2.60,          // Cylindrical + rounded U-bottom + 1.5mm wall withstands ~1.6 bar overpressure (> Erlenmeyer)
+    shatterOverpressureBar: 1.60,
+    implosionUnderpressureBar: 0.95,
+    fragilityDropPx: 205,
     heatLossCoeffWK: 0.22,
     surfaceAreaCm2: 4.0,
     opticalPathCm: 2.2,
@@ -155,7 +171,11 @@ export const APPARATUS = {
     heatable: false,
     stopperable: false,
     popPressureBar: null,
-    shatterPressureBar: null,
+    popOverpressureBar: null,
+    shatterPressureBar: 1.95,
+    shatterOverpressureBar: 0.95,
+    implosionUnderpressureBar: 0.80,
+    fragilityDropPx: 175,              // Tall narrow center of mass breaks easier on tall drops
     heatLossCoeffWK: 0.30,
     surfaceAreaCm2: 6.16,
     opticalPathCm: 2.9,
@@ -200,7 +220,7 @@ export const APPARATUS = {
     id: 'gas_syringe',
     kind: 'gas_syringe',
     i18nKey: 'eq_gas_syringe',
-    isoStandard: 'Borosilicate 3.3 Gastight · Luer Lock (Ø47.8×290 mm · ID 42.9 mm · ±1.5%)',
+    isoStandard: 'Borosilicate 3.3 Gastight · Luer Lock (Ø47.8×290 mm · Max 2.05 bar / 30 psi)',
     materialSpec: 'Borosilicate 3.3 + PTFE',
     barrelOdMm: 47.8,
     innerDiameterMm: 42.9,
@@ -209,6 +229,9 @@ export const APPARATUS = {
     collarOdMm: 57,
     graduationErrorPct: 1.5,
     maxVolumeMl: 250,
+    plungerPopOverpressureBar: 0.48,   // Unclamped ground-glass plunger ejects above ~+0.48 bar overpressure
+    shatterOverpressureBar: 1.05,      // Large 250 mL glass barrel max rated ~2 atm (~30 psi / 207 kPa abs -> +1.05 bar gauge)
+    fragilityDropPx: 185,
     width: 256,
     height: 84,
     barrelW: 192,
@@ -223,8 +246,18 @@ export const APPARATUS = {
     isoStandard: 'ISO 835 Class A · Mohr Dropper (10 mL)',
     materialSpec: 'Borosilicate 3.3 + Silicone',
     maxVolumeMl: 10,
+    fragilityDropPx: 225,
     width: 30,
     height: 156,
+  },
+  retort_stand: {
+    id: 'retort_stand',
+    kind: 'stand',
+    i18nKey: 'eq_retort_stand',
+    isoStandard: 'Heavy Base + Steel Rod · Bosshead Clamp',
+    materialSpec: 'Cast Iron + 304 Stainless Steel',
+    width: 112,
+    height: 310,
   },
 };
 
@@ -235,6 +268,7 @@ export const APPARATUS_ORDER = [
   'test_tube_50',
   'cylinder_100',
   'pipette_10',
+  'retort_stand',
   'scale',
   'burner',
   'gas_syringe',

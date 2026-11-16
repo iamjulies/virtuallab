@@ -6,6 +6,81 @@ import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
 export const NON_STEAM_GASES = ['H2_g', 'O2_g', 'HCl_g', 'Cl2_g', 'HNO3_g'];
 export const ALL_GASES = [...NON_STEAM_GASES, 'H2O_g'];
 
+export function getSyringeNozzlePos(syringe) {
+  const sSpec = APPARATUS.gas_syringe;
+  const barrelLeft = syringe.x - sSpec.width / 2 + (sSpec.barrelLeftOffset || 20);
+  return {
+    x: barrelLeft - 18,
+    y: syringe.y,
+  };
+}
+
+/**
+ * Compute parabolic discharge water stream trajectory from a Gas Syringe's Luer-Lock nozzle
+ * under workbench gravity, testing exact entry into any open vessel's mouth below it.
+ */
+export function computeSyringeDischargeArc(
+  syringe,
+  items = [],
+  benchFloorY = 482,
+  gravityPxS2 = CONSTANTS.GRAVITY_PX_S2 || 1800
+) {
+  const { x: nozzleX, y: nozzleY } = getSyringeNozzlePos(syringe);
+  const vx0 = -48; // Gentle horizontal leftward stream velocity out of Luer tip
+  const vy0 = 14;
+  const dtStep = 0.004;
+  const points = [{ x: nozzleX, y: nozzleY }];
+
+  let hitTargetVessel = null;
+  let blockedByStopper = false;
+  let hitX = nozzleX;
+  let hitY = Math.min(benchFloorY, nozzleY);
+
+  let prevX = nozzleX;
+  let prevY = nozzleY;
+
+  for (let i = 1; i <= 320; i++) {
+    const t = i * dtStep;
+    const px = nozzleX + vx0 * t;
+    const py = nozzleY + vy0 * t + 0.5 * gravityPxS2 * t * t;
+
+    // Test crossing any unbroken vessel rim / mouth horizontally aligned underneath stream
+    for (const dst of items) {
+      if (dst.kind !== 'vessel' || dst.isShattered) continue;
+      const dSpec = APPARATUS[dst.typeId];
+      if (!dSpec) continue;
+      const rimY = dst.y - dSpec.height / 2 + 2;
+      const mouthHalfW = Math.max(9, (dSpec.neckRadius || dSpec.width * 0.42) - 2);
+
+      if (prevY <= rimY + 2 && py >= rimY - 2 && Math.abs(px - dst.x) <= mouthHalfW) {
+        if (!dst.isStoppered) {
+          hitTargetVessel = dst;
+          hitX = px;
+          hitY = rimY;
+          points.push({ x: px, y: rimY });
+          return { nozzleX, nozzleY, points, hitTargetVessel, hitX, hitY, blockedByStopper: false };
+        }
+        blockedByStopper = true;
+      }
+    }
+
+    if (py >= benchFloorY) {
+      hitX = px;
+      hitY = benchFloorY;
+      points.push({ x: px, y: benchFloorY });
+      break;
+    }
+
+    if (i % 2 === 0) {
+      points.push({ x: px, y: py });
+    }
+    prevX = px;
+    prevY = py;
+  }
+
+  return { nozzleX, nozzleY, points, hitTargetVessel, hitX, hitY, blockedByStopper };
+}
+
 export function cubicBezierPoint(t, p0, p1, p2, p3) {
   const u = 1 - t;
   const tt = t * t;
@@ -106,6 +181,17 @@ export function computeSyringeGasVolumeMl(syringe, env) {
 }
 
 /**
+ * Compute unified aqueous moles map combining condensed pure H2O(l) and overflowed solution inside Gas Syringe.
+ */
+export function buildCombinedSyringeLiquidMoles(syringe) {
+  const moles = { ...(syringe?.overflowMoles || {}) };
+  if ((syringe?.condensedWaterMol || 0) > 1e-12) {
+    moles.H2O_l = (moles.H2O_l || 0) + syringe.condensedWaterMol;
+  }
+  return moles;
+}
+
+/**
  * Compute liquid water + overflowed solution volume inside Gas Syringe barrel (mL).
  */
 export function computeSyringeLiquidVolumeMl(syringe, env) {
@@ -184,6 +270,17 @@ export function stepSyringeThermodynamics(syringe, dt, env) {
   }
   syringe.tempK = Math.max(220, Math.min(600, newTempK));
   syringe.lastCondenseRateMolS = condenseRate;
+
+  // Track internal syringe pressure when piston hits 250 mL mechanical collar stop
+  const gasMl = computeSyringeGasVolumeMl(syringe, env);
+  const liqMl = computeSyringeLiquidVolumeMl(syringe, env);
+  const syrSpec = APPARATUS[syringe.typeId] || APPARATUS.gas_syringe;
+  const maxGasCapMl = Math.max(2.0, syrSpec.maxVolumeMl - liqMl);
+  if (gasMl > maxGasCapMl) {
+    syringe.internalPressureBar = pExtBar * (gasMl / maxGasCapMl);
+  } else {
+    syringe.internalPressureBar = pExtBar;
+  }
 }
 
 /**
@@ -233,6 +330,7 @@ export function stepVesselGasAndPressure(
   const headspaceL = Math.max(0.015, (spec.maxVolumeMl - Math.min(spec.maxVolumeMl * 0.94, liqMl + solMl)) / 1000);
 
   // Connected to another apparatus (Gas Syringe OR receiving Vessel) via rubber tubing
+  let maxedSyringe = null;
   const targetId = vessel.connectedTargetId || vessel.connectedSyringeId;
   if (targetId) {
     const target = getApparatusById(targetId);
@@ -263,9 +361,11 @@ export function stepVesselGasAndPressure(
         }
 
         vessel.internalPressureBar = env.pressureBar;
+        target.internalPressureBar = env.pressureBar;
         return events;
       }
-      // Syringe maxed out -> remaining gas pressurizes vessel!
+      // Syringe maxed out (>= 250 mL) -> remaining gas equilibrates pressure across flask + syringe
+      maxedSyringe = target;
     } else if (target && target.kind === 'vessel' && !target.isShattered && !target.isStoppered) {
       // Condense steam & dissolve soluble acid gases into open receiving vessel; vent permanent gases
       let heatAddedJ = 0;
@@ -334,21 +434,55 @@ export function stepVesselGasAndPressure(
 
   extraGasMol += vessel.headspaceGasMoles.H2O_g || 0;
 
-  const partialAirAndGas =
-    ((vessel.sealedAirMoles + extraGasMol) * CONSTANTS.R_L_BAR_MOL_K * vessel.tempK) / headspaceL;
+  const effectiveVolL = maxedSyringe ? headspaceL + 0.25 : headspaceL;
+  const partialAirAndGas = maxedSyringe
+    ? env.pressureBar + (extraGasMol * CONSTANTS.R_L_BAR_MOL_K * vessel.tempK) / effectiveVolL
+    : ((vessel.sealedAirMoles + extraGasMol) * CONSTANTS.R_L_BAR_MOL_K * vessel.tempK) / headspaceL;
   const hasWater = (vessel.moles.H2O_l || 0) > 1e-6;
-  const vaporContribution = hasWater ? Math.max(0, waterVaporPressureBar(vessel.tempK) - 0.03) : 0;
+  const vaporContribution = !maxedSyringe && hasWater ? Math.max(0, waterVaporPressureBar(vessel.tempK) - 0.03) : 0;
 
-  vessel.internalPressureBar = partialAirAndGas + vaporContribution;
+  vessel.internalPressureBar = Math.max(0.02, partialAirAndGas + vaporContribution);
+  if (maxedSyringe) {
+    maxedSyringe.internalPressureBar = vessel.internalPressureBar;
+  }
 
-  // Check overpressure thresholds
-  if (spec.shatterPressureBar && vessel.internalPressureBar >= spec.shatterPressureBar) {
+  // Real-world gauge differential pressure checks (Borosilicate 3.3 flat base vs rounded tube, wet vs dry rubber bung, 250 mL glass syringe 2.05 bar limit)
+  const overpressureBar = vessel.internalPressureBar - env.pressureBar;
+  const underpressureBar = env.pressureBar - vessel.internalPressureBar;
+  const isNeckWet = liqMl + solMl > spec.maxVolumeMl * 0.85 || (vessel.wallCondenseLevel || 0) > 0.35;
+  const effPopDeltaBar = spec.popOverpressureBar
+    ? isNeckWet
+      ? Math.min(spec.popOverpressureBar, 0.14)
+      : spec.popOverpressureBar
+    : null;
+  const shatterDeltaBar = spec.shatterOverpressureBar ?? (spec.shatterPressureBar ? spec.shatterPressureBar - 1.0 : null);
+
+  if (maxedSyringe) {
+    const syrSpec = APPARATUS[maxedSyringe.typeId] || APPARATUS.gas_syringe;
+    if (syrSpec.shatterOverpressureBar && overpressureBar >= syrSpec.shatterOverpressureBar) {
+      events.push({ type: 'syringe_shatter', vesselId: vessel.id, syringeId: maxedSyringe.id });
+      return events;
+    }
+    if (
+      syrSpec.plungerPopOverpressureBar &&
+      overpressureBar >= syrSpec.plungerPopOverpressureBar &&
+      (!effPopDeltaBar || effPopDeltaBar > syrSpec.plungerPopOverpressureBar)
+    ) {
+      events.push({ type: 'syringe_plunger_pop', vesselId: vessel.id, syringeId: maxedSyringe.id });
+      return events;
+    }
+  }
+
+  if (
+    (shatterDeltaBar && overpressureBar >= shatterDeltaBar) ||
+    (spec.implosionUnderpressureBar && underpressureBar >= spec.implosionUnderpressureBar)
+  ) {
     vessel.isShattered = true;
     vessel.isStoppered = false;
     vessel.connectedSyringeId = null;
     vessel.connectedTargetId = null;
-    events.push({ type: 'shatter', vesselId: vessel.id });
-  } else if (spec.popPressureBar && vessel.internalPressureBar >= spec.popPressureBar) {
+    events.push({ type: 'shatter', vesselId: vessel.id, implosion: underpressureBar >= (spec.implosionUnderpressureBar || 99) });
+  } else if (effPopDeltaBar && overpressureBar >= effPopDeltaBar) {
     vessel.isStoppered = false;
     vessel.connectedSyringeId = null;
     vessel.connectedTargetId = null;

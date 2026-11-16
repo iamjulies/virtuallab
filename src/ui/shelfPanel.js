@@ -21,6 +21,8 @@ function apparatusSvg(typeId) {
       return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7" y="13" width="16" height="10" rx="1"/><path d="M3 18h4M20 14v8M20 18h11M31 14v8"/></svg>`;
     case 'pipette_10':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 9a3 3 0 016 0v3h-6V9z" fill="currentColor" opacity="0.35"/><path d="M15 12h6l-1.2 14-1.8 5-1.8-5L15 12z"/><path d="M16 16h2.5M16.2 20h2" opacity="0.65"/></svg>`;
+    case 'retort_stand':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="28" width="24" height="3" rx="1"/><path d="M23 28V6M23 14h-9"/><circle cx="11" cy="14" r="3"/></svg>`;
     default:
       return '';
   }

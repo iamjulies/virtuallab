@@ -114,6 +114,7 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
 const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
   onOpenTransfer: (sourceId) => dosingModal.openTransfer(sourceId),
   onOpenTubeTarget: (sourceId) => dosingModal.openTubeTarget(sourceId),
+  onOpenSyringeTransfer: (syringeId) => dosingModal.openSyringeTransfer(syringeId),
   onNotify: (msg) => showToast(msg),
 });
 
@@ -188,7 +189,15 @@ sim.visualHooks.onAlert = (type, vessel, meta) => {
     showToast(`💥 ${t('alertNaExplosion')}`);
   } else if (type === 'shatter') {
     workbench.triggerShake(8, 0.34);
-    showToast(`💥 ${t('alertOverpressureShatter')}`);
+    const latest = sim.logs[0];
+    const msgKey = latest?.key || 'alertOverpressureShatter';
+    showToast(`💥 ${t(msgKey)}`);
+  } else if (type === 'drop_spill') {
+    workbench.triggerShake(4.2, 0.20);
+    showToast(`💧 ${t('alertDropSpill')}`);
+  } else if (type === 'syringe_plunger_pop') {
+    workbench.triggerShake(6.0, 0.26);
+    showToast(`⚠️ ${t('alertSyringePlungerPop')}`);
   } else if (type === 'pop') {
     workbench.triggerShake(5.5, 0.24);
     showToast(`⚠️ ${meta?.hydraulic ? t('alertHydroOverflowPop') : t('alertOverpressurePop')}`);

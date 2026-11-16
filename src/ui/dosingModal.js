@@ -1,7 +1,7 @@
 import { APPARATUS } from '../data/apparatus.js';
 import { SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { computeLiquidVolumeL } from '../engine/equilibrium.js';
-import { computeTubingGeometry } from '../engine/gasNetwork.js';
+import { computeSyringeTotalVolumeMl, computeTubingGeometry } from '../engine/gasNetwork.js';
 
 export class DosingModal {
   constructor(container, sim, getLang) {
@@ -62,6 +62,22 @@ export class DosingModal {
       mode: 'tube_target',
       sourceVesselId,
       targetVesselId: targets[0].id,
+    };
+    this.render();
+  }
+
+  openSyringeTransfer(syringeId) {
+    const syr = this.sim.getItem(syringeId);
+    if (!syr || syr.kind !== 'gas_syringe' || syr.isBroken) return;
+    const vessels = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered);
+    if (vessels.length === 0) return;
+
+    const totMl = computeSyringeTotalVolumeMl(syr, this.sim.environment);
+    this.state = {
+      mode: 'syringe_transfer',
+      sourceSyringeId: syringeId,
+      targetVesselId: vessels[0].id,
+      amount: Math.max(0.1, Number(totMl.toFixed(1))),
     };
     this.render();
   }
@@ -334,6 +350,50 @@ export class DosingModal {
           </div>
         </div>
       `;
+    } else if (st.mode === 'syringe_transfer') {
+      const syr = this.sim.getItem(st.sourceSyringeId);
+      const totMl = syr ? computeSyringeTotalVolumeMl(syr, this.sim.environment) : 0;
+      this.container.innerHTML = `
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="dosing-backdrop">
+          <div class="w-full max-w-md rounded-2xl border border-theme bg-surface p-5 shadow-2xl flex flex-col gap-3.5 text-main">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <h3 class="text-sm font-bold">💉 ${t('dosingTitleSyringeTransfer')}</h3>
+                <p class="text-xs text-muted">${t('eq_gas_syringe')} ${syr?.label || ''} (${totMl.toFixed(1)} mL) →</p>
+              </div>
+              <button type="button" id="dosing-close-x" class="px-2 py-1 rounded text-xs text-muted hover:text-main border border-theme">✕</button>
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <label class="text-xs font-medium text-muted">${t('targetVessel')}</label>
+              <select id="dosing-target-select" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium">
+                ${vessels
+                  .map(
+                    (v) =>
+                      `<option value="${v.id}" ${v.id === st.targetVesselId ? 'selected' : ''}>${t(
+                        APPARATUS[v.typeId].i18nKey
+                      )} ${v.label}</option>`
+                  )
+                  .join('')}
+              </select>
+            </div>
+            <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2">
+              <div class="flex items-center justify-between">
+                <label class="text-xs font-semibold">${t('volumeLabel')}</label>
+                <div class="flex items-center gap-1.5">
+                  <input id="dosing-num" type="number" min="0.1" max="${Math.max(0.1, totMl.toFixed(1))}" step="0.5" value="${st.amount}"
+                    class="w-24 px-2 py-1 rounded border border-theme bg-surface text-xs font-mono font-bold text-right" />
+                  <span class="text-xs font-semibold">mL</span>
+                </div>
+              </div>
+              <input id="dosing-slider" type="range" min="0.1" max="${Math.max(0.1, totMl.toFixed(1))}" step="0.5" value="${st.amount}" class="w-full accent-blue-500" />
+            </div>
+            <div class="flex items-center justify-end gap-2">
+              <button type="button" id="dosing-cancel" class="px-3 py-2 rounded-lg border border-theme text-xs font-medium text-muted hover:text-main">${t('btnClose')}</button>
+              <button type="button" id="dosing-confirm" class="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 transition">${t('btnAddExact')}</button>
+            </div>
+          </div>
+        </div>
+      `;
     }
 
     this.bindModalEvents();
@@ -452,6 +512,12 @@ export class DosingModal {
         this.sim.addReagentToVessel(this.state.targetVesselId, this.state.reagentId, this.state.amount, {
           fine: this.state.fine,
         });
+      } else if (this.state.mode === 'syringe_transfer') {
+        this.sim.pumpSyringeToVessel(
+          this.state.sourceSyringeId,
+          this.state.targetVesselId,
+          this.state.amount
+        );
       } else {
         this.sim.pourBetweenVessels(
           this.state.sourceVesselId,

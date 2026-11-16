@@ -21,6 +21,7 @@
     import { APPARATUS } from '../src/data/apparatus.js';
     import { SPECIES } from '../src/data/species.js';
     import { computeVesselFluidGeometry } from '../src/canvas/vesselRenderer.js';
+    import { ParticleSystem } from '../src/canvas/particles.js';
     import { LabSimulation } from '../src/engine/simulation.js';
     import {
       computeContentsMassG,
@@ -30,6 +31,7 @@
       computeSolutionVisuals,
     } from '../src/engine/equilibrium.js';
     import {
+      computeSyringeDischargeArc,
       computeSyringeGasVolumeMl,
       computeSyringeLiquidVolumeMl,
       computeSyringeTotalVolumeMl,
@@ -787,6 +789,119 @@
           dropFired &&
           b2Ph > 11.5,
         `drew=${drewMl.toFixed(2)}mL, dispensed=${dispensedMl.toFixed(2)}mL, left=${pip.volumeMl.toFixed(2)}mL, b2_pH=${b2Ph.toFixed(2)}`
+      );
+    }
+
+    // TEST 25: Gas Syringe extraction methods (gravity stream catch, pipette draw, direct pump) & visible Cl2 filaments vs invisible H2 plume
+    {
+      const sim = new LabSimulation();
+      const ps = new ParticleSystem();
+      sim.visualHooks.onParticlesNeeded = (it, m) => ps.emitForVessel(it, m, 0.02);
+
+      const stand = sim.createApparatus('retort_stand', 560, 482 - APPARATUS.retort_stand.height / 2 + 2);
+      const syr = sim.createApparatus('gas_syringe', 515, 290);
+      sim.attachToStand(syr.id, stand.id);
+      const catcher = sim.createApparatus('beaker_250', 385, 482 - APPARATUS.beaker_250.height / 2 + 2);
+      const pip = sim.createApparatus('pipette_10', 220, 482 - APPARATUS.pipette_10.height / 2 + 2);
+
+      // Load condensate + NaOH solution into syringe and verify aligned parabolic stream catches into catcher
+      syr.condensedWaterMol = 1.0; // ~18 mL H2O
+      syr.overflowMoles = { H2O_l: 0.5, Na_aq: 0.05, OH_aq: 0.05 };
+      syr.gasMoles.Cl2_g = 0.002;
+      const arcHit = computeSyringeDischargeArc(syr, sim.items, 482, CONSTANTS.GRAVITY_PX_S2);
+      catcher.x = arcHit.hitX; // Align mouth directly under nozzle parabola!
+      const arcAligned = computeSyringeDischargeArc(syr, sim.items, 482, CONSTANTS.GRAVITY_PX_S2);
+
+      // 1) Draw 5 mL out of Gas Syringe with Pipette 10 mL
+      const pipDrewMl = sim.pipetteDrawFromSyringe(syr.id, 5.0, pip);
+      // 2) Discharge via gravity arc -> catcher catches liquid & Cl2 produces visible filament/cloud particles
+      sim.ventSyringe(syr.id);
+      stepSeconds(sim, 1.5, 0.02);
+      const caughtMl = computeLiquidVolumeL(catcher.moles, catcher.tempK) * 1000;
+      const visibleCl2Count = ps.particles.filter(p => p.kind === 'gas_filament' || p.kind === 'gas_cloud').length;
+
+      // 3) Discharge pure colorless H2_g -> ZERO visible cloud/filament mist particles!
+      const psH2 = new ParticleSystem();
+      const simH2 = new LabSimulation();
+      simH2.visualHooks.onParticlesNeeded = (it, m) => psH2.emitForVessel(it, m, 0.02);
+      const syrH2 = simH2.createApparatus('gas_syringe', 500, 380);
+      syrH2.gasMoles.H2_g = 0.004;
+      simH2.ventSyringe(syrH2.id);
+      stepSeconds(simH2, 1.2, 0.02);
+      const visibleH2Mist = psH2.particles.filter(p => p.kind === 'gas_filament' || p.kind === 'gas_cloud' || p.kind === 'mist').length;
+
+      assert(
+        'Gas Syringe supports Pipette draw, gravity-stream vessel catching & emits visible Cl2 wisps while colorless H2 remains invisible',
+        arcAligned.hitTargetVessel?.id === catcher.id &&
+          Math.abs(pipDrewMl - 5.0) < 0.05 &&
+          caughtMl > 12.0 &&
+          visibleCl2Count > 0 &&
+          visibleH2Mist === 0,
+        `pipDrew=${pipDrewMl.toFixed(1)}mL, caught=${caughtMl.toFixed(1)}mL, Cl2_plumes=${visibleCl2Count}, H2_plumes=${visibleH2Mist}`
+      );
+    }
+
+    // TEST 26: Workbench Gravity, Retort Clamp Support, Mid-Drop Spill & High-Drop Impact Shatter
+    {
+      const sim = new LabSimulation();
+      const stand = sim.createApparatus('retort_stand', 260, 482 - APPARATUS.retort_stand.height / 2 + 2);
+      const clampedFlask = sim.createApparatus('erlenmeyer_250', 232, 260);
+      sim.attachToStand(clampedFlask.id, stand.id);
+      stepSeconds(sim, 0.6, 0.02);
+      const heldElevation = Math.abs(clampedFlask.y - 260) < 1;
+
+      // Unclamp flask high above bench (~141 px fall) -> falls to floor cleanly, slosh-spills? Check >195 px shatter vs medium spill
+      const bMed = sim.createApparatus('beaker_250', 460, 290); // 429 - 290 = 139 px fall -> medium drop spill
+      sim.addReagentToVessel(bMed.id, 'h2o', 120);
+      bMed.fallStartY = 290;
+      const bHigh = sim.createApparatus('beaker_250', 680, 140); // 429 - 140 = 289 px fall -> shatter drop!
+      sim.addReagentToVessel(bHigh.id, 'h2o', 100);
+      bHigh.fallStartY = 140;
+
+      sim.detachFromStand(clampedFlask.id);
+      stepSeconds(sim, 1.0, 0.02);
+
+      const clampedDropped = clampedFlask.y > 390;
+      const medVolAfter = computeLiquidVolumeL(bMed.moles, bMed.tempK) * 1000;
+      assert(
+        'Gravity pulls un-clamped items downward; medium drop sloshes liquid while tall drop shatters glass on impact',
+        heldElevation &&
+          clampedDropped &&
+          !bMed.isShattered &&
+          medVolAfter < 115 &&
+          medVolAfter > 45 &&
+          bHigh.isShattered === true &&
+          sim.logs.some(l => l.key === 'alertDropSpill') &&
+          sim.logs.some(l => l.key === 'alertDropShatter'),
+        `clampedY=${clampedFlask.y.toFixed(0)}, medLeft=${medVolAfter.toFixed(1)}mL(broken=${bMed.isShattered}), highBroken=${bHigh.isShattered}`
+      );
+    }
+
+    // TEST 27: Empirically calibrated Borosilicate 3.3 & Stopper differential pressure ratings
+    {
+      const erl = APPARATUS.erlenmeyer_250;
+      const tube = APPARATUS.test_tube_50;
+      const syr = APPARATUS.gas_syringe;
+      const specsConsistent =
+        tube.shatterOverpressureBar > erl.shatterOverpressureBar &&
+        erl.shatterOverpressureBar >= 0.8 &&
+        erl.shatterOverpressureBar <= 1.1 &&
+        syr.shatterOverpressureBar >= 1.0 &&
+        syr.shatterOverpressureBar <= 1.15 &&
+        erl.popOverpressureBar < erl.shatterOverpressureBar;
+
+      // Ambient pressure awareness: raising room ambient pressure to 1.8 bar must NOT prematurely pop a newly sealed flask!
+      const sim = new LabSimulation();
+      sim.environment.pressureBar = 1.8;
+      const f = sim.createApparatus('erlenmeyer_250', 300, 401);
+      sim.addReagentToVessel(f.id, 'h2o', 40);
+      sim.toggleStopper(f.id);
+      stepSeconds(sim, 1.5, 0.02);
+
+      assert(
+        'Pressure limits follow gauge ΔP (Test Tube > Erlenmeyer, 250mL Syringe ~+1.05 bar) & stay stable at 1.8 bar ambient',
+        specsConsistent && f.isStoppered === true && !f.isShattered,
+        `TubeMax=+${tube.shatterOverpressureBar}bar > ErlMax=+${erl.shatterOverpressureBar}bar, SyrMax=+${syr.shatterOverpressureBar}bar, P1.8_ok=${f.isStoppered}`
       );
     }
 

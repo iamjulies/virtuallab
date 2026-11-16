@@ -7,6 +7,7 @@ import {
   computePH,
 } from '../engine/equilibrium.js';
 import {
+  computeSyringeDischargeArc,
   computeSyringeGasVolumeMl,
   computeSyringeLiquidVolumeMl,
   computeSyringeTotalVolumeMl,
@@ -90,6 +91,7 @@ export class InspectorPanel {
   getStructureSignature(t, langCode) {
     const item = this.sim.getItem(this.sim.selectedId);
     const logLen = this.sim.logs.length;
+    const standCount = this.sim.items.filter((i) => i.kind === 'stand').length;
     if (!item) return `none|${langCode}|${logLen}`;
 
     if (item.kind === 'vessel') {
@@ -98,19 +100,23 @@ export class InspectorPanel {
         .sort()
         .join(',');
       const rxnKeys = item.activeReactions.map((r) => r.id).join(',');
-      return `v|${item.id}|${item.isStoppered}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
+      return `v|${item.id}|${item.isStoppered}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'burner') {
       return `b|${item.id}|${langCode}|${logLen}`;
     }
     if (item.kind === 'pipette') {
-      return `p|${item.id}|${Math.round((item.dropDoseMl || 1) * 100)}|${langCode}|${logLen}`;
+      return `p|${item.id}|${item.isBroken}|${Math.round((item.dropDoseMl || 1) * 100)}|${langCode}|${logLen}`;
     }
     if (item.kind === 'scale') {
       return `s|${item.id}|${Math.abs(item.tareG) > 0.001}|${langCode}|${logLen}`;
     }
+    if (item.kind === 'stand') {
+      const children = this.sim.items.filter((i) => i.clampedToId === item.id).map((i) => i.id).join(',');
+      return `st|${item.id}|${children}|${langCode}|${logLen}`;
+    }
     if (item.kind === 'gas_syringe') {
-      return `g|${item.id}|${item.connectedFromId}|${langCode}|${logLen}`;
+      return `g|${item.id}|${item.connectedFromId}|${item.clampedToId}|${standCount}|${item.isBroken}|${langCode}|${logLen}`;
     }
     return `other|${item.id}|${langCode}|${logLen}`;
   }
@@ -243,16 +249,56 @@ export class InspectorPanel {
           <button type="button" id="ins-clear-pipette" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('pipetteClear')}</button>
         </div>
       `;
+    } else if (item.kind === 'stand') {
+      const stSpec = APPARATUS.retort_stand;
+      const clampedItems = this.sim.items.filter((i) => i.clampedToId === item.id);
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">🗜️ ${t('standTitle')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${stSpec.materialSpec} · ${stSpec.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <div class="text-xs font-medium text-muted">${t('standClampedList')}</div>
+            ${
+              clampedItems.length === 0
+                ? `<p class="text-xs text-muted leading-relaxed">${t('standNoClamped')}</p>`
+                : clampedItems
+                    .map(
+                      (c) => `
+                  <div class="flex items-center justify-between p-2 rounded-lg border border-theme bg-surface text-xs">
+                    <span class="font-semibold">${t(APPARATUS[c.typeId].i18nKey)} ${c.label}</span>
+                    <button type="button" class="stand-detach-btn px-2 py-0.5 rounded border border-theme text-[11px] text-amber-400 hover:bg-amber-500/10" data-cid="${c.id}">${t('actionUnclampStand')}</button>
+                  </div>`
+                    )
+                    .join('')
+            }
+          </div>
+        </div>
+      `;
     } else if (item.kind === 'gas_syringe') {
       const syrSpec = APPARATUS.gas_syringe;
       const volMl = computeSyringeTotalVolumeMl(item, this.sim.environment);
       const totalGasMol = sumAllGasMoles(item.gasMoles);
       const condInfo = getSyringeCondenseInfo(item, this.sim.environment, t);
+      const stands = this.sim.items.filter((i) => i.kind === 'stand');
+      const arc = !item.isBroken
+        ? computeSyringeDischargeArc(item, this.sim.items, 482, 1800)
+        : null;
+      const catchLabel = arc?.hitTargetVessel
+        ? `🎯 ${t(APPARATUS[arc.hitTargetVessel.typeId].i18nKey)} ${arc.hitTargetVessel.label}`
+        : t('syringeCatchMiss');
+      const pBar = item.internalPressureBar ?? this.sim.environment.pressureBar;
+      const overPBar = pBar - this.sim.environment.pressureBar;
+
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div>
-              <div class="text-sm font-bold">${t('eq_gas_syringe')} ${item.label}</div>
+              <div class="text-sm font-bold">${t('eq_gas_syringe')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
               <div class="text-[11px] text-muted">${syrSpec.materialSpec} · ${syrSpec.isoStandard}</div>
             </div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
@@ -275,13 +321,39 @@ export class InspectorPanel {
               <div class="text-sm font-bold font-mono text-sky-400" id="live-syr-cond">${condInfo.totalLiqMl.toFixed(2)} mL</div>
             </div>
           </div>
+          <div class="p-2 rounded-lg border border-theme bg-surface text-[11px] flex items-center justify-between gap-2">
+            <span class="text-muted">${t('syringePressureNote')}</span>
+            <strong class="font-mono ${overPBar >= 0.35 ? 'text-red-400' : 'text-main'}" id="live-syr-press">${pBar.toFixed(2)} bar (ΔP ${overPBar >= 0 ? '+' : ''}${overPBar.toFixed(2)} / +${(syrSpec.shatterOverpressureBar || 1.05).toFixed(2)} bar)</strong>
+          </div>
           <div class="px-2.5 py-1.5 rounded-lg border border-sky-500/35 bg-sky-500/10 text-xs font-medium" id="live-syr-cond-state">
             ${condInfo.condenseState}
           </div>
           <div class="text-xs text-muted flex flex-wrap gap-x-2 gap-y-0.5" id="live-syr-breakdown">
             ${formatGasSummaryHtml(item.gasMoles)}
           </div>
-          <button type="button" id="ins-vent-syringe" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('syringeReleaseGas')}</button>
+          ${
+            item.isBroken
+              ? `<p class="text-xs text-red-400 font-medium">${t('shatteredEmptyMsg')}</p>`
+              : `
+            <div class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-[11px] flex items-center justify-between gap-2">
+              <span class="text-muted">${t('syringeCatchHint')}</span>
+              <span class="font-semibold truncate" id="live-syr-catch">${catchLabel}</span>
+            </div>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button type="button" id="ins-syringe-hold-push" class="py-1.5 px-2 rounded-lg bg-sky-600 text-white text-xs font-semibold hover:bg-sky-500 select-none">💨 ${t('syringeHoldPush')}</button>
+              <button type="button" id="ins-syringe-pump" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">💉 ${t('syringePumpTo')}</button>
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <button type="button" id="ins-vent-syringe" class="flex-1 py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('syringeReleaseGas')}</button>
+              ${
+                stands.length > 0
+                  ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${
+                      item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')
+                    }</button>`
+                  : ''
+              }
+            </div>`
+          }
         </div>
       `;
     } else if (item.kind === 'vessel') {
@@ -309,6 +381,9 @@ export class InspectorPanel {
       const syrCondInfo = syr ? getSyringeCondenseInfo(syr, this.sim.environment, t) : null;
       const tubeGeom = connTarget ? computeTubingGeometry(item, connTarget) : null;
       const tubeVolMl = connTarget ? computeLiquidVolumeL(item.tubeMoles || {}, item.tubeTempK || item.tempK) * 1000 : 0;
+      const stands = this.sim.items.filter((i) => i.kind === 'stand');
+      const popStr = spec.popOverpressureBar ? `+${spec.popOverpressureBar.toFixed(2)} / ` : '';
+      const shatterStr = spec.shatterOverpressureBar ? `+${spec.shatterOverpressureBar.toFixed(2)} bar` : '0 bar';
 
       topSection = `
         <!-- Vessel Header & Actions -->
@@ -342,8 +417,16 @@ export class InspectorPanel {
                   }</button>`
                 : ''
             }
+            ${
+              stands.length > 0
+                ? `<button type="button" id="ins-toggle-clamp" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${
+                    item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')
+                  }</button>`
+                : ''
+            }
             <button type="button" id="ins-rinse" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium text-muted hover:text-main">${t('actionRinse')}</button>
-          </div>`
+          </div>
+          <div class="text-[10px] font-mono text-muted">${t('pressureLimitNote')} ${popStr}${shatterStr}</div>`
           }
         </div>
 
@@ -541,8 +624,43 @@ export class InspectorPanel {
         btn.addEventListener('click', () => this.sim.setPipetteDropDose(item.id, Number(btn.dataset.dose)));
       });
       this.container.querySelector('#ins-clear-pipette')?.addEventListener('click', () => this.sim.clearPipette(item.id));
+    } else if (item.kind === 'stand') {
+      this.container.querySelectorAll('.stand-detach-btn').forEach((btn) => {
+        btn.addEventListener('click', () => this.sim.detachFromStand(btn.dataset.cid));
+      });
     } else if (item.kind === 'gas_syringe') {
       this.container.querySelector('#ins-vent-syringe')?.addEventListener('click', () => this.sim.ventSyringe(item.id));
+      const holdBtn = this.container.querySelector('#ins-syringe-hold-push');
+      if (holdBtn) {
+        holdBtn.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          this.sim.setSyringeDischarge(item.id, true);
+        });
+        const stopPush = () => this.sim.setSyringeDischarge(item.id, false);
+        holdBtn.addEventListener('pointerup', stopPush);
+        holdBtn.addEventListener('pointerleave', stopPush);
+        holdBtn.addEventListener('pointercancel', stopPush);
+      }
+      this.container.querySelector('#ins-syringe-pump')?.addEventListener('click', () => {
+        const vessels = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered);
+        if (vessels.length === 0) {
+          this.callbacks.onNotify?.(t('alertTransferNeedSecond'));
+          return;
+        }
+        this.callbacks.onOpenSyringeTransfer?.(item.id);
+      });
+      this.container.querySelector('#ins-toggle-clamp')?.addEventListener('click', () => {
+        if (item.clampedToId) {
+          this.sim.detachFromStand(item.id);
+        } else {
+          const st = this.sim.items.find((i) => i.kind === 'stand');
+          if (st) {
+            item.x = st.x - 45;
+            item.y = Math.min(item.y, 330);
+            this.sim.attachToStand(item.id, st.id);
+          }
+        }
+      });
     } else if (item.kind === 'vessel') {
       this.container.querySelector('#ins-pour')?.addEventListener('click', () => {
         const vessels = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered);
@@ -555,6 +673,18 @@ export class InspectorPanel {
       this.container.querySelector('#ins-stir')?.addEventListener('click', () => this.sim.stirVessel(item.id));
       this.container.querySelector('#ins-rinse')?.addEventListener('click', () => this.sim.rinseVessel(item.id));
       this.container.querySelector('#ins-stopper')?.addEventListener('click', () => this.sim.toggleStopper(item.id));
+      this.container.querySelector('#ins-toggle-clamp')?.addEventListener('click', () => {
+        if (item.clampedToId) {
+          this.sim.detachFromStand(item.id);
+        } else {
+          const st = this.sim.items.find((i) => i.kind === 'stand');
+          if (st) {
+            item.x = st.x - 28;
+            item.y = Math.min(item.y, 340);
+            this.sim.attachToStand(item.id, st.id);
+          }
+        }
+      });
       this.container.querySelector('#ins-tube')?.addEventListener('click', () => {
         if (item.connectedTargetId || item.connectedSyringeId) {
           this.sim.disconnectSyringe(item.id);
@@ -609,18 +739,34 @@ export class InspectorPanel {
       const volMl = computeSyringeTotalVolumeMl(item, this.sim.environment);
       const totalGasMol = sumAllGasMoles(item.gasMoles);
       const condInfo = getSyringeCondenseInfo(item, this.sim.environment, t);
+      const syrSpec = APPARATUS.gas_syringe;
+      const pBar = item.internalPressureBar ?? this.sim.environment.pressureBar;
+      const overPBar = pBar - this.sim.environment.pressureBar;
+      const arc = !item.isBroken
+        ? computeSyringeDischargeArc(item, this.sim.items, 482, 1800)
+        : null;
       const vEl = this.container.querySelector('#live-syr-vol');
       const mEl = this.container.querySelector('#live-syr-mol');
       const tEl = this.container.querySelector('#live-syr-temp');
       const cEl = this.container.querySelector('#live-syr-cond');
       const sEl = this.container.querySelector('#live-syr-cond-state');
       const bEl = this.container.querySelector('#live-syr-breakdown');
+      const pEl = this.container.querySelector('#live-syr-press');
+      const catchEl = this.container.querySelector('#live-syr-catch');
       if (vEl) vEl.textContent = `${volMl.toFixed(2)} mL`;
       if (mEl) mEl.textContent = `${(totalGasMol * 1000).toFixed(2)} mmol`;
       if (tEl) tEl.textContent = `${condInfo.syrTempK.toFixed(1)} K (${condInfo.syrTempC.toFixed(1)}°C)`;
       if (cEl) cEl.textContent = `${condInfo.totalLiqMl.toFixed(2)} mL`;
       if (sEl) sEl.textContent = condInfo.condenseState;
       if (bEl) bEl.innerHTML = formatGasSummaryHtml(item.gasMoles);
+      if (pEl) {
+        pEl.textContent = `${pBar.toFixed(2)} bar (ΔP ${overPBar >= 0 ? '+' : ''}${overPBar.toFixed(2)} / +${(syrSpec.shatterOverpressureBar || 1.05).toFixed(2)} bar)`;
+      }
+      if (catchEl && arc) {
+        catchEl.textContent = arc.hitTargetVessel
+          ? `🎯 ${t(APPARATUS[arc.hitTargetVessel.typeId].i18nKey)} ${arc.hitTargetVessel.label}`
+          : t('syringeCatchMiss');
+      }
       return;
     }
 

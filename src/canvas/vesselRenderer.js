@@ -9,13 +9,29 @@ import {
 } from '../engine/equilibrium.js';
 import {
   ALL_GASES,
+  buildCombinedSyringeLiquidMoles,
   computeSyringeGasVolumeMl,
   computeSyringeLiquidVolumeMl,
   computeSyringeTotalVolumeMl,
   computeTubingGeometry,
   cubicBezierPoint,
+  getSyringeNozzlePos,
 } from '../engine/gasNetwork.js';
 import { renderVesselSolids } from './chemicalVisuals.js';
+
+function cylinderFillHeightFraction(areaFrac) {
+  const f = Math.max(0, Math.min(1, areaFrac));
+  if (f <= 0) return 0;
+  if (f >= 1) return 1;
+  let theta = Math.PI * (0.25 + f * 1.5);
+  const target = 2 * Math.PI * f;
+  for (let k = 0; k < 4; k++) {
+    const err = theta - Math.sin(theta) - target;
+    const d = Math.max(0.05, 1 - Math.cos(theta));
+    theta -= err / d;
+  }
+  return Math.max(0, Math.min(1, 0.5 * (1 - Math.cos(theta * 0.5))));
+}
 
 function getThemePalette(isDark) {
   return isDark
@@ -371,9 +387,192 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
   ctx.restore();
 }
 
+function renderBrokenSyringe(ctx, item, pal, isSelected) {
+  const { x, y } = item;
+  const spec = APPARATUS.gas_syringe;
+  const bottom = y + spec.height / 2;
+
+  ctx.save();
+  if (item.spilledPuddleColor) {
+    ctx.fillStyle = item.spilledPuddleColor;
+    ctx.globalAlpha = 0.68;
+    ctx.beginPath();
+    ctx.ellipse(x - 10, bottom - 1, 78, 5.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Cracked Luer tip + shattered barrel base fragments
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillRect(x - 110, bottom - 14, 16, 7);
+  ctx.fillStyle = pal.glassFill;
+  ctx.strokeStyle = isSelected ? '#3b82f6' : '#ef4444';
+  ctx.lineWidth = isSelected ? 2 : 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x - 86, bottom - 22);
+  ctx.lineTo(x - 42, bottom - 8);
+  ctx.lineTo(x - 10, bottom - 19);
+  ctx.lineTo(x + 28, bottom - 5);
+  ctx.lineTo(x + 64, bottom - 15);
+  ctx.lineTo(x + 68, bottom - 1);
+  ctx.lineTo(x - 86, bottom - 1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Scattered glass splinters
+  for (let i = 0; i < 12; i++) {
+    const sx = x - 70 + i * 14 + Math.sin(i * 7.1) * 5;
+    const sy = bottom - 3 - (i % 3) * 3;
+    ctx.fillStyle = 'rgba(224, 242, 254, 0.72)';
+    ctx.beginPath();
+    ctx.moveTo(sx - 5, sy + 2);
+    ctx.lineTo(sx + 4, sy - 4);
+    ctx.lineTo(sx + 6, sy + 3);
+    ctx.closePath();
+    ctx.fill();
+  }
+  drawLabelPill(ctx, x, bottom - 44, `${item.label} · 💥`, {
+    pal,
+    borderColor: '#ef4444',
+    font: '600 10.5px system-ui, sans-serif',
+    height: 19,
+  });
+  ctx.restore();
+}
+
+export function renderRetortStand(ctx, stand, isSelected, isDark) {
+  const spec = APPARATUS.retort_stand;
+  const pal = getThemePalette(isDark);
+  const { x, y } = stand;
+  const w = spec.width;
+  const h = spec.height;
+  const top = y - h / 2;
+  const bottom = y + h / 2;
+  const rodX = x + 36;
+
+  ctx.save();
+  if (stand.landingTilt) {
+    ctx.translate(x, bottom);
+    ctx.rotate(stand.landingTilt * 0.4);
+    ctx.translate(-x, -bottom);
+  }
+  if (isSelected) {
+    ctx.shadowColor = '#3b82f6';
+    ctx.shadowBlur = 10;
+  }
+
+  // Heavy cast-iron base plate resting on bench
+  ctx.fillStyle = isDark ? '#334155' : '#475569';
+  ctx.strokeStyle = isSelected ? '#3b82f6' : isDark ? '#64748b' : '#1e293b';
+  ctx.lineWidth = isSelected ? 2 : 1.4;
+  ctx.beginPath();
+  ctx.roundRect(x - w / 2, bottom - 12, w, 12, 3);
+  ctx.fill();
+  ctx.stroke();
+
+  // Boss socket collar at base of stainless rod
+  ctx.fillStyle = isDark ? '#475569' : '#64748b';
+  ctx.fillRect(rodX - 7, bottom - 22, 14, 10);
+
+  // 304 Stainless steel vertical rod
+  const rodGrad = ctx.createLinearGradient(rodX - 3.5, 0, rodX + 3.5, 0);
+  rodGrad.addColorStop(0, '#64748b');
+  rodGrad.addColorStop(0.45, '#e2e8f0');
+  rodGrad.addColorStop(1, '#475569');
+  ctx.fillStyle = rodGrad;
+  ctx.fillRect(rodX - 3, top + 8, 6, h - 22);
+
+  // Finial cap at rod top
+  ctx.beginPath();
+  ctx.arc(rodX, top + 8, 4.5, 0, Math.PI * 2);
+  ctx.fillStyle = '#94a3b8';
+  ctx.fill();
+  ctx.stroke();
+
+  drawLabelPill(ctx, rodX, top - 16, stand.label, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : pal.badgeBorder,
+    font: '600 10px system-ui, sans-serif',
+    height: 17,
+  });
+  ctx.restore();
+}
+
+export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
+  if (!stand || !clampedItem) return;
+  const rodX = stand.x + 36;
+  const spec = APPARATUS[clampedItem.typeId];
+  const isSyr = clampedItem.kind === 'gas_syringe';
+
+  let attachX = clampedItem.x;
+  let attachY = clampedItem.y;
+  if (isSyr) {
+    const barrelLeft = clampedItem.x - spec.width / 2 + (spec.barrelLeftOffset || 20);
+    const barrelRight = barrelLeft + (spec.barrelW || 192);
+    // Grip rear collar/barrel section horizontally closest to stand rod without crossing the graduations
+    attachX = Math.max(barrelLeft + 32, Math.min(barrelRight - 14, rodX - 24));
+    attachY = clampedItem.y;
+  } else {
+    attachY = clampedItem.y - spec.height / 2 + (spec.shape === 'erlenmeyer' ? 24 : 26);
+  }
+
+  ctx.save();
+  // Bosshead block mounted on stainless steel rod
+  ctx.fillStyle = isDark ? '#475569' : '#334155';
+  ctx.strokeStyle = isDark ? '#94a3b8' : '#1e293b';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.roundRect(rodX - 8, attachY - 9, 16, 18, 3);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillRect(rodX + 8, attachY - 3, 6, 6);
+
+  // Horizontal stainless clamp extension rod (stops cleanly at barrel/neck grip edge)
+  const jawRadius = isSyr ? (spec.barrelH || 54) / 2 + 2 : Math.max(13, (spec.neckRadius || 16) + 2);
+  const armEndX = isSyr ? attachX : attachX + (rodX >= attachX ? jawRadius : -jawRadius);
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(rodX, attachY);
+  ctx.lineTo(armEndX, attachY);
+  ctx.stroke();
+
+  // Dual rubberized prong jaws clasping top/bottom (syringe) or left/right (vertical glassware neck)
+  ctx.strokeStyle = isDark ? '#cbd5e1' : '#1e293b';
+  ctx.lineWidth = 3.2;
+  ctx.lineCap = 'round';
+  if (isSyr) {
+    ctx.beginPath();
+    ctx.arc(attachX, attachY, jawRadius, -Math.PI * 0.5 - 0.52, -Math.PI * 0.5 + 0.52);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(attachX, attachY, jawRadius, Math.PI * 0.5 - 0.52, Math.PI * 0.5 + 0.52);
+    ctx.stroke();
+    ctx.fillStyle = '#64748b';
+    ctx.beginPath();
+    ctx.arc(attachX, attachY, 4, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.arc(attachX, attachY, jawRadius, -0.58, 0.58);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(attachX, attachY, jawRadius, Math.PI - 0.58, Math.PI + 0.58);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 'vi', timeNow = 0) {
   const spec = APPARATUS.gas_syringe;
   const pal = getThemePalette(isDark);
+  if (item.isBroken) {
+    renderBrokenSyringe(ctx, item, pal, isSelected);
+    return;
+  }
+
   const { x, y } = item;
   const w = spec.width;
   const barrelW = spec.barrelW || 192;
@@ -390,20 +589,38 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   const totalLiqMl = overflowMl + condensedMl;
   const totalVolMl = computeSyringeTotalVolumeMl(item, env);
 
-  const ratio = Math.max(0, Math.min(1, totalVolMl / spec.maxVolumeMl));
-  const liqRatio = Math.max(0, Math.min(ratio, totalLiqMl / spec.maxVolumeMl));
-  const travelStart = barrelLeft + 12;
+  // Calibrate stroke: 0 mL tick aligns directly with chamber front face; travel span = 166 px
+  const travelStart = barrelLeft + 8;
   const travelSpan = barrelW - 26;
-  const plungerX = travelStart + ratio * travelSpan;
-  const liqEndX = travelStart + liqRatio * travelSpan;
+  const ratio = Math.max(0, Math.min(1, totalVolMl / spec.maxVolumeMl));
+  const plungerFaceX = travelStart + ratio * travelSpan;
+  const activeChamberRight = Math.max(barrelLeft + 3, plungerFaceX);
+
   const hasSteam = (item.gasMoles?.H2O_g || 0) > 1e-6;
   const hasCl2 = (item.gasMoles?.Cl2_g || 0) > 1e-6;
   const syrTempC = kelvinToCelsius(syrTempK);
+  const overP = (item.internalPressureBar || env.pressureBar) - env.pressureBar;
 
   ctx.save();
+  if (item.landingTilt) {
+    ctx.translate(x, y);
+    ctx.rotate(item.landingTilt * 0.45);
+    ctx.translate(-x, -y);
+  }
   if (isSelected) {
     ctx.shadowColor = '#3b82f6';
     ctx.shadowBlur = 11;
+  }
+
+  // Ground puddle beneath if dropped and spilled liquid
+  if (item.spilledPuddleColor && !item.clampedToId) {
+    ctx.save();
+    ctx.fillStyle = item.spilledPuddleColor;
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.ellipse(barrelLeft - 8, barrelTop + barrelH + 10, 26, 3.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   // Stainless steel / Chrome Luer-Lock precision connector tip on left
@@ -416,55 +633,118 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   ctx.fillRect(barrelLeft - 8, y - 7, 8, 14);
   ctx.strokeRect(barrelLeft - 8, y - 7, 8, 14);
 
-  // Flared Glass Collar Flange (Ø 57 mm OD rear lip) + Borosilicate 3.3 Barrel (Ø 47.8 mm OD)
+  // Borosilicate 3.3 Barrel (Ø 47.8 mm OD) + Rear Flared Flange (Ø 57 mm OD)
   ctx.fillStyle = pal.glassFill;
-  ctx.strokeStyle = isSelected ? '#3b82f6' : syrTempC >= 60 ? '#f59e0b' : pal.glassStroke;
-  ctx.lineWidth = isSelected ? 2.2 : 1.7;
+  ctx.strokeStyle =
+    overP >= 0.35
+      ? '#ef4444'
+      : isSelected
+      ? '#3b82f6'
+      : syrTempC >= 60
+      ? '#f59e0b'
+      : pal.glassStroke;
+  ctx.lineWidth = isSelected || overP >= 0.35 ? 2.2 : 1.7;
   ctx.beginPath();
   ctx.roundRect(barrelLeft, barrelTop, barrelW, barrelH, 5);
   ctx.fill();
   ctx.stroke();
 
-  // Rear Collar Flange rim
   ctx.fillStyle = pal.glassFill;
   ctx.beginPath();
   ctx.roundRect(barrelLeft + barrelW - 4, y - collarH / 2, 7, collarH, 3);
   ctx.fill();
   ctx.stroke();
-
   ctx.shadowBlur = 0;
 
-  // Gas tint inside chamber (foggy vapor, greenish Cl2, or clean sky tint)
-  if (ratio > liqRatio + 0.004) {
-    const gStart = overflowMl > 0.2 ? liqEndX : barrelLeft + 2;
-    ctx.fillStyle = hasCl2
-      ? 'rgba(217, 249, 157, 0.30)'
-      : hasSteam
-      ? isDark
-        ? 'rgba(226, 232, 240, 0.28)'
-        : 'rgba(148, 163, 184, 0.28)'
-      : 'rgba(186, 230, 253, 0.16)';
-    ctx.fillRect(gStart, barrelTop + 2, Math.max(0, plungerX - gStart), barrelH - 4);
-  }
-
-  // Overflowed solution entering Luer-Lock nozzle & filling chamber
-  if (overflowMl > 0.05) {
-    const ovVis = computeSolutionVisuals(
-      item.overflowMoles,
-      overflowL,
-      computePH(item.overflowMoles, overflowL, syrTempK),
-      4.29,
-      item.overflowBleachFrac || 0
-    );
+  // Inner chamber strictly clipped to [barrelLeft + 2 .. plungerFaceX] — NEVER bleeds behind piston!
+  const chamberW = Math.max(0, activeChamberRight - (barrelLeft + 2));
+  if (chamberW > 0.5) {
     ctx.save();
-    ctx.fillStyle = ovVis.css;
-    ctx.fillRect(barrelLeft + 2, barrelTop + 2, Math.max(4, liqEndX - barrelLeft - 2), barrelH - 4);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.58)';
-    ctx.lineWidth = 1.4;
     ctx.beginPath();
-    ctx.moveTo(liqEndX, barrelTop + 2);
-    ctx.lineTo(liqEndX, barrelTop + barrelH - 2);
-    ctx.stroke();
+    ctx.roundRect(barrelLeft + 2, barrelTop + 2, barrelW - 4, barrelH - 4, 4);
+    ctx.clip();
+    ctx.beginPath();
+    ctx.rect(barrelLeft + 2, barrelTop + 2, chamberW, barrelH - 4);
+    ctx.clip();
+
+    const innerTop = barrelTop + 2;
+    const innerH = barrelH - 4;
+    const innerBot = innerTop + innerH;
+
+    // 1. Gas phase color fill inside expanded chamber
+    if (gasVolMl > 0.05) {
+      ctx.fillStyle = hasCl2
+        ? 'rgba(190, 242, 100, 0.34)'
+        : hasSteam
+        ? isDark
+          ? 'rgba(226, 232, 240, 0.26)'
+          : 'rgba(148, 163, 184, 0.26)'
+        : 'rgba(186, 230, 253, 0.14)';
+      ctx.fillRect(barrelLeft + 2, innerTop, chamberW, innerH);
+    }
+
+    // 2. Unified aqueous liquid + condensate strictly confined ahead of plunger face!
+    if (totalLiqMl > 0.002) {
+      const combMoles = buildCombinedSyringeLiquidMoles(item);
+      const combL = computeLiquidVolumeL(combMoles, syrTempK);
+      let liqColor = isDark ? 'rgba(56, 189, 248, 0.62)' : 'rgba(14, 165, 233, 0.55)';
+      if (combL > 1e-8) {
+        liqColor = computeSolutionVisuals(
+          combMoles,
+          combL,
+          computePH(combMoles, combL, syrTempK),
+          4.29,
+          item.overflowBleachFrac || 0
+        ).css;
+      }
+
+      if (chamberW < 8) {
+        // Tiny condensate volume near 0 mL (e.g. 0.90 mL water with 0.0 mL gas):
+        // pool proportionally in the front nose gap strictly inside [barrelLeft+2 .. plungerFaceX]
+        const miniFrac = Math.max(0.16, Math.min(1, totalLiqMl / 2.2));
+        const miniH = innerH * miniFrac;
+        ctx.fillStyle = liqColor;
+        ctx.fillRect(barrelLeft + 2, innerBot - miniH, chamberW, miniH);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.68)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(barrelLeft + 2, innerBot - miniH);
+        ctx.lineTo(activeChamberRight, innerBot - miniH);
+        ctx.stroke();
+      } else {
+        // Horizontal cylinder pool: height derived from cross-section volume fraction V_liq / (V_liq + V_gas)
+        const areaFrac = totalLiqMl / Math.max(totalLiqMl + gasVolMl, 1e-6);
+        const hFrac = cylinderFillHeightFraction(areaFrac);
+        const poolH = Math.max(2.5, innerH * hFrac);
+        const poolY = innerBot - poolH;
+
+        ctx.fillStyle = liqColor;
+        ctx.fillRect(barrelLeft + 2, poolY, chamberW, poolH);
+
+        if (hFrac < 0.985) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.68)';
+          ctx.lineWidth = 1.1;
+          ctx.beginPath();
+          ctx.moveTo(barrelLeft + 2, poolY);
+          ctx.lineTo(activeChamberRight, poolY);
+          ctx.stroke();
+        }
+      }
+
+      // Condensation micro-droplets strictly inside active gas chamber above pool
+      if (condensedMl > 0.002 && chamberW >= 12) {
+        ctx.fillStyle = 'rgba(186, 230, 253, 0.84)';
+        const nDrops = Math.min(10, Math.max(3, Math.floor(chamberW / 12)));
+        for (let i = 0; i < nDrops; i++) {
+          const dx = barrelLeft + 6 + ((i * 0.618 + 0.13) % 1) * Math.max(4, chamberW - 8);
+          const dy = innerTop + 4 + ((i * 0.37) % 1) * Math.max(6, innerH * 0.55);
+          ctx.beginPath();
+          ctx.arc(dx, dy, 1.1 + (i % 3) * 0.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
     ctx.restore();
   }
 
@@ -478,43 +758,9 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(barrelLeft - 14, y);
-    ctx.lineTo(barrelLeft + 10 + pulse * 20, y);
+    ctx.lineTo(Math.min(activeChamberRight, barrelLeft + 10 + pulse * 18), y);
     ctx.stroke();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
-    for (let k = 0; k < 3; k++) {
-      const rOff = ((pulse + k * 0.33) % 1) * 18;
-      ctx.beginPath();
-      ctx.arc(barrelLeft + 6 + rOff, y + Math.sin(k * 2.1 + timeNow * 18) * 8, 2.0, 0, Math.PI * 2);
-      ctx.fill();
-    }
     ctx.restore();
-  }
-
-  // Condensed H2O(l) water pool + micro-droplets inside barrel
-  if (condensedMl > 0.0002) {
-    const wettedEndX = Math.max(plungerX - 4, barrelLeft + Math.min(barrelW - 14, 46 + condensedMl * 16));
-    const poolH = Math.min(13, 2.5 + Math.cbrt(condensedMl) * 7.2);
-    const poolY = barrelTop + barrelH - 2 - poolH;
-
-    ctx.fillStyle = isDark ? 'rgba(56, 189, 248, 0.56)' : 'rgba(14, 165, 233, 0.50)';
-    ctx.fillRect(barrelLeft + 2, poolY, wettedEndX - barrelLeft - 2, poolH);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(barrelLeft + 3, poolY);
-    ctx.lineTo(wettedEndX, poolY);
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(186, 230, 253, 0.85)';
-    const dropSpan = Math.max(28, wettedEndX - barrelLeft - 10);
-    for (let i = 0; i < 9; i++) {
-      const dx = barrelLeft + 8 + ((i * 0.137 + 0.05) % 1) * dropSpan;
-      const dy = barrelTop + 6 + (i % 3) * 9.5;
-      const r = 1.3 + (i % 3) * 0.55;
-      ctx.beginPath();
-      ctx.arc(dx, dy, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
   }
 
   // Rear collar spill stream when full 250 mL syringe overflows
@@ -532,22 +778,45 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
     ctx.restore();
   }
 
-  // Ground-glass frosted plunger piston + twin black PTFE Teflon O-ring seals + pull rod
-  const rodTailX = plungerX + travelSpan * 0.42 + 44;
+  // Active parabolic water stream discharging from Luer nozzle downward!
+  if ((item.dischargeLiquidRateMlS || 0) > 0.15 && item.dischargeArc && item.dischargeArc.points?.length >= 2) {
+    const arcPts = item.dischargeArc.points;
+    ctx.save();
+    ctx.strokeStyle = item.dischargeColor || 'rgba(186, 230, 253, 0.9)';
+    ctx.lineWidth = Math.min(5.2, 2.0 + Math.sqrt(item.dischargeLiquidRateMlS) * 0.32);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(arcPts[0].x, arcPts[0].y);
+    for (let i = 1; i < arcPts.length; i++) {
+      ctx.lineTo(arcPts[i].x, arcPts[i].y);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.42)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Ground-glass frosted plunger piston + twin black PTFE O-ring seals + pull rod
+  // Front piston sealing face sits cleanly AT plungerFaceX!
+  const pistonW = 16;
+  const rodTailX = plungerFaceX + travelSpan * 0.42 + 44;
   ctx.fillStyle = isDark ? 'rgba(203, 213, 225, 0.35)' : 'rgba(241, 245, 249, 0.72)';
   ctx.strokeStyle = pal.glassStroke;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(plungerX - 8, barrelTop + 4, 20, barrelH - 8, 2);
+  ctx.roundRect(plungerFaceX, barrelTop + 4, pistonW, barrelH - 8, 2);
   ctx.fill();
   ctx.stroke();
-  // Dual PTFE sealing rings
+  // Dual PTFE Teflon sealing rings
   ctx.fillStyle = '#0f172a';
-  ctx.fillRect(plungerX - 5, barrelTop + 3, 3.5, barrelH - 6);
-  ctx.fillRect(plungerX + 6, barrelTop + 3, 3.5, barrelH - 6);
+  ctx.fillRect(plungerFaceX + 2, barrelTop + 3, 3.2, barrelH - 6);
+  ctx.fillRect(plungerFaceX + 10.5, barrelTop + 3, 3.2, barrelH - 6);
   // Frosted glass plunger rod + ring grip
   ctx.fillStyle = isDark ? 'rgba(148, 163, 184, 0.65)' : 'rgba(100, 116, 139, 0.6)';
-  ctx.fillRect(plungerX + 12, y - 5, Math.max(18, rodTailX - (plungerX + 12)), 10);
+  ctx.fillRect(plungerFaceX + pistonW, y - 4.5, Math.max(16, rodTailX - (plungerFaceX + pistonW)), 9);
   ctx.strokeStyle = pal.glassStroke;
   ctx.lineWidth = 2.2;
   ctx.beginPath();
@@ -573,7 +842,6 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
       ctx.fillText(String(ml), tx, barrelTop + 12);
     }
   }
-  // Technical glass spec print along lower barrel
   ctx.fillStyle = pal.enamelText;
   ctx.font = '600 7px system-ui, sans-serif';
   ctx.textAlign = 'right';
@@ -593,10 +861,13 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   } else {
     labelText = `${gasTag}: ${gasVolMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
   }
+  if (overP > 0.08) {
+    labelText += ` · +${overP.toFixed(2)} bar`;
+  }
   const badgeTopY = y + collarH / 2 + 6;
   drawLabelPill(ctx, x, badgeTopY, labelText, {
     pal,
-    borderColor: isSelected ? '#3b82f6' : syrTempC >= 55 ? '#f59e0b' : pal.badgeBorder,
+    borderColor: overP >= 0.35 ? '#ef4444' : isSelected ? '#3b82f6' : syrTempC >= 55 ? '#f59e0b' : pal.badgeBorder,
     font: '600 11.5px system-ui, sans-serif',
     height: 22,
   });
@@ -640,6 +911,29 @@ export function renderPipette(ctx, item, isSelected, isDark, langCode = 'vi', ti
   const top = y - h / 2;
   const bottom = y + h / 2;
 
+  if (item.isBroken) {
+    ctx.save();
+    ctx.strokeStyle = isSelected ? '#3b82f6' : '#ef4444';
+    ctx.lineWidth = 1.4;
+    ctx.fillStyle = pal.glassFill;
+    ctx.beginPath();
+    ctx.moveTo(x - 16, bottom - 12);
+    ctx.lineTo(x + 12, bottom - 6);
+    ctx.lineTo(x + 6, bottom - 1);
+    ctx.lineTo(x - 14, bottom - 1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    drawLabelPill(ctx, x, bottom - 32, `${item.label} · 💥`, {
+      pal,
+      borderColor: '#ef4444',
+      font: '600 10px system-ui, sans-serif',
+      height: 17,
+    });
+    ctx.restore();
+    return;
+  }
+
   const cap = item.capacityMl || 10.0;
   const volMl = Math.max(0, Math.min(cap, item.volumeMl || 0));
   const fillRatio = volMl / cap;
@@ -657,10 +951,11 @@ export function renderPipette(ctx, item, isSelected, isDark, langCode = 'vi', ti
     ctx.shadowBlur = 11;
   }
 
-  // Tilted slight ergonomic angle while dragged over a vessel
-  if (item.tiltAngle) {
+  // Tilted slight ergonomic angle while dragged or wobbling from impact
+  const totTilt = (item.tiltAngle || 0) + (item.landingTilt || 0);
+  if (totTilt) {
     ctx.translate(x, y);
-    ctx.rotate(item.tiltAngle);
+    ctx.rotate(totTilt);
     ctx.translate(-x, -y);
   }
 
@@ -997,10 +1292,22 @@ export function renderVessel(ctx, vessel, opts) {
 
   ctx.save();
 
-  // Apply pour tilt around vessel center
-  if (vessel.tiltAngle) {
+  // Spilled chemical puddle on floor around unbroken vessel from drop spill or overflow
+  if (vessel.spilledPuddleColor && !vessel.isDragging) {
+    ctx.save();
+    ctx.fillStyle = vessel.spilledPuddleColor;
+    ctx.globalAlpha = 0.56;
+    ctx.beginPath();
+    ctx.ellipse(x, bottom + 1, w * 0.62, 4.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Apply pour tilt + impact drop wobble around vessel center
+  const effTilt = (vessel.tiltAngle || 0) + (vessel.landingTilt || 0);
+  if (effTilt) {
     ctx.translate(x, y);
-    ctx.rotate(vessel.tiltAngle);
+    ctx.rotate(effTilt);
     ctx.translate(-x, -y);
   }
 

@@ -1,5 +1,7 @@
+import { CONSTANTS } from '../data/constants.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl } from '../engine/equilibrium.js';
+import { getSyringeNozzlePos } from '../engine/gasNetwork.js';
 import { computeVesselFluidGeometry } from './vesselRenderer.js';
 
 const BENCH_FLOOR_Y = 482;
@@ -23,8 +25,11 @@ export class ParticleSystem {
    */
   emitForVessel(item, metrics, dt) {
     if (item.kind === 'gas_syringe') {
+      const sSpec = APPARATUS.gas_syringe;
+      const nozzle = getSyringeNozzlePos(item);
+
+      // 1. Rear collar spill when 250 mL syringe overflows
       if ((metrics.overflowOutRateMlS || 0) > 0.5) {
-        const sSpec = APPARATUS.gas_syringe;
         const rate = Math.min(60, 14 + metrics.overflowOutRateMlS * 0.45);
         const dropCount = Math.floor(rate * dt) + (Math.random() < (rate * dt) % 1 ? 1 : 0);
         const rearX = item.x - sSpec.width / 2 + (sSpec.barrelLeftOffset || 20) + (sSpec.barrelW || 192);
@@ -42,6 +47,96 @@ export class ParticleSystem {
             color: col,
             splashed: false,
           });
+        }
+      }
+
+      // 2. Active parabolic liquid discharge droplets falling from Luer nozzle
+      if ((metrics.dischargeLiquidRateMlS || 0) > 0.2 && metrics.dischargeArc) {
+        const arc = metrics.dischargeArc;
+        const rate = Math.min(55, 14 + metrics.dischargeLiquidRateMlS * 0.55);
+        const count = Math.floor(rate * dt) + (Math.random() < (rate * dt) % 1 ? 1 : 0);
+        const col = metrics.dischargeColor || 'rgba(186, 230, 253, 0.9)';
+        for (let i = 0; i < count; i++) {
+          this.particles.push({
+            kind: 'drip',
+            x: nozzle.x + (Math.random() - 0.5) * 2.5,
+            y: nozzle.y + (Math.random() - 0.5) * 2.5,
+            vx: -48 + (Math.random() - 0.5) * 8,
+            vy: 14 + (Math.random() - 0.5) * 6,
+            g: CONSTANTS.GRAVITY_PX_S2 || 1800,
+            r: 2.1 + Math.random() * 1.4,
+            stopY: arc.hitY,
+            catchX: arc.hitTargetVessel ? arc.hitX : null,
+            nozzleStream: true,
+            life: 0,
+            maxLife: 0.95,
+            color: col,
+            splashed: false,
+          });
+        }
+      }
+
+      // 3. Colored / fuming rising gas filaments & soft mist clouds from Luer nozzle
+      // (Pure colorless gases H2 / O2 are intentionally invisible!)
+      const gasRates = metrics.dischargeGasRates || {};
+      const cl2R = gasRates.Cl2_g || 0;
+      const acidR = (gasRates.HCl_g || 0) + (gasRates.HNO3_g || 0);
+      const steamR = (metrics.gasTempK || 298) >= 316 ? gasRates.H2O_g || 0 : 0;
+
+      if (cl2R > 2e-6 || acidR > 5e-6 || steamR > 5e-6) {
+        const isCl2 = cl2R > 2e-6;
+        const isAcid = !isCl2 && acidR > 5e-6;
+        const filColor = isCl2
+          ? this.isDark
+            ? 'rgba(190, 242, 100, 0.64)'
+            : 'rgba(101, 163, 13, 0.56)'
+          : isAcid
+          ? this.isDark
+            ? 'rgba(241, 245, 249, 0.44)'
+            : 'rgba(100, 116, 139, 0.34)'
+          : this.isDark
+          ? 'rgba(226, 232, 240, 0.46)'
+          : 'rgba(148, 163, 184, 0.36)';
+        const cloudColor = isCl2
+          ? this.isDark
+            ? 'rgba(163, 230, 53, 0.24)'
+            : 'rgba(132, 204, 22, 0.24)'
+          : this.isDark
+          ? 'rgba(226, 232, 240, 0.20)'
+          : 'rgba(100, 116, 139, 0.18)';
+
+        const ratePlume = isCl2 ? 22 : 14;
+        const pCount = Math.floor(ratePlume * dt) + (Math.random() < (ratePlume * dt) % 1 ? 1 : 0);
+        for (let i = 0; i < pCount; i++) {
+          if (Math.random() < 0.55) {
+            this.particles.push({
+              kind: 'gas_filament',
+              x: nozzle.x,
+              y: nozzle.y + (Math.random() - 0.5) * 3,
+              vx: -(28 + Math.random() * 24),
+              vy: -(32 + Math.random() * 44),
+              phase: Math.random() * Math.PI * 2,
+              trail: [{ x: nozzle.x, y: nozzle.y }],
+              w: isCl2 ? 3.2 : 2.4,
+              life: 0,
+              maxLife: 1.55 + Math.random() * 0.75,
+              color: filColor,
+            });
+          } else {
+            this.particles.push({
+              kind: 'gas_cloud',
+              x: nozzle.x - 4,
+              y: nozzle.y - 2,
+              vx: -(16 + Math.random() * 18),
+              vy: -(38 + Math.random() * 34),
+              phase: Math.random() * Math.PI * 2,
+              r: 6 + Math.random() * 5,
+              growR: 15 + Math.random() * 10,
+              life: 0,
+              maxLife: 1.85 + Math.random() * 0.85,
+              color: cloudColor,
+            });
+          }
         }
       }
       return;
@@ -153,17 +248,35 @@ export class ParticleSystem {
         const spreadX = fromCrystal ? halfW * 1.15 : Math.max(8, (spec.neckRadius || 20) * 0.9);
         const mistColor = hasCl2 ? cl2Palette : hasHClFume ? fumePalette : steamPalette;
 
-        this.particles.push({
-          kind: 'mist',
-          x: vessel.x + (Math.random() - 0.5) * spreadX,
-          y: startY,
-          vx: (Math.random() - 0.5) * (fromCrystal ? 12 : 20),
-          vy: -(28 + Math.random() * 34 + (metrics.isBoiling ? 12 : 0)),
-          r: (fromCrystal ? 3.8 : 5.2) + Math.random() * 6.5,
-          life: 0,
-          maxLife: (fromCrystal ? 1.35 : 1.05) + Math.random() * 0.65,
-          color: mistColor,
-        });
+        if (hasCl2 && Math.random() < 0.45) {
+          this.particles.push({
+            kind: 'gas_filament',
+            x: vessel.x + (Math.random() - 0.5) * spreadX * 0.6,
+            y: startY,
+            vx: (Math.random() - 0.5) * 16,
+            vy: -(38 + Math.random() * 36),
+            phase: Math.random() * Math.PI * 2,
+            trail: [{ x: vessel.x, y: startY }],
+            w: 2.8,
+            life: 0,
+            maxLife: 1.5 + Math.random() * 0.7,
+            color: this.isDark ? 'rgba(190, 242, 100, 0.55)' : 'rgba(101, 163, 13, 0.48)',
+          });
+        } else {
+          this.particles.push({
+            kind: hasCl2 ? 'gas_cloud' : 'mist',
+            x: vessel.x + (Math.random() - 0.5) * spreadX,
+            y: startY,
+            vx: (Math.random() - 0.5) * (fromCrystal ? 12 : 20),
+            vy: -(28 + Math.random() * 34 + (metrics.isBoiling ? 12 : 0)),
+            phase: Math.random() * Math.PI * 2,
+            r: (fromCrystal ? 3.8 : 5.2) + Math.random() * 6.5,
+            growR: 13,
+            life: 0,
+            maxLife: (fromCrystal ? 1.35 : 1.05) + Math.random() * 0.65,
+            color: mistColor,
+          });
+        }
       }
     } else if (vaporIntensity > 0.18 && vessel.isStoppered) {
       // Swirling hot steam / Cl2 trapped inside headspace or entering tubing toward gas syringe
@@ -344,6 +457,75 @@ export class ParticleSystem {
           color: meta?.liquidColor || 'rgba(186, 230, 253, 0.85)',
           splashed: false,
         });
+      }
+      return;
+    }
+
+    if (type === 'drop_spill') {
+      const vw = meta?.vesselWidth || 72;
+      const vh = meta?.vesselHeight || 110;
+      const count = Math.min(40, Math.max(12, Math.round((meta?.liquidMl || 20) * 0.45)));
+      const col = meta?.liquidColor || 'rgba(186, 230, 253, 0.85)';
+      for (let i = 0; i < count; i++) {
+        const angle = -Math.PI * (0.08 + Math.random() * 0.84);
+        const spd = 65 + Math.random() * 135;
+        this.particles.push({
+          kind: 'drip',
+          x: x + (Math.random() - 0.5) * vw * 0.5,
+          y: y - vh * 0.25 + (Math.random() - 0.5) * 12,
+          vx: Math.cos(angle) * spd,
+          vy: Math.sin(angle) * spd - 20,
+          r: 2.3 + Math.random() * 3.0,
+          life: 0,
+          maxLife: 0.95 + Math.random() * 0.45,
+          color: col,
+          splashed: false,
+        });
+      }
+      this.particles.push({
+        kind: 'shockwave',
+        x,
+        y: y + vh * 0.42,
+        vx: 0,
+        vy: 0,
+        r: 6,
+        maxR: Math.max(46, vw * 0.8),
+        life: 0,
+        maxLife: 0.28,
+        color: col,
+      });
+      return;
+    }
+
+    if (type === 'syringe_plunger_pop') {
+      const col = meta?.liquidColor || 'rgba(226, 232, 240, 0.72)';
+      this.particles.push({
+        kind: 'shockwave',
+        x: x + 90,
+        y,
+        vx: 0,
+        vy: 0,
+        r: 8,
+        maxR: 86,
+        life: 0,
+        maxLife: 0.28,
+        color: '#f59e0b',
+      });
+      if (meta?.hadLiquid) {
+        for (let i = 0; i < 22; i++) {
+          this.particles.push({
+            kind: 'drip',
+            x: x - 20 + Math.random() * 110,
+            y: y + (Math.random() - 0.5) * 20,
+            vx: 65 + Math.random() * 140,
+            vy: -55 + Math.random() * 80,
+            r: 2.5 + Math.random() * 2.5,
+            life: 0,
+            maxLife: 1.15,
+            color: col,
+            splashed: false,
+          });
+        }
       }
       return;
     }
@@ -568,30 +750,48 @@ export class ParticleSystem {
           p.vx *= 0.72;
           p.spin *= 0.6;
         }
+      } else if (p.kind === 'gas_filament') {
+        p.vx += (Math.sin(p.life * 8.5 + p.phase) * 75 - p.vx * 1.4) * dt;
+        p.vy = Math.max(-115, p.vy - 18 * dt);
+        p.trail.push({ x: p.x, y: p.y });
+        if (p.trail.length > 14) p.trail.shift();
+      } else if (p.kind === 'gas_cloud') {
+        p.r += (p.growR || 12) * dt;
+        p.vx += (Math.sin(p.life * 4.5 + p.phase) * 32 - p.vx * 0.9) * dt;
+        p.vy = Math.max(-92, p.vy - 8 * dt);
       } else if (p.kind === 'pipette_suck') {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.65)';
-        ctx.lineWidth = 0.6;
-        ctx.stroke();
+        p.vx *= 0.98;
       } else if (p.kind === 'drip') {
-        p.vy += 390 * dt;
+        p.vy += (p.g || 390) * dt;
         const limitY = p.stopY || BENCH_FLOOR_Y;
         if (p.y >= limitY) {
           p.y = limitY;
           if (!p.splashed) {
             p.splashed = true;
-            p.vy = p.stopY ? 0 : -Math.abs(p.vy) * 0.16;
-            p.vx = p.stopY ? 0 : (p.vx === 0 ? (Math.random() - 0.5) * 40 : p.vx * 1.35);
+            if (p.catchX != null) {
+              // Absorbed into receiving vessel rim cleanly
+              p.life = p.maxLife;
+              this.particles.push({
+                kind: 'shockwave',
+                x: p.catchX,
+                y: limitY + 4,
+                vx: 0,
+                vy: 0,
+                r: 2,
+                maxR: 13,
+                life: 0,
+                maxLife: 0.22,
+                color: p.color,
+              });
+            } else {
+              p.vy = p.stopY && !p.nozzleStream ? 0 : -Math.abs(p.vy) * 0.18;
+              p.vx = p.stopY && !p.nozzleStream ? 0 : p.vx === 0 ? (Math.random() - 0.5) * 40 : p.vx * 1.15;
+            }
           } else {
             p.vy = 0;
             p.vx *= 0.85;
           }
         }
-      } else if (p.kind === 'pipette_suck') {
-        p.vx *= 0.98;
       } else if (p.kind === 'stopper_fly') {
         p.vy += 470 * dt;
         p.angle += p.spin * dt;
@@ -630,6 +830,29 @@ export class ParticleSystem {
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
+        ctx.fill();
+      } else if (p.kind === 'gas_filament') {
+        const pts = p.trail || [];
+        if (pts.length >= 2) {
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x, pts[0].y);
+          for (let k = 1; k < pts.length; k++) {
+            ctx.lineTo(pts[k].x, pts[k].y);
+          }
+          ctx.strokeStyle = p.color;
+          ctx.lineWidth = Math.max(0.8, (p.w || 2.8) * (1 - t * 0.4));
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.stroke();
+        }
+      } else if (p.kind === 'gas_cloud') {
+        const grad = ctx.createRadialGradient(p.x, p.y, 1, p.x, p.y, p.r);
+        grad.addColorStop(0, p.color);
+        grad.addColorStop(0.55, p.color);
+        grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
         ctx.fill();
       } else if (p.kind === 'flame') {
         ctx.beginPath();

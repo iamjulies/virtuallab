@@ -44,6 +44,7 @@ export const CONSTANTS = {
   // Physical workbench geometry & tubing bore constants
   PX_PER_MM: 1.15,                   // 1.15 px/mm across all ISO apparatus
   TUBING_INNER_DIAMETER_MM: 6.0,     // Fixed 6.0 mm inner bore silicone/rubber delivery tubing
+  GRAVITY_PX_S2: 1800.0,             // Workbench gravitational acceleration (px/s^2)
 
   // Numerical integration limits
   SUBSTEP_MAX_DT: 0.01, // 10 ms max physics/chem substep

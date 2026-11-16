@@ -1,9 +1,13 @@
 import { APPARATUS } from '../data/apparatus.js';
+import { CONSTANTS } from '../data/constants.js';
 import { computeLiquidVolumeL, computePH, computeSolutionVisuals } from '../engine/equilibrium.js';
+import { computeSyringeDischargeArc, computeSyringeLiquidVolumeMl } from '../engine/gasNetwork.js';
 import {
   renderBurner,
   renderGasSyringe,
   renderPipette,
+  renderRetortClampJaw,
+  renderRetortStand,
   renderScale,
   renderTubingConnections,
   renderVessel,
@@ -111,6 +115,36 @@ export class LabWorkbenchCanvas {
     return null;
   }
 
+  findSyringeAt(lx, ly) {
+    for (let i = this.sim.items.length - 1; i >= 0; i--) {
+      const it = this.sim.items[i];
+      if (it.kind !== 'gas_syringe' || it.isBroken) continue;
+      const spec = APPARATUS[it.typeId];
+      const hw = spec.width / 2 + 12;
+      const hh = spec.height / 2 + 18;
+      if (lx >= it.x - hw && lx <= it.x + hw && ly >= it.y - hh && ly <= it.y + hh) {
+        return it;
+      }
+    }
+    return null;
+  }
+
+  findStandNear(item) {
+    if (!item || (item.kind !== 'vessel' && item.kind !== 'gas_syringe')) return null;
+    for (const stand of this.sim.items) {
+      if (stand.kind !== 'stand') continue;
+      const sSpec = APPARATUS.retort_stand;
+      const standTop = stand.y - sSpec.height / 2;
+      const rodX = stand.x + 36;
+      const distX = Math.abs(item.x - (item.kind === 'gas_syringe' ? rodX - 45 : rodX - 28));
+      const maxPullDist = item.kind === 'gas_syringe' ? 88 : 54;
+      if (distX <= maxPullDist && item.y >= standTop + 10 && item.y <= BENCH_FLOOR_Y - 30) {
+        return stand;
+      }
+    }
+    return null;
+  }
+
   bindEvents() {
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(this.canvas.parentElement);
@@ -121,8 +155,12 @@ export class LabWorkbenchCanvas {
       const hit = this.hitTestItem(pt.x, pt.y);
       if (hit) {
         this.sim.selectedId = hit.id;
-        // Bring dragged item to front visually unless it's a support base (scale/burner)
-        if (hit.kind === 'vessel' || hit.kind === 'pipette') {
+        hit.isDragging = true;
+        hit.vy = 0;
+        hit.fallStartY = hit.y;
+        hit.restingOnId = null;
+        // Bring dragged item to front visually unless it's a support base (scale/burner/stand)
+        if (hit.kind === 'vessel' || hit.kind === 'pipette' || hit.kind === 'gas_syringe') {
           this.sim.items = this.sim.items.filter((i) => i.id !== hit.id);
           this.sim.items.push(hit);
         }
@@ -130,8 +168,11 @@ export class LabWorkbenchCanvas {
           itemId: hit.id,
           offsetX: pt.x - hit.x,
           offsetY: pt.y - hit.y,
+          prevX: hit.x,
+          prevY: hit.y,
           pourTargetId: null,
           pipetteTargetId: null,
+          clampStandId: hit.clampedToId || null,
           pouredMl: 0,
         };
         this.canvas.setPointerCapture(e.pointerId);
@@ -158,8 +199,36 @@ export class LabWorkbenchCanvas {
       if (!item) return;
 
       const spec = APPARATUS[item.typeId];
-      item.x = Math.max(60, Math.min(BENCH_LOGICAL_W - 60, pt.x - this.dragState.offsetX));
-      item.y = Math.max(65, Math.min(BENCH_FLOOR_Y - spec.height / 2 + 4, pt.y - this.dragState.offsetY));
+      const nextX = Math.max(60, Math.min(BENCH_LOGICAL_W - 60, pt.x - this.dragState.offsetX));
+      const nextY = Math.max(65, Math.min(BENCH_FLOOR_Y - spec.height / 2 + 4, pt.y - this.dragState.offsetY));
+      const dxMove = nextX - item.x;
+      const dyMove = nextY - item.y;
+      item.x = nextX;
+      item.y = nextY;
+      item.vy = 0;
+      item.fallStartY = item.y;
+
+      // Move clamped items along with stand when dragging a Retort Stand
+      if (item.kind === 'stand') {
+        for (const child of this.sim.items) {
+          if (child.clampedToId === item.id) {
+            child.x = Math.max(60, Math.min(BENCH_LOGICAL_W - 60, child.x + dxMove));
+            child.y = Math.max(65, Math.min(BENCH_FLOOR_Y - APPARATUS[child.typeId].height / 2 - 4, child.y + dyMove));
+          }
+        }
+      }
+
+      // Check Retort Stand clamp snap/release for vessels & syringes
+      if ((item.kind === 'vessel' && !item.isShattered) || (item.kind === 'gas_syringe' && !item.isBroken)) {
+        const stand = this.findStandNear(item);
+        if (stand && item.y < BENCH_FLOOR_Y - spec.height / 2 - 20) {
+          this.dragState.clampStandId = stand.id;
+          item.clampedToId = stand.id;
+        } else {
+          this.dragState.clampStandId = null;
+          item.clampedToId = null;
+        }
+      }
 
       // If dragging a vessel, check if hovering above another vessel's rim to auto-tilt & pour
       if (item.kind === 'vessel' && !item.isStoppered && !item.isShattered) {
@@ -185,8 +254,9 @@ export class LabWorkbenchCanvas {
           this.dropTargetVesselId = null;
           item.tiltAngle = 0;
         }
-      } else if (item.kind === 'pipette') {
+      } else if (item.kind === 'pipette' && !item.isBroken) {
         const tgt = this.findVesselAt(item.x, item.y + spec.height * 0.28);
+        const syrTgt = !tgt ? this.findSyringeAt(item.x, item.y + spec.height * 0.28) : null;
         if (tgt && !tgt.isShattered && !tgt.isStoppered) {
           this.dragState.pipetteTargetId = tgt.id;
           this.dropTargetVesselId = tgt.id;
@@ -199,6 +269,12 @@ export class LabWorkbenchCanvas {
             : this.langCode === 'vi'
             ? '🧪 Thả hút (≤10 mL)'
             : '🧪 Drop to draw (≤10 mL)';
+        } else if (syrTgt && (item.volumeMl || 0) <= 0.05 && computeSyringeLiquidVolumeMl(syrTgt, this.sim.environment) > 0.02) {
+          this.dragState.pipetteTargetId = syrTgt.id;
+          this.dropTargetVesselId = syrTgt.id;
+          item.tiltAngle = -0.14;
+          item.hoveredActionLabel =
+            this.langCode === 'vi' ? '🧪 Hút từ Syringe (≤10 mL)' : '🧪 Draw from Syringe';
         } else {
           this.dragState.pipetteTargetId = null;
           this.dropTargetVesselId = null;
@@ -214,14 +290,19 @@ export class LabWorkbenchCanvas {
       if (!this.dragState) return;
       const item = this.sim.getItem(this.dragState.itemId);
       const pipTargetId = this.dragState.pipetteTargetId;
+      if (item) {
+        item.isDragging = false;
+        item.fallStartY = item.clampedToId ? null : item.y;
+        item.vy = 0;
+      }
       if (item && (item.kind === 'vessel' || item.kind === 'pipette')) {
         item.tiltAngle = 0;
       }
-      if (item && item.kind === 'pipette') {
+      if (item && item.kind === 'pipette' && !item.isBroken) {
         item.hoveredActionLabel = null;
         if (pipTargetId) {
           const tgt = this.sim.getItem(pipTargetId);
-          if (tgt && !tgt.isShattered && !tgt.isStoppered) {
+          if (tgt && tgt.kind === 'vessel' && !tgt.isShattered && !tgt.isStoppered) {
             if ((item.volumeMl || 0) <= 0.05) {
               this.sim.pipetteDrawFromVessel(tgt.id, item.capacityMl || 10.0, item);
             } else {
@@ -233,6 +314,13 @@ export class LabWorkbenchCanvas {
             const parkLeftX = tgt.x - tSpec.width / 2 - 26;
             item.x = parkRightX <= BENCH_LOGICAL_W - 45 ? parkRightX : Math.max(45, parkLeftX);
             item.y = BENCH_FLOOR_Y - pSpec.height / 2 + 2;
+            item.fallStartY = null;
+          } else if (tgt && tgt.kind === 'gas_syringe' && !tgt.isBroken && (item.volumeMl || 0) <= 0.05) {
+            this.sim.pipetteDrawFromSyringe(tgt.id, item.capacityMl || 10.0, item);
+            const pSpec = APPARATUS[item.typeId];
+            item.x = Math.max(45, tgt.x - APPARATUS.gas_syringe.width / 2 - 24);
+            item.y = BENCH_FLOOR_Y - pSpec.height / 2 + 2;
+            item.fallStartY = null;
           }
         }
       }
@@ -270,9 +358,18 @@ export class LabWorkbenchCanvas {
       if (apparatusId) {
         const spec = APPARATUS[apparatusId];
         const hoverVessel = apparatusId === 'pipette_10' ? this.findVesselAt(pt.x, pt.y) : null;
+        const hoverSyr = apparatusId === 'pipette_10' && !hoverVessel ? this.findSyringeAt(pt.x, pt.y) : null;
         const clampedX = Math.max(70, Math.min(BENCH_LOGICAL_W - 70, pt.x));
-        const clampedY = Math.min(BENCH_FLOOR_Y - (spec?.height || 100) / 2, Math.max(80, pt.y));
+        const clampedY = Math.min(BENCH_FLOOR_Y - (spec?.height || 100) / 2 + 2, Math.max(80, pt.y));
         const created = this.sim.createApparatus(apparatusId, clampedX, clampedY);
+        if (created) {
+          const nearStand = this.findStandNear(created);
+          if (nearStand && created.y < BENCH_FLOOR_Y - (spec?.height || 100) / 2 - 20) {
+            this.sim.attachToStand(created.id, nearStand.id);
+          } else {
+            created.fallStartY = created.y;
+          }
+        }
         if (created && hoverVessel && !hoverVessel.isShattered && !hoverVessel.isStoppered) {
           const drew = this.sim.pipetteDrawFromVessel(hoverVessel.id, created.capacityMl || 10.0, created);
           if (drew > 0) {
@@ -281,6 +378,14 @@ export class LabWorkbenchCanvas {
             const parkLeftX = hoverVessel.x - hSpec.width / 2 - 26;
             created.x = parkRightX <= BENCH_LOGICAL_W - 45 ? parkRightX : Math.max(45, parkLeftX);
             created.y = BENCH_FLOOR_Y - spec.height / 2 + 2;
+            created.fallStartY = null;
+          }
+        } else if (created && hoverSyr && !hoverSyr.isBroken) {
+          const drew = this.sim.pipetteDrawFromSyringe(hoverSyr.id, created.capacityMl || 10.0, created);
+          if (drew > 0) {
+            created.x = Math.max(45, hoverSyr.x - APPARATUS.gas_syringe.width / 2 - 24);
+            created.y = BENCH_FLOOR_Y - spec.height / 2 + 2;
+            created.fallStartY = null;
           }
         }
         if (created && this.callbacks.onSelect) this.callbacks.onSelect(created);
@@ -386,11 +491,11 @@ export class LabWorkbenchCanvas {
     ctx.lineTo(BENCH_LOGICAL_W, BENCH_FLOOR_Y);
     ctx.stroke();
 
-    // 2. Render rubber tubing behind/between vessels
+    // 2. Render supports & stands behind, clamp jaws, then Syringes, Vessels, and Pipettes on top
     renderTubingConnections(ctx, this.sim.items, this.isDark, timeNow, this.langCode);
 
-    // 3. Render supports first (Scales & Burners), then Syringes, then Vessels, then Pipettes on top
     const ordered = [
+      ...this.sim.items.filter((i) => i.kind === 'stand'),
       ...this.sim.items.filter((i) => i.kind === 'scale' || i.kind === 'burner'),
       ...this.sim.items.filter((i) => i.kind === 'gas_syringe'),
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
@@ -399,7 +504,9 @@ export class LabWorkbenchCanvas {
 
     for (const item of ordered) {
       const isSelected = item.id === this.sim.selectedId;
-      if (item.kind === 'scale') {
+      if (item.kind === 'stand') {
+        renderRetortStand(ctx, item, isSelected, this.isDark);
+      } else if (item.kind === 'scale') {
         renderScale(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'burner') {
         renderBurner(ctx, item, isSelected, this.isDark, timeNow);
@@ -415,6 +522,51 @@ export class LabWorkbenchCanvas {
         });
       } else if (item.kind === 'pipette') {
         renderPipette(ctx, item, isSelected, this.isDark, this.langCode, timeNow);
+      }
+
+      if (item.clampedToId) {
+        const st = this.sim.getItem(item.clampedToId);
+        if (st && st.kind === 'stand') {
+          renderRetortClampJaw(ctx, st, item, this.isDark);
+        }
+      }
+    }
+
+    // Show parabolic aim trajectory guide when selecting a Gas Syringe containing liquid (so user can align a catching vessel below)
+    const selItem = this.sim.getItem(this.sim.selectedId);
+    if (
+      selItem &&
+      selItem.kind === 'gas_syringe' &&
+      !selItem.isBroken &&
+      !selItem.connectedFromId &&
+      computeSyringeLiquidVolumeMl(selItem, this.sim.environment) > 0.05 &&
+      (selItem.dischargeLiquidRateMlS || 0) <= 0.15
+    ) {
+      const aimArc = computeSyringeDischargeArc(
+        selItem,
+        this.sim.items,
+        BENCH_FLOOR_Y,
+        CONSTANTS.GRAVITY_PX_S2 || 1800
+      );
+      if (aimArc.points.length >= 2) {
+        ctx.save();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = aimArc.hitTargetVessel ? 'rgba(16, 185, 129, 0.72)' : 'rgba(148, 163, 184, 0.36)';
+        ctx.lineWidth = aimArc.hitTargetVessel ? 2.0 : 1.3;
+        ctx.beginPath();
+        ctx.moveTo(aimArc.points[0].x, aimArc.points[0].y);
+        for (let i = 1; i < aimArc.points.length; i++) {
+          ctx.lineTo(aimArc.points[i].x, aimArc.points[i].y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (aimArc.hitTargetVessel) {
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.85)';
+          ctx.beginPath();
+          ctx.arc(aimArc.hitX, aimArc.hitY, 4.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
       }
     }
 

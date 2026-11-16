@@ -92,7 +92,10 @@ button:disabled {
 .accent-orange-500 { accent-color: #f97316; }
 .accent-blue-500 { accent-color: #3b82f6; }
 .text-sky-400 { color: #38bdf8; }
+.bg-sky-600 { background-color: #0284c7; }
+.hover\:bg-sky-500:hover { background-color: #0ea5e9; }
 .text-amber-400 { color: #fbbf24; }
+.hover\:bg-amber-500\/10:hover { background-color: rgba(245, 158, 11, 0.14); }
 .border-sky-500\/35 { border-color: rgba(14, 165, 233, 0.42); }
 .bg-sky-500\/10 { background-color: rgba(14, 165, 233, 0.12); }
 [data-theme="light"] .text-sky-400 { color: #0284c7; }
