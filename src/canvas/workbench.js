@@ -286,52 +286,63 @@ export class LabWorkbenchCanvas {
       this.sim.recomputeScaleReadings();
     });
 
-    const endDrag = () => {
+    const endDrag = (e) => {
       if (!this.dragState) return;
-      const item = this.sim.getItem(this.dragState.itemId);
-      const pipTargetId = this.dragState.pipetteTargetId;
-      if (item) {
-        item.isDragging = false;
-        item.fallStartY = item.clampedToId ? null : item.y;
-        item.vy = 0;
-      }
-      if (item && (item.kind === 'vessel' || item.kind === 'pipette')) {
-        item.tiltAngle = 0;
-      }
-      if (item && item.kind === 'pipette' && !item.isBroken) {
-        item.hoveredActionLabel = null;
-        if (pipTargetId) {
-          const tgt = this.sim.getItem(pipTargetId);
-          if (tgt && tgt.kind === 'vessel' && !tgt.isShattered && !tgt.isStoppered) {
-            if ((item.volumeMl || 0) <= 0.05) {
-              this.sim.pipetteDrawFromVessel(tgt.id, item.capacityMl || 10.0, item);
-            } else {
-              this.sim.pipetteDispenseToVessel(tgt.id, item.dropDoseMl || 1.0, item);
+      try {
+        const item = this.sim.getItem(this.dragState.itemId);
+        const pipTargetId = this.dragState.pipetteTargetId;
+        if (item) {
+          item.isDragging = false;
+          item.fallStartY = item.clampedToId ? null : item.y;
+          item.vy = 0;
+        }
+        if (item && (item.kind === 'vessel' || item.kind === 'pipette')) {
+          item.tiltAngle = 0;
+        }
+        if (item && item.kind === 'pipette' && !item.isBroken) {
+          item.hoveredActionLabel = null;
+          if (pipTargetId) {
+            const tgt = this.sim.getItem(pipTargetId);
+            if (tgt && tgt.kind === 'vessel' && !tgt.isShattered && !tgt.isStoppered) {
+              if ((item.volumeMl || 0) <= 0.05) {
+                this.sim.pipetteDrawFromVessel(tgt.id, item.capacityMl || 10.0, item);
+              } else {
+                this.sim.pipetteDispenseToVessel(tgt.id, item.dropDoseMl || 1.0, item);
+              }
+              const tSpec = APPARATUS[tgt.typeId];
+              const pSpec = APPARATUS[item.typeId];
+              const parkRightX = tgt.x + tSpec.width / 2 + 26;
+              const parkLeftX = tgt.x - tSpec.width / 2 - 26;
+              item.x = parkRightX <= BENCH_LOGICAL_W - 45 ? parkRightX : Math.max(45, parkLeftX);
+              item.y = BENCH_FLOOR_Y - pSpec.height / 2 + 2;
+              item.fallStartY = null;
+            } else if (tgt && tgt.kind === 'gas_syringe' && !tgt.isBroken && (item.volumeMl || 0) <= 0.05) {
+              this.sim.pipetteDrawFromSyringe(tgt.id, item.capacityMl || 10.0, item);
+              const pSpec = APPARATUS[item.typeId];
+              item.x = Math.max(45, tgt.x - APPARATUS.gas_syringe.width / 2 - 24);
+              item.y = BENCH_FLOOR_Y - pSpec.height / 2 + 2;
+              item.fallStartY = null;
             }
-            const tSpec = APPARATUS[tgt.typeId];
-            const pSpec = APPARATUS[item.typeId];
-            const parkRightX = tgt.x + tSpec.width / 2 + 26;
-            const parkLeftX = tgt.x - tSpec.width / 2 - 26;
-            item.x = parkRightX <= BENCH_LOGICAL_W - 45 ? parkRightX : Math.max(45, parkLeftX);
-            item.y = BENCH_FLOOR_Y - pSpec.height / 2 + 2;
-            item.fallStartY = null;
-          } else if (tgt && tgt.kind === 'gas_syringe' && !tgt.isBroken && (item.volumeMl || 0) <= 0.05) {
-            this.sim.pipetteDrawFromSyringe(tgt.id, item.capacityMl || 10.0, item);
-            const pSpec = APPARATUS[item.typeId];
-            item.x = Math.max(45, tgt.x - APPARATUS.gas_syringe.width / 2 - 24);
-            item.y = BENCH_FLOOR_Y - pSpec.height / 2 + 2;
-            item.fallStartY = null;
           }
         }
+      } finally {
+        this.dragState = null;
+        this.dropTargetVesselId = null;
+        this.canvas.style.cursor = 'default';
+        if (e?.pointerId != null && this.canvas.hasPointerCapture?.(e.pointerId)) {
+          try {
+            this.canvas.releasePointerCapture(e.pointerId);
+          } catch {}
+        }
+        this.sim.updateSupportAttachments();
+        this.sim.emitChange();
       }
-      this.dragState = null;
-      this.dropTargetVesselId = null;
-      this.sim.updateSupportAttachments();
-      this.sim.emitChange();
     };
 
     this.canvas.addEventListener('pointerup', endDrag);
     this.canvas.addEventListener('pointercancel', endDrag);
+    this.canvas.addEventListener('lostpointercapture', endDrag);
+    window.addEventListener('blur', endDrag);
 
     // HTML5 Drag & Drop from Shelf onto Bench
     this.canvas.addEventListener('dragover', (e) => {

@@ -198,11 +198,24 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.48)';
       ctx.fill();
 
-      // Molten silvery sphere with metallic radial gradient
+      // Thermal sodium halo when molten -> incandescent -> ignited (>= 680 K)
+      const tNa = vessel.naTempK ?? vessel.tempK;
+      if (tNa >= 520 || vessel.naIgnited) {
+        const heatFrac = Math.min(1, (tNa - 500) / 220);
+        const haloGrad = ctx.createRadialGradient(nx, ny, radius * 0.4, nx, ny, radius * (2.2 + heatFrac * 1.5));
+        haloGrad.addColorStop(0, vessel.naIgnited ? 'rgba(253, 224, 71, 0.92)' : `rgba(251, 146, 60, ${0.45 * heatFrac})`);
+        haloGrad.addColorStop(1, 'rgba(249, 115, 22, 0)');
+        ctx.fillStyle = haloGrad;
+        ctx.beginPath();
+        ctx.arc(nx, ny, radius * (2.2 + heatFrac * 1.5), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Molten silvery sphere (shifts slightly warm amber-white at high T_Na)
       const grad = ctx.createRadialGradient(nx - radius * 0.3, ny - radius * 0.35, 1, nx, ny, radius);
       grad.addColorStop(0, '#ffffff');
-      grad.addColorStop(0.55, '#cbd5e1');
-      grad.addColorStop(1, '#64748b');
+      grad.addColorStop(0.55, vessel.naIgnited ? '#fde68a' : '#cbd5e1');
+      grad.addColorStop(1, vessel.naIgnited ? '#ea580c' : '#64748b');
       ctx.beginPath();
       ctx.arc(nx, ny, radius, 0, Math.PI * 2);
       ctx.fillStyle = grad;

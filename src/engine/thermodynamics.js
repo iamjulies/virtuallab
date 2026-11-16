@@ -62,8 +62,48 @@ function computeEffectiveBurnerPowerW(spec, vesselTempK, burnerPowerW, flameLeve
 }
 
 /**
+ * Universal Clausius-Clapeyron + Stefan-Maxwell + Gilliland air-diffusion evaporation model (mol/s).
+ * Uses only molarMass, boilTempK & dHVapJ per liquid species in SPECIES database.
+ */
+export function calcEvaporationRateMol(
+  species,
+  moleFraction,
+  tempK,
+  areaCm2,
+  pAmbientPa = 0,
+  isStirred = false
+) {
+  if (!species || !species.boilTempK || !species.dHVapJ || moleFraction <= 0 || areaCm2 <= 0) {
+    return 0;
+  }
+  const R = CONSTANTS.R_J_MOL_K;
+  const P_atm = 101325;
+  const T = Math.max(200, tempK);
+  const P_sat = P_atm * Math.exp((species.dHVapJ / R) * (1 / species.boilTempK - 1 / T));
+  const P_surface = moleFraction * (species.activityCoeff || 1.0) * P_sat;
+  if (P_surface <= pAmbientPa) return 0;
+
+  // Gilliland diffusivity scaling in lab air (M_air = 28.97 g/mol)
+  const diffFactor = Math.pow(Math.sqrt(1 / species.molarMass + 1 / 28.97), 2 / 3);
+  const stirBoost = isStirred ? 1.85 : 1.0;
+  const k_mass = 5.4e-6 * stirBoost * diffFactor;
+  return k_mass * areaCm2 * ((P_surface - pAmbientPa) / (R * T));
+}
+
+/**
+ * Optical water-vapor mist visibility [0..1] determined by mixing dew-point condensation
+ * above surface: 0 at 25 C in 60% RH room air, thin wisps at 45-55 C, dense plume near boiling.
+ */
+export function computeSteamOpacity(waterTempK, envTempK = CONSTANTS.T_STD_K, rh = CONSTANTS.RELATIVE_HUMIDITY) {
+  const tWaterC = waterTempK - CONSTANTS.KELVIN_OFFSET;
+  const tRoomC = envTempK - CONSTANTS.KELVIN_OFFSET;
+  const raw = (tWaterC - (tRoomC + 22 - 15 * rh)) / 45;
+  return Math.max(0, Math.min(1, raw));
+}
+
+/**
  * Advance vessel thermal state, surface evaporation/HCl fuming, and azeotropic boiling over dt.
- * Returns { steamProducedMol, hclProducedMol, isBoiling, boilingPointK }
+ * Returns { steamProducedMol, hclProducedMol, isBoiling, boilingPointK, steamOpacity }
  */
 export function stepVesselThermodynamics(
   vessel,
@@ -105,15 +145,12 @@ export function stepVesselThermodynamics(
 
   const boilingPointK = solutionBoilingPointK(vessel.moles, effectivePressureBar);
 
-  // Regime 1: Sub-boiling surface evaporation (Dalton + Raoult + Antoine)
-  // dm_evap/dt = km * A_surface * max(0, x_H2O * P_sat(T) - RH * P_sat(T_room))
-  // Open vessels evaporate at any T; syringe-connected vessels vent expanding warm vapor once T >= 80 C.
+  // Regime 1: Universal sub-boiling evaporation (Clausius-Clapeyron + Stefan-Maxwell + Gilliland)
+  // Open vessels evaporate gently at any T; syringe-connected vessels vent expanding warm vapor once T >= 80 C.
   const canSubBoilVent = !vessel.isStoppered || (vessel.connectedSyringeId && vessel.tempK >= 353.15);
-  if (nWater > 1e-7 && canSubBoilVent && vessel.tempK < boilingPointK) {
+  const nEthanol = vessel.moles.C2H5OH_l || 0;
+  if ((nWater > 1e-7 || nEthanol > 1e-7) && canSubBoilVent && vessel.tempK < boilingPointK) {
     const xH2O = waterMoleFraction(vessel.moles);
-    const pSurfMmHg = xH2O * waterVaporPressureMmHg(vessel.tempK);
-    const pAmbMmHg = CONSTANTS.RELATIVE_HUMIDITY * waterVaporPressureMmHg(env.tempK);
-    const deltaPMmHg = Math.max(0, pSurfMmHg - pAmbMmHg);
     const volMl =
       computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000 +
       computeSolidVolumeMl(vessel.moles);
@@ -121,9 +158,28 @@ export function stepVesselThermodynamics(
       ? Math.max(0.2, spec.geometry.getLiquidState(volMl).surfaceAreaCm2)
       : spec.surfaceAreaCm2 || 20.0;
     const tubingScale = vessel.isStoppered && vessel.connectedSyringeId ? 0.55 : 1.0;
-    const km = 2.4e-6 * (vessel.stirTimer > 0 ? 2.0 : 1.0) * tubingScale; // g / (cm^2 * s * mmHg)
-    const evapMolS = (km * areaCm2 * deltaPMmHg) / CONSTANTS.M_H2O;
-    const subBoilEvap = Math.min(nWater, evapMolS * dt);
+    const effAreaCm2 = areaCm2 * tubingScale;
+    const isStirred = (vessel.stirTimer || 0) > 0;
+
+    // 1a) Water sub-boiling evaporation (against ambient 60% RH water vapor pressure)
+    const pAmbH2OPa =
+      CONSTANTS.RELATIVE_HUMIDITY *
+      101325 *
+      Math.exp((SPECIES.H2O_l.dHVapJ / CONSTANTS.R_J_MOL_K) * (1 / SPECIES.H2O_l.boilTempK - 1 / env.tempK));
+    const evapH2OMolS =
+      nWater > 1e-7
+        ? calcEvaporationRateMol(SPECIES.H2O_l, xH2O, vessel.tempK, effAreaCm2, pAmbH2OPa, isStirred)
+        : 0;
+    const subBoilEvap = Math.min(nWater, evapH2OMolS * dt);
+
+    // 1b) Volatile ethanol co-evaporation (e.g. from 1% phenolphthalein solution)
+    const solTotal = Math.max(1e-9, nWater + nEthanol);
+    const xEtOH = nEthanol / solTotal;
+    const evapEtOHMolS =
+      nEthanol > 1e-7
+        ? calcEvaporationRateMol(SPECIES.C2H5OH_l, xEtOH, vessel.tempK, effAreaCm2, 0, isStirred)
+        : 0;
+    const subBoilEtOH = Math.min(nEthanol, evapEtOHMolS * dt);
 
     const nH = vessel.moles.H_aq || 0;
     const nCl = vessel.moles.Cl_aq || 0;
@@ -134,7 +190,7 @@ export function stepVesselThermodynamics(
     if (nHCl > 1e-12) {
       const mHCl = nHCl * CONSTANTS.M_HCL;
       const mH2O = nWater * CONSTANTS.M_H2O;
-      const wHCl = mHCl / (mHCl + mH2O);
+      const wHCl = mHCl / Math.max(1e-9, mHCl + mH2O);
       // Direct HCl outgassing above the 20.24% azeotrope ("fuming slightly" at room temp)
       const fumeExcess = Math.max(0, wHCl - CONSTANTS.HCL_AZEOTROPE_WT_FRAC - 0.01);
       const fumeMol =
@@ -152,6 +208,11 @@ export function stepVesselThermodynamics(
       if (vessel.moles.H2O_l < 1e-12) delete vessel.moles.H2O_l;
       steamProducedMol += subBoilEvap;
       evapCoolingJ -= subBoilEvap * CONSTANTS.DELTA_H_VAP_WATER_J;
+    }
+    if (subBoilEtOH > 1e-12) {
+      vessel.moles.C2H5OH_l -= subBoilEtOH;
+      if (vessel.moles.C2H5OH_l < 1e-12) delete vessel.moles.C2H5OH_l;
+      evapCoolingJ -= subBoilEtOH * SPECIES.C2H5OH_l.dHVapJ;
     }
     if (subBoilHCl > 1e-12) {
       vessel.moles.H_aq = Math.max(0, (vessel.moles.H_aq || 0) - subBoilHCl);
@@ -213,11 +274,15 @@ export function stepVesselThermodynamics(
   }
 
   vessel.tempK = newTempK;
+  const steamOpacity = (vessel.moles.H2O_l || 0) > 1e-7
+    ? computeSteamOpacity(newTempK, env.tempK, CONSTANTS.RELATIVE_HUMIDITY)
+    : 0;
 
   return {
     steamProducedMol,
     hclProducedMol,
     isBoiling,
     boilingPointK,
+    steamOpacity,
   };
 }

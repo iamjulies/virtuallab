@@ -376,7 +376,7 @@ export const REACTIONS = [
     aqueousId: 'H2O_l',
     useWaterContact: true,
     k298: 12.0, // Scales with surface area (mol / (m^2 * s))
-    eaJ: 16000,
+    eaJ: 4200,  // Driven by separate droplet surface temp T_Na
     deltaHJ: -368000, // -184 kJ per mol Na!
     vigorousGas: true,
   },
@@ -393,7 +393,7 @@ export const REACTIONS = [
     solidId: 'Na_s',
     aqueousId: 'H_aq',
     k298: 45.0,
-    eaJ: 14000,
+    eaJ: 4200,
     deltaHJ: -480000,
     vigorousGas: true,
   },

@@ -10,7 +10,7 @@ import {
   computeSolutionVisuals,
 } from './equilibrium.js';
 import { enforceDryPhaseBoundary, stepVesselChemistry } from './chemistry.js';
-import { computeHeatCapacityJK, stepVesselThermodynamics } from './thermodynamics.js';
+import { computeHeatCapacityJK, computeSteamOpacity, stepVesselThermodynamics } from './thermodynamics.js';
 import {
   ALL_GASES,
   NON_STEAM_GASES,
@@ -199,6 +199,10 @@ export class LabSimulation {
         naVisualPhase: Math.random() * 6.28,
         naPosRatio: 0.5,
         naVel: 0.9,
+        naTempK: null,
+        naPinned: false,
+        naIgnited: false,
+        localH2Mol: 0,
         wasBoiling: false,
         lastGasOutTempK: null,
         lastGasOutFormula: '',
@@ -973,6 +977,10 @@ export class LabSimulation {
     v.overflowColor = null;
     v.wasOverflowing = false;
     v.spilledPuddleColor = null;
+    v.naTempK = null;
+    v.naPinned = false;
+    v.naIgnited = false;
+    v.localH2Mol = 0;
     v.wasBoiling = false;
     v.lastGasOutTempK = null;
     v.lastGasOutFormula = '';
@@ -2093,6 +2101,8 @@ export class LabSimulation {
       let frameGasCl2 = 0;
       let frameSteam = 0;
       let frameBoiling = false;
+      let frameSteamOpacity = 0;
+      let frameNaEvent = null;
       const frameActiveMap = new Map();
 
       for (let s = 0; s < numSteps; s++) {
@@ -2133,6 +2143,12 @@ export class LabSimulation {
         frameGasCl2 += combinedGas.Cl2_g;
         frameSteam += combinedGas.H2O_g + (thermRes.steamProducedMol || 0);
         if (thermRes.isBoiling) frameBoiling = true;
+        if ((thermRes.steamOpacity || 0) > frameSteamOpacity) {
+          frameSteamOpacity = thermRes.steamOpacity;
+        }
+        if (chemRes.naEvent === 'explosion' || (chemRes.naEvent === 'ignition_flame' && frameNaEvent !== 'explosion') || (!frameNaEvent && chemRes.naEvent)) {
+          frameNaEvent = chemRes.naEvent;
+        }
 
         for (const rxn of chemRes.activeReactions) {
           const prev = frameActiveMap.get(rxn.id);
@@ -2203,16 +2219,8 @@ export class LabSimulation {
 
       v.activeReactions = Array.from(frameActiveMap.values());
 
-      // Check runaway Sodium + H2 ignition / thermal shock explosion (large > ~3.5g Na reacting violently at high temp)
-      const naReactionRate =
-        (frameActiveMap.get('na_water')?.rateMolS || 0) +
-        (frameActiveMap.get('na_acid')?.rateMolS || 0);
-      if (
-        !v.isShattered &&
-        naReactionRate > 0.045 &&
-        (v.moles.Na_s || 0) > 0.15 &&
-        v.tempK >= 365.0
-      ) {
+      // Two-temperature coupled Sodium Coulomb explosion / ignition shatter
+      if (!v.isShattered && frameNaEvent === 'explosion') {
         this.shatterVessel(v, 'alertNaExplosion', 'explosion');
         continue;
       }
@@ -2239,22 +2247,28 @@ export class LabSimulation {
         }
       }
 
-      // Sodium motion on meniscus
+      // Sodium motion on meniscus (wide surface skitters freely; narrow surface pins against glass wall)
       const naActive = frameActiveMap.has('na_water') || frameActiveMap.has('na_acid');
       const isDehydrating = frameActiveMap.has('dehydrate_cuso4_5h2o');
       if (naActive && (v.moles.Na_s || 0) > 1e-7) {
-        v.naVisualPhase += realDeltaSec * 8.5;
-        v.naPosRatio += v.naVel * realDeltaSec * (0.8 + Math.sin(v.naVisualPhase) * 0.6);
-        if (v.naPosRatio > 0.84) {
-          v.naPosRatio = 0.84;
-          v.naVel = -Math.abs(v.naVel);
-        } else if (v.naPosRatio < 0.16) {
-          v.naPosRatio = 0.16;
-          v.naVel = Math.abs(v.naVel);
+        if (v.naPinned) {
+          // Wall-pinned Sodium clings violently near glass wall edge
+          const pinTarget = v.naPosRatio >= 0.5 ? 0.88 : 0.12;
+          v.naPosRatio += (pinTarget - v.naPosRatio) * Math.min(1, realDeltaSec * 8);
+        } else {
+          v.naVisualPhase += realDeltaSec * 8.5;
+          v.naPosRatio += v.naVel * realDeltaSec * (0.8 + Math.sin(v.naVisualPhase) * 0.6);
+          if (v.naPosRatio > 0.84) {
+            v.naPosRatio = 0.84;
+            v.naVel = -Math.abs(v.naVel);
+          } else if (v.naPosRatio < 0.16) {
+            v.naPosRatio = 0.16;
+            v.naVel = Math.abs(v.naVel);
+          }
         }
       }
 
-      // Compute evolving gas/steam telemetry & wall condensation state for canvas labels & inspector
+      // Compute evolving gas/steam telemetry & optically-accurate fog/condensation state
       const invDt = 1 / Math.max(1e-4, scaledDt);
       const rateH2 = frameGasH2 * invDt;
       const rateO2 = frameGasO2 * invDt;
@@ -2263,27 +2277,36 @@ export class LabSimulation {
       const rateSteam = frameSteam * invDt;
       const totalGasRate = rateH2 + rateO2 + rateHCl + rateCl2 + rateSteam;
 
+      const curSteamOpacity =
+        frameBoiling
+          ? 1.0
+          : isDehydrating
+          ? Math.max(0.65, computeSteamOpacity(v.tempK, this.environment.tempK, CONSTANTS.RELATIVE_HUMIDITY))
+          : Math.max(frameSteamOpacity, computeSteamOpacity(v.tempK, this.environment.tempK, CONSTANTS.RELATIVE_HUMIDITY));
+      const steamVisible = (rateSteam > 3e-5 && curSteamOpacity > 0.04) || frameBoiling || isDehydrating;
+
       const labels = [];
       if (rateH2 > 2e-5) labels.push('H₂');
       if (rateO2 > 2e-5) labels.push('O₂');
       if (rateCl2 > 2e-5) labels.push('Cl₂');
       if (rateHCl > 2e-5) labels.push('HCl(g)');
-      if (rateSteam > 3e-5 || frameBoiling || isDehydrating) labels.push('H₂O(g)');
+      if (steamVisible) labels.push('H₂O(g)');
       const formulaSummary = labels.slice(0, 2).join(' + ');
 
-      if (rateSteam > 4e-5 || (v.headspaceGasMoles?.H2O_g || 0) > 1e-5) {
-        const targetCond = Math.min(1, 0.25 + Math.log10(1 + rateSteam * 2500) * 0.5);
+      if ((rateSteam > 4e-5 && curSteamOpacity > 0.12) || frameBoiling || (v.headspaceGasMoles?.H2O_g || 0) > 1e-5) {
+        const targetCond = Math.min(1, 0.25 + curSteamOpacity * 0.65);
         v.wallCondenseLevel = Math.min(1, (v.wallCondenseLevel || 0) + (targetCond - (v.wallCondenseLevel || 0)) * Math.min(1, realDeltaSec * 2.5));
       } else {
-        v.wallCondenseLevel = Math.max(0, (v.wallCondenseLevel || 0) - realDeltaSec * 0.12);
+        v.wallCondenseLevel = Math.max(0, (v.wallCondenseLevel || 0) - realDeltaSec * 0.14);
       }
 
-      if ((totalGasRate > 3.5e-5 || frameBoiling || isDehydrating) && formulaSummary) {
+      const visibleOutRate = rateH2 + rateO2 + rateHCl + rateCl2 + (steamVisible ? rateSteam : 0);
+      if ((visibleOutRate > 3.5e-5 || frameBoiling || isDehydrating) && formulaSummary) {
         if (!v.isStoppered) {
           v.lastGasOutTempK = v.tempK;
           v.lastGasOutFormula = formulaSummary;
           v.gasOutBoiling = frameBoiling;
-          v.gasOutSteam = rateSteam > 3e-5 || frameBoiling || isDehydrating;
+          v.gasOutSteam = steamVisible;
           v.gasOutBannerTimer = 1.8;
           v.tubeFlowBannerTimer = Math.max(0, (v.tubeFlowBannerTimer || 0) - realDeltaSec);
         } else if (v.connectedSyringeId) {
@@ -2315,11 +2338,14 @@ export class LabSimulation {
           gasRateHCl: rateHCl,
           gasRateCl2: rateCl2,
           steamRate: rateSteam,
+          steamOpacity: curSteamOpacity,
           overflowRateMlS: v.overflowRateMlS || 0,
           overflowColor: v.overflowColor || null,
           isBoiling: frameBoiling,
           isDehydrating,
           naActive,
+          naIgnited: !!v.naIgnited,
+          naTempK: v.naTempK,
           naRate:
             (frameActiveMap.get('na_water')?.rateMolS || 0) +
             (frameActiveMap.get('na_acid')?.rateMolS || 0),

@@ -202,28 +202,28 @@ export class ParticleSystem {
       }
     }
 
-    // 3. Real Steam (boiling, sub-boil evap, crystal dehydration), HCl fuming, & Cl2 gas mist
+    // 3. Optically calibrated Vapor Fog (steamOpacity from mixing dew point), HCl acid fuming & Cl2 plume
     const nH = vessel.moles.H_aq || 0;
     const nCl = vessel.moles.Cl_aq || 0;
     const hConc = liqMl > 1 ? Math.min(nH, nCl) / (liqMl / 1000) : 0;
     const steamRate = metrics.steamRate || 0;
+    const steamVis = metrics.isBoiling
+      ? Math.max(0.88, metrics.steamOpacity || 0)
+      : metrics.isDehydrating
+      ? Math.max(0.62, metrics.steamOpacity || 0)
+      : (metrics.steamOpacity || 0);
     const hasCl2 = (metrics.gasRateCl2 || 0) > 1e-6;
     const hasHClFume = !vessel.isStoppered && (hConc > 6.5 || (metrics.gasRateHCl || 0) > 5e-5);
 
     const steamSignal =
-      steamRate > 2e-6 || metrics.isBoiling || metrics.isDehydrating
-        ? Math.min(
-            2.2,
-            0.42 +
-              Math.log10(1 + steamRate * 4800) * 0.92 +
-              (metrics.isBoiling ? 0.55 : 0) +
-              (metrics.isDehydrating ? 0.35 : 0)
-          )
+      (steamRate > 1.5e-6 && steamVis > 0.03) || metrics.isBoiling || metrics.isDehydrating
+        ? Math.min(2.2, (0.28 + steamVis * 1.45) * (metrics.isBoiling ? 1.25 : 1.0))
         : 0;
-    const cl2Signal = hasCl2 ? 0.65 : 0;
-    const fumeSignal = hasHClFume ? 0.4 : 0;
-    const naSignal = metrics.naActive ? 0.9 : 0;
-    const vaporIntensity = steamSignal + cl2Signal + fumeSignal + naSignal;
+    const cl2Signal = hasCl2 ? 0.68 : 0;
+    const fumeSignal = hasHClFume ? 0.42 : 0;
+    const naMistSignal = metrics.naIgnited ? 0.85 : (metrics.naTempK || 298) >= 540 ? 0.25 : 0;
+    const vaporIntensity = steamSignal + cl2Signal + fumeSignal + naMistSignal;
+    const mistAlphaScale = hasCl2 ? 0.92 : hasHClFume ? 0.65 : Math.min(1.0, Math.max(0.18, steamVis));
 
     const steamPalette = this.isDark
       ? 'rgba(226, 232, 240, 0.50)'
@@ -236,15 +236,17 @@ export class ParticleSystem {
       : 'rgba(132, 204, 22, 0.52)';
 
     if (vaporIntensity > 0.08 && !vessel.isStoppered) {
-      const mistRate = Math.min(58, vaporIntensity * 28);
+      const mistRate = Math.min(58, vaporIntensity * 26);
       const count = Math.floor(mistRate * dt) + (Math.random() < (mistRate * dt) % 1 ? 1 : 0);
       for (let i = 0; i < count; i++) {
         const fromCrystal = metrics.isDehydrating && Math.random() < 0.55;
+        // At boiling, vapor clears a tiny 4px hot transparent zone right above meniscus before condensing
+        const clearGap = metrics.isBoiling ? 5 : 0;
         const startY = fromCrystal
           ? bottomY - 10 - Math.random() * 8
           : metrics.naActive
-          ? surfaceY - 2
-          : vessel.y - spec.height / 2 + 8;
+          ? surfaceY - 4
+          : Math.min(surfaceY - clearGap, vessel.y - spec.height / 2 + 8);
         const spreadX = fromCrystal ? halfW * 1.15 : Math.max(8, (spec.neckRadius || 20) * 0.9);
         const mistColor = hasCl2 ? cl2Palette : hasHClFume ? fumePalette : steamPalette;
 
@@ -270,10 +272,11 @@ export class ParticleSystem {
             vx: (Math.random() - 0.5) * (fromCrystal ? 12 : 20),
             vy: -(28 + Math.random() * 34 + (metrics.isBoiling ? 12 : 0)),
             phase: Math.random() * Math.PI * 2,
-            r: (fromCrystal ? 3.8 : 5.2) + Math.random() * 6.5,
+            r: (fromCrystal ? 3.8 : 4.5 + steamVis * 2.2) + Math.random() * 5.8,
             growR: 13,
+            alphaScale: mistAlphaScale,
             life: 0,
-            maxLife: (fromCrystal ? 1.35 : 1.05) + Math.random() * 0.65,
+            maxLife: (fromCrystal ? 1.35 : 0.95) + Math.random() * 0.65,
             color: mistColor,
           });
         }
@@ -300,36 +303,41 @@ export class ParticleSystem {
       }
     }
 
-    // 4. Sodium molten yellow-orange flame & sparks!
+    // 4. Sodium molten yellow-orange ignition flame & sparks driven by separate droplet T_Na (>= 680 K ignition!)
     if (metrics.naActive && (vessel.moles.Na_s || 0) > 1e-7) {
       const naX = vessel.x + (vessel.naPosRatio - 0.5) * halfW * 1.55;
-      const intensity = Math.min(1.5, metrics.naRate * 450 + (vessel.tempK > 335 ? 0.5 : 0.2));
-      const sparkProb = Math.min(0.95, 0.28 + intensity * 0.55);
+      const tNa = metrics.naTempK ?? vessel.tempK;
+      const isIgnited = !!metrics.naIgnited || tNa >= 680;
+      const intensity = isIgnited
+        ? 1.55
+        : Math.min(0.85, Math.max(0.05, (tNa - 420) / 320));
+      const flameProb = isIgnited ? 0.94 : tNa >= 560 ? 0.35 : 0.04;
 
-      if (Math.random() < sparkProb) {
+      if (Math.random() < flameProb) {
+        const flameScale = isIgnited ? 1.6 : 0.75;
         this.particles.push({
           kind: 'flame',
           x: naX + (Math.random() - 0.5) * 6,
           y: surfaceY - 2,
           vx: (Math.random() - 0.5) * 20,
-          vy: -(24 + Math.random() * 28),
-          r: 4 + Math.random() * 5,
+          vy: -(24 + Math.random() * 32) * flameScale,
+          r: (4 + Math.random() * 5) * flameScale,
           life: 0,
           maxLife: 0.22 + Math.random() * 0.16,
           color: Math.random() < 0.5 ? '#fbbf24' : '#f97316',
         });
       }
 
-      if (intensity > 0.45 && Math.random() < 0.45) {
+      if ((isIgnited || intensity > 0.55) && Math.random() < (isIgnited ? 0.75 : 0.28)) {
         const angle = -Math.PI / 2 + (Math.random() - 0.5) * 1.8;
-        const spd = 45 + Math.random() * 85;
+        const spd = (isIgnited ? 75 : 45) + Math.random() * 85;
         this.particles.push({
           kind: 'spark',
           x: naX,
           y: surfaceY - 3,
           vx: Math.cos(angle) * spd,
           vy: Math.sin(angle) * spd,
-          r: 1.6 + Math.random() * 1.4,
+          r: 1.6 + Math.random() * 1.6,
           life: 0,
           maxLife: 0.35 + Math.random() * 0.25,
           color: '#fef08a',
@@ -827,6 +835,7 @@ export class ParticleSystem {
         ctx.lineWidth = 0.8;
         ctx.stroke();
       } else if (p.kind === 'mist') {
+        ctx.globalAlpha = Math.max(0, Math.min(1, alpha * (p.alphaScale ?? 1)));
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
         ctx.fillStyle = p.color;

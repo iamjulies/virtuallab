@@ -23,6 +23,7 @@
     import { computeVesselFluidGeometry } from '../src/canvas/vesselRenderer.js';
     import { ParticleSystem } from '../src/canvas/particles.js';
     import { LabSimulation } from '../src/engine/simulation.js';
+    import { calcEvaporationRateMol, computeSteamOpacity } from '../src/engine/thermodynamics.js';
     import {
       computeContentsMassG,
       computeLiquidVolumeL,
@@ -902,6 +903,138 @@
         'Pressure limits follow gauge ΔP (Test Tube > Erlenmeyer, 250mL Syringe ~+1.05 bar) & stay stable at 1.8 bar ambient',
         specsConsistent && f.isStoppered === true && !f.isShattered,
         `TubeMax=+${tube.shatterOverpressureBar}bar > ErlMax=+${erl.shatterOverpressureBar}bar, SyrMax=+${syr.shatterOverpressureBar}bar, P1.8_ok=${f.isStoppered}`
+      );
+    }
+
+    // TEST 28: Optically realistic vapor visibility (0 mist at 25°C water, thin ~45°C, thick ~85°C, winter breath at 10°C room, HCl fuming at 25°C) + Ethanol vs Water Clausius-Clapeyron evaporation
+    {
+      const sim = new LabSimulation();
+      const ps = new ParticleSystem();
+      sim.visualHooks.onParticlesNeeded = (it, m) => ps.emitForVessel(it, m, 0.02);
+
+      const bk25 = sim.createApparatus('beaker_250', 220, 429);
+      sim.addReagentToVessel(bk25.id, 'h2o', 50);
+      stepSeconds(sim, 1.5, 0.02);
+      const mist25 = ps.particles.filter(p => p.kind === 'mist').length;
+      const banner25 = bk25.gasOutSteam;
+
+      // Now warm to 68°C -> visible steam wisps spawn!
+      ps.clear();
+      bk25.tempK = 341.15;
+      stepSeconds(sim, 0.8, 0.02);
+      const mist68 = ps.particles.filter(p => p.kind === 'mist').length;
+
+      // Compare EtOH vs H2O evaporation rates under Clausius-Clapeyron + Stefan-Maxwell + Gilliland
+      const rateH2O = calcEvaporationRateMol(SPECIES.H2O_l, 1.0, 298.15, 39.6, 1900, false);
+      const rateEtOH = calcEvaporationRateMol(SPECIES.C2H5OH_l, 1.0, 298.15, 39.6, 0, false);
+      const op25 = computeSteamOpacity(298.15, 298.15, 0.60);
+      const op30Winter = computeSteamOpacity(303.15, 283.15, 0.60);
+
+      // 37% HCl still fumes lightly even at 25°C
+      const psAcid = new ParticleSystem();
+      const simAcid = new LabSimulation();
+      simAcid.visualHooks.onParticlesNeeded = (it, m) => psAcid.emitForVessel(it, m, 0.02);
+      const bkAcid = simAcid.createApparatus('beaker_250', 400, 429);
+      simAcid.addReagentToVessel(bkAcid.id, 'hcl_37', 30);
+      stepSeconds(simAcid, 1.0, 0.02);
+      const hclMist25 = psAcid.particles.filter(p => p.kind === 'mist').length;
+
+      assert(
+        '25°C water emits ZERO steam clouds/labels, 68°C & 10°C-room/30°C show mist, HCl fumes at 25°C, & Ethanol evaporates faster than H2O',
+        op25 === 0 &&
+          mist25 === 0 &&
+          !banner25 &&
+          mist68 > 0 &&
+          op30Winter > 0.15 &&
+          hclMist25 > 0 &&
+          rateEtOH > rateH2O * 3.0,
+        `mist25=${mist25}, mist68=${mist68}, winter30°C=${op30Winter.toFixed(2)}, hclMist25=${hclMist25}, EtOH/H2O=${(rateEtOH/rateH2O).toFixed(1)}x`
+      );
+    }
+
+    // TEST 29: Pipette particle update & multi-cycle draw/dispense stability (zero ctx ReferenceError freeze)
+    {
+      const sim = new LabSimulation();
+      const ps = new ParticleSystem();
+      sim.visualHooks.onParticlesNeeded = (it, m) => ps.emitForVessel(it, m, 0.02);
+      sim.visualHooks.onAlert = (type, it, meta) => ps.emitBurst(type, it.x, it.y, meta);
+
+      const b1 = sim.createApparatus('beaker_250', 220, 429);
+      const b2 = sim.createApparatus('beaker_250', 460, 429);
+      const pip = sim.createApparatus('pipette_10', 330, 406);
+      sim.addReagentToVessel(b1.id, 'h2o', 40);
+      sim.addReagentToVessel(b1.id, 'naoh', 0.4, { fine: true });
+      sim.addReagentToVessel(b2.id, 'h2o', 30);
+
+      let crashed = false;
+      try {
+        const d1 = sim.pipetteDrawFromVessel(b1.id, 8.0, pip);
+        for (let f = 0; f < 45; f++) {
+          sim.step(0.02);
+          ps.update(0.02);
+        }
+        const d2 = sim.pipetteDispenseToVessel(b2.id, 4.0, pip);
+        for (let f = 0; f < 45; f++) {
+          sim.step(0.02);
+          ps.update(0.02);
+        }
+        if (d1 < 7.9 || d2 < 3.9) crashed = true;
+      } catch (e) {
+        crashed = true;
+      }
+
+      assert(
+        'Pipette draw -> 90 particle/sim frames -> dispense runs smoothly with ZERO freeze or exceptions',
+        !crashed && Math.abs(pip.volumeMl - 4.0) < 0.1,
+        `crashed=${crashed}, pipLeft=${pip.volumeMl.toFixed(2)}mL`
+      );
+    }
+
+    // TEST 30: Two-temperature coupled Sodium-Water model (200mL open fizzing vs narrow-neck wall-pinning & small-volume runaway)
+    {
+      // A) 0.30 g Na in wide 200 mL Beaker -> T_Na plateaus safely < 680 K, reacts smoothly without shatter
+      const simOpen = new LabSimulation();
+      const bkWide = simOpen.createApparatus('beaker_250', 250, 429);
+      simOpen.addReagentToVessel(bkWide.id, 'h2o', 200);
+      simOpen.addReagentToVessel(bkWide.id, 'na', 0.30);
+      let peakTNaWide = 298.15;
+      for (let i = 0; i < 200; i++) {
+        simOpen.step(0.025);
+        if ((bkWide.naTempK || 0) > peakTNaWide) peakTNaWide = bkWide.naTempK;
+      }
+
+      // B) 0.35 g Na in Erlenmeyer filled into narrow neck (240 mL -> A_surf < 15 cm^2): wall-pinned + H2 confinement triggers explosion!
+      const simNeck = new LabSimulation();
+      const erlNeck = simNeck.createApparatus('erlenmeyer_250', 250, 401);
+      simNeck.addReagentToVessel(erlNeck.id, 'h2o', 240);
+      simNeck.addReagentToVessel(erlNeck.id, 'na', 0.35);
+      let peakTNaNeck = 298.15;
+      for (let i = 0; i < 200; i++) {
+        simNeck.step(0.025);
+        if ((erlNeck.naTempK || 0) > peakTNaNeck) peakTNaNeck = erlNeck.naTempK;
+      }
+
+      // C) 0.45 g Na in tiny 6 mL H2O -> heat-sink collapse + NaOH viscosity spikes T_Na >= 680 K ignition!
+      const simTiny = new LabSimulation();
+      const bkTiny = simTiny.createApparatus('beaker_250', 250, 429);
+      simTiny.addReagentToVessel(bkTiny.id, 'h2o', 6);
+      simTiny.addReagentToVessel(bkTiny.id, 'na', 0.45);
+      let peakTNaTiny = 298.15;
+      let ignitedTiny = false;
+      for (let i = 0; i < 200; i++) {
+        simTiny.step(0.025);
+        if ((bkTiny.naTempK || 0) > peakTNaTiny) peakTNaTiny = bkTiny.naTempK;
+        if (bkTiny.naIgnited || bkTiny.isShattered) ignitedTiny = true;
+      }
+
+      assert(
+        'Two-temperature Na physics: 0.3g Na fizzles safely in wide 200mL beaker, wall-pins & explodes in narrow 240mL flask neck, & ignites in tiny 6mL water',
+        !bkWide.isShattered &&
+          peakTNaWide < 680 &&
+          peakTNaNeck >= 680 &&
+          erlNeck.isShattered === true &&
+          (peakTNaTiny >= 680 || ignitedTiny),
+        `Wide200(maxTNa=${peakTNaWide.toFixed(0)}K,shat=${bkWide.isShattered}), Neck240(maxTNa=${peakTNaNeck.toFixed(0)}K,shat=${erlNeck.isShattered}), Tiny6mL(maxTNa=${peakTNaTiny.toFixed(0)}K,ignited=${ignitedTiny})`
       );
     }
 

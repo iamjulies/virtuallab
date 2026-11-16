@@ -1,7 +1,8 @@
 import { CONSTANTS } from '../data/constants.js';
+import { APPARATUS } from '../data/apparatus.js';
 import { SPECIES } from '../data/species.js';
 import { REACTIONS } from '../data/reactions.js';
-import { computeLiquidVolumeL } from './equilibrium.js';
+import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
 
 /**
  * Arrhenius factor relative to 298.15 K.
@@ -107,15 +108,30 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     const nSolid = moles[rxn.solidId] || 0;
     const pCount = vessel.particleCounts?.[rxn.solidId] ?? (rxn.solidId === 'Na_s' ? 1 : 6);
     const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, pCount);
-    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
 
-    if (rxn.useWaterContact) {
-      // Sodium + liquid water: melts at 370.95 K -> skitters & mixes faster
-      const moltenBoost = T >= (SPECIES.Na_s.meltTempK || 370.95) ? 1.85 : 1.0;
-      const waterFrac = Math.min(1.0, (moles.H2O_l || 0) / 0.1);
-      return k * area * waterFrac * moltenBoost;
+    if (rxn.solidId === 'Na_s') {
+      const tNa = vessel.naTempK ?? T;
+      const spec = APPARATUS[vessel.typeId];
+      const totMl = liquidVolL * 1000 + computeSolidVolumeMl(moles);
+      const areaSurfCm2 = spec?.geometry
+        ? Math.max(0.5, spec.geometry.getLiquidState(totMl).surfaceAreaCm2)
+        : spec?.surfaceAreaCm2 || 25.0;
+      const isMolten = tNa >= (SPECIES.Na_s.meltTempK || 370.95);
+      const wallPinned = areaSurfCm2 < 15.0;
+      const gammaCoulomb = isMolten ? (wallPinned ? 3.2 : 1.25) : 1.0;
+      const k = rxn.k298 * arrheniusFactor(rxn.eaJ, tNa) * gammaCoulomb;
+
+      if (rxn.useWaterContact) {
+        const waterFrac = Math.min(1.0, (moles.H2O_l || 0) / 0.1);
+        return k * area * waterFrac;
+      }
+      const aqConc = (moles[rxn.aqueousId] || 0) / liquidVolL;
+      if (rxn.minAqConc && aqConc < rxn.minAqConc) return 0;
+      const concFactor = Math.pow(Math.min(14.0, aqConc), 1.05);
+      return k * area * concFactor * (vessel.stirTimer > 0 ? 2.4 : 1.0) * 3.5;
     }
 
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
     const aqConc = (moles[rxn.aqueousId] || 0) / liquidVolL;
     if (rxn.minAqConc && aqConc < rxn.minAqConc) return 0;
 
@@ -408,6 +424,8 @@ export function stepVesselChemistry(vessel, dt) {
 
   // 3. Apply clamped reaction steps
   let reactionHeatJ = 0;
+  let naHeatGenJ = 0;
+  let naH2ProducedMol = 0;
   const gasProduced = { H2_g: 0, O2_g: 0, HCl_g: 0, Cl2_g: 0, H2O_g: 0, HNO3_g: 0 };
   const activeReactions = [];
 
@@ -437,8 +455,14 @@ export function stepVesselChemistry(vessel, dt) {
       }
     }
 
-    // Enthalpy: exothermic (deltaH < 0) releases positive heat (+J)
-    reactionHeatJ += -item.rxn.deltaHJ * dXi;
+    // Separate Sodium reaction enthalpy to drive independent metal droplet temperature T_Na
+    const rxnHeat = -item.rxn.deltaHJ * dXi;
+    if (item.rxn.id === 'na_water' || item.rxn.id === 'na_acid') {
+      naHeatGenJ += rxnHeat;
+      naH2ProducedMol += (item.rxn.products.H2_g || 0) * dXi;
+    } else {
+      reactionHeatJ += rxnHeat;
+    }
 
     activeReactions.push({
       id: item.rxn.id,
@@ -453,6 +477,63 @@ export function stepVesselChemistry(vessel, dt) {
     });
   }
 
+  // 3b. Two-temperature coupled Sodium droplet thermal balance & Coulomb/H2 blast trigger
+  let naEvent = null;
+  const nNaLeft = vessel.moles.Na_s || 0;
+  if (nNaLeft > 1e-10 && liquidVolL > 1e-6) {
+    const tNaPrev = vessel.naTempK ?? vessel.tempK;
+    const pCount = vessel.particleCounts?.Na_s ?? 1;
+    const aNaCm2 = Math.max(0.04, computeSolidSurfaceAreaM2('Na_s', nNaLeft, pCount) * 1e4);
+    const spec = APPARATUS[vessel.typeId];
+    const totMl = liquidVolL * 1000 + computeSolidVolumeMl(vessel.moles);
+    const areaSurfCm2 = spec?.geometry
+      ? Math.max(0.5, spec.geometry.getLiquidState(totMl).surfaceAreaCm2)
+      : spec?.surfaceAreaCm2 || 25.0;
+
+    const cNaOH = (vessel.moles.OH_aq || 0) / Math.max(1e-5, liquidVolL);
+    const effNaFootprint = Math.min(Math.max(aNaCm2, 0.08), 6.0);
+    const mobilityFactor = 0.28 + 0.72 * (1 - Math.exp(-0.14 * (areaSurfCm2 / effNaFootprint)));
+    const pinHeatLoss = areaSurfCm2 < 15.0 ? 0.42 : 1.0;
+    const viscosityDamping = 1 / (1 + 0.55 * cNaOH + 0.35 * cNaOH * cNaOH);
+    const hEff = 11.5 * mobilityFactor * pinHeatLoss * viscosityDamping; // W / (cm^2 * K)
+    const condWK = Math.max(1e-4, hEff * aNaCm2);
+
+    const mNaG = Math.max(1e-4, nNaLeft * SPECIES.Na_s.molarMass);
+    const cNa = Math.max(1e-4, mNaG * (tNaPrev >= 370.95 ? 1.38 : 1.23));
+    const qGenW = naHeatGenJ / Math.max(1e-6, dt);
+    const tEq = Math.min(1350, vessel.tempK + qGenW / condWK);
+    const alpha = condWK / cNa;
+    const newTNa = Math.max(250, Math.min(1250, tEq + (tNaPrev - tEq) * Math.exp(-alpha * dt)));
+
+    const transferJ = Math.max(0, naHeatGenJ - cNa * (newTNa - tNaPrev));
+    reactionHeatJ += transferJ;
+
+    const kEsc = 0.08;
+    const escRate = kEsc * areaSurfCm2;
+    const dec = Math.exp(-escRate * dt);
+    const localIn = escRate * dt > 1e-6 ? naH2ProducedMol * ((1 - dec) / (escRate * dt)) : naH2ProducedMol;
+    const newLocalH2 = Math.max(0, (vessel.localH2Mol || 0) * dec + localIn);
+
+    vessel.naTempK = newTNa;
+    vessel.naPinned = areaSurfCm2 < 15.0;
+    vessel.naIgnited = newTNa >= 680.0;
+    vessel.localH2Mol = newLocalH2;
+
+    if (vessel.naIgnited) {
+      const confinement = Math.max(1.0, 22.0 / Math.max(areaSurfCm2, 1.0));
+      const blastEnergyJ = newLocalH2 * 241800 * Math.min(confinement, 5.0);
+      naEvent = blastEnergyJ > 150.0 ? 'explosion' : 'ignition_flame';
+    } else if (naH2ProducedMol > 0) {
+      naEvent = 'fizzing';
+    }
+  } else {
+    reactionHeatJ += naHeatGenJ;
+    vessel.naTempK = null;
+    vessel.naPinned = false;
+    vessel.naIgnited = false;
+    vessel.localH2Mol = 0;
+  }
+
   // 4. Reversible [CuCl4]2- complexation equilibrium
   reactionHeatJ += stepChlorocuprateEquilibrium(vessel, liquidVolL, dt, activeReactions);
 
@@ -463,5 +544,6 @@ export function stepVesselChemistry(vessel, dt) {
     reactionHeatJ,
     gasProduced,
     activeReactions,
+    naEvent,
   };
 }
