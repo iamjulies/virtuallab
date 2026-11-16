@@ -1,6 +1,6 @@
 import { APPARATUS } from '../data/apparatus.js';
 import { kelvinToCelsius } from '../data/constants.js';
-import { SPECIES } from '../data/species.js';
+import { GAS_DISPLAY_META, SPECIES } from '../data/species.js';
 import {
   computeContentsMassG,
   computeLiquidVolumeL,
@@ -22,19 +22,6 @@ const CHART_PALETTE = [
   '#a78bfa',
   '#fb7185',
   '#f97316',
-];
-
-const GAS_DISPLAY_META = [
-  { id: 'H2_g', label: 'H₂', always: true },
-  { id: 'O2_g', label: 'O₂', always: true },
-  { id: 'HCl_g', label: 'HCl', always: false },
-  { id: 'Cl2_g', label: 'Cl₂', always: false },
-  { id: 'C2H5Cl_g', label: 'C₂H₅Cl', always: false },
-  { id: 'NH3_g', label: 'NH₃', always: false },
-  { id: 'NO2_g', label: 'NO₂', always: false },
-  { id: 'NO_g', label: 'NO', always: false },
-  { id: 'HNO3_g', label: 'HNO₃', always: false },
-  { id: 'H2O_g', label: 'H₂O(g)', always: false },
 ];
 
 function sumAllGasMoles(gasMap = {}) {

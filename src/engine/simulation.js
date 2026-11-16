@@ -1,6 +1,11 @@
 import { CONSTANTS, waterBoilingPointK } from '../data/constants.js';
-import { SPECIES, STARTER_REAGENTS } from '../data/species.js';
-import { APPARATUS } from '../data/apparatus.js';
+import {
+  ALL_GAS_IDS,
+  createZeroGasMap,
+  SPECIES,
+  STARTER_REAGENTS,
+} from '../data/species.js';
+import { APPARATUS, clampItemToStandY } from '../data/apparatus.js';
 import {
   calcSolidTransferRatio,
   computeContentsMassG,
@@ -29,12 +34,7 @@ import {
 } from './gasNetwork.js';
 
 const SIM_BENCH_FLOOR_Y = 482;
-
-function createEmptyGasMap() {
-  const obj = {};
-  for (const g of ALL_GASES) obj[g] = 0;
-  return obj;
-}
+const createEmptyGasMap = createZeroGasMap;
 
 function getVesselBrimVolumeMl(spec) {
   return spec.geometry ? spec.geometry.maxVolumeMl * 0.96 : spec.maxVolumeMl * 1.15;
@@ -332,20 +332,14 @@ export class LabSimulation {
     const item = this.getItem(itemId);
     const stand = this.getItem(standId);
     if (!item || !stand || stand.kind !== 'stand') return false;
-    if (item.kind !== 'vessel' && item.kind !== 'gas_syringe') return false;
-    if (item.isShattered || item.isBroken) return false;
-    const stSpec = APPARATUS.retort_stand;
-    const standTop = stand.y - stSpec.height / 2;
-    const standBot = stand.y + stSpec.height / 2;
     const spec = APPARATUS[item.typeId];
+    if (!spec?.supportsClamp) return false;
+    if (item.isShattered || item.isBroken) return false;
     item.clampedToId = stand.id;
     item.restingOnId = null;
     item.vy = 0;
     item.fallStartY = null;
-    const neckOff = item.kind === 'gas_syringe' ? 0 : -spec.height / 2 + (spec.shape === 'erlenmeyer' ? 24 : 26);
-    const minItemY = standTop + 14 - neckOff;
-    const maxItemY = Math.min(SIM_BENCH_FLOOR_Y - spec.height / 2 - 6, standBot - 22 - neckOff);
-    item.y = Math.max(minItemY, Math.min(maxItemY, item.y));
+    item.y = clampItemToStandY(spec, stand, SIM_BENCH_FLOOR_Y, item.y, 6);
     this.recomputeScaleReadings();
     this.emitChange();
     return true;
@@ -2121,12 +2115,7 @@ export class LabSimulation {
           item.vy = 0;
           item.fallStartY = null;
           item.restingOnId = null;
-          const stSpec = APPARATUS.retort_stand;
-          const sp = APPARATUS[item.typeId];
-          const neckOff = item.kind === 'gas_syringe' ? 0 : -sp.height / 2 + (sp.shape === 'erlenmeyer' ? 24 : 26);
-          const minItemY = (stand.y - stSpec.height / 2) + 14 - neckOff;
-          const maxItemY = Math.min(SIM_BENCH_FLOOR_Y - sp.height / 2 - 4, (stand.y + stSpec.height / 2) - 22 - neckOff);
-          item.y = Math.max(minItemY, Math.min(maxItemY, item.y));
+          item.y = clampItemToStandY(APPARATUS[item.typeId], stand, SIM_BENCH_FLOOR_Y, item.y, 4);
           continue;
         }
         item.clampedToId = null;
@@ -2180,9 +2169,6 @@ export class LabSimulation {
       // Keep any vessel/syringe clamped to a falling Retort Stand moving locked to the stand rod!
       if (item.kind === 'stand') {
         const dyStand = item.y - prevY;
-        const stSpec = APPARATUS.retort_stand;
-        const standTop = item.y - stSpec.height / 2;
-        const standBot = item.y + stSpec.height / 2;
         for (const child of this.items) {
           if (child.clampedToId !== item.id) continue;
           if (child.isShattered || child.isBroken) {
@@ -2191,11 +2177,7 @@ export class LabSimulation {
             continue;
           }
           if (!child.isDragging && Math.abs(dyStand) > 1e-6) {
-            const cSpec = APPARATUS[child.typeId];
-            const neckOff = child.kind === 'gas_syringe' ? 0 : -cSpec.height / 2 + (cSpec.shape === 'erlenmeyer' ? 24 : 26);
-            const minCY = standTop + 14 - neckOff;
-            const maxCY = Math.min(SIM_BENCH_FLOOR_Y - cSpec.height / 2 - 4, standBot - 22 - neckOff);
-            child.y = Math.max(minCY, Math.min(maxCY, child.y + dyStand));
+            child.y = clampItemToStandY(APPARATUS[child.typeId], item, SIM_BENCH_FLOOR_Y, child.y + dyStand, 4);
           }
           if (didLand && landDropDist >= 112) {
             this.handleLandingImpact(child, landDropDist * 0.9, landVy, item);
@@ -2281,14 +2263,7 @@ export class LabSimulation {
         }
       }
 
-      let frameGasH2 = 0;
-      let frameGasO2 = 0;
-      let frameGasHCl = 0;
-      let frameGasCl2 = 0;
-      let frameGasC2H5Cl = 0;
-      let frameGasNH3 = 0;
-      let frameGasNO2 = 0;
-      let frameGasNO = 0;
+      const frameGas = createZeroGasMap();
       let frameSteam = 0;
       let frameBoiling = false;
       let frameSteamOpacity = 0;
@@ -2307,21 +2282,11 @@ export class LabSimulation {
         );
         const dryRes = enforceDryPhaseBoundary(v);
 
-        const combinedGas = {
-          H2_g: chemRes.gasProduced.H2_g || 0,
-          O2_g: chemRes.gasProduced.O2_g || 0,
-          HCl_g:
-            (chemRes.gasProduced.HCl_g || 0) +
-            (thermRes.hclProducedMol || 0) +
-            (dryRes.gasProduced.HCl_g || 0),
-          Cl2_g: chemRes.gasProduced.Cl2_g || 0,
-          HNO3_g: (chemRes.gasProduced.HNO3_g || 0) + (dryRes.gasProduced.HNO3_g || 0),
-          C2H5Cl_g: chemRes.gasProduced.C2H5Cl_g || 0,
-          NH3_g: (chemRes.gasProduced.NH3_g || 0) + (dryRes.gasProduced.NH3_g || 0),
-          NO2_g: chemRes.gasProduced.NO2_g || 0,
-          NO_g: chemRes.gasProduced.NO_g || 0,
-          H2O_g: (chemRes.gasProduced.H2O_g || 0) + (dryRes.gasProduced.H2O_g || 0),
-        };
+        const combinedGas = createZeroGasMap();
+        for (const gId of ALL_GAS_IDS) {
+          combinedGas[gId] = (chemRes.gasProduced[gId] || 0) + (dryRes.gasProduced[gId] || 0);
+        }
+        combinedGas.HCl_g += thermRes.hclProducedMol || 0;
 
         const gasEvents = stepVesselGasAndPressure(
           v,
@@ -2331,14 +2296,9 @@ export class LabSimulation {
           getApp
         );
 
-        frameGasH2 += combinedGas.H2_g;
-        frameGasO2 += combinedGas.O2_g;
-        frameGasHCl += combinedGas.HCl_g;
-        frameGasCl2 += combinedGas.Cl2_g;
-        frameGasC2H5Cl += combinedGas.C2H5Cl_g;
-        frameGasNH3 += combinedGas.NH3_g;
-        frameGasNO2 += combinedGas.NO2_g;
-        frameGasNO += combinedGas.NO_g;
+        for (const gId of ALL_GAS_IDS) {
+          if (gId !== 'H2O_g') frameGas[gId] += combinedGas[gId];
+        }
         frameSteam += combinedGas.H2O_g + (thermRes.steamProducedMol || 0);
         if (thermRes.isBoiling) frameBoiling = true;
         if ((thermRes.steamOpacity || 0) > frameSteamOpacity) {
@@ -2470,9 +2430,9 @@ export class LabSimulation {
         v.recentHalogenGasTimer = Math.max(0, v.recentHalogenGasTimer - realDeltaSec);
       }
       if (v.hasPhenCotton && !v.isStoppered) {
-        if (frameGasNH3 > 1e-6) {
+        if (frameGas.NH3_g > 1e-6) {
           v.phenCottonLevel = Math.min(1.0, (v.phenCottonLevel || 0) + realDeltaSec * 2.2);
-        } else if (frameGasHCl > 1e-6) {
+        } else if (frameGas.HCl_g > 1e-6) {
           v.phenCottonLevel = Math.max(0, (v.phenCottonLevel || 0) - realDeltaSec * 2.5);
         } else {
           v.phenCottonLevel = Math.max(0, (v.phenCottonLevel || 0) - realDeltaSec * 0.04);
@@ -2481,14 +2441,15 @@ export class LabSimulation {
         v.phenCottonLevel = 0;
       }
 
-      // Beilstein green copper flame test when vessel over lit burner holds Cu(s) + organohalide/halide gas
+      // Beilstein green copper flame test when vessel over lit burner holds any Cu metal/alloy + halogen vapor
       if (v.restingOnId && burnerPowerW > 0) {
         const sup = this.getItem(v.restingOnId);
-        const hasCuMetal =
-          (v.moles.Cu_s || 0) > 1e-6 ||
-          (v.moles.Cu3Zn_alpha_s || 0) > 1e-6 ||
-          (v.moles.Cu3Zn_gamma_s || 0) > 1e-6;
-        const hasHalogenPlume = frameGasC2H5Cl > 1e-7 || frameGasHCl > 1e-6 || frameGasCl2 > 1e-7 || (v.recentHalogenGasTimer || 0) > 0;
+        const hasCuMetal = Object.entries(v.moles).some(([id, n]) => n > 1e-6 && SPECIES[id]?.isCopperMetal);
+        const hasHalogenPlume =
+          (v.recentHalogenGasTimer || 0) > 0 ||
+          frameGas.C2H5Cl_g > 1e-7 ||
+          frameGas.Cl2_g > 1e-7 ||
+          frameGas.HCl_g > 1e-6;
         if (sup && sup.kind === 'burner' && hasCuMetal && hasHalogenPlume) {
           sup.beilsteinTimer = 2.0;
           if ((this.timeSec - (v.seenReactions.beilstein_test ?? -99)) > 5.0) {
@@ -2522,7 +2483,7 @@ export class LabSimulation {
       v.wasBoiling = frameBoiling;
 
       // Update precipitate settling (~12-15s undisturbed rest) & suspension decay
-      const vigAgitation = v.stirTimer > 0 || frameGasH2 > 1e-5 || frameBoiling;
+      const vigAgitation = v.stirTimer > 0 || frameGas.H2_g > 1e-5 || frameBoiling;
       if (vigAgitation) {
         v.suspensionLevel = Math.min(1.0, (v.suspensionLevel || 0) + 0.65 * realDeltaSec);
       } else {
@@ -2533,7 +2494,7 @@ export class LabSimulation {
         if (sp && sp.isPrecipitate && n > 1e-8) {
           const prev = v.precipitateSettle[spId] ?? 0.0;
           // Precipitates settle gradually over ~12.5s unless stirred, boiling, or vigorously bubbling
-          const isDenseMetal = spId === 'Cu_s' || spId === 'Zn_s' || spId === 'Ag_s' || spId === 'Cu3Zn_gamma_s' || spId === 'Cu3Zn_alpha_s';
+          const isDenseMetal = Boolean(sp.isDenseMetal);
           const settleSpeed = vigAgitation ? (isDenseMetal ? -0.25 : -0.45) : (isDenseMetal ? 0.55 : 0.08);
           v.precipitateSettle[spId] = Math.max(0.0, Math.min(1.0, prev + settleSpeed * realDeltaSec));
         }
@@ -2567,16 +2528,19 @@ export class LabSimulation {
 
       // Compute evolving gas/steam telemetry & optically-accurate fog/condensation state
       const invDt = 1 / Math.max(1e-4, scaledDt);
-      const rateH2 = frameGasH2 * invDt;
-      const rateO2 = frameGasO2 * invDt;
-      const rateHCl = frameGasHCl * invDt;
-      const rateCl2 = frameGasCl2 * invDt;
-      const rateC2H5Cl = frameGasC2H5Cl * invDt;
-      const rateNH3 = frameGasNH3 * invDt;
-      const rateNO2 = frameGasNO2 * invDt;
-      const rateNO = frameGasNO * invDt;
+      const rateMap = createZeroGasMap();
+      let totalGasRate = 0;
+      let visibleNonSteamRate = 0;
+      for (const gId of ALL_GAS_IDS) {
+        if (gId === 'H2O_g') continue;
+        const r = (frameGas[gId] || 0) * invDt;
+        rateMap[gId] = r;
+        totalGasRate += r;
+        if (gId !== 'HNO3_g') visibleNonSteamRate += r;
+      }
       const rateSteam = frameSteam * invDt;
-      const totalGasRate = rateH2 + rateO2 + rateHCl + rateCl2 + rateC2H5Cl + rateNH3 + rateNO2 + rateNO + rateSteam;
+      rateMap.H2O_g = rateSteam;
+      totalGasRate += rateSteam;
 
       const curSteamOpacity =
         frameBoiling
@@ -2586,15 +2550,18 @@ export class LabSimulation {
           : Math.max(frameSteamOpacity, computeSteamOpacity(v.tempK, this.environment.tempK, CONSTANTS.RELATIVE_HUMIDITY));
       const steamVisible = (rateSteam > 3e-5 && curSteamOpacity > 0.04) || frameBoiling || isDehydrating;
 
+      const labelOrder = ['C2H5Cl_g', 'NH3_g', 'NO2_g', 'NO_g', 'H2_g', 'O2_g', 'Cl2_g', 'HCl_g'];
+      const extraLabelIds = ALL_GAS_IDS.filter(
+        (id) => id !== 'H2O_g' && id !== 'HNO3_g' && !labelOrder.includes(id)
+      );
       const labels = [];
-      if (rateC2H5Cl > 2e-5) labels.push('C₂H₅Cl');
-      if (rateNH3 > 2e-5) labels.push('NH₃');
-      if (rateNO2 > 1.5e-5) labels.push('NO₂');
-      if (rateNO > 2e-5) labels.push('NO');
-      if (rateH2 > 2e-5) labels.push('H₂');
-      if (rateO2 > 2e-5) labels.push('O₂');
-      if (rateCl2 > 2e-5) labels.push('Cl₂');
-      if (rateHCl > 2e-5) labels.push('HCl(g)');
+      for (const gId of [...labelOrder, ...extraLabelIds]) {
+        const sp = SPECIES[gId];
+        const thresh = sp?.bannerThresholdMolS ?? 2e-5;
+        if ((rateMap[gId] || 0) > thresh) {
+          labels.push(sp?.formula || gId);
+        }
+      }
       if (steamVisible) labels.push('H₂O(g)');
       const formulaSummary = labels.slice(0, 2).join(' + ');
 
@@ -2605,8 +2572,7 @@ export class LabSimulation {
         v.wallCondenseLevel = Math.max(0, (v.wallCondenseLevel || 0) - realDeltaSec * 0.14);
       }
 
-      const visibleOutRate =
-        rateH2 + rateO2 + rateHCl + rateCl2 + rateC2H5Cl + rateNH3 + rateNO2 + rateNO + (steamVisible ? rateSteam : 0);
+      const visibleOutRate = visibleNonSteamRate + (steamVisible ? rateSteam : 0);
       if ((visibleOutRate > 3.5e-5 || frameBoiling || isDehydrating) && formulaSummary) {
         if (!v.isStoppered) {
           v.lastGasOutTempK = v.tempK;
@@ -2639,14 +2605,15 @@ export class LabSimulation {
       // Emit visual particle request
       if (this.visualHooks.onParticlesNeeded) {
         this.visualHooks.onParticlesNeeded(v, {
-          gasRateH2: rateH2,
-          gasRateO2: rateO2,
-          gasRateHCl: rateHCl,
-          gasRateCl2: rateCl2,
-          gasRateC2H5Cl: rateC2H5Cl,
-          gasRateNH3: rateNH3,
-          gasRateNO2: rateNO2,
-          gasRateNO: rateNO,
+          gasRates: rateMap,
+          gasRateH2: rateMap.H2_g,
+          gasRateO2: rateMap.O2_g,
+          gasRateHCl: rateMap.HCl_g,
+          gasRateCl2: rateMap.Cl2_g,
+          gasRateC2H5Cl: rateMap.C2H5Cl_g,
+          gasRateNH3: rateMap.NH3_g,
+          gasRateNO2: rateMap.NO2_g,
+          gasRateNO: rateMap.NO_g,
           steamRate: rateSteam,
           steamOpacity: curSteamOpacity,
           overflowRateMlS: v.overflowRateMlS || 0,
@@ -2678,13 +2645,17 @@ export class LabSimulation {
       }
       this.stepSyringeDischarge(item, scaledDt);
       this.stepSyringeOverflow(item, scaledDt);
-      // Check Beilstein flame test when Gas Syringe directs C2H5Cl / HCl / Cl2 onto a lit burner
-      if ((item.isDischarging || (item.autoDischargeTimer || 0) > 0) &&
-          ((item.gasMoles?.C2H5Cl_g || 0) > 1e-7 || (item.gasMoles?.HCl_g || 0) > 1e-7 || (item.gasMoles?.Cl2_g || 0) > 1e-7)) {
+      // Check Beilstein flame test when Gas Syringe directs any halogen vapor onto a lit burner
+      const hasSyrHalogen = Object.entries(item.gasMoles || {}).some(
+        ([id, n]) => n > 1e-7 && SPECIES[id]?.isHalogenVapor
+      );
+      if ((item.isDischarging || (item.autoDischargeTimer || 0) > 0) && hasSyrHalogen) {
         const nozzle = getSyringeNozzlePos(item);
         const hasAnyCuOnBench = this.items.some(
-          (v) => v.kind === 'vessel' && !v.isShattered &&
-            ((v.moles?.Cu_s || 0) > 1e-6 || (v.moles?.Cu3Zn_alpha_s || 0) > 1e-6 || (v.moles?.Cu3Zn_gamma_s || 0) > 1e-6)
+          (v) =>
+            v.kind === 'vessel' &&
+            !v.isShattered &&
+            Object.entries(v.moles || {}).some(([id, n]) => n > 1e-6 && SPECIES[id]?.isCopperMetal)
         );
         if (hasAnyCuOnBench) {
           for (const b of this.items) {

@@ -3,6 +3,28 @@ import { SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { computeLiquidVolumeL } from '../engine/equilibrium.js';
 import { computeSyringeTotalVolumeMl, computeTubingGeometry } from '../engine/gasNetwork.js';
 
+function formatReagentMolPreview(reg, amount) {
+  if (!reg) return '';
+  if (reg.kind === 'solid') {
+    const sp = SPECIES[reg.speciesId];
+    const mol = amount / sp.molarMass;
+    return `${(mol * 1000).toFixed(2)} mmol (${mol.toFixed(5)} mol)`;
+  }
+  if (reg.previewMode === 'acid_hcl') {
+    return `HCl: ${(reg.perMl.H_aq * amount * 1000).toFixed(2)} mmol (~12.06 M)`;
+  }
+  if (reg.previewMode === 'solvent_water') {
+    return `H₂O: ${(reg.perMl.H2O_l * amount).toFixed(3)} mol (${(amount * reg.densityGPerMl).toFixed(2)} g)`;
+  }
+  if (reg.previewMode === 'indicator' || reg.isIndicator) {
+    const molP = (reg.perMl.Phenolphthalein_aq || Object.values(reg.perMl || {})[0] || 0) * amount;
+    return `${(molP * 1e6).toFixed(1)} µmol indicator`;
+  }
+  const entries = Object.entries(reg.perMl || {});
+  const [firstId, perMlVal] = entries[0] || ['H2O_l', 0];
+  return `${SPECIES[firstId]?.formula || firstId}: ${(perMlVal * amount * 1000).toFixed(2)} mmol`;
+}
+
 export class DosingModal {
   constructor(container, sim, getLang) {
     this.container = container;
@@ -24,7 +46,7 @@ export class DosingModal {
       reagentId,
       targetVesselId: target.id,
       amount: reg.defaultDose,
-      rateMlS: reg.id === 'phen' ? 0.5 : 10,
+      rateMlS: reg.isIndicator ? 0.5 : 10,
       fine: false,
       pouredLive: 0,
     };
@@ -111,30 +133,9 @@ export class DosingModal {
       const reg = STARTER_REAGENTS.find((r) => r.id === st.reagentId);
       const isSolid = reg.kind === 'solid';
       const title = isSolid ? t('dosingTitleSolid') : t('dosingTitleLiquid');
-
-      let molPreview = '';
-      if (isSolid) {
-        const sp = SPECIES[reg.speciesId];
-        const mol = st.amount / sp.molarMass;
-        molPreview = `${(mol * 1000).toFixed(2)} mmol (${mol.toFixed(5)} mol)`;
-      } else if (reg.id === 'hcl_37') {
-        const molHCl = reg.perMl.H_aq * st.amount;
-        molPreview = `HCl: ${(molHCl * 1000).toFixed(2)} mmol (~12.06 M)`;
-      } else if (reg.id === 'h2o') {
-        const molW = reg.perMl.H2O_l * st.amount;
-        molPreview = `H₂O: ${molW.toFixed(3)} mol (${(st.amount * reg.densityGPerMl).toFixed(2)} g)`;
-      } else {
-        const molP = reg.perMl.Phenolphthalein_aq * st.amount;
-        molPreview = `${(molP * 1e6).toFixed(1)} µmol indicator`;
-      }
-
-      const presets = isSolid
-        ? reg.id === 'na'
-          ? [0.05, 0.15, 0.25, 0.5, 1.0]
-          : [0.25, 0.5, 1.0, 2.5, 5.0]
-        : reg.id === 'phen'
-        ? [0.05, 0.15, 0.5, 1.0]
-        : [1, 5, 10, 25, 50, 100];
+      const molPreview = formatReagentMolPreview(reg, st.amount);
+      const presets =
+        reg.dosePresets || (isSolid ? [0.25, 0.5, 1.0, 2.5, 5.0] : [1, 5, 10, 25, 50, 100]);
 
       this.container.innerHTML = `
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="dosing-backdrop">
@@ -242,7 +243,7 @@ export class DosingModal {
               }
               <button type="button" id="dosing-cancel" class="px-3 py-2 rounded-lg border border-theme text-xs font-medium text-muted hover:text-main">${t('btnClose')}</button>
               <button type="button" id="dosing-confirm" class="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 transition">
-                ${reg.id === 'na' ? t('btnCutDropNa') : t('btnAddExact')}
+                ${reg.confirmKey ? t(reg.confirmKey) : t('btnAddExact')}
               </button>
             </div>
           </div>
@@ -431,16 +432,7 @@ export class DosingModal {
       const preview = this.container.querySelector('#dosing-mol-preview');
       if (preview && this.state.mode === 'reagent') {
         const reg = STARTER_REAGENTS.find((r) => r.id === this.state.reagentId);
-        if (reg.kind === 'solid') {
-          const mol = this.state.amount / SPECIES[reg.speciesId].molarMass;
-          preview.textContent = `${(mol * 1000).toFixed(2)} mmol (${mol.toFixed(5)} mol)`;
-        } else if (reg.id === 'hcl_37') {
-          preview.textContent = `HCl: ${(reg.perMl.H_aq * this.state.amount * 1000).toFixed(2)} mmol (~12.06 M)`;
-        } else if (reg.id === 'h2o') {
-          preview.textContent = `H₂O: ${(reg.perMl.H2O_l * this.state.amount).toFixed(3)} mol (${(this.state.amount * reg.densityGPerMl).toFixed(2)} g)`;
-        } else {
-          preview.textContent = `${(reg.perMl.Phenolphthalein_aq * this.state.amount * 1e6).toFixed(1)} µmol indicator`;
-        }
+        preview.textContent = formatReagentMolPreview(reg, this.state.amount);
       }
     };
 

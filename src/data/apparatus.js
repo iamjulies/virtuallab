@@ -11,6 +11,7 @@ export const APPARATUS = {
     kind: 'vessel',
     shape: 'beaker',
     formVariant: 'low',
+    supportsClamp: true,
     i18nKey: 'eq_beaker_250',
     isoStandard: 'ISO 3819 · DIN 12331 (Low 70×95 mm)',
     materialSpec: 'Borosilicate 3.3',
@@ -47,6 +48,7 @@ export const APPARATUS = {
     kind: 'vessel',
     shape: 'beaker',
     formVariant: 'tall',
+    supportsClamp: true,
     i18nKey: 'eq_beaker_tall_250',
     isoStandard: 'ISO 3819 · DIN 12331 (Tall 60×120 mm)',
     materialSpec: 'Borosilicate 3.3',
@@ -82,6 +84,7 @@ export const APPARATUS = {
     id: 'erlenmeyer_250',
     kind: 'vessel',
     shape: 'erlenmeyer',
+    supportsClamp: true,
     i18nKey: 'eq_erlenmeyer_250',
     isoStandard: 'ISO 1773 · DIN 12380 (Ø85×144 mm · Ø32 mm)',
     materialSpec: 'Borosilicate 3.3',
@@ -119,6 +122,7 @@ export const APPARATUS = {
     id: 'test_tube_50',
     kind: 'vessel',
     shape: 'test_tube',
+    supportsClamp: true,
     i18nKey: 'eq_test_tube_50',
     isoStandard: 'ISO 4142 / DIN 12395 (Ø25×150 mm · Rimmed)',
     materialSpec: 'Borosilicate 3.3',
@@ -156,6 +160,7 @@ export const APPARATUS = {
     id: 'cylinder_100',
     kind: 'vessel',
     shape: 'cylinder',
+    supportsClamp: true,
     i18nKey: 'eq_cylinder_100',
     isoStandard: 'ISO 4788 · Class A (100 mL)',
     materialSpec: 'Borosilicate 3.3',
@@ -188,6 +193,7 @@ export const APPARATUS = {
   scale: {
     id: 'scale',
     kind: 'scale',
+    isSupport: true,
     i18nKey: 'eq_scale',
     width: 156,
     height: 62,
@@ -197,6 +203,7 @@ export const APPARATUS = {
   burner: {
     id: 'burner',
     kind: 'burner',
+    isSupport: true,
     i18nKey: 'eq_burner',
     width: 120,
     height: 112,
@@ -219,6 +226,7 @@ export const APPARATUS = {
   gas_syringe: {
     id: 'gas_syringe',
     kind: 'gas_syringe',
+    supportsClamp: true,
     i18nKey: 'eq_gas_syringe',
     isoStandard: 'Borosilicate 3.3 Gastight · Luer Lock (Ø47.8×290 mm · Max 2.05 bar / 30 psi)',
     materialSpec: 'Borosilicate 3.3 + PTFE',
@@ -273,3 +281,25 @@ export const APPARATUS_ORDER = [
   'burner',
   'gas_syringe',
 ];
+
+/**
+ * Vertical offset (px) from apparatus center y to its Retort Stand bosshead clamp grip point.
+ */
+export function getClampNeckOffsetY(spec) {
+  if (!spec) return 0;
+  if (spec.kind === 'gas_syringe') return spec.clampOffsetY ?? 0;
+  return spec.clampOffsetY ?? -spec.height / 2 + (spec.shape === 'erlenmeyer' ? 24 : 26);
+}
+
+/**
+ * Clamp an apparatus center y-coordinate onto a Retort Stand's stainless steel rod shaft.
+ */
+export function clampItemToStandY(itemSpec, stand, floorY = 482, candidateY = 0, floorPad = 4) {
+  const stSpec = APPARATUS.retort_stand;
+  const neckOff = getClampNeckOffsetY(itemSpec);
+  const standTop = stand.y - stSpec.height / 2;
+  const standBot = stand.y + stSpec.height / 2;
+  const minItemY = standTop + 14 - neckOff;
+  const maxItemY = Math.min(floorY - itemSpec.height / 2 - floorPad, standBot - 22 - neckOff);
+  return Math.max(minItemY, Math.min(maxItemY, candidateY));
+}

@@ -1,10 +1,10 @@
 import { CONSTANTS, waterBoilingPointK, waterVaporPressureBar } from '../data/constants.js';
-import { SPECIES } from '../data/species.js';
+import { ALL_GAS_IDS, NON_STEAM_GAS_IDS, SPECIES } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
 
-export const NON_STEAM_GASES = ['H2_g', 'O2_g', 'HCl_g', 'Cl2_g', 'HNO3_g', 'C2H5Cl_g', 'NH3_g', 'NO2_g', 'NO_g'];
-export const ALL_GASES = [...NON_STEAM_GASES, 'H2O_g'];
+export const NON_STEAM_GASES = NON_STEAM_GAS_IDS;
+export const ALL_GASES = ALL_GAS_IDS;
 
 export function getSyringeNozzlePos(syringe) {
   const sSpec = APPARATUS.gas_syringe;

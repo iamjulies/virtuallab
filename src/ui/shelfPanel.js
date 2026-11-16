@@ -30,73 +30,74 @@ function apparatusSvg(typeId) {
 }
 
 function reagentIconSvg(reg) {
-  if (reg.id === 'na') {
+  const style = reg.bottleStyle || {};
+  const capCol = style.shelfCapColor || style.capColor || '#334155';
+  const fillCol = style.shelfFill || 'rgba(148,163,184,0.18)';
+  const strokeCol = style.shelfStroke || '#64748b';
+
+  if (style.vesselForm === 'dropper') {
     return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="7" y="9" width="22" height="23" rx="3.5" fill="rgba(250, 204, 21, 0.22)" stroke="#ca8a04" stroke-width="1.5"/>
-      <rect x="10" y="4.5" width="16" height="4.5" rx="1.2" fill="#334155"/>
-      <rect x="9" y="14" width="18" height="16" rx="2" fill="rgba(234, 179, 8, 0.34)"/>
-      <rect x="12" y="19" width="8" height="8" rx="0.8" fill="#e2e8f0" stroke="#64748b" stroke-width="0.9"/>
-      <rect x="20" y="21" width="5" height="6" rx="0.6" fill="#cbd5e1" stroke="#64748b" stroke-width="0.8"/>
-    </svg>`;
-  }
-  if (reg.id === 'cuso4_5h2o') {
-    return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="7" y="9" width="22" height="23" rx="3.5" fill="rgba(14,165,233,0.14)" stroke="#64748b" stroke-width="1.5"/>
-      <rect x="10" y="4.5" width="16" height="4.5" rx="1.2" fill="#1d4ed8"/>
-      <polygon points="10,29 14,19 20,23 18,30" fill="#0284c7" stroke="#bae6fd" stroke-width="0.9"/>
-      <polygon points="18,30 22,20 27,26 24,30" fill="#0369a1" stroke="#bae6fd" stroke-width="0.9"/>
-      <polygon points="15,21 19,16 22,21" fill="#38bdf8" stroke="#e0f2fe" stroke-width="0.7"/>
-    </svg>`;
-  }
-  if (reg.id === 'agno3') {
-    return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="8" y="9" width="20" height="23" rx="3.5" fill="rgba(146, 64, 14, 0.72)" stroke="#b45309" stroke-width="1.5"/>
-      <rect x="11" y="4.5" width="14" height="4.5" rx="1.2" fill="#1e293b"/>
-      <rect x="11" y="14" width="14" height="6" rx="1" fill="rgba(248, 250, 252, 0.88)"/>
-      <rect x="12" y="23" width="5" height="5" fill="rgba(248, 250, 252, 0.72)" stroke="#f8fafc" stroke-width="0.5"/>
-      <rect x="19" y="24" width="5" height="4" fill="rgba(226, 232, 240, 0.72)" stroke="#f8fafc" stroke-width="0.5"/>
-    </svg>`;
-  }
-  if (reg.id === 'naoh') {
-    return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="7" y="9" width="22" height="23" rx="3.5" fill="rgba(241, 245, 249, 0.75)" stroke="#94a3b8" stroke-width="1.5"/>
-      <rect x="10" y="4.5" width="16" height="4.5" rx="1.2" fill="#ea580c"/>
-      <circle cx="13" cy="27" r="2.6" fill="#ffffff" stroke="#94a3b8" stroke-width="0.7"/>
-      <circle cx="19" cy="27.5" r="2.6" fill="#ffffff" stroke="#94a3b8" stroke-width="0.7"/>
-      <circle cx="23" cy="24" r="2.3" fill="#ffffff" stroke="#94a3b8" stroke-width="0.7"/>
-      <circle cx="16" cy="22.5" r="2.4" fill="#ffffff" stroke="#94a3b8" stroke-width="0.7"/>
-    </svg>`;
-  }
-  if (reg.id === 'zn') {
-    return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="7" y="9" width="22" height="23" rx="3.5" fill="rgba(148,163,184,0.16)" stroke="#64748b" stroke-width="1.5"/>
-      <rect x="10" y="4.5" width="16" height="4.5" rx="1.2" fill="#334155"/>
-      <polygon points="10,29 13,21 18,24 16,29" fill="#94a3b8" stroke="#e2e8f0" stroke-width="0.8"/>
-      <polygon points="17,29 21,20 26,24 23,29" fill="#cbd5e1" stroke="#475569" stroke-width="0.8"/>
-    </svg>`;
-  }
-  if (reg.id === 'phen') {
-    return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="10.5" y="13" width="15" height="18" rx="3" fill="rgba(244,114,182,0.18)" stroke="#64748b" stroke-width="1.5"/>
+      <rect x="10.5" y="13" width="15" height="18" rx="3" fill="${fillCol}" stroke="${strokeCol}" stroke-width="1.5"/>
       <path d="M14.5 13V9h7v4" stroke="#475569" stroke-width="1.4" fill="#334155"/>
-      <path d="M15.5 9V5a2.5 2.5 0 015 0v4" fill="#ec4899"/>
-      <rect x="12.5" y="20" width="11" height="9" rx="1" fill="rgba(244,114,182,0.38)"/>
+      <path d="M15.5 9V5a2.5 2.5 0 015 0v4" fill="${capCol}"/>
+      <rect x="12.5" y="20" width="11" height="9" rx="1" fill="${style.shelfLiquidFill || 'rgba(244,114,182,0.38)'}"/>
       <line x1="18" y1="13" x2="18" y2="27" stroke="#ffffff" stroke-width="1" opacity="0.6"/>
     </svg>`;
   }
-  if (reg.id === 'hcl_37') {
+
+  if (reg.kind === 'liquid') {
+    const liqCol = style.shelfLiquidFill || 'rgba(56,189,248,0.48)';
+    const liqY = style.isFuming ? 19 : 17;
+    const liqH = 30 - liqY;
+    const fumeSvg = style.isFuming
+      ? `<path d="M14 2c2 1 1 3 0 4M20 2c2 1 1 3 0 4" stroke="#cbd5e1" stroke-width="1.2" fill="none"/>`
+      : '';
     return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <path d="M13 6h10v4l4 5v15a2 2 0 01-2 2H11a2 2 0 01-2-2V15l4-5V6z" fill="rgba(226,232,240,0.16)" stroke="#ef4444" stroke-width="1.5"/>
-      <rect x="12.5" y="3" width="11" height="4" rx="1" fill="#dc2626"/>
-      <rect x="11" y="19" width="14" height="11" fill="rgba(226,232,240,0.42)"/>
-      <path d="M14 2c2 1 1 3 0 4M20 2c2 1 1 3 0 4" stroke="#cbd5e1" stroke-width="1.2" fill="none"/>
+      <path d="M13 6h10v4l4 5v15a2 2 0 01-2 2H11a2 2 0 01-2-2V15l4-5V6z" fill="${fillCol}" stroke="${strokeCol}" stroke-width="1.5"/>
+      <rect x="12.5" y="3" width="11" height="4" rx="1" fill="${capCol}"/>
+      <rect x="11" y="${liqY}" width="14" height="${liqH}" fill="${liqCol}"/>
+      ${fumeSvg}
     </svg>`;
   }
-  // H2O
+
+  const contentsKind = style.contentsKind || 'pellets';
+  let contentsSvg = '';
+  if (contentsKind === 'oil_blocks') {
+    contentsSvg = `
+      <rect x="9" y="14" width="18" height="16" rx="2" fill="rgba(234, 179, 8, 0.34)"/>
+      <rect x="12" y="19" width="8" height="8" rx="0.8" fill="#e2e8f0" stroke="#64748b" stroke-width="0.9"/>
+      <rect x="20" y="21" width="5" height="6" rx="0.6" fill="#cbd5e1" stroke="#64748b" stroke-width="0.8"/>`;
+  } else if (contentsKind === 'blue_crystals') {
+    contentsSvg = `
+      <polygon points="10,29 14,19 20,23 18,30" fill="${style.solidColor || '#0284c7'}" stroke="#bae6fd" stroke-width="0.9"/>
+      <polygon points="18,30 22,20 27,26 24,30" fill="#0369a1" stroke="#bae6fd" stroke-width="0.9"/>
+      <polygon points="15,21 19,16 22,21" fill="#38bdf8" stroke="#e0f2fe" stroke-width="0.7"/>`;
+  } else if (contentsKind === 'granules') {
+    contentsSvg = `
+      <polygon points="10,29 13,21 18,24 16,29" fill="${style.solidColor || '#94a3b8'}" stroke="#e2e8f0" stroke-width="0.8"/>
+      <polygon points="17,29 21,20 26,24 23,29" fill="#cbd5e1" stroke="#475569" stroke-width="0.8"/>`;
+  } else if (contentsKind === 'white_crystals') {
+    contentsSvg = `
+      <rect x="11" y="14" width="14" height="6" rx="1" fill="rgba(248, 250, 252, 0.88)"/>
+      <rect x="12" y="23" width="5" height="5" fill="rgba(248, 250, 252, 0.72)" stroke="#f8fafc" stroke-width="0.5"/>
+      <rect x="19" y="24" width="5" height="4" fill="rgba(226, 232, 240, 0.72)" stroke="#f8fafc" stroke-width="0.5"/>`;
+  } else {
+    contentsSvg = `
+      <circle cx="13" cy="27" r="2.6" fill="${style.solidColor || '#ffffff'}" stroke="#94a3b8" stroke-width="0.7"/>
+      <circle cx="19" cy="27.5" r="2.6" fill="${style.solidColor || '#ffffff'}" stroke="#94a3b8" stroke-width="0.7"/>
+      <circle cx="23" cy="24" r="2.3" fill="${style.solidColor || '#ffffff'}" stroke="#94a3b8" stroke-width="0.7"/>
+      <circle cx="16" cy="22.5" r="2.4" fill="${style.solidColor || '#ffffff'}" stroke="#94a3b8" stroke-width="0.7"/>`;
+  }
+
+  const jarX = style.glassMaterial === 'amber' ? 8 : 7;
+  const jarW = style.glassMaterial === 'amber' ? 20 : 22;
+  const capX = style.glassMaterial === 'amber' ? 11 : 10;
+  const capW = style.glassMaterial === 'amber' ? 14 : 16;
+
   return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-    <path d="M13 6h10v4l4 5v15a2 2 0 01-2 2H11a2 2 0 01-2-2V15l4-5V6z" fill="rgba(56,189,248,0.16)" stroke="#38bdf8" stroke-width="1.5"/>
-    <rect x="12.5" y="3" width="11" height="4" rx="1" fill="#0284c7"/>
-    <rect x="11" y="17" width="14" height="13" fill="rgba(56,189,248,0.48)"/>
+    <rect x="${jarX}" y="9" width="${jarW}" height="23" rx="3.5" fill="${fillCol}" stroke="${strokeCol}" stroke-width="1.5"/>
+    <rect x="${capX}" y="4.5" width="${capW}" height="4.5" rx="1.2" fill="${capCol}"/>
+    ${contentsSvg}
   </svg>`;
 }
 

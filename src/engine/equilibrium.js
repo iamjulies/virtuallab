@@ -162,33 +162,22 @@ export function computeSolutionVisuals(
   let extraOpacity = 0;
   let indicatorBoost = 0;
 
-  // 1. Copper(II) sky-blue & Tetrachlorocuprate(II) yellow-green absorption
-  const nCu = moles.Cu2_aq || 0;
-  if (nCu > 1e-9) {
-    const cCu = nCu / liquidVolL;
-    const ext = SPECIES.Cu2_aq.extinctionRGB;
-    tr *= Math.exp(-ext.r * cCu * opticalPathCm * 0.22);
-    tg *= Math.exp(-ext.g * cCu * opticalPathCm * 0.22);
-    tb *= Math.exp(-ext.b * cCu * opticalPathCm * 0.22);
-    extraOpacity += Math.min(0.45, cCu * 0.45);
-  }
-  const nCuCl4 = moles.CuCl4_2_aq || 0;
-  if (nCuCl4 > 1e-9) {
-    const cComp = nCuCl4 / liquidVolL;
-    const ext = SPECIES.CuCl4_2_aq.extinctionRGB;
-    tr *= Math.exp(-ext.r * cComp * opticalPathCm * 0.22);
-    tg *= Math.exp(-ext.g * cComp * opticalPathCm * 0.22);
-    tb *= Math.exp(-ext.b * cComp * opticalPathCm * 0.22);
-    extraOpacity += Math.min(0.5, cComp * 0.48);
-  }
-  const nCuOH4 = moles.CuOH4_2_aq || 0;
-  if (nCuOH4 > 1e-9) {
-    const cCuBase = nCuOH4 / liquidVolL;
-    const ext = SPECIES.CuOH4_2_aq.extinctionRGB;
-    tr *= Math.exp(-ext.r * cCuBase * opticalPathCm * 0.24);
-    tg *= Math.exp(-ext.g * cCuBase * opticalPathCm * 0.24);
-    tb *= Math.exp(-ext.b * cCuBase * opticalPathCm * 0.24);
-    extraOpacity += Math.min(0.52, cCuBase * 0.55 + 0.14);
+  // 1. Dynamic Beer-Lambert RGB absorption for all aqueous chromophores (Cu2+, [CuCl4]2-, [Cu(OH)4]2-, ...)
+  for (const [spId, nMol] of Object.entries(moles)) {
+    if (!nMol || nMol <= 1e-9) continue;
+    const sp = SPECIES[spId];
+    if (!sp || sp.phase !== 'aq' || !sp.extinctionRGB) continue;
+    const conc = nMol / liquidVolL;
+    const ext = sp.extinctionRGB;
+    const coeff = sp.opticalCoeff ?? 0.22;
+    const kPath = opticalPathCm * coeff;
+    tr *= Math.exp(-ext.r * conc * kPath);
+    tg *= Math.exp(-ext.g * conc * kPath);
+    tb *= Math.exp(-ext.b * conc * kPath);
+    const opScale = sp.opticalOpacityScale ?? 0.45;
+    const opMax = sp.opticalOpacityMax ?? 0.45;
+    const opBase = sp.opticalOpacityBase ?? 0;
+    extraOpacity += Math.min(opMax, conc * opScale + opBase);
   }
 
   // 2. Phenolphthalein indicator 4-state optics + irreversible C-C cleavage guard:
@@ -270,22 +259,13 @@ export function computeSolidVolumeMl(moles) {
   return vol;
 }
 
-const COLLOIDAL_PRECIPITATE_IDS = new Set([
-  'AgCl_s',
-  'CuOH2_s',
-  'ZnOH2_s',
-  'CuCl_s',
-  'CuO_s',
-  'Ag2O_s',
-]);
-
 /**
  * Compute natural undisturbed solid suspension factor (0 = settled on bottom, 1 = dispersed).
  * Coarse heavy metals/crystals sink immediately; fine colloidal precipitates follow vessel stir/settling state (~12-15s).
  */
 export function computeSolidSuspensionFactor(vessel, spId, sp) {
   if (!sp || sp.phase !== 's') return 0;
-  if (COLLOIDAL_PRECIPITATE_IDS.has(spId)) {
+  if (sp.isColloidal) {
     const settleFrac = vessel?.precipitateSettle?.[spId];
     const settleSusp = settleFrac !== undefined ? Math.max(0, 1 - settleFrac) : 0;
     return Math.max(vessel?.suspensionLevel || 0, settleSusp);

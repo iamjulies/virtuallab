@@ -1,4 +1,4 @@
-import { APPARATUS } from '../data/apparatus.js';
+import { APPARATUS, getClampNeckOffsetY } from '../data/apparatus.js';
 import { kelvinToCelsius } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
 import {
@@ -516,15 +516,12 @@ export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
   const isSyr = clampedItem.kind === 'gas_syringe';
 
   let attachX = clampedItem.x;
-  let attachY = clampedItem.y;
+  let attachY = clampedItem.y + getClampNeckOffsetY(spec);
   if (isSyr) {
     const barrelLeft = clampedItem.x - spec.width / 2 + (spec.barrelLeftOffset || 20);
     const barrelRight = barrelLeft + (spec.barrelW || 192);
     // Grip rear collar/barrel section horizontally closest to stand rod without crossing the graduations
     attachX = Math.max(barrelLeft + 32, Math.min(barrelRight - 14, rodX - 24));
-    attachY = clampedItem.y;
-  } else {
-    attachY = clampedItem.y - spec.height / 2 + (spec.shape === 'erlenmeyer' ? 24 : 26);
   }
   // Keep bosshead clamp strictly mounted along the stainless steel rod shaft
   attachY = Math.max(standTop + 14, Math.min(standBot - 22, attachY));
@@ -608,10 +605,18 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   const plungerFaceX = travelStart + ratio * travelSpan;
   const activeChamberRight = Math.max(barrelLeft + 3, plungerFaceX);
 
-  const hasSteam = (item.gasMoles?.H2O_g || 0) > 1e-6;
-  const hasCl2 = (item.gasMoles?.Cl2_g || 0) > 1e-6;
   const syrTempC = kelvinToCelsius(syrTempK);
   const overP = (item.internalPressureBar || env.pressureBar) - env.pressureBar;
+
+  // Determine chamber gas tint dynamically from SPECIES.syringeFillColor (colored gases take precedence over steam)
+  let gasChamberFill = 'rgba(186, 230, 253, 0.14)';
+  for (const gId of ALL_GASES) {
+    if ((item.gasMoles?.[gId] || 0) <= 1e-6) continue;
+    const fill = SPECIES[gId]?.syringeFillColor;
+    if (!fill) continue;
+    gasChamberFill = typeof fill === 'string' ? fill : (isDark ? fill.dark : fill.light);
+    if (gId !== 'H2O_g') break;
+  }
 
   ctx.save();
   if (item.landingTilt) {
@@ -685,13 +690,7 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
 
     // 1. Gas phase color fill inside expanded chamber
     if (gasVolMl > 0.05) {
-      ctx.fillStyle = hasCl2
-        ? 'rgba(190, 242, 100, 0.34)'
-        : hasSteam
-        ? isDark
-          ? 'rgba(226, 232, 240, 0.26)'
-          : 'rgba(148, 163, 184, 0.26)'
-        : 'rgba(186, 230, 253, 0.14)';
+      ctx.fillStyle = gasChamberFill;
       ctx.fillRect(barrelLeft + 2, innerTop, chamberW, innerH);
     }
 

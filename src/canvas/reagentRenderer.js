@@ -27,11 +27,13 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
   if (tiltRad) ctx.rotate(tiltRad);
   ctx.scale(scale, scale);
 
+  const style = reg.bottleStyle || {};
   const isLiquid = reg.kind === 'liquid';
-  const isDropper = reg.id === 'phen';
-  const isAmber = reg.id === 'agno3';
-  const isHDPE = reg.id === 'naoh';
-  const isOil = reg.id === 'na';
+  const vesselForm = style.vesselForm || (isLiquid ? 'winchester' : 'jar');
+  const glassMat = style.glassMaterial || 'clear';
+  const isDropper = vesselForm === 'dropper';
+  const isAmber = glassMat === 'amber';
+  const isHDPE = glassMat === 'hdpe';
 
   const w = isDropper ? 52 : isLiquid ? 76 : 78;
   const h = isDropper ? 106 : isLiquid ? 132 : 114;
@@ -45,7 +47,7 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
 
   // 1. Bottle / Jar Glass or HDPE Silhouette
   ctx.beginPath();
-  if (isLiquid && !isDropper) {
+  if (vesselForm === 'winchester') {
     // Classic narrow-mouth sloped shoulder Winchester reagent bottle
     ctx.moveTo(-neckW / 2, top + 12);
     ctx.lineTo(neckW / 2, top + 12);
@@ -103,59 +105,43 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
   ctx.clip();
 
   const fillTop = bottom - (bottom - shoulderY) * 0.68;
-  if (reg.id === 'h2o') {
+  const contentsKind = style.contentsKind || (isLiquid ? 'liquid' : 'pellets');
+  if (isLiquid) {
     const liqGrad = ctx.createLinearGradient(0, fillTop, 0, bottom);
-    liqGrad.addColorStop(0, 'rgba(125, 211, 252, 0.42)');
-    liqGrad.addColorStop(1, 'rgba(56, 189, 248, 0.62)');
+    liqGrad.addColorStop(0, style.liquidGradTop || 'rgba(125, 211, 252, 0.42)');
+    liqGrad.addColorStop(1, style.liquidGradBottom || 'rgba(56, 189, 248, 0.62)');
     ctx.fillStyle = liqGrad;
     ctx.fillRect(left, fillTop, w, bottom - fillTop);
-    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(left + 4, fillTop);
-    ctx.quadraticCurveTo(0, fillTop + 3, w / 2 - 4, fillTop);
-    ctx.stroke();
-  } else if (reg.id === 'hcl_37') {
-    const acidGrad = ctx.createLinearGradient(0, fillTop, 0, bottom);
-    acidGrad.addColorStop(0, 'rgba(241, 245, 249, 0.42)');
-    acidGrad.addColorStop(1, 'rgba(203, 213, 225, 0.62)');
-    ctx.fillStyle = acidGrad;
-    ctx.fillRect(left, fillTop, w, bottom - fillTop);
-    // Faint corrosive fuming mist in bottle shoulder
-    for (let i = 0; i < 4; i++) {
-      ctx.fillStyle = 'rgba(248, 250, 252, 0.28)';
-      ctx.beginPath();
-      ctx.arc(-10 + i * 7, fillTop - 10 - (i % 2) * 5, 5 + i * 0.8, 0, Math.PI * 2);
-      ctx.fill();
+    if (style.isFuming) {
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = 'rgba(248, 250, 252, 0.28)';
+        ctx.beginPath();
+        ctx.arc(-10 + i * 7, fillTop - 10 - (i % 2) * 5, 5 + i * 0.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
-    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(left + 4, fillTop);
-    ctx.quadraticCurveTo(0, fillTop + 3, w / 2 - 4, fillTop);
-    ctx.stroke();
-  } else if (reg.id === 'phen') {
-    const phenGrad = ctx.createLinearGradient(0, fillTop, 0, bottom);
-    phenGrad.addColorStop(0, 'rgba(244, 114, 182, 0.24)');
-    phenGrad.addColorStop(1, 'rgba(236, 72, 153, 0.42)');
-    ctx.fillStyle = phenGrad;
-    ctx.fillRect(left, fillTop, w, bottom - fillTop);
-    // Internal glass dropper tube
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    ctx.moveTo(0, shoulderY - 4);
-    ctx.lineTo(0, bottom - 12);
-    ctx.stroke();
-  } else if (isOil) {
-    // Mineral paraffin oil bath
+    if (style.hasDropperTube) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(0, shoulderY - 4);
+      ctx.lineTo(0, bottom - 12);
+      ctx.stroke();
+    } else {
+      ctx.strokeStyle = style.isFuming ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.65)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(left + 4, fillTop);
+      ctx.quadraticCurveTo(0, fillTop + 3, w / 2 - 4, fillTop);
+      ctx.stroke();
+    }
+  } else if (contentsKind === 'oil_blocks') {
     const oilTop = shoulderY + 14;
     const oilGrad = ctx.createLinearGradient(0, oilTop, 0, bottom);
     oilGrad.addColorStop(0, 'rgba(254, 240, 138, 0.34)');
     oilGrad.addColorStop(1, 'rgba(234, 179, 8, 0.44)');
     ctx.fillStyle = oilGrad;
     ctx.fillRect(left, oilTop, w, bottom - oilTop);
-    // Submerged fresh-cut silvery Sodium metal blocks
     ctx.fillStyle = '#e2e8f0';
     ctx.strokeStyle = '#64748b';
     ctx.lineWidth = 1.2;
@@ -163,7 +149,7 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
     ctx.rect(-14, bottom - 28, 17, 17);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = '#cbd5e1';
+    ctx.fillStyle = style.solidColor || '#cbd5e1';
     ctx.beginPath();
     ctx.rect(2, bottom - 22, 14, 13);
     ctx.fill();
@@ -173,13 +159,13 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
     ctx.moveTo(left + 4, oilTop);
     ctx.lineTo(w / 2 - 4, oilTop);
     ctx.stroke();
-  } else if (reg.id === 'cuso4_5h2o') {
+  } else if (contentsKind === 'blue_crystals') {
     const crystals = [
-      [-18, bottom - 14, 11, '#0284c7'],
+      [-18, bottom - 14, 11, style.solidColor || '#0284c7'],
       [-3, bottom - 18, 13, '#0369a1'],
       [14, bottom - 13, 10, '#0ea5e9'],
       [-10, bottom - 28, 9, '#38bdf8'],
-      [7, bottom - 27, 10, '#0284c7'],
+      [7, bottom - 27, 10, style.solidColor || '#0284c7'],
       [0, bottom - 8, 12, '#0369a1'],
     ];
     for (const [gx, gy, r, col] of crystals) {
@@ -199,7 +185,7 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
       ctx.stroke();
       ctx.restore();
     }
-  } else if (reg.id === 'zn') {
+  } else if (contentsKind === 'granules') {
     const granules = [
       [-17, bottom - 12, 8],
       [-5, bottom - 16, 10],
@@ -219,14 +205,14 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
       ctx.lineTo(r, r * 0.45);
       ctx.lineTo(-r * 0.2, r * 0.78);
       ctx.closePath();
-      ctx.fillStyle = '#94a3b8';
+      ctx.fillStyle = style.solidColor || '#94a3b8';
       ctx.fill();
       ctx.strokeStyle = '#e2e8f0';
       ctx.lineWidth = 0.9;
       ctx.stroke();
       ctx.restore();
     }
-  } else if (reg.id === 'agno3') {
+  } else if (contentsKind === 'white_crystals') {
     for (let i = 0; i < 9; i++) {
       const gx = -20 + (i % 4) * 12 + (i > 4 ? 4 : 0);
       const gy = bottom - 10 - Math.floor(i / 4) * 11;
@@ -236,12 +222,12 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
       ctx.fillRect(gx - 4, gy - 4, 8, 7);
       ctx.strokeRect(gx - 4, gy - 4, 8, 7);
     }
-  } else if (isHDPE) {
-    // Opaque white caustic pellets silhouette
+  } else {
+    // Pellets / granular solid silhouette
     for (let i = 0; i < 10; i++) {
       const gx = -18 + (i % 4) * 12;
       const gy = bottom - 10 - Math.floor(i / 4) * 10;
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = style.solidColor || '#ffffff';
       ctx.strokeStyle = '#cbd5e1';
       ctx.lineWidth = 0.9;
       ctx.beginPath();
@@ -258,45 +244,13 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
     const labW = w - 10;
     ctx.fillStyle = 'rgba(248, 250, 252, 0.92)';
     ctx.fillRect(-labW / 2, labY, labW, labH);
-    const accentBand =
-      reg.id === 'hcl_37'
-        ? '#dc2626'
-        : reg.id === 'na'
-        ? '#eab308'
-        : reg.id === 'naoh'
-        ? '#f97316'
-        : reg.id === 'cuso4_5h2o'
-        ? '#0284c7'
-        : reg.id === 'phen'
-        ? '#ec4899'
-        : reg.id === 'agno3'
-        ? '#92400e'
-        : reg.id === 'zn'
-        ? '#475569'
-        : '#0ea5e9';
-    ctx.fillStyle = accentBand;
+    ctx.fillStyle = style.accentColor || '#0ea5e9';
     ctx.fillRect(-labW / 2, labY, labW, 5);
     ctx.fillStyle = '#0f172a';
     ctx.font = `bold ${isDropper ? 9.5 : 11}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const shortFormula =
-      reg.id === 'cuso4_5h2o'
-        ? 'CuSO₄·5H₂O'
-        : reg.id === 'hcl_37'
-        ? 'HCl 37%'
-        : reg.id === 'phen'
-        ? 'Phen 1%'
-        : reg.id === 'agno3'
-        ? 'AgNO₃'
-        : reg.id === 'naoh'
-        ? 'NaOH'
-        : reg.id === 'na'
-        ? 'Na (Oil)'
-        : reg.id === 'zn'
-        ? 'Zn (s)'
-        : 'H₂O';
-    ctx.fillText(shortFormula, 0, labY + 18);
+    ctx.fillText(style.shortLabel || reg.formula, 0, labY + 18);
   }
 
   // Vertical glass specular reflection highlight
@@ -311,18 +265,10 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
   ctx.restore();
 
   // 2. Outer Rim Stroke
-  ctx.strokeStyle = isAmber
-    ? '#b45309'
-    : reg.id === 'hcl_37'
-    ? '#ef4444'
-    : isHDPE
-    ? '#94a3b8'
-    : isDark
-    ? '#94a3b8'
-    : '#475569';
+  ctx.strokeStyle = style.rimStrokeColor || (isAmber ? '#b45309' : isHDPE || isDark ? '#94a3b8' : '#475569');
   ctx.lineWidth = 1.8;
   ctx.beginPath();
-  if (isLiquid && !isDropper) {
+  if (vesselForm === 'winchester') {
     ctx.moveTo(-neckW / 2, top + 12);
     ctx.lineTo(neckW / 2, top + 12);
     ctx.lineTo(neckW / 2, shoulderY - 12);
@@ -352,32 +298,20 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
   // 3. Screw Cap or Dropper Pipette Bulb (omitted if uncapped during scooping/pouring!)
   if (!uncapped) {
     if (isDropper) {
-      // Magenta rubber bulb & collar
       ctx.fillStyle = '#334155';
       ctx.fillRect(-neckW / 2 - 2, top + 8, neckW + 4, 8);
-      ctx.fillStyle = '#ec4899';
+      ctx.fillStyle = style.capColor || '#ec4899';
       ctx.beginPath();
       ctx.roundRect(-6, top - 6, 12, 15, 6);
       ctx.fill();
     } else {
-      const capCol =
-        reg.id === 'hcl_37'
-          ? '#dc2626'
-          : reg.id === 'h2o'
-          ? '#0284c7'
-          : reg.id === 'cuso4_5h2o'
-          ? '#1d4ed8'
-          : reg.id === 'naoh'
-          ? '#ea580c'
-          : '#334155';
-      ctx.fillStyle = capCol;
+      ctx.fillStyle = style.capColor || '#334155';
       ctx.strokeStyle = '#0f172a';
       ctx.lineWidth = 1.2;
       ctx.beginPath();
       ctx.roundRect(-neckW / 2 - 2, top - 2, neckW + 4, 15, 3);
       ctx.fill();
       ctx.stroke();
-      // Knurled grip ridges
       ctx.strokeStyle = 'rgba(255,255,255,0.22)';
       ctx.lineWidth = 1;
       for (let rx = -neckW / 2 + 2; rx <= neckW / 2 - 2; rx += 5) {
@@ -388,7 +322,6 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
       }
     }
   } else {
-    // Flared glass lip when open
     ctx.fillStyle = 'rgba(224, 242, 254, 0.5)';
     ctx.strokeStyle = isAmber ? '#b45309' : '#94a3b8';
     ctx.lineWidth = 1.6;
@@ -493,16 +426,12 @@ export function renderActiveReagentTransfer(ctx, anim, targetVessel, spec, botto
       const lipY = rodTopY - 6;
       const hitRodX = rodTopX * 0.78 + rodBottomX * 0.22;
       const hitRodY = rodTopY * 0.78 + rodBottomY * 0.22;
-      const streamCol =
-        reg.id === 'phen'
-          ? 'rgba(244, 114, 182, 0.78)'
-          : reg.id === 'hcl_37'
-          ? 'rgba(226, 232, 240, 0.84)'
-          : 'rgba(125, 211, 252, 0.84)';
+      const style = reg.bottleStyle || {};
+      const streamCol = style.streamColor || 'rgba(125, 211, 252, 0.84)';
 
       ctx.globalAlpha = flowAlpha * 0.9;
       ctx.strokeStyle = streamCol;
-      ctx.lineWidth = reg.id === 'phen' ? 2.4 : 3.4;
+      ctx.lineWidth = style.streamWidth || 3.4;
       ctx.beginPath();
       // Curve from lip to rod, then track cleanly along the rod shaft to bottom!
       ctx.moveTo(lipX, lipY);
@@ -584,22 +513,15 @@ export function renderActiveReagentTransfer(ctx, anim, targetVessel, spec, botto
     ctx.stroke();
 
     // Solid crystals / metal / pellets scooped inside the glass spoon bowl
+    const style = reg.bottleStyle || {};
     if (hasLoad) {
-      const solidCol =
-        reg.id === 'cuso4_5h2o'
-          ? '#0284c7'
-          : reg.id === 'na'
-          ? '#cbd5e1'
-          : reg.id === 'zn'
-          ? '#94a3b8'
-          : '#f8fafc';
-      const solidStroke = reg.id === 'cuso4_5h2o' ? '#7dd3fc' : '#64748b';
-      ctx.fillStyle = solidCol;
-      ctx.strokeStyle = solidStroke;
+      ctx.fillStyle = style.solidColor || '#f8fafc';
+      ctx.strokeStyle = style.solidStrokeColor || '#64748b';
       ctx.lineWidth = 0.8;
+      const dotR = style.solidRadius || 3.0;
       for (let g = -1; g <= 1; g++) {
         ctx.beginPath();
-        ctx.arc(g * 3.5, -2.5 - (1 - Math.abs(g)) * 1.5, reg.id === 'na' ? 4.2 : 3.0, 0, Math.PI * 2);
+        ctx.arc(g * 3.5, -2.5 - (1 - Math.abs(g)) * 1.5, dotR, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
       }
@@ -609,15 +531,9 @@ export function renderActiveReagentTransfer(ctx, anim, targetVessel, spec, botto
     // Falling solid granules/crystals cascading down into vessel after spoon tilts
     if (progress >= 0.76) {
       const p = (progress - 0.76) / 0.24;
-      const dropCol =
-        reg.id === 'cuso4_5h2o'
-          ? '#0284c7'
-          : reg.id === 'na'
-          ? '#e2e8f0'
-          : reg.id === 'zn'
-          ? '#94a3b8'
-          : '#f8fafc';
-      const count = reg.id === 'na' ? 1 : 6;
+      const dropCol = style.solidDropColor || style.solidColor || '#f8fafc';
+      const count = style.solidDropCount || 6;
+      const isSquare = style.solidShape === 'square';
       for (let i = 0; i < count; i++) {
         const gp = Math.max(0, Math.min(1, p * 1.3 - i * 0.08));
         const gx = targetVessel.x + ((i - count / 2) * 4.5) * (0.4 + gp * 0.6);
@@ -626,7 +542,7 @@ export function renderActiveReagentTransfer(ctx, anim, targetVessel, spec, botto
         ctx.strokeStyle = '#64748b';
         ctx.lineWidth = 0.7;
         ctx.beginPath();
-        if (reg.id === 'na') {
+        if (isSquare) {
           ctx.rect(gx - 4.5, gy - 4.5, 9, 9);
         } else {
           ctx.arc(gx, gy, 2.8, 0, Math.PI * 2);

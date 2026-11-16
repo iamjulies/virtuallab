@@ -18,11 +18,20 @@
 
   <script type="module">
     import { CONSTANTS, waterBoilingPointK } from '../src/data/constants.js';
-    import { APPARATUS } from '../src/data/apparatus.js';
-    import { SPECIES } from '../src/data/species.js';
+    import { APPARATUS, clampItemToStandY, getClampNeckOffsetY } from '../src/data/apparatus.js';
+    import {
+      GAS_DISPLAY_META,
+      SORTED_BOTTOM_SOLID_SPECIES,
+      SORTED_PRECIPITATE_SPECIES,
+      SPECIES,
+      STARTER_REAGENTS,
+    } from '../src/data/species.js';
+    import { REACTIONS } from '../src/data/reactions.js';
     import { computeVesselFluidGeometry } from '../src/canvas/vesselRenderer.js';
+    import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
     import { ParticleSystem } from '../src/canvas/particles.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
+    import { enforceDryPhaseBoundary, DRY_COMPLEX_DISSOCIATIONS, DRY_SALT_PAIRINGS } from '../src/engine/chemistry.js';
     import { LabSimulation } from '../src/engine/simulation.js';
     import { calcEvaporationRateMol, computeSteamOpacity } from '../src/engine/thermodynamics.js';
     import {
@@ -33,6 +42,7 @@
       computeSolutionVisuals,
     } from '../src/engine/equilibrium.js';
     import {
+      NON_STEAM_GASES,
       computeSyringeDischargeArc,
       computeSyringeGasVolumeMl,
       computeSyringeLiquidVolumeMl,
@@ -1399,6 +1409,120 @@
           agClCalmLeft > 98.5 &&
           agClShakeMovedPct > 45,
         `Cu_left=${cuLeftPct.toFixed(1)}%, Zn_moved=${znMovedPct.toFixed(0)}%, Na_moved=${naMovedPct.toFixed(0)}%, AgCl_stir=${agClStirMoved.toFixed(0)}%, AgCl_calmLeft=${agClCalmLeft.toFixed(1)}%, AgCl_shake=${agClShakeMovedPct.toFixed(0)}%`
+      );
+    }
+
+    // TEST 43: Architecture & Data-Driven Registry Integrity Audit (gases, solids, dry phase, reagents, clamp helpers)
+    {
+      // 1) All gases in SPECIES auto-populate NON_STEAM_GASES & GAS_DISPLAY_META
+      const gasSpeciesIds = Object.values(SPECIES).filter((s) => s.phase === 'g').map((s) => s.id);
+      const nonSteamExpected = gasSpeciesIds.filter((id) => id !== 'H2O_g');
+      const allGasesSynced =
+        nonSteamExpected.every((id) => NON_STEAM_GASES.includes(id)) &&
+        gasSpeciesIds.every((id) => GAS_DISPLAY_META.some((m) => m.id === id));
+
+      // 2) All solid species have density, molarMass, visualType, & render without throwing
+      const solidSpecies = Object.values(SPECIES).filter((s) => s.phase === 's');
+      const coveredSolidIds = new Set([
+        'Na_s',
+        ...SORTED_PRECIPITATE_SPECIES.map((s) => s.id),
+        ...SORTED_BOTTOM_SOLID_SPECIES.map((s) => s.id),
+      ]);
+      const allSolidsValid = solidSpecies.every(
+        (s) => s.density > 0 && s.molarMass > 0 && typeof s.visualType === 'string' && coveredSolidIds.has(s.id)
+      );
+      const mockCanvas = document.createElement('canvas');
+      mockCanvas.width = 120;
+      mockCanvas.height = 160;
+      const mockCtx = mockCanvas.getContext('2d');
+      const mockVessel = {
+        moles: Object.fromEntries(solidSpecies.map((s) => [s.id, 0.01])),
+        precipitateSettle: {},
+        naPosRatio: 0.5,
+        naTempK: 298.15,
+        tempK: 298.15,
+      };
+      let solidsRenderOk = true;
+      try {
+        renderVesselSolids(mockCtx, mockVessel, { left: 10, right: 110, bottom: 150, top: 10, width: 100 }, false, 150);
+      } catch {
+        solidsRenderOk = false;
+      }
+
+      // 3) Every aqueous species in SPECIES is explicitly mapped in dry-phase rules, and neutral mix leaves ZERO (aq)
+      const handledAqIds = new Set([
+        'ZnOH4_2_aq',
+        'Phenolphthalein_aq',
+        ...Object.keys(DRY_COMPLEX_DISSOCIATIONS),
+        ...DRY_SALT_PAIRINGS.flatMap(([a, , b]) => [a, b]),
+      ]);
+      const aqSpeciesIds = Object.values(SPECIES).filter((s) => s.phase === 'aq').map((s) => s.id);
+      const allAqCovered = aqSpeciesIds.every((id) => handledAqIds.has(id));
+
+      const dryTestMoles = {
+        // Charge-balanced mixture covering all aq ions/complexes
+        Ag_aq: 0.05,
+        Cu2_aq: 0.05,
+        Zn2_aq: 0.05,
+        Na_aq: 0.60, // Balances OH-(0.10), C2H5O-(0.05), ZnOH4^2-(0.05), CuCl4^2-(0.05), CuOH4^2-(0.05), AgOH2-(0.05), AgCl2-(0.05), CuCl2-(0.05)
+        H_aq: 0.05,
+        Cl_aq: 0.05,
+        SO4_2_aq: 0.05,
+        NO3_aq: 0.15,
+        OH_aq: 0.10,
+        C2H5O_aq: 0.05,
+        CuCl4_2_aq: 0.05,
+        CuOH4_2_aq: 0.05,
+        AgOH2_aq: 0.05,
+        AgCl2_aq: 0.05,
+        CuCl2_comp_aq: 0.05,
+        ZnOH4_2_aq: 0.05,
+        NH3_aq: 0.05,
+        Phenolphthalein_aq: 0.01,
+      };
+      enforceDryPhaseBoundary({ moles: dryTestMoles });
+      const leftoverAq = Object.entries(dryTestMoles).filter(([id, n]) => SPECIES[id]?.phase === 'aq' && n > 1e-10);
+
+      // 4) Every STARTER_REAGENTS has declarative bottleStyle, presets, & valid canvas sprite
+      const allReagentsOk = STARTER_REAGENTS.every((reg) => {
+        const s = reg.bottleStyle;
+        const c = getReagentDragCanvas(reg.id);
+        return Boolean(
+          s &&
+            s.capColor &&
+            s.accentColor &&
+            s.shortLabel &&
+            s.vesselForm &&
+            Array.isArray(reg.dosePresets) &&
+            reg.dosePresets.length > 0 &&
+            c &&
+            c.width > 0
+        );
+      });
+
+      // 5) Clamp helpers work consistently for every supportsClamp apparatus
+      const stand = { x: 400, y: 329 };
+      const clampApps = Object.values(APPARATUS).filter((a) => a.supportsClamp);
+      const clampOk = clampApps.every((spec) => {
+        const off = getClampNeckOffsetY(spec);
+        const cy = clampItemToStandY(spec, stand, 482, 260, 4);
+        return Number.isFinite(off) && Number.isFinite(cy) && cy >= 150 && cy <= 480;
+      });
+
+      // 6) Dynamic Beer-Lambert chromophore loop computes distinct absorbed optical color
+      const dynVis = computeSolutionVisuals({ H2O_l: 5.55, Cu2_aq: 0.05 }, 0.1, 4.5, 6.5);
+
+      assert(
+        'Architecture Registry Integrity: gases, solids, dry-phase boundary, reagent styles, clamp helpers & optical loop 100% covered',
+        allGasesSynced &&
+          allSolidsValid &&
+          solidsRenderOk &&
+          allAqCovered &&
+          leftoverAq.length === 0 &&
+          allReagentsOk &&
+          clampOk &&
+          dynVis.b > dynVis.r,
+        `gases=${allGasesSynced}, solids=${allSolidsValid}, render=${solidsRenderOk}, aqCov=${allAqCovered}, dryAqLeft=${leftoverAq.length}, reagents=${allReagentsOk}, clamp=${clampOk}, blueB>R=${dynVis.b}>${dynVis.r}`
       );
     }
 

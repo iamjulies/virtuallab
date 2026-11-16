@@ -1,4 +1,4 @@
-import { APPARATUS } from '../data/apparatus.js';
+import { APPARATUS, clampItemToStandY } from '../data/apparatus.js';
 import { CONSTANTS } from '../data/constants.js';
 import { computeLiquidVolumeL, computePH, computeSolutionVisuals } from '../engine/equilibrium.js';
 import { computeSyringeDischargeArc, computeSyringeLiquidVolumeMl } from '../engine/gasNetwork.js';
@@ -221,8 +221,6 @@ export class LabWorkbenchCanvas {
 
       // Move clamped items rigidly along with stand when dragging a Retort Stand
       if (item.kind === 'stand') {
-        const standTop = item.y - spec.height / 2;
-        const standBot = item.y + spec.height / 2;
         for (const child of this.sim.items) {
           if (child.clampedToId !== item.id) continue;
           if (child.isShattered || child.isBroken) {
@@ -231,18 +229,15 @@ export class LabWorkbenchCanvas {
             continue;
           }
           const cSpec = APPARATUS[child.typeId];
-          const neckOff = child.kind === 'gas_syringe' ? 0 : -cSpec.height / 2 + (cSpec.shape === 'erlenmeyer' ? 24 : 26);
-          const minCY = standTop + 14 - neckOff;
-          const maxCY = Math.min(BENCH_FLOOR_Y - cSpec.height / 2 - 4, standBot - 22 - neckOff);
           child.x = Math.max(50, Math.min(BENCH_LOGICAL_W - 50, child.x + dxMove));
-          child.y = Math.max(minCY, Math.min(maxCY, child.y + dyMove));
+          child.y = clampItemToStandY(cSpec, item, BENCH_FLOOR_Y, child.y + dyMove, 4);
           child.vy = 0;
           child.fallStartY = null;
         }
       }
 
-      // Check Retort Stand clamp snap/release for vessels & syringes (always unclamp broken glass)
-      if (item.kind === 'vessel' || item.kind === 'gas_syringe') {
+      // Check Retort Stand clamp snap/release for clamp-capable apparatus (always unclamp broken glass)
+      if (spec?.supportsClamp) {
         if (item.isShattered || item.isBroken) {
           this.dragState.clampStandId = null;
           item.clampedToId = null;

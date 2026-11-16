@@ -1,5 +1,6 @@
 import { CONSTANTS } from '../data/constants.js';
 import { APPARATUS } from '../data/apparatus.js';
+import { NON_STEAM_GAS_IDS, SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl } from '../engine/equilibrium.js';
 import { getSyringeNozzlePos } from '../engine/gasNetwork.js';
 import { computeVesselFluidGeometry } from './vesselRenderer.js';
@@ -77,35 +78,37 @@ export class ParticleSystem {
       }
 
       // 3. Colored / fuming rising gas filaments & soft mist clouds from Luer nozzle
-      // (Pure colorless gases H2 / O2 are intentionally invisible!)
+      // Driven declaratively by SPECIES[gId].plume (pure colorless H2 / O2 remain invisible)
       const gasRates = metrics.dischargeGasRates || {};
-      const cl2R = gasRates.Cl2_g || 0;
-      const acidR = (gasRates.HCl_g || 0) + (gasRates.HNO3_g || 0);
       const steamR = (metrics.gasTempK || 298) >= 316 ? gasRates.H2O_g || 0 : 0;
+      let nozzlePlume = null;
+      for (const gId of NON_STEAM_GAS_IDS) {
+        const p = SPECIES[gId]?.plume;
+        if (!p || !p.nozzleDarkColor) continue;
+        const rateMin = p.nozzleRateMin ?? 5e-6;
+        if ((gasRates[gId] || 0) > rateMin && (!nozzlePlume || p.priority > nozzlePlume.priority)) {
+          nozzlePlume = p;
+        }
+      }
 
-      if (cl2R > 2e-6 || acidR > 5e-6 || steamR > 5e-6) {
-        const isCl2 = cl2R > 2e-6;
-        const isAcid = !isCl2 && acidR > 5e-6;
-        const filColor = isCl2
+      if (nozzlePlume || steamR > 5e-6) {
+        const filColor = nozzlePlume
           ? this.isDark
-            ? 'rgba(190, 242, 100, 0.64)'
-            : 'rgba(101, 163, 13, 0.56)'
-          : isAcid
-          ? this.isDark
-            ? 'rgba(241, 245, 249, 0.44)'
-            : 'rgba(100, 116, 139, 0.34)'
+            ? nozzlePlume.nozzleDarkColor
+            : nozzlePlume.nozzleLightColor
           : this.isDark
           ? 'rgba(226, 232, 240, 0.46)'
           : 'rgba(148, 163, 184, 0.36)';
-        const cloudColor = isCl2
+        const cloudColor = nozzlePlume
           ? this.isDark
-            ? 'rgba(163, 230, 53, 0.24)'
-            : 'rgba(132, 204, 22, 0.24)'
+            ? nozzlePlume.nozzleCloudDark
+            : nozzlePlume.nozzleCloudLight
           : this.isDark
           ? 'rgba(226, 232, 240, 0.20)'
           : 'rgba(100, 116, 139, 0.18)';
 
-        const ratePlume = isCl2 ? 22 : 14;
+        const ratePlume = nozzlePlume?.nozzleFilamentRate || 14;
+        const filW = (nozzlePlume?.filamentWidth || 2.4) === 2.8 ? 3.2 : 2.4;
         const pCount = Math.floor(ratePlume * dt) + (Math.random() < (ratePlume * dt) % 1 ? 1 : 0);
         for (let i = 0; i < pCount; i++) {
           if (Math.random() < 0.55) {
@@ -117,7 +120,7 @@ export class ParticleSystem {
               vy: -(32 + Math.random() * 44),
               phase: Math.random() * Math.PI * 2,
               trail: [{ x: nozzle.x, y: nozzle.y }],
-              w: isCl2 ? 3.2 : 2.4,
+              w: filW,
               life: 0,
               maxLife: 1.55 + Math.random() * 0.75,
               color: filColor,
@@ -202,7 +205,17 @@ export class ParticleSystem {
       }
     }
 
-    // 3. Optically calibrated Vapor Fog (steamOpacity from mixing dew point), HCl acid fuming & Cl2 plume
+    // 3. Optically calibrated Vapor Fog (steamOpacity from mixing dew point) + species plume table
+    const rateMap = metrics.gasRates || {
+      H2_g: metrics.gasRateH2 || 0,
+      O2_g: metrics.gasRateO2 || 0,
+      HCl_g: metrics.gasRateHCl || 0,
+      Cl2_g: metrics.gasRateCl2 || 0,
+      C2H5Cl_g: metrics.gasRateC2H5Cl || 0,
+      NH3_g: metrics.gasRateNH3 || 0,
+      NO2_g: metrics.gasRateNO2 || 0,
+      NO_g: metrics.gasRateNO || 0,
+    };
     const nH = vessel.moles.H_aq || 0;
     const nCl = vessel.moles.Cl_aq || 0;
     const hConc = liqMl > 1 ? Math.min(nH, nCl) / (liqMl / 1000) : 0;
@@ -212,42 +225,46 @@ export class ParticleSystem {
       : metrics.isDehydrating
       ? Math.max(0.62, metrics.steamOpacity || 0)
       : (metrics.steamOpacity || 0);
-    const hasCl2 = (metrics.gasRateCl2 || 0) > 1e-6;
-    const hasNO2 = (metrics.gasRateNO2 || 0) > 1e-6;
-    const hasOrganicOrNH3Gas =
-      (metrics.gasRateC2H5Cl || 0) > 2e-5 || (metrics.gasRateNH3 || 0) > 2e-5 || (metrics.gasRateNO || 0) > 2e-5;
-    const hasHClFume = !vessel.isStoppered && (hConc > 6.5 || (metrics.gasRateHCl || 0) > 5e-5);
+
+    let dominantPlume = null;
+    let plumeSignalSum = 0;
+    for (const gId of NON_STEAM_GAS_IDS) {
+      const p = SPECIES[gId]?.plume;
+      if (!p) continue;
+      const rateMin = p.rateMin ?? 2e-5;
+      const active =
+        gId === 'HCl_g'
+          ? !vessel.isStoppered && (hConc > 6.5 || (rateMap.HCl_g || 0) > rateMin)
+          : (rateMap[gId] || 0) > rateMin;
+      if (active) {
+        plumeSignalSum += p.signal || 0.25;
+        if (!dominantPlume || p.priority > dominantPlume.priority) {
+          dominantPlume = p;
+        }
+      }
+    }
 
     const steamSignal =
       (steamRate > 1.5e-6 && steamVis > 0.03) || metrics.isBoiling || metrics.isDehydrating
         ? Math.min(2.2, (0.28 + steamVis * 1.45) * (metrics.isBoiling ? 1.25 : 1.0))
         : 0;
-    const cl2Signal = hasCl2 ? 0.68 : 0;
-    const no2Signal = hasNO2 ? 0.72 : 0;
-    const fumeSignal = hasHClFume ? 0.42 : hasOrganicOrNH3Gas ? 0.24 : 0;
     const naMistSignal = metrics.naIgnited ? 0.85 : (metrics.naTempK || 298) >= 540 ? 0.25 : 0;
-    const vaporIntensity = steamSignal + cl2Signal + no2Signal + fumeSignal + naMistSignal;
-    const mistAlphaScale = hasCl2 || hasNO2 ? 0.92 : hasHClFume ? 0.65 : hasOrganicOrNH3Gas ? 0.42 : Math.min(1.0, Math.max(0.18, steamVis));
+    const vaporIntensity = steamSignal + plumeSignalSum + naMistSignal;
+    const mistAlphaScale = dominantPlume?.alphaScale ?? Math.min(1.0, Math.max(0.18, steamVis));
 
-    const steamPalette = this.isDark
-      ? 'rgba(226, 232, 240, 0.50)'
-      : 'rgba(100, 116, 139, 0.38)';
-    const fumePalette = this.isDark
-      ? 'rgba(241, 245, 249, 0.52)'
-      : 'rgba(71, 85, 105, 0.42)';
-    const cl2Palette = this.isDark
-      ? 'rgba(217, 249, 157, 0.52)'
-      : 'rgba(132, 204, 22, 0.52)';
-    const no2Palette = this.isDark
-      ? 'rgba(245, 158, 11, 0.52)'
-      : 'rgba(180, 83, 9, 0.48)';
+    const steamPalette = this.isDark ? 'rgba(226, 232, 240, 0.50)' : 'rgba(100, 116, 139, 0.38)';
+    const activePlumeColor = dominantPlume
+      ? this.isDark
+        ? dominantPlume.darkColor
+        : dominantPlume.lightColor
+      : steamPalette;
+    const hasFilaments = Boolean(dominantPlume?.filamentProb);
 
     if (vaporIntensity > 0.08 && !vessel.isStoppered) {
       const mistRate = Math.min(58, vaporIntensity * 26);
       const count = Math.floor(mistRate * dt) + (Math.random() < (mistRate * dt) % 1 ? 1 : 0);
       for (let i = 0; i < count; i++) {
         const fromCrystal = metrics.isDehydrating && Math.random() < 0.55;
-        // At boiling, vapor clears a tiny 4px hot transparent zone right above meniscus before condensing
         const clearGap = metrics.isBoiling ? 5 : 0;
         const startY = fromCrystal
           ? bottomY - 10 - Math.random() * 8
@@ -255,9 +272,8 @@ export class ParticleSystem {
           ? surfaceY - 4
           : Math.min(surfaceY - clearGap, vessel.y - spec.height / 2 + 8);
         const spreadX = fromCrystal ? halfW * 1.15 : Math.max(8, (spec.neckRadius || 20) * 0.9);
-        const mistColor = hasNO2 ? no2Palette : hasCl2 ? cl2Palette : hasHClFume ? fumePalette : steamPalette;
 
-        if (hasCl2 && Math.random() < 0.45) {
+        if (hasFilaments && Math.random() < dominantPlume.filamentProb) {
           this.particles.push({
             kind: 'gas_filament',
             x: vessel.x + (Math.random() - 0.5) * spreadX * 0.6,
@@ -266,14 +282,17 @@ export class ParticleSystem {
             vy: -(38 + Math.random() * 36),
             phase: Math.random() * Math.PI * 2,
             trail: [{ x: vessel.x, y: startY }],
-            w: 2.8,
+            w: dominantPlume.filamentWidth || 2.8,
             life: 0,
             maxLife: 1.5 + Math.random() * 0.7,
-            color: this.isDark ? 'rgba(190, 242, 100, 0.55)' : 'rgba(101, 163, 13, 0.48)',
+            color: this.isDark ? dominantPlume.filDarkColor : dominantPlume.filLightColor,
           });
         } else {
           this.particles.push({
-            kind: hasCl2 || hasNO2 ? 'gas_cloud' : 'mist',
+            kind:
+              dominantPlume && (dominantPlume.kind === 'colored_filament' || dominantPlume.kind === 'colored_cloud')
+                ? 'gas_cloud'
+                : 'mist',
             x: vessel.x + (Math.random() - 0.5) * spreadX,
             y: startY,
             vx: (Math.random() - 0.5) * (fromCrystal ? 12 : 20),
@@ -284,12 +303,12 @@ export class ParticleSystem {
             alphaScale: mistAlphaScale,
             life: 0,
             maxLife: (fromCrystal ? 1.35 : 0.95) + Math.random() * 0.65,
-            color: mistColor,
+            color: activePlumeColor,
           });
         }
       }
     } else if (vaporIntensity > 0.18 && vessel.isStoppered) {
-      // Swirling hot steam / Cl2 trapped inside headspace or entering tubing toward gas syringe
+      // Swirling hot steam / colored gases trapped inside headspace or entering tubing toward gas syringe
       const innerRate = Math.min(26, vaporIntensity * 14);
       const count = Math.floor(innerRate * dt) + (Math.random() < (innerRate * dt) % 1 ? 1 : 0);
       const neckW = Math.max(7, (spec.neckRadius || 16) * 0.85);
@@ -305,7 +324,7 @@ export class ParticleSystem {
           r: 3.2 + Math.random() * 4.2,
           life: 0,
           maxLife: 0.48 + Math.random() * 0.3,
-          color: hasCl2 ? cl2Palette : steamPalette,
+          color: dominantPlume && dominantPlume.priority >= 30 ? activePlumeColor : steamPalette,
         });
       }
     }
