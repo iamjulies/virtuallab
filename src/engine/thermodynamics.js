@@ -257,11 +257,12 @@ export function stepVesselThermodynamics(
   const boilingPointK = solutionBoilingPointK(vessel.moles, effectivePressureBar);
 
   // Regime 1: Universal sub-boiling evaporation (Clausius-Clapeyron + Margules activity + Stefan-Maxwell + Gilliland)
-  // Open vessels evaporate gently at any T; tube-connected vessels vent expanding warm vapor once T >= 80 C,
-  // and fuming conc. HCl (>21.2%) continuously outgasses dry HCl(g) through an open delivery tube.
+  // Open vessels evaporate gently at any T; tube-connected vessels vent expanding warm vapor once T >= 80 C
+  // (or T >= 40 C when volatile Ethanol is present), while fuming HCl/NH3 outgas continuously through open tubes.
   const canSubBoilVent = !vessel.isStoppered || (hasOpenTube && vessel.tempK >= 351.0);
+  const canEtOHVent = !vessel.isStoppered || (hasOpenTube && nEthanol > 1e-7 && vessel.tempK >= 313.15);
   const canVentFumingHCl = !vessel.isStoppered || hasOpenTube;
-  if ((nWater > 1e-7 || nEthanol > 1e-7 || nAmmonia > 1e-8) && (canSubBoilVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
+  if ((nWater > 1e-7 || nEthanol > 1e-7 || nAmmonia > 1e-8) && (canSubBoilVent || canEtOHVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
     const vle = computeEthanolWaterVLE(vessel.moles, vessel.tempK, false);
     const volMl =
       computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000 +
@@ -273,17 +274,17 @@ export function stepVesselThermodynamics(
     const effAreaCm2 = areaCm2 * tubingScale;
     const isStirred = (vessel.stirTimer || 0) > 0;
 
-    // 1a) Water sub-boiling evaporation (against ambient 60% RH water/ice vapor pressure)
+    // 1a) Water sub-boiling evaporation (against ambient 60% RH water/ice vapor pressure; co-vents warm above 40C with EtOH)
     const pAmbH2OPa = CONSTANTS.RELATIVE_HUMIDITY * waterVaporPressureBar(env.tempK) * 100000;
     const evapH2OMolS =
-      nWater > 1e-7 && canSubBoilVent && !vessel.isFrozenSolid
+      nWater > 1e-7 && (canSubBoilVent || canEtOHVent) && !vessel.isFrozenSolid
         ? calcEvaporationRateMol(SPECIES.H2O_l, vle.xW0 * vle.fIon, vessel.tempK, effAreaCm2, pAmbH2OPa, isStirred, vle.gammaW)
         : 0;
     const subBoilEvap = Math.min(nWater, evapH2OMolS * dt);
 
     // 1b) Volatile ethanol evaporation (Margules positive azeotrope gamma_E boosts trace & blend volatility)
     const evapEtOHMolS =
-      nEthanol > 1e-7 && canSubBoilVent
+      nEthanol > 1e-7 && (canSubBoilVent || canEtOHVent)
         ? calcEvaporationRateMol(SPECIES.C2H5OH_l, vle.xE0 * vle.fIon, vessel.tempK, effAreaCm2, 0, isStirred, vle.gammaE)
         : 0;
     const subBoilEtOH = Math.min(nEthanol, evapEtOHMolS * dt);

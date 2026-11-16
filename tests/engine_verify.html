@@ -50,6 +50,7 @@
     } from '../src/engine/equilibrium.js';
     import { EnvironmentBar } from '../src/ui/environmentBar.js';
     import { ShelfPanel } from '../src/ui/shelfPanel.js';
+    import { InspectorPanel } from '../src/ui/inspectorPanel.js';
     import { LabWorkbenchCanvas } from '../src/canvas/workbench.js';
     import { I18N } from '../src/data/i18n.js';
     import {
@@ -2387,15 +2388,15 @@
       );
     }
 
-    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.3 Sync
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.4 Sync
     {
       const allTranslated = APPARATUS_ORDER.every((id) => {
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_v2+build.3';
+      const expectedBuild = 'virlab_v2+build.4';
       assert(
-        'Build virlab_v2+build.3 parity: All 25 apparatus translated in VI/EN, IUPAC spellings enforced',
+        'Build virlab_v2+build.4 parity: All 25 apparatus translated in VI/EN, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 25 &&
           allTranslated &&
           I18N.vi.appSubtitle.includes(expectedBuild) &&
@@ -2403,6 +2404,215 @@
           I18N.vi.eq_burette_50.includes('Buret') &&
           !I18N.vi.reg_na.toLowerCase().includes('natri'),
         `count=${APPARATUS_ORDER.length}, allI18n=${allTranslated}, sub=${I18N.vi.appSubtitle}`
+      );
+    }
+
+    // TEST 63: Ethanol & Aq-Ethanol vapor collection in Gas Syringe + Gas-phase NH3 + HCl -> NH4Cl(s) in Syringe
+    {
+      // Part A: Pure Ethanol vapor collects cleanly into Gas Syringe (condensate + vapor) & re-evaporates >= 78.3C
+      const simEt = new LabSimulation();
+      const bnEt = simEt.createApparatus('burner', 220, 428);
+      simEt.setBurnerFlame(bnEt.id, 3);
+      const flEt = simEt.createApparatus('erlenmeyer_250', 220, 310);
+      flEt.moles = { C2H5OH_l: 0.45 };
+      const syrEt = simEt.createApparatus('gas_syringe', 480, 320);
+      simEt.connectSyringe(flEt.id, syrEt.id);
+      simEt.updateSupportAttachments();
+      stepSeconds(simEt, 16.0, 0.05);
+      const condEt = syrEt.condensedEtOHMol || 0;
+      const gasEt = syrEt.gasMoles.C2H5OH_g || 0;
+
+      // Part B: Aqueous Ethanol (Phen 1%) collects both C2H5OH and H2O into Gas Syringe
+      const simAq = new LabSimulation();
+      const bnAq = simAq.createApparatus('burner', 220, 428);
+      simAq.setBurnerFlame(bnAq.id, 3);
+      const flAq = simAq.createApparatus('erlenmeyer_250', 220, 310);
+      simAq.addReagentToVessel(flAq.id, 'phen', 25);
+      const syrAq = simAq.createApparatus('gas_syringe', 480, 320);
+      simAq.connectSyringe(flAq.id, syrAq.id);
+      simAq.updateSupportAttachments();
+      stepSeconds(simAq, 18.0, 0.05);
+      const colAqEt = (syrAq.condensedEtOHMol || 0) + (syrAq.gasMoles.C2H5OH_g || 0);
+      const colAqH2O = (syrAq.condensedWaterMol || 0) + (syrAq.gasMoles.H2O_g || 0);
+
+      // Part C: Leading NH3(g) into Gas Syringe pre-filled with HCl(g) -> stoichiometric NH4Cl(s) contraction
+      const simSal = new LabSimulation();
+      const flNH3 = simSal.createApparatus('erlenmeyer_250', 220, 399);
+      simSal.addReagentToVessel(flNH3.id, 'nh3_25', 20);
+      flNH3.tempK = 338.0;
+      const syrSal = simSal.createApparatus('gas_syringe', 480, 400);
+      syrSal.gasMoles.HCl_g = 0.008; // ~198 mL HCl(g)
+      const hclBefore = syrSal.gasMoles.HCl_g;
+      simSal.connectSyringe(flNH3.id, syrSal.id);
+      stepSeconds(simSal, 12.0, 0.05);
+      const nh4clFormed = (syrSal.overflowMoles?.NH4Cl_s || 0) + (syrSal.overflowMoles?.NH4_aq || 0);
+      const hclAfter = syrSal.gasMoles.HCl_g || 0;
+
+      assert(
+        'Ethanol & Aq-Ethanol vapor collect cleanly in Gas Syringe, and NH3(g) + HCl(g) react inside syringe barrel to form NH4Cl(s)',
+        condEt + gasEt > 0.02 &&
+          colAqEt > 0.01 &&
+          colAqH2O > 0.005 &&
+          nh4clFormed > 0.0005 &&
+          hclAfter < hclBefore - 0.0004,
+        `pureEt=${((condEt+gasEt)*1000).toFixed(1)}mmol, aqEt=${(colAqEt*1000).toFixed(1)}mmol, aqH2O=${(colAqH2O*1000).toFixed(1)}mmol, NH4Cl=${(nh4clFormed*1000).toFixed(2)}mmol`
+      );
+    }
+
+    // TEST 64: NH3 + HCl open-air fume reaction produces ONLY gentle gas_cloud mist (ZERO stopper_fly / shockwave / shards)
+    {
+      const ps = new ParticleSystem();
+      for (let i = 0; i < 40; i++) {
+        ps.emitBurst('nh3_hcl_smoke', 300, 350, { intensity: 1.0 });
+      }
+      const badTypes = ps.particles.filter((p) => p.kind === 'stopper_fly' || p.kind === 'shockwave' || p.kind === 'glass_triangle').length;
+      const goodClouds = ps.particles.filter((p) => p.kind === 'gas_cloud').length;
+      assert(
+        'Open-air NH3 + HCl white fume plume spawns gentle gas_cloud particles with ZERO stopper_fly / shockwave / shards',
+        badTypes === 0 && goodClouds > 0 && goodClouds < 45,
+        `badTypes=${badTypes}, gasClouds=${goodClouds}`
+      );
+    }
+
+    // TEST 65: Inverted Drop Fragility (Burette/Condenser/SaltBridge/Funnel break; Porcelain Dish/Mortar survive) + Magnetic Stir Bar workflow
+    {
+      const sim = new LabSimulation();
+      const dish = sim.createApparatus('porcelain_dish', 140, 100);
+      const mortar = sim.createApparatus('mortar_pestle', 240, 100);
+      const bur = sim.createApparatus('burette_50', 340, 80);
+      const cond = sim.createApparatus('liebig_condenser', 440, 80);
+      const sb = sim.createApparatus('salt_bridge', 540, 80);
+      const fun = sim.createApparatus('filter_funnel', 640, 80);
+
+      sim.handleLandingImpact(dish, 360, 850, null);
+      sim.handleLandingImpact(mortar, 360, 850, null);
+      sim.handleLandingImpact(bur, 360, 850, null);
+      sim.handleLandingImpact(cond, 360, 850, null);
+      sim.handleLandingImpact(sb, 360, 850, null);
+      sim.handleLandingImpact(fun, 360, 850, null);
+
+      const simStir = new LabSimulation();
+      const bk = simStir.createApparatus('beaker_250', 220, 427);
+      const bar = simStir.createApparatus('stir_bar', 400, 470);
+      const insOk = simStir.insertStirBarIntoVessel(bar.id, bk.id, 800);
+      const rpmOn = bk.magStirRpm;
+      simStir.removeStirBarFromVessel(bar.id);
+
+      assert(
+        'Fragility rules reversed: Porcelain Dish & Mortar survive 360px drop while Burette/Condenser/SaltBridge/Funnel break; Stir Bar auto-spins & removes cleanly',
+        !dish.isShattered &&
+          !mortar.isShattered &&
+          bur.isBroken &&
+          cond.isBroken &&
+          sb.isBroken &&
+          fun.isBroken &&
+          insOk &&
+          rpmOn === 800 &&
+          !bk.hasStirBar &&
+          bar.inVesselId === null,
+        `dishBreak=${dish.isShattered}, mortarBreak=${mortar.isShattered}, glassBreak=${bur.isBroken&&cond.isBroken&&sb.isBroken&&fun.isBroken}, stirOn=${rpmOn}->${bk.magStirRpm}`
+      );
+    }
+
+    // TEST 66: Condenser Dual-Port Outlet Tubing + O2 Splint Blazing Flare + Clean Flame Loop Ion Label
+    {
+      const sim = new LabSimulation();
+      const bn = sim.createApparatus('burner', 200, 428);
+      sim.setBurnerFlame(bn.id, 3);
+      const fl = sim.createApparatus('erlenmeyer_250', 200, 310);
+      fl.moles = { H2O_l: 2.0, C2H5OH_l: 0.6 };
+      sim.updateSupportAttachments();
+      const cond = sim.createApparatus('liebig_condenser', 360, 220);
+      const stand = sim.createApparatus('retort_stand', 360, 327);
+      sim.attachToStand(cond.id, stand.id);
+      const rcvOffset = sim.createApparatus('beaker_250', 580, 427);
+      sim.connectTube(fl.id, cond.id);
+      sim.connectCondenserOutlet(cond.id, rcvOffset.id);
+      stepSeconds(sim, 36.0, 0.05);
+
+      const bO2 = sim.createApparatus('beaker_250', 760, 427);
+      bO2.moles = { H2O_l: 1.5, H2O2_aq: 0.25, Cu2_aq: 0.05, SO4_2_aq: 0.05 };
+      const burnSpl = sim.createApparatus('splint', 810, 372);
+      burnSpl.mode = 'burning';
+      burnSpl.isDragging = true;
+      const bNa = sim.createApparatus('beaker_250', 900, 427);
+      bNa.moles = { H2O_l: 1.0, Na_aq: 0.4, Cl_aq: 0.4 };
+      const loop = sim.createApparatus('flame_loop', 950, 427);
+      stepSeconds(sim, 0.25, 0.05);
+
+      assert(
+        'Condenser outlet port routes distillate to offset flask; Burning splint flares vividly in O2; Flame loop displays clean ion symbol',
+        (rcvOffset.moles.C2H5OH_l || 0) > 0.01 &&
+          burnSpl.lastTestEvent === 'o2_flare' &&
+          (burnSpl.o2FlareTimer || 0) > 1.0 &&
+          loop.sampleLabel === 'Na⁺',
+        `distOffset=${((rcvOffset.moles.C2H5OH_l||0)*1000).toFixed(1)}mmol, splEvt=${burnSpl.lastTestEvent}, flareT=${(burnSpl.o2FlareTimer||0).toFixed(2)}, loopLbl=${loop.sampleLabel}`
+      );
+    }
+
+    // TEST 67: Mounted Funnel Aim Priority + Litmus hides pH + Burette Clamp Snap + Electrode Material Switching
+    {
+      const sim = new LabSimulation();
+      const ps = new ParticleSystem();
+      const wrap = document.createElement('div');
+      wrap.style.width = '1000px';
+      wrap.style.height = '560px';
+      const canvas = document.createElement('canvas');
+      wrap.appendChild(canvas);
+      document.body.appendChild(wrap);
+      const wb = new LabWorkbenchCanvas(canvas, sim, ps, {});
+      wb.resize();
+
+      const recv = sim.createApparatus('beaker_250', 320, 427);
+      const funnel = sim.createApparatus('filter_funnel', 320, 354);
+      funnel.mountedOnVesselId = recv.id;
+      const aimed = wb.findVesselAt(320, 410, null, true);
+
+      const stand = sim.createApparatus('retort_stand', 500, 327);
+      const bur = sim.createApparatus('burette_50', 515, 220);
+      const nearStand = wb.findStandNear(bur);
+
+      const insEl = document.createElement('div');
+      const ins = new InspectorPanel(insEl, sim, () => (k) => I18N.vi[k] || k, {});
+      const lit = sim.createApparatus('litmus_paper', 600, 460);
+      lit.sampledPH = 1.5;
+      lit.sampledFrom = '#1';
+      lit.tipColor = '#ef4444';
+      sim.selectedId = lit.id;
+      ins.update('vi', true);
+      const litText = insEl.textContent;
+
+      const phs = sim.createApparatus('ph_strip', 700, 460);
+      phs.sampledPH = 2.4;
+      phs.sampledFrom = '#1';
+      phs.tipColor = '#f97316';
+      sim.selectedId = phs.id;
+      ins.update('vi', true);
+      const phsText = insEl.textContent;
+
+      const el = sim.createApparatus('electrode_rod', 320, 412);
+      el.dockedVesselId = recv.id;
+      const sigBefore = ins.getStructureSignature((k) => I18N.vi[k] || k, 'vi');
+      sim.selectedId = el.id;
+      ins.update('vi', true);
+      const cuBtn = insEl.querySelector('.el-mat-btn[data-mat="Cu"]');
+      cuBtn?.click();
+      const elHit = wb.hitTestItem(el.x, el.y);
+      const sigAfter = ins.getStructureSignature((k) => I18N.vi[k] || k, 'vi');
+
+      wrap.remove();
+
+      assert(
+        'Mounted funnel captures container aim, Litmus hides numeric pH (pH strip shows it), Burette snaps to stand, and Electrode material switches reliably',
+        aimed?.id === funnel.id &&
+          nearStand?.id === stand.id &&
+          !litText.includes('1.5') &&
+          litText.includes('Acid') &&
+          phsText.includes('2.4') &&
+          el.material === 'Cu' &&
+          sigBefore !== sigAfter &&
+          elHit?.id === el.id,
+        `aim=${aimed?.id}, stand=${nearStand?.id}, lit=${litText.includes('1.5')}, phs=${phsText.includes('2.4')}, elMat=${el.material}, elHit=${elHit?.id}`
       );
     }
 

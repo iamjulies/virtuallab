@@ -237,6 +237,8 @@ sim.visualHooks.onAlert = (type, vessel, meta) => {
     showToast(`💥 ${t('alertH2Pop')}`);
   } else if (type === 'o2_relight') {
     showToast(`🔥 ${t('alertO2Relight')}`);
+  } else if (type === 'o2_flare') {
+    showToast(`🔥 ${t('alertO2Flare')}`);
   }
 };
 

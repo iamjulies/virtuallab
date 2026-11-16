@@ -14,10 +14,49 @@ function drawSelectionGlow(ctx, isSelected, isDropTarget) {
   }
 }
 
+function renderBrokenToolShards(ctx, item, pal, isSelected, spanW = 48, height = 60) {
+  const { x, y } = item;
+  const bottom = y + height / 2;
+  ctx.save();
+  if (item.spilledPuddleColor) {
+    ctx.fillStyle = item.spilledPuddleColor;
+    ctx.globalAlpha = 0.65;
+    ctx.beginPath();
+    ctx.ellipse(x, bottom - 2, Math.max(24, spanW * 0.72), 4.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.fillStyle = pal.glassFill;
+  ctx.strokeStyle = isSelected ? '#3b82f6' : '#ef4444';
+  ctx.lineWidth = 1.4;
+  for (let i = 0; i < 7; i++) {
+    const sx = x + ((i - 3) * (spanW * 0.2));
+    const sy = bottom - 3 - (i % 3) * 3;
+    ctx.beginPath();
+    ctx.moveTo(sx - 6, sy + 2);
+    ctx.lineTo(sx + 2, sy - 6 - (i % 2) * 3);
+    ctx.lineTo(sx + 7, sy + 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  drawLabelPill(ctx, x, bottom - 28, `${item.label} · 💥`, {
+    pal,
+    borderColor: '#ef4444',
+    font: '600 10.5px system-ui, sans-serif',
+    height: 18,
+  });
+  ctx.restore();
+}
+
 export function renderFilterFunnel(ctx, item, isSelected, isDropTarget, isDark, langCode = 'vi', timeNow = 0) {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
   const spec = APPARATUS.filter_funnel;
+  if (item.isBroken) {
+    renderBrokenToolShards(ctx, item, pal, isSelected, spec.width, spec.height);
+    return;
+  }
   const topY = y - spec.height / 2;
   const coneBotY = y + 8;
   const stemBotY = y + spec.height / 2;
@@ -170,10 +209,14 @@ export function renderWashBottle(ctx, item, isSelected, isDark, langCode = 'vi')
   ctx.restore();
 }
 
-export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0) {
+export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0, langCode = 'vi') {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
   const spec = APPARATUS.liebig_condenser;
+  if (item.isBroken) {
+    renderBrokenToolShards(ctx, item, pal, isSelected, spec.width * 0.7, spec.height);
+    return;
+  }
   const halfW = spec.width / 2;
 
   ctx.save();
@@ -221,10 +264,27 @@ export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0
     }
   }
 
-  ctx.setTransform(ctx.getTransform()); // keep aligned for drop below? No, undo local rotation safely
   ctx.restore();
 
-  if (item.activeDrop) {
+  // Intuitive Left Inlet & Right Outlet tube drag ports (in world coordinates matching rotated endpoints)
+  const portIn = { x: x - halfW * 0.94, y: y - 10 };
+  const portOut = { x: x + halfW * 0.94, y: y + 11 };
+  for (const [port, connected, color] of [
+    [portIn, Boolean(item.connectedFromId), '#f59e0b'],
+    [portOut, Boolean(item.outletTargetId), '#0ea5e9'],
+  ]) {
+    ctx.save();
+    ctx.fillStyle = connected ? color : pal.badgeBg;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(port.x, port.y, 5.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if (item.activeDrop && !item.outletTargetId) {
     ctx.save();
     const dropY = y + 18 + ((timeNow * 45) % 24);
     ctx.fillStyle = 'rgba(186, 230, 253, 0.9)';
@@ -237,7 +297,7 @@ export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0
   drawLabelPill(
     ctx,
     x,
-    y - 32,
+    y - 34,
     `${item.label} · ❄️ ${item.waterFlowOn ? 'H₂O ON' : 'OFF'} · ${(item.totalCondensedMl || 0).toFixed(1)}mL`,
     { pal, borderColor: isSelected ? '#3b82f6' : null, font: '600 10.5px system-ui, sans-serif', height: 18 }
   );
@@ -247,6 +307,10 @@ export function renderBurette(ctx, item, isSelected, isDropTarget, isDark, timeN
   const pal = getThemePalette(isDark);
   const { x, y } = item;
   const spec = APPARATUS.burette_50;
+  if (item.isBroken) {
+    renderBrokenToolShards(ctx, item, pal, isSelected, 54, spec.height);
+    return;
+  }
   const topY = y - spec.height / 2;
   const botY = y + spec.height / 2;
   const colBotY = botY - 36;
@@ -349,32 +413,39 @@ export function renderSplint(ctx, item, isSelected, isDark, timeNow = 0) {
   ctx.shadowBlur = 0;
 
   const tipX = x - 48;
+  const isO2Flare = item.mode === 'burning' && (item.o2FlareTimer || 0) > 0;
   if (item.mode === 'burning' || item.mode === 'glowing') {
     // Charred tip + glowing ember
     ctx.fillStyle = '#1f2937';
     ctx.fillRect(tipX - 2, y - 3.2, 8, 6.4);
-    const pulse = 0.75 + Math.sin(timeNow * 14) * 0.25;
-    const g = ctx.createRadialGradient(tipX, y, 1, tipX, y, item.mode === 'burning' ? 18 : 11);
-    g.addColorStop(0, item.mode === 'burning' ? '#fef08a' : `rgba(249, 115, 22, ${0.95 * pulse})`);
-    g.addColorStop(0.55, `rgba(239, 68, 68, ${0.65 * pulse})`);
+    const pulse = 0.78 + Math.sin(timeNow * 14) * 0.22;
+    const haloR = isO2Flare ? 34 : item.mode === 'burning' ? 16 : 10;
+    const g = ctx.createRadialGradient(tipX, y, 1, tipX, y, haloR);
+    g.addColorStop(0, isO2Flare ? '#ffffff' : item.mode === 'burning' ? '#fef08a' : `rgba(249, 115, 22, ${0.95 * pulse})`);
+    g.addColorStop(0.55, isO2Flare ? `rgba(253, 224, 71, ${0.85 * pulse})` : `rgba(239, 68, 68, ${0.65 * pulse})`);
     g.addColorStop(1, 'rgba(239, 68, 68, 0)');
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.arc(tipX, y, item.mode === 'burning' ? 18 : 11, 0, Math.PI * 2);
+    ctx.arc(tipX, y, haloR, 0, Math.PI * 2);
     ctx.fill();
 
     if (item.mode === 'burning') {
-      const wob = Math.sin(timeNow * 20) * 2.2;
-      ctx.fillStyle = 'rgba(251, 146, 60, 0.92)';
+      const fScale = isO2Flare ? 2.15 : 1.0;
+      const wob = Math.sin(timeNow * (isO2Flare ? 28 : 20)) * (isO2Flare ? 3.8 : 2.0);
+      const outerH = 19 * fScale;
+      const outerW = 4.6 * fScale;
+      const innerH = 11 * fScale;
+      const innerW = 2.4 * fScale;
+      ctx.fillStyle = isO2Flare ? 'rgba(251, 191, 36, 0.96)' : 'rgba(251, 146, 60, 0.90)';
       ctx.beginPath();
-      ctx.moveTo(tipX - 5, y);
-      ctx.quadraticCurveTo(tipX + wob, y - 22, tipX + 5, y);
+      ctx.moveTo(tipX - outerW, y);
+      ctx.quadraticCurveTo(tipX + wob, y - outerH, tipX + outerW, y);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = 'rgba(254, 240, 138, 0.96)';
+      ctx.fillStyle = isO2Flare ? '#ffffff' : 'rgba(254, 240, 138, 0.95)';
       ctx.beginPath();
-      ctx.moveTo(tipX - 2.5, y);
-      ctx.quadraticCurveTo(tipX + wob * 0.5, y - 13, tipX + 2.5, y);
+      ctx.moveTo(tipX - innerW, y);
+      ctx.quadraticCurveTo(tipX + wob * 0.5, y - innerH, tipX + innerW, y);
       ctx.closePath();
       ctx.fill();
     }
@@ -383,14 +454,21 @@ export function renderSplint(ctx, item, isSelected, isDark, timeNow = 0) {
   const badgeTxt =
     item.lastTestEvent === 'h2_pop'
       ? '💥 H₂ "Póc!"'
+      : isO2Flare || item.lastTestEvent === 'o2_flare'
+      ? '🔥 O₂ Bùng rực!'
       : item.lastTestEvent === 'o2_relight'
-      ? '🔥 O₂ Bùng!'
+      ? '🔥 O₂ Bùng cháy!'
       : item.mode === 'burning'
       ? '🔥 Burning Splint'
       : item.mode === 'glowing'
       ? '🔴 Glowing Ember'
       : 'Unlit Splint';
-  drawLabelPill(ctx, x, y - 19, badgeTxt, { pal, borderColor: isSelected ? '#3b82f6' : null, font: '600 10.5px system-ui, sans-serif', height: 18 });
+  drawLabelPill(ctx, x, y - (isO2Flare ? 28 : 19), badgeTxt, {
+    pal,
+    borderColor: isO2Flare ? '#facc15' : isSelected ? '#3b82f6' : null,
+    font: '600 10.5px system-ui, sans-serif',
+    height: 18,
+  });
   ctx.restore();
 }
 
@@ -420,25 +498,24 @@ export function renderFlameLoop(ctx, item, isSelected, isDark, timeNow = 0) {
   ctx.arc(x - 47, y, 5, 0, Math.PI * 2);
   ctx.stroke();
 
-  if (item.sampledColor) {
-    ctx.fillStyle = item.sampledColor;
-    ctx.globalAlpha = 0.72 + Math.sin(timeNow * 8) * 0.18;
+  if (item.sampledIon) {
+    // Subtle wet solution film on wire loop — color reveals ONLY upon heating in burner flame!
+    ctx.fillStyle = item.sampledIon === 'Cu²⁺' ? 'rgba(56, 189, 248, 0.42)' : 'rgba(226, 232, 240, 0.42)';
     ctx.beginPath();
-    ctx.arc(x - 47, y, 4.2, 0, Math.PI * 2);
+    ctx.arc(x - 47, y, 4.0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.globalAlpha = 1;
   }
 
-  drawLabelPill(ctx, x, y - 18, item.sampledIon ? `🔬 ${item.sampleLabel}` : `${item.label} · NiCr Wire`, {
+  drawLabelPill(ctx, x, y - 18, item.sampledIon ? `🔬 ${item.sampledIon}` : `${item.label} · NiCr Wire`, {
     pal,
-    borderColor: item.sampledColor || (isSelected ? '#3b82f6' : null),
+    borderColor: isSelected ? '#3b82f6' : null,
     font: '600 10.5px system-ui, sans-serif',
     height: 18,
   });
   ctx.restore();
 }
 
-export function renderIndicatorStrip(ctx, item, isSelected, isDark) {
+export function renderIndicatorStrip(ctx, item, isSelected, isDark, langCode = 'vi') {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
   const isLit = item.stripKind === 'litmus';
@@ -462,14 +539,24 @@ export function renderIndicatorStrip(ctx, item, isSelected, isDark) {
   ctx.fillRect(x - 27.5, y - 5.5, 25, 11);
   ctx.shadowBlur = 0;
 
-  const txt =
-    item.isBleached
-      ? 'Cl₂ Bleached'
-      : item.sampledPH !== null && item.sampledPH !== undefined
-      ? `pH ≈ ${item.sampledPH.toFixed(1)}`
-      : isLit
-      ? 'Litmus Paper'
-      : 'Universal pH';
+  let txt;
+  if (item.isBleached) {
+    txt = langCode === 'vi' ? 'Mất màu (Cl₂)' : 'Cl₂ Bleached';
+  } else if (isLit) {
+    if (item.sampledPH == null) {
+      txt = langCode === 'vi' ? 'Quỳ tím' : 'Litmus Paper';
+    } else if (item.sampledPH < 5.2) {
+      txt = langCode === 'vi' ? 'Đỏ (Acid)' : 'Red (Acid)';
+    } else if (item.sampledPH > 8.2) {
+      txt = langCode === 'vi' ? 'Xanh (Base)' : 'Blue (Base)';
+    } else {
+      txt = langCode === 'vi' ? 'Tím (Trung tính)' : 'Purple (Neutral)';
+    }
+  } else if (item.sampledPH !== null && item.sampledPH !== undefined) {
+    txt = `pH ≈ ${item.sampledPH.toFixed(1)}`;
+  } else {
+    txt = langCode === 'vi' ? 'Giấy đo pH' : 'Universal pH';
+  }
   drawLabelPill(ctx, x, y - 18, txt, { pal, borderColor: item.sampledPH != null ? wetColor : null, font: '600 10.5px system-ui, sans-serif', height: 18 });
   ctx.restore();
 }
@@ -491,32 +578,130 @@ export function renderStirBar(ctx, item, isSelected, isDark) {
   ctx.restore();
 }
 
-export function renderSaltBridge(ctx, item, isSelected, isDark) {
+export function renderSaltBridge(ctx, item, items = [], isSelected = false, isDark = true, timeNow = 0, langCode = 'vi') {
   const pal = getThemePalette(isDark);
-  const { x, y } = item;
+  const spec = APPARATUS.salt_bridge;
+  if (item.isBroken) {
+    renderBrokenToolShards(ctx, item, pal, isSelected, spec.width * 0.72, spec.height);
+    return;
+  }
+
+  let { x, y } = item;
+  const vA = item.vesselAId ? items.find((i) => i.id === item.vesselAId && !i.isShattered) : null;
+  const vB = item.vesselBId ? items.find((i) => i.id === item.vesselBId && !i.isShattered) : null;
+  const bridged = Boolean(vA && vB);
+
+  let lx = x - 44;
+  let rx = x + 44;
+  let lyBot = y + 32;
+  let ryBot = y + 32;
+  let archTopY = y - 34;
+
+  if (bridged) {
+    const leftV = vA.x <= vB.x ? vA : vB;
+    const rightV = vA.x <= vB.x ? vB : vA;
+    const spL = APPARATUS[leftV.typeId] || APPARATUS.beaker_250;
+    const spR = APPARATUS[rightV.typeId] || APPARATUS.beaker_250;
+    // Dip neatly inside the facing inner half of BOTH electrolyte solutions (avoiding centered electrodes cleanly)
+    lx = leftV.x + Math.min(20, spL.width * 0.24);
+    rx = rightV.x - Math.min(20, spR.width * 0.24);
+    if (rx - lx < 36) {
+      lx = leftV.x + 8;
+      rx = rightV.x - 8;
+    }
+    lyBot = leftV.y + spL.height / 2 - 14;
+    ryBot = rightV.y + spR.height / 2 - 14;
+    const rimTop = Math.min(leftV.y - spL.height / 2, rightV.y - spR.height / 2);
+    archTopY = rimTop - 22;
+    x = 0.5 * (lx + rx);
+    y = rimTop;
+    if (!item.isDragging) {
+      item.x = x;
+      item.y = y;
+    }
+  }
+
   ctx.save();
   drawSelectionGlow(ctx, isSelected, false);
 
+  const r = Math.max(18, (rx - lx) * 0.5);
+  const midX = 0.5 * (lx + rx);
+  const curveBaseY = archTopY + Math.min(34, r * 0.65);
+
+  const traceU = () => {
+    ctx.beginPath();
+    ctx.moveTo(lx, lyBot);
+    ctx.lineTo(lx, curveBaseY);
+    ctx.quadraticCurveTo(lx, archTopY, midX, archTopY);
+    ctx.quadraticCurveTo(rx, archTopY, rx, curveBaseY);
+    ctx.lineTo(rx, ryBot);
+  };
+
+  // Outer Borosilicate U-tube wall
   ctx.strokeStyle = isSelected ? '#3b82f6' : pal.glassStroke;
-  ctx.lineWidth = 10;
+  ctx.lineWidth = 10.5;
   ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(x - 44, y + 32);
-  ctx.lineTo(x - 44, y - 12);
-  ctx.arc(x, y - 12, 44, Math.PI, 0, false);
-  ctx.lineTo(x + 44, y + 32);
+  traceU();
   ctx.stroke();
 
-  // Agar-Na2SO4 gel core inside U-tube
-  ctx.strokeStyle = isDark ? 'rgba(224, 242, 254, 0.58)' : 'rgba(186, 230, 253, 0.84)';
-  ctx.lineWidth = 6.5;
+  // Saturated agar Na2SO4 / KNO3 gel core
+  ctx.strokeStyle = isDark ? 'rgba(224, 242, 254, 0.58)' : 'rgba(186, 230, 253, 0.86)';
+  ctx.lineWidth = 6.8;
+  traceU();
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  const active = Boolean(item.vesselAId && item.vesselBId);
-  drawLabelPill(ctx, x, y - 68, `${item.label} · ${active ? '⚡ Bridged' : 'Salt Bridge'}`, {
+  // Porous cotton/agar end plugs clearly visible inside the solutions
+  ctx.fillStyle = isDark ? '#f8fafc' : '#e2e8f0';
+  ctx.strokeStyle = isDark ? '#94a3b8' : '#64748b';
+  ctx.lineWidth = 0.9;
+  for (const [px, py] of [[lx, lyBot], [rx, ryBot]]) {
+    ctx.beginPath();
+    ctx.roundRect(px - 4.2, py - 5, 8.4, 7, 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Subtle ion-migration shimmer along bridge when Galvanic current flows
+  if (bridged && (item.activeCurrentA || 0) > 1e-4) {
+    const p0 = { x: lx, y: curveBaseY };
+    const p1 = { x: lx, y: archTopY };
+    const p2 = { x: midX, y: archTopY };
+    const p3 = { x: rx, y: archTopY };
+    const p4 = { x: rx, y: curveBaseY };
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.92)';
+    for (let k = 0; k < 4; k++) {
+      const u = ((timeNow * 0.75 + k * 0.25) % 1);
+      let ix;
+      let iy;
+      if (u < 0.5) {
+        const s = u * 2;
+        const m = 1 - s;
+        ix = m * m * p0.x + 2 * m * s * p1.x + s * s * p2.x;
+        iy = m * m * p0.y + 2 * m * s * p1.y + s * s * p2.y;
+      } else {
+        const s = (u - 0.5) * 2;
+        const m = 1 - s;
+        ix = m * m * p2.x + 2 * m * s * p3.x + s * s * p4.x;
+        iy = m * m * p2.y + 2 * m * s * p3.y + s * s * p4.y;
+      }
+      ctx.beginPath();
+      ctx.arc(ix, iy, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  const labelStr = bridged
+    ? langCode === 'vi'
+      ? `${item.label} · Cầu muối (${vA.label} ↔ ${vB.label})${(item.activeCurrentA || 0) > 1e-4 ? ' · ⚡' : ''}`
+      : `${item.label} · Salt Bridge (${vA.label} ↔ ${vB.label})${(item.activeCurrentA || 0) > 1e-4 ? ' · ⚡' : ''}`
+    : langCode === 'vi'
+    ? `${item.label} · Cầu muối (Chưa nối)`
+    : `${item.label} · Salt Bridge (Unbridged)`;
+
+  drawLabelPill(ctx, midX, archTopY - 26, labelStr, {
     pal,
-    borderColor: active ? '#10b981' : isSelected ? '#3b82f6' : null,
+    borderColor: bridged ? '#10b981' : isSelected ? '#3b82f6' : null,
     font: '600 10.5px system-ui, sans-serif',
     height: 18,
   });

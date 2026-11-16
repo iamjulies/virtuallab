@@ -978,6 +978,10 @@ export const SPECIES = {
     molarMass: M_ETOH,
     cp: 65.4,
     color: '#f1f5f9',
+    syringeFillColor: {
+      dark: 'rgba(226, 232, 240, 0.22)',
+      light: 'rgba(148, 163, 184, 0.22)',
+    },
     plume: {
       kind: 'faint_fume',
       signal: 0.38,

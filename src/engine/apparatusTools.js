@@ -192,7 +192,18 @@ function stepLiebigCondenser(sim, cond, dt) {
   const eff = cond.waterFlowOn ? 0.94 : 0.22;
   const spoutX = cond.x + 68;
   const spoutY = cond.y + 18;
-  const dst = findOpenVesselBelowPoint(sim.items, spoutX, spoutY - 8, 58, 0, 320);
+  let dst = null;
+  if (cond.outletTargetId) {
+    const oDst = sim.getItem(cond.outletTargetId);
+    if (oDst && oDst.kind === 'vessel' && !oDst.isShattered && !oDst.isStoppered) {
+      dst = oDst;
+    } else if (!oDst || oDst.isShattered) {
+      cond.outletTargetId = null;
+    }
+  }
+  if (!dst) {
+    dst = findOpenVesselBelowPoint(sim.items, spoutX, spoutY - 8, 58, 0, 320);
+  }
 
   const nSteam = vapor.H2O_g || 0;
   const nEtOH = vapor.C2H5OH_g || 0;
@@ -324,25 +335,46 @@ export function checkSplintInteractions(sim, splint) {
       return 'h2_pop';
     }
 
-    // Glowing ember splint + O2 -> Relights brightly
+    // Glowing ember splint + O2 -> Relights softly into steady burning flame; Burning splint + O2 -> Intense blazing flare!
     if (splint.mode === 'glowing' && o2Pocket > 6e-5) {
       splint.mode = 'burning';
       splint.cooldownTimer = 1.6;
+      splint.o2FlareTimer = 0.6;
       splint.lastTestEvent = 'o2_relight';
       splint.lastEventTimer = 1.6;
       sim.addLog({
         type: 'reaction',
-        equation: 'C(tàn đóm) + O₂(g) dư → CO₂(g) (Bùng cháy rực rỡ)',
-        nameVi: 'Thử khí Oxygen: Tàn đóm đỏ bùng cháy lại mạnh mẽ',
-        nameEn: 'Splint Test: Glowing splint bursts back into flame in O₂(g)',
-        descVi: 'Môi trường giàu O₂(g) làm tàn đóm đỏ lập tức bùng ngọn lửa sáng rực.',
-        descEn: 'Elevated O₂(g) concentration immediately relights a glowing ember into bright flame.',
+        equation: 'C(tàn đóm) + O₂(g) dư → CO₂(g) (Bùng cháy)',
+        nameVi: 'Thử khí Oxygen: Tàn đóm đỏ bùng cháy thành ngọn lửa',
+        nameEn: 'Splint Test: Glowing splint relights into flame in O₂(g)',
+        descVi: 'Môi trường giàu O₂(g) làm tàn đóm đỏ lập tức bùng cháy lại.',
+        descEn: 'Elevated O₂(g) immediately relights a glowing ember into steady flame.',
         vesselLabel: `${splint.label} → ${v.label}`,
       });
       if (sim.visualHooks.onAlert) {
         sim.visualHooks.onAlert('o2_relight', { x: tipX, y: tipY }, { vesselId: v.id });
       }
       return 'o2_relight';
+    }
+
+    if (splint.mode === 'burning' && o2Pocket > 6e-5 && h2Pocket <= 6e-5) {
+      splint.cooldownTimer = 1.6;
+      splint.o2FlareTimer = 2.0;
+      splint.lastTestEvent = 'o2_flare';
+      splint.lastEventTimer = 1.8;
+      sim.addLog({
+        type: 'reaction',
+        equation: 'C(que đang cháy) + O₂(g) đặc → CO₂(g) + hν (Cháy sáng chói!)',
+        nameVi: 'Que đóm đang cháy gặp Oxygen: Ngọn lửa bùng to sáng chói',
+        nameEn: 'Burning splint flares violently brighter in pure O₂(g)',
+        descVi: 'Ngọn lửa đang cháy được cung cấp O₂(g) nguyên chất nên tốc độ oxi hóa tăng vọt, bùng cháy to và sáng chói.',
+        descEn: 'An already burning splint accelerates dramatically in high-O₂ gas, flaring intensely bright and tall.',
+        vesselLabel: `${splint.label} → ${v.label}`,
+      });
+      if (sim.visualHooks.onAlert) {
+        sim.visualHooks.onAlert('o2_flare', { x: tipX, y: tipY }, { vesselId: v.id });
+      }
+      return 'o2_flare';
     }
 
     // Ignition source over exposed Sodium
@@ -373,11 +405,11 @@ export function checkFlameLoopInteractions(sim, loop) {
       if (hasCu) {
         loop.sampledIon = 'Cu²⁺';
         loop.sampledColor = '#10b981';
-        loop.sampleLabel = 'Cu²⁺ (510 nm Green)';
+        loop.sampleLabel = 'Cu²⁺';
       } else if (hasNa) {
         loop.sampledIon = 'Na⁺';
         loop.sampledColor = '#facc15';
-        loop.sampleLabel = 'Na⁺ (589 nm Yellow)';
+        loop.sampleLabel = 'Na⁺';
       }
     }
   }
@@ -531,6 +563,7 @@ export function stepApparatusTools(sim, dt, realDeltaSec) {
       stepLiebigCondenser(sim, it, dt);
     } else if (it.kind === 'splint') {
       if ((it.cooldownTimer || 0) > 0) it.cooldownTimer = Math.max(0, it.cooldownTimer - realDeltaSec);
+      if ((it.o2FlareTimer || 0) > 0) it.o2FlareTimer = Math.max(0, it.o2FlareTimer - realDeltaSec);
       if ((it.lastEventTimer || 0) > 0) {
         it.lastEventTimer = Math.max(0, it.lastEventTimer - realDeltaSec);
         if (it.lastEventTimer === 0) it.lastTestEvent = null;

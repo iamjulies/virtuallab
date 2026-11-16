@@ -17,7 +17,7 @@ import {
   computeSolutionVisuals,
 } from './equilibrium.js';
 import { enforceDryPhaseBoundary, stepVesselChemistry } from './chemistry.js';
-import { stepElectrochemistry } from './electrochemistry.js';
+import { ELECTRODE_MATERIALS, stepElectrochemistry } from './electrochemistry.js';
 import { grindMortarSolids, stepApparatusTools, syncDockedToolPositions } from './apparatusTools.js';
 import { computeHeatCapacityJK, computeSteamOpacity, stepVesselThermodynamics } from './thermodynamics.js';
 import {
@@ -90,6 +90,16 @@ function extractSyringeLiquidFraction(syringe, frac, dstMoles = null) {
       dstMoles.H2O_l = (dstMoles.H2O_l || 0) + moveW;
     }
     movedHeatCapJK += moveW * CONSTANTS.CP_H2O_J_MOL_K;
+  }
+
+  if ((syringe.condensedEtOHMol || 0) > 1e-12) {
+    const moveE = syringe.condensedEtOHMol * f;
+    syringe.condensedEtOHMol = Math.max(0, syringe.condensedEtOHMol - moveE);
+    if (syringe.condensedEtOHMol < 1e-13) syringe.condensedEtOHMol = 0;
+    if (dstMoles) {
+      dstMoles.C2H5OH_l = (dstMoles.C2H5OH_l || 0) + moveE;
+    }
+    movedHeatCapJK += moveE * (SPECIES.C2H5OH_l?.cp || 112.3);
   }
 
   if (syringe.overflowMoles) {
@@ -287,6 +297,7 @@ export class LabSimulation {
       Object.assign(base, {
         waterFlowOn: true,
         connectedFromId: null,
+        outletTargetId: null,
         vaporInMoles: createEmptyGasMap(),
         distillRateMlS: 0,
         totalCondensedMl: 0,
@@ -312,6 +323,7 @@ export class LabSimulation {
       Object.assign(base, {
         mode: 'burning',
         cooldownTimer: 0,
+        o2FlareTimer: 0,
         lastTestEvent: null,
         lastEventTimer: 0,
       });
@@ -347,7 +359,7 @@ export class LabSimulation {
     } else if (spec.kind === 'electrode') {
       const idx = this.items.filter((i) => i.kind === 'electrode').length;
       Object.assign(base, {
-        material: ['C', 'Cu', 'Zn'][idx % 3],
+        material: 'C',
         dockedVesselId: null,
         dockSide: idx % 2 === 0 ? 'left' : 'right',
         polarityLabel: '',
@@ -384,7 +396,10 @@ export class LabSimulation {
       Object.assign(base, {
         gasMoles: createEmptyGasMap(),
         condensedWaterMol: 0,
+        condensedEtOHMol: 0,
         frozenWaterMol: 0,
+        nh4clSmokeTimer: 0,
+        lastNH4ClRxnFlag: false,
         frostOpacity: this.environment.tempK < CONSTANTS.T_FREEZE_WATER_K ? 0.35 : 0,
         overflowMoles: {},
         overflowBleachFrac: 0,
@@ -441,6 +456,9 @@ export class LabSimulation {
       }
       if (other.connectedFromId === id) {
         other.connectedFromId = null;
+      }
+      if (other.outletTargetId === id) {
+        other.outletTargetId = null;
       }
       if (other.dockedVesselId === id) {
         other.dockedVesselId = null;
@@ -879,7 +897,9 @@ export class LabSimulation {
     if (immediate) {
       syr.gasMoles = createEmptyGasMap();
       syr.condensedWaterMol = 0;
+      syr.condensedEtOHMol = 0;
       syr.frozenWaterMol = 0;
+      syr.nh4clSmokeTimer = 0;
       syr.overflowMoles = {};
       syr.overflowBleachFrac = 0;
       syr.lastCondenseRateMolS = 0;
@@ -1759,6 +1779,56 @@ export class LabSimulation {
     this.emitChange();
   }
 
+  insertStirBarIntoVessel(stirBarId, vesselId, rpm = 800) {
+    const bar = this.getItem(stirBarId);
+    const v = this.getItem(vesselId);
+    if (!bar || bar.kind !== 'stir_bar' || !v || v.kind !== 'vessel' || v.isShattered || v.isStoppered) return false;
+    if (bar.inVesselId && bar.inVesselId !== v.id) {
+      this.removeStirBarFromVessel(bar.id);
+    }
+    bar.inVesselId = v.id;
+    v.hasStirBar = true;
+    if (!v.magStirRpm && rpm > 0) v.magStirRpm = rpm;
+    syncDockedToolPositions(this);
+    this.recomputeScaleReadings();
+    this.emitChange();
+    return true;
+  }
+
+  removeStirBarFromVessel(stirBarId) {
+    const bar = this.getItem(stirBarId);
+    if (!bar || bar.kind !== 'stir_bar') return false;
+    if (bar.inVesselId) {
+      const v = this.getItem(bar.inVesselId);
+      if (v) {
+        const stillHas = this.items.some((i) => i.kind === 'stir_bar' && i.id !== bar.id && i.inVesselId === v.id);
+        v.hasStirBar = stillHas;
+        if (!stillHas) v.magStirRpm = 0;
+      }
+      bar.inVesselId = null;
+      bar.y = Math.min(SIM_BENCH_FLOOR_Y - 8, bar.y);
+      bar.x = Math.min(920, bar.x + 56);
+    }
+    this.recomputeScaleReadings();
+    this.emitChange();
+    return true;
+  }
+
+  connectCondenserOutlet(condenserId, vesselId = null) {
+    const cond = this.getItem(condenserId);
+    if (!cond || cond.kind !== 'condenser' || cond.isBroken) return false;
+    if (!vesselId) {
+      cond.outletTargetId = null;
+      this.emitChange();
+      return true;
+    }
+    const dst = this.getItem(vesselId);
+    if (!dst || dst.kind !== 'vessel' || dst.isShattered || dst.isStoppered) return false;
+    cond.outletTargetId = dst.id;
+    this.emitChange();
+    return true;
+  }
+
   setElectrodeMaterial(electrodeId, mat) {
     const el = this.getItem(electrodeId);
     if (!el || el.kind !== 'electrode' || !ELECTRODE_MATERIALS[mat]) return;
@@ -2438,7 +2508,9 @@ export class LabSimulation {
     syringe.dischargeLiquidRateMlS = 0;
     syringe.gasMoles = createEmptyGasMap();
     syringe.condensedWaterMol = 0;
+    syringe.condensedEtOHMol = 0;
     syringe.frozenWaterMol = 0;
+    syringe.nh4clSmokeTimer = 0;
     syringe.overflowMoles = {};
     syringe.overflowBleachFrac = 0;
     syringe.internalPressureBar = this.environment.pressureBar;
@@ -2478,7 +2550,9 @@ export class LabSimulation {
     }
     syringe.gasMoles = createEmptyGasMap();
     syringe.condensedWaterMol = 0;
+    syringe.condensedEtOHMol = 0;
     syringe.frozenWaterMol = 0;
+    syringe.nh4clSmokeTimer = 0;
     syringe.overflowMoles = {};
     syringe.overflowBleachFrac = 0;
     syringe.internalPressureBar = this.environment.pressureBar;
@@ -2514,6 +2588,58 @@ export class LabSimulation {
     }
   }
 
+  breakToolOnDrop(item) {
+    if (!item || item.isBroken) return;
+    const spec = APPARATUS[item.typeId] || {};
+    let hadLiq = false;
+    let liqMl = 0;
+    let liqCol = 'rgba(186, 230, 253, 0.85)';
+    if (item.moles) {
+      const l = computeLiquidVolumeL(item.moles, item.tempK || this.environment.tempK);
+      liqMl = l * 1000;
+      hadLiq = liqMl > 0.05;
+      if (hadLiq) {
+        liqCol = computeSolutionVisuals(item.moles, l, computePH(item.moles, l, item.tempK || this.environment.tempK), 2.5, item.phenBleachFrac || 0).css;
+      }
+      item.moles = {};
+      if (item.particleCounts) item.particleCounts = {};
+      if (item.precipitateSettle) item.precipitateSettle = {};
+    }
+    if (item.kind === 'condenser') {
+      if (item.connectedFromId) this.disconnectSyringe(item.connectedFromId);
+      item.outletTargetId = null;
+      item.waterFlowOn = false;
+      item.activeDrop = false;
+    }
+    if (item.kind === 'salt_bridge') {
+      item.vesselAId = null;
+      item.vesselBId = null;
+      item.activeCurrentA = 0;
+    }
+    if (item.kind === 'burette') {
+      item.valveRateMlS = 0;
+      item.streamingNow = false;
+    }
+    if (item.kind === 'filter_funnel') {
+      item.mountedOnVesselId = null;
+      item.isFiltering = false;
+    }
+    item.clampedToId = null;
+    item.restingOnId = null;
+    item.isBroken = true;
+    item.spilledPuddleColor = hadLiq ? liqCol : null;
+    this.addLog({ type: 'alert', key: 'alertToolBreak', vesselLabel: item.label });
+    if (this.visualHooks.onAlert) {
+      this.visualHooks.onAlert('shatter', item, {
+        hadLiquid: hadLiq,
+        liquidColor: liqCol,
+        liquidMl: liqMl,
+        vesselWidth: spec.width || 48,
+        vesselHeight: spec.height || 90,
+      });
+    }
+  }
+
   handleLandingImpact(item, dropDistPx, impactVy, support) {
     if (!item || item.isDragging) return;
     const spec = APPARATUS[item.typeId];
@@ -2527,14 +2653,20 @@ export class LabSimulation {
       return;
     }
 
+    const canBreak = spec.breakable !== false && spec.fragilityDropPx !== Infinity;
     const shatterThreshold = spec.fragilityDropPx || 195;
-    if (dropDistPx >= shatterThreshold) {
+    if (canBreak && dropDistPx >= shatterThreshold) {
       if (item.kind === 'vessel' && !item.isShattered) {
         this.shatterVessel(item, 'alertDropShatter', 'shatter');
       } else if (item.kind === 'gas_syringe' && !item.isBroken) {
         this.shatterSyringe(item, 'alertSyringeDropShatter');
       } else if (item.kind === 'pipette' && !item.isBroken) {
         this.breakPipetteOnDrop(item);
+      } else if (
+        !item.isBroken &&
+        (item.kind === 'burette' || item.kind === 'condenser' || item.kind === 'salt_bridge' || item.kind === 'filter_funnel')
+      ) {
+        this.breakToolOnDrop(item);
       }
       return;
     }
@@ -3410,8 +3542,27 @@ export class LabSimulation {
     // Advance thermal exchange, Antoine condensation, gravity discharge & overflow inside all Gas Syringes
     for (const item of this.items) {
       if (item.kind !== 'gas_syringe' || item.isBroken) continue;
+      item.lastNH4ClRxnFlag = false;
       for (let s = 0; s < numSteps; s++) {
         stepSyringeThermodynamics(item, dt, this.environment);
+      }
+      if ((item.nh4clSmokeTimer || 0) > 0) {
+        item.nh4clSmokeTimer = Math.max(0, item.nh4clSmokeTimer - realDeltaSec);
+      }
+      if (item.lastNH4ClRxnFlag) {
+        this._seenSyrNH4Cl = this._seenSyrNH4Cl || {};
+        if (this.timeSec - (this._seenSyrNH4Cl[item.id] ?? -99) > 6.0) {
+          this._seenSyrNH4Cl[item.id] = this.timeSec;
+          this.addLog({
+            type: 'reaction',
+            equation: 'NH₃(g) + HCl(g) → NH₄Cl(s) (kết tinh trắng)',
+            nameVi: 'Khí NH₃ gặp HCl(g) trong Gas Syringe tạo muối trắng NH₄Cl(s)',
+            nameEn: 'NH₃(g) + HCl(g) combine inside Gas Syringe to deposit white NH₄Cl(s)',
+            descVi: 'Hai khí acid–base trung hòa ngay trong xilanh tạo tinh thể bụi trắng NH₄Cl(s), làm giảm mạnh thể tích khí.',
+            descEn: 'Acid-base gas neutralization consumes both gases in the barrel, precipitating white NH₄Cl(s) powder and contracting volume.',
+            vesselLabel: item.label,
+          });
+        }
       }
       const syrT = item.tempK ?? this.environment.tempK;
       const envSubzeroSyr = Math.max(0, CONSTANTS.T_FREEZE_WATER_K - this.environment.tempK);

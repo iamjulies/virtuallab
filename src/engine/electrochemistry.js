@@ -1,4 +1,5 @@
 import { CONSTANTS } from '../data/constants.js';
+import { APPARATUS } from '../data/apparatus.js';
 import { computeLiquidVolumeL } from './equilibrium.js';
 
 export const ELECTRODE_MATERIALS = {
@@ -66,31 +67,24 @@ export function stepElectrochemistry(sim, dt) {
     el.polarityLabel = '';
   }
 
-  // Update salt bridge endpoints to two nearest valid open vessels beneath its left & right legs
+  // Reset live circuit indicator on bridges before evaluating supplies
   for (const sb of bridges) {
-    const leftX = sb.x - 42;
-    const rightX = sb.x + 42;
-    let bestA = null;
-    let bestDA = 75;
-    let bestB = null;
-    let bestDB = 75;
-    for (const v of items) {
-      if (v.kind !== 'vessel' || v.isShattered || v.isStoppered) continue;
-      if (Math.abs(v.y - sb.y) > 130) continue;
-      const dA = Math.abs(v.x - leftX);
-      const dB = Math.abs(v.x - rightX);
-      if (dA < bestDA) {
-        bestDA = dA;
-        bestA = v;
-      }
-      if (dB < bestDB && (!bestA || v.id !== bestA.id)) {
-        bestDB = dB;
-        bestB = v;
-      }
-    }
+    sb.activeCurrentA = 0;
+    const valid = items.filter(
+      (v) => v.kind === 'vessel' && !v.isShattered && !v.isStoppered && !APPARATUS[v.typeId]?.isMortar && Math.abs(v.y - sb.y) <= 150
+    );
+    const leftCands = valid
+      .filter((v) => v.x <= sb.x + 24 && Math.abs(v.x - sb.x) <= 145)
+      .sort((a, b) => Math.abs(a.x - (sb.x - 44)) - Math.abs(b.x - (sb.x - 44)));
+    const bestA = leftCands[0] || null;
+    const rightCands = valid
+      .filter((v) => (!bestA || v.id !== bestA.id) && v.x >= sb.x - 24 && Math.abs(v.x - sb.x) <= 145)
+      .sort((a, b) => Math.abs(a.x - (sb.x + 44)) - Math.abs(b.x - (sb.x + 44)));
+    const bestB = rightCands[0] || null;
+
     if (bestA && bestB && bestA.id !== bestB.id) {
-      sb.vesselAId = bestA.id;
-      sb.vesselBId = bestB.id;
+      sb.vesselAId = bestA.x <= bestB.x ? bestA.id : bestB.id;
+      sb.vesselBId = bestA.x <= bestB.x ? bestB.id : bestA.id;
     } else {
       sb.vesselAId = null;
       sb.vesselBId = null;
@@ -269,6 +263,7 @@ export function stepElectrochemistry(sim, dt) {
         (cathInfo.vessel.moles.H_aq || 0) > 1e-5;
       const currentA = hasCathIon ? Math.min(2.0, emfV / rTotal) : 0;
       sup.measuredCurrentA = currentA;
+      if (currentA > 1e-5) bridge.activeCurrentA = Math.max(bridge.activeCurrentA || 0, currentA);
       if (currentA <= 1e-5) continue;
 
       const neMol = (currentA * dt) / CONSTANTS.FARADAY_C_MOL;

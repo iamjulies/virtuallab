@@ -731,6 +731,94 @@ export class ParticleSystem {
       return;
     }
 
+    if (type === 'nh3_hcl_smoke') {
+      // Gentle, realistic white NH4Cl(s) aerosol plume rising softly (throttled so 60fps never floods shockwaves/clutter)
+      if (Math.random() > 0.26) return;
+      const intensity = Math.max(0.35, Math.min(1.4, meta?.intensity ?? 0.8));
+      const puffCount = intensity > 0.9 ? 2 : 1;
+      for (let i = 0; i < puffCount; i++) {
+        this.particles.push({
+          kind: 'gas_cloud',
+          x: x + (Math.random() - 0.5) * 28,
+          y: y + (Math.random() - 0.5) * 14,
+          vx: (Math.random() - 0.5) * 14,
+          vy: -(16 + Math.random() * 14),
+          phase: Math.random() * Math.PI * 2,
+          r: 5 + Math.random() * 4.5,
+          growR: 11,
+          alphaScale: 0.28 * Math.min(1.1, intensity),
+          life: 0,
+          maxLife: 1.5 + Math.random() * 0.7,
+          color: this.isDark ? 'rgba(241, 245, 249, 0.75)' : 'rgba(148, 163, 184, 0.65)',
+        });
+      }
+      return;
+    }
+
+    if (type === 'h2_pop') {
+      this.particles.push({
+        kind: 'flash',
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        r: 26,
+        life: 0,
+        maxLife: 0.28,
+        color: 'rgba(125, 211, 252, 0.92)',
+      });
+      for (let i = 0; i < 12; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = 45 + Math.random() * 90;
+        this.particles.push({
+          kind: 'spark',
+          x,
+          y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          r: 2.0 + Math.random() * 1.5,
+          life: 0,
+          maxLife: 0.35 + Math.random() * 0.2,
+          color: i % 2 === 0 ? '#7dd3fc' : '#fde047',
+        });
+      }
+      return;
+    }
+
+    if (type === 'o2_relight' || type === 'o2_flare') {
+      const isFlare = type === 'o2_flare';
+      this.particles.push({
+        kind: 'flash',
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        r: isFlare ? 44 : 28,
+        life: 0,
+        maxLife: 0.40,
+        color: isFlare ? 'rgba(254, 240, 138, 0.96)' : 'rgba(253, 224, 71, 0.9)',
+      });
+      const nSparks = isFlare ? 20 : 12;
+      for (let i = 0; i < nSparks; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = (isFlare ? 40 : 28) + Math.random() * (isFlare ? 95 : 65);
+        this.particles.push({
+          kind: 'spark',
+          x,
+          y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd - 24,
+          r: (isFlare ? 2.1 : 1.6) + Math.random() * 1.6,
+          life: 0,
+          maxLife: 0.42 + Math.random() * 0.25,
+          color: i % 3 === 0 ? '#fef08a' : '#fbbf24',
+        });
+      }
+      return;
+    }
+
+    if (type !== 'pop') return;
+
     // Flying Rubber Stopper POP burst!
     const neckTopY = y - (meta?.vesselHeight || 150) / 2;
     const stopTopW = Math.max(15, (meta?.neckRadius || 18) + 1.5);
@@ -794,79 +882,6 @@ export class ParticleSystem {
           maxLife: 1.2 + Math.random() * 0.5,
           color: meta.liquidColor || 'rgba(186, 230, 253, 0.85)',
           splashed: false,
-        });
-      }
-    } else if (type === 'h2_pop') {
-      this.particles.push({
-        kind: 'flash',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        r: 26,
-        life: 0,
-        maxLife: 0.28,
-        color: 'rgba(125, 211, 252, 0.92)',
-      });
-      for (let i = 0; i < 12; i++) {
-        const ang = Math.random() * Math.PI * 2;
-        const spd = 45 + Math.random() * 90;
-        this.particles.push({
-          kind: 'spark',
-          x,
-          y,
-          vx: Math.cos(ang) * spd,
-          vy: Math.sin(ang) * spd,
-          r: 2.0 + Math.random() * 1.5,
-          life: 0,
-          maxLife: 0.35 + Math.random() * 0.2,
-          color: i % 2 === 0 ? '#7dd3fc' : '#fde047',
-        });
-      }
-    } else if (type === 'o2_relight') {
-      this.particles.push({
-        kind: 'flash',
-        x,
-        y,
-        vx: 0,
-        vy: 0,
-        r: 32,
-        life: 0,
-        maxLife: 0.42,
-        color: 'rgba(253, 224, 71, 0.95)',
-      });
-      for (let i = 0; i < 16; i++) {
-        const ang = Math.random() * Math.PI * 2;
-        const spd = 30 + Math.random() * 80;
-        this.particles.push({
-          kind: 'spark',
-          x,
-          y,
-          vx: Math.cos(ang) * spd,
-          vy: Math.sin(ang) * spd - 20,
-          r: 1.8 + Math.random() * 1.6,
-          life: 0,
-          maxLife: 0.45 + Math.random() * 0.25,
-          color: '#fbbf24',
-        });
-      }
-    } else if (type === 'nh3_hcl_smoke') {
-      const intensity = Math.max(0.35, Math.min(2.0, meta?.intensity ?? 1.0));
-      const puffCount = Math.max(2, Math.round(3 * intensity));
-      for (let i = 0; i < puffCount; i++) {
-        this.particles.push({
-          kind: 'gas_cloud',
-          x: x + (Math.random() - 0.5) * 34,
-          y: y + (Math.random() - 0.5) * 18,
-          vx: (Math.random() - 0.5) * 26,
-          vy: -(22 + Math.random() * 26),
-          phase: Math.random() * Math.PI * 2,
-          r: 7 + Math.random() * 7,
-          growR: 16,
-          alphaScale: 0.58 * Math.min(1.2, intensity),
-          life: 0,
-          maxLife: 1.45 + Math.random() * 0.75,
-          color: this.isDark ? 'rgba(248, 250, 252, 0.82)' : 'rgba(148, 163, 184, 0.72)',
         });
       }
     }

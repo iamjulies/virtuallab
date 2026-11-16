@@ -50,16 +50,27 @@ function formatGasSummaryHtml(gasMap = {}, escapedFrostMol = 0, t = null) {
 function getSyringeCondenseInfo(syr, env, t) {
   const syrTempK = syr.tempK ?? env.tempK;
   const syrTempC = kelvinToCelsius(syrTempK);
-  const condensedMol = syr.condensedWaterMol || 0;
+  const condensedWaterMol = syr.condensedWaterMol || 0;
+  const condensedEtOHMol = syr.condensedEtOHMol || 0;
+  const condensedMol = condensedWaterMol + condensedEtOHMol;
   const frozenMol = syr.frozenWaterMol || 0;
-  const condensedMl = (condensedMol * SPECIES.H2O_l.molarMass) / 0.997;
+  const condensedWaterMl = (condensedWaterMol * SPECIES.H2O_l.molarMass) / 0.997;
+  const condensedEtOHMl = (condensedEtOHMol * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density;
+  const condensedMl = condensedWaterMl + condensedEtOHMl;
   const frozenMl = computeSyringeFrozenVolumeMl(syr);
   const overflowMl = computeLiquidVolumeL(syr.overflowMoles || {}, syrTempK) * 1000;
   const totalLiqMl = condensedMl + overflowMl;
   const totalFluidMl = totalLiqMl + frozenMl;
-  const hasSteam = (syr.gasMoles?.H2O_g || 0) > 1e-6;
+  const hasSteam = (syr.gasMoles?.H2O_g || 0) > 1e-6 || (syr.gasMoles?.C2H5OH_g || 0) > 1e-6;
   const isCondensing = (syr.lastCondenseRateMolS || 0) > 1e-6;
-  const condenseState =
+  const condSpec =
+    condensedWaterMl > 0.0005 && condensedEtOHMl > 0.0005
+      ? 'H₂O + C₂H₅OH'
+      : condensedEtOHMl > 0.0005
+      ? 'C₂H₅OH(l)'
+      : 'H₂O(l)';
+  const nh4clMol = syr.overflowMoles?.NH4Cl_s || 0;
+  let condenseState =
     (syr.overflowOutRateMlS || 0) > 0.5
       ? `⚠️ ${t('alertSyringeOverflow')}`
       : isCondensing
@@ -69,11 +80,29 @@ function getSyringeCondenseInfo(syr, env, t) {
       : overflowMl > 0.05
       ? `💧 ${t('syringeLiquidOverflowLabel')}: ${overflowMl.toFixed(2)} mL`
       : condensedMol > 1e-5 || frozenMol > 1e-5
-      ? `${frozenMol > condensedMol ? '❄️' : '💧'} ${t('syringeCondenseDone')}`
+      ? `${frozenMol > condensedMol ? '❄️' : '💧'} ${t('syringeCondenseDone')} (${condSpec})`
       : hasSteam
       ? `♨️ ${t('syringeHotSteam')}`
       : t('syringeDryGas');
-  return { syrTempK, syrTempC, condensedMol, frozenMol, condensedMl, frozenMl, overflowMl, totalLiqMl, totalFluidMl, isCondensing, condenseState };
+  if (nh4clMol > 1e-6) {
+    condenseState += ` · 🧂 ${(nh4clMol * 1000).toFixed(2)} mmol NH₄Cl(s)`;
+  }
+  return {
+    syrTempK,
+    syrTempC,
+    condensedMol,
+    condensedWaterMl,
+    condensedEtOHMl,
+    condSpec,
+    frozenMol,
+    condensedMl,
+    frozenMl,
+    overflowMl,
+    totalLiqMl,
+    totalFluidMl,
+    isCondensing,
+    condenseState,
+  };
 }
 
 export class InspectorPanel {
@@ -124,25 +153,34 @@ export class InspectorPanel {
     }
     if (item.kind === 'filter_funnel' || item.kind === 'burette') {
       const spKeys = Object.keys(item.moles || {}).filter((k) => item.moles[k] > 1e-10).sort().join(',');
-      return `${item.kind}|${item.id}|${item.clampedToId}|${item.valveRateMlS || 0}|${item.isFiltering ? 1 : 0}|${spKeys}|${langCode}|${logLen}`;
+      return `${item.kind}|${item.id}|${item.isBroken ? 1 : 0}|${item.clampedToId}|${item.valveRateMlS || 0}|${item.isFiltering ? 1 : 0}|${spKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'dc_power') {
       return `dc|${item.id}|${item.powerOn ? 1 : 0}|${item.circuitMode}|${langCode}|${logLen}`;
     }
     if (item.kind === 'electrode') {
-      return `el|${item.id}|${item.material}|${item.dockedVesselId}|${langCode}|${logLen}`;
+      return `el|${item.id}|${item.material}|${item.dockedVesselId || ''}|${item.polarityLabel || ''}|${langCode}|${logLen}`;
     }
     if (item.kind === 'splint') {
       return `sp|${item.id}|${item.mode}|${langCode}|${logLen}`;
     }
     if (item.kind === 'condenser') {
-      return `co|${item.id}|${item.waterFlowOn ? 1 : 0}|${item.clampedToId}|${langCode}|${logLen}`;
+      const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered).length;
+      return `co|${item.id}|${item.isBroken ? 1 : 0}|${item.waterFlowOn ? 1 : 0}|${item.clampedToId}|${item.connectedFromId || ''}|${item.outletTargetId || ''}|${vCnt}|${langCode}|${logLen}`;
     }
     if (item.kind === 'flame_loop') {
       return `fl|${item.id}|${item.sampledIon || ''}|${langCode}|${logLen}`;
     }
     if (item.kind === 'indicator_strip') {
-      return `ind|${item.id}|${item.tipColor}|${item.isBleached ? 1 : 0}|${langCode}|${logLen}`;
+      return `ind|${item.id}|${item.stripKind}|${item.sampledPH ?? 'null'}|${item.tipColor}|${item.isBleached ? 1 : 0}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'stir_bar') {
+      const host = item.inVesselId ? this.sim.getItem(item.inVesselId) : null;
+      const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered).length;
+      return `sb_bar|${item.id}|${item.inVesselId || ''}|${host?.magStirRpm || 0}|${vCnt}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'salt_bridge') {
+      return `sbr|${item.id}|${item.isBroken ? 1 : 0}|${item.vesselAId || ''}|${item.vesselBId || ''}|${langCode}|${logLen}`;
     }
     return `other|${item.id}|${langCode}|${logLen}`;
   }
@@ -394,25 +432,29 @@ export class InspectorPanel {
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div>
-              <div class="text-sm font-bold">${t('eq_filter_funnel')} ${item.label}</div>
+              <div class="text-sm font-bold">${t('eq_filter_funnel')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
               <div class="text-[11px] text-muted">${fSpec.materialSpec} · ${fSpec.isoStandard}</div>
             </div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
           </div>
-          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs">
-            <div class="text-muted mb-1 font-medium">${langCode === 'en' ? 'Filter Paper Residue (Retained (s)):' : 'Bã rắn trên giấy lọc ((s)):'}</div>
-            ${
-              solids.length === 0
-                ? `<div class="text-muted">${langCode === 'en' ? '— Empty filter paper —' : '— Giấy lọc đang sạch —'}</div>`
-                : solids
-                    .map(([id, n]) => `<div class="font-mono flex justify-between"><span>${SPECIES[id]?.formula || id}</span><span>${(n * 1000).toFixed(2)} mmol</span></div>`)
-                    .join('')
-            }
-          </div>
-          <div class="flex flex-wrap gap-1.5">
-            ${solids.length > 0 ? `<button type="button" id="ins-solid-xfer" class="px-2.5 py-1.5 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">${t('actionTransferSolid')}</button>` : ''}
-            ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
-          </div>
+          ${
+            item.isBroken
+              ? `<p class="text-xs text-red-400 font-medium">${t('alertToolBreak')}</p>`
+              : `<div class="p-2.5 rounded-lg border border-theme bg-surface text-xs">
+                  <div class="text-muted mb-1 font-medium">${langCode === 'en' ? 'Filter Paper Residue (Retained (s)):' : 'Bã rắn trên giấy lọc ((s)):'}</div>
+                  ${
+                    solids.length === 0
+                      ? `<div class="text-muted">${langCode === 'en' ? '— Empty filter paper —' : '— Giấy lọc đang sạch —'}</div>`
+                      : solids
+                          .map(([id, n]) => `<div class="font-mono flex justify-between"><span>${SPECIES[id]?.formula || id}</span><span>${(n * 1000).toFixed(2)} mmol</span></div>`)
+                          .join('')
+                  }
+                </div>
+                <div class="flex flex-wrap gap-1.5">
+                  ${solids.length > 0 ? `<button type="button" id="ins-solid-xfer" class="px-2.5 py-1.5 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">${t('actionTransferSolid')}</button>` : ''}
+                  ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
+                </div>`
+          }
         </div>
       `;
     } else if (item.kind === 'wash_bottle') {
@@ -434,20 +476,55 @@ export class InspectorPanel {
       `;
     } else if (item.kind === 'condenser') {
       const stands = this.sim.items.filter((i) => i.kind === 'stand');
+      const inletSrcs = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && APPARATUS[i.typeId]?.stopperable);
+      const outletDsts = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered && i.id !== item.connectedFromId);
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
-            <div class="text-sm font-bold">${t('eq_liebig_condenser')} ${item.label}</div>
+            <div class="text-sm font-bold">${t('eq_liebig_condenser')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
           </div>
-          <div class="p-2.5 rounded-lg border border-theme bg-surface flex justify-between items-center text-xs">
-            <span class="text-muted">${langCode === 'en' ? 'Distillate Condensed:' : 'Dịch chưng cất thu được:'}</span>
-            <strong class="font-mono text-sky-400" id="live-cond-ml">${(item.totalCondensedMl || 0).toFixed(2)} mL</strong>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <button type="button" id="ins-cond-water" class="flex-1 py-1.5 px-2.5 rounded-lg border ${item.waterFlowOn ? 'border-sky-500/40 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface text-muted'} text-xs font-semibold">${t('actionToggleWaterFlow')} ${item.waterFlowOn ? (langCode === 'en' ? 'ON' : 'BẬT') : (langCode === 'en' ? 'OFF' : 'TẮT')}</button>
-            ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
-          </div>
+          ${
+            item.isBroken
+              ? `<p class="text-xs text-red-400 font-medium">${t('alertToolBreak')}</p>`
+              : `<div class="p-2.5 rounded-lg border border-theme bg-surface flex justify-between items-center text-xs">
+                  <span class="text-muted">${langCode === 'en' ? 'Distillate Condensed:' : 'Dịch chưng cất thu được:'}</span>
+                  <strong class="font-mono text-sky-400" id="live-cond-ml">${(item.totalCondensedMl || 0).toFixed(2)} mL</strong>
+                </div>
+                <div class="flex flex-col gap-2 pt-1 border-t border-theme/50 text-xs">
+                  <div class="flex flex-col gap-1">
+                    <span class="text-muted">${t('condInletLabel')}</span>
+                    <div class="flex gap-1.5">
+                      <select id="cond-inlet-sel" class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs">
+                        ${inletSrcs.length === 0 ? `<option value="">—</option>` : inletSrcs.map((v) => `<option value="${v.id}" ${item.connectedFromId === v.id ? 'selected' : ''}>${t(APPARATUS[v.typeId].i18nKey)} ${v.label}</option>`).join('')}
+                      </select>
+                      ${
+                        item.connectedFromId
+                          ? `<button type="button" id="ins-cond-in-dis" class="px-2 py-1 rounded border border-red-500/40 bg-red-500/10 text-red-400 text-xs">${t('condDisconnect')}</button>`
+                          : `<button type="button" id="ins-cond-in-con" ${inletSrcs.length === 0 ? 'disabled' : ''} class="px-2 py-1 rounded bg-amber-600 text-white text-xs font-semibold disabled:opacity-40">${t('condConnectInlet')}</button>`
+                      }
+                    </div>
+                  </div>
+                  <div class="flex flex-col gap-1">
+                    <span class="text-muted">${t('condOutletLabel')}</span>
+                    <div class="flex gap-1.5">
+                      <select id="cond-outlet-sel" class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs">
+                        ${outletDsts.length === 0 ? `<option value="">—</option>` : outletDsts.map((v) => `<option value="${v.id}" ${item.outletTargetId === v.id ? 'selected' : ''}>${t(APPARATUS[v.typeId].i18nKey)} ${v.label}</option>`).join('')}
+                      </select>
+                      ${
+                        item.outletTargetId
+                          ? `<button type="button" id="ins-cond-out-dis" class="px-2 py-1 rounded border border-red-500/40 bg-red-500/10 text-red-400 text-xs">${t('condDisconnect')}</button>`
+                          : `<button type="button" id="ins-cond-out-con" ${outletDsts.length === 0 ? 'disabled' : ''} class="px-2 py-1 rounded bg-sky-600 text-white text-xs font-semibold disabled:opacity-40">${t('condConnectOutlet')}</button>`
+                      }
+                    </div>
+                  </div>
+                  <p class="text-[11px] text-muted leading-snug">${t('condDragHint')}</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <button type="button" id="ins-cond-water" class="flex-1 py-1.5 px-2.5 rounded-lg border ${item.waterFlowOn ? 'border-sky-500/40 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface text-muted'} text-xs font-semibold">${t('actionToggleWaterFlow')} ${item.waterFlowOn ? (langCode === 'en' ? 'ON' : 'BẬT') : (langCode === 'en' ? 'OFF' : 'TẮT')}</button>
+                  ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
+                </div>`
+          }
         </div>
       `;
     } else if (item.kind === 'burette') {
@@ -457,42 +534,46 @@ export class InspectorPanel {
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
-            <div class="text-sm font-bold">${t('eq_burette_50')} ${item.label}</div>
+            <div class="text-sm font-bold">${t('eq_burette_50')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
           </div>
-          <div class="grid grid-cols-2 gap-2">
-            <div class="p-2.5 rounded-lg border border-theme bg-surface">
-              <div class="text-xs text-muted">${t('metricVol')}</div>
-              <div class="text-sm font-bold font-mono" id="live-bur-vol">${liqMl.toFixed(2)} / 50.0 mL</div>
-            </div>
-            <div class="p-2.5 rounded-lg border border-theme bg-surface">
-              <div class="text-xs text-muted">${langCode === 'en' ? 'Dispensed (ΔV)' : 'Đã nhỏ (ΔV)'}</div>
-              <div class="text-sm font-bold font-mono text-emerald-400" id="live-bur-disp">${(item.dispensedMl || 0).toFixed(2)} mL</div>
-            </div>
-          </div>
-          <div class="flex flex-col gap-1.5">
-            <span class="text-xs text-muted font-medium">${t('buretteValveLabel')}</span>
-            <div class="grid grid-cols-4 gap-1.5">
-              ${[0, 0.15, 0.8, 3.0]
-                .map(
-                  (r) => `<button type="button" class="bur-rate-btn py-1.5 rounded border text-xs font-mono ${
-                    Math.abs((item.valveRateMlS || 0) - r) < 0.05 ? 'border-accent bg-accent/15 font-bold text-accent' : 'border-theme bg-surface text-muted'
-                  }" data-rate="${r}">${r === 0 ? (langCode === 'en' ? 'Closed' : 'Đóng') : `${r}`}</button>`
-                )
-                .join('')}
-            </div>
-            <button type="button" id="ins-bur-drop" class="py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500">${t('buretteAddDrop')}</button>
-          </div>
-          <div class="flex flex-col gap-1.5 pt-1 border-t border-theme/50">
-            <span class="text-[11px] text-muted">${t('buretteFillTitle')}</span>
-            <div class="flex gap-1.5">
-              <select id="bur-fill-sel" class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs">
-                ${liqReagents.map((r) => `<option value="${r.id}">${t(r.i18nKey)}</option>`).join('')}
-              </select>
-              <button type="button" id="ins-bur-fill" class="px-2.5 py-1 rounded bg-accent text-white text-xs font-semibold">+25 mL</button>
-            </div>
-          </div>
-          ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
+          ${
+            item.isBroken
+              ? `<p class="text-xs text-red-400 font-medium">${t('alertToolBreak')}</p>`
+              : `<div class="grid grid-cols-2 gap-2">
+                  <div class="p-2.5 rounded-lg border border-theme bg-surface">
+                    <div class="text-xs text-muted">${t('metricVol')}</div>
+                    <div class="text-sm font-bold font-mono" id="live-bur-vol">${liqMl.toFixed(2)} / 50.0 mL</div>
+                  </div>
+                  <div class="p-2.5 rounded-lg border border-theme bg-surface">
+                    <div class="text-xs text-muted">${langCode === 'en' ? 'Dispensed (ΔV)' : 'Đã nhỏ (ΔV)'}</div>
+                    <div class="text-sm font-bold font-mono text-emerald-400" id="live-bur-disp">${(item.dispensedMl || 0).toFixed(2)} mL</div>
+                  </div>
+                </div>
+                <div class="flex flex-col gap-1.5">
+                  <span class="text-xs text-muted font-medium">${t('buretteValveLabel')}</span>
+                  <div class="grid grid-cols-4 gap-1.5">
+                    ${[0, 0.15, 0.8, 3.0]
+                      .map(
+                        (r) => `<button type="button" class="bur-rate-btn py-1.5 rounded border text-xs font-mono ${
+                          Math.abs((item.valveRateMlS || 0) - r) < 0.05 ? 'border-accent bg-accent/15 font-bold text-accent' : 'border-theme bg-surface text-muted'
+                        }" data-rate="${r}">${r === 0 ? (langCode === 'en' ? 'Closed' : 'Đóng') : `${r}`}</button>`
+                      )
+                      .join('')}
+                  </div>
+                  <button type="button" id="ins-bur-drop" class="py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500">${t('buretteAddDrop')}</button>
+                </div>
+                <div class="flex flex-col gap-1.5 pt-1 border-t border-theme/50">
+                  <span class="text-[11px] text-muted">${t('buretteFillTitle')}</span>
+                  <div class="flex gap-1.5">
+                    <select id="bur-fill-sel" class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs">
+                      ${liqReagents.map((r) => `<option value="${r.id}">${t(r.i18nKey)}</option>`).join('')}
+                    </select>
+                    <button type="button" id="ins-bur-fill" class="px-2.5 py-1 rounded bg-accent text-white text-xs font-semibold">+25 mL</button>
+                  </div>
+                </div>
+                ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}`
+          }
         </div>
       `;
     } else if (item.kind === 'splint') {
@@ -527,23 +608,31 @@ export class InspectorPanel {
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs font-mono flex justify-between">
             <span class="text-muted">${langCode === 'en' ? 'Adsorbed Ion:' : 'Ion hấp phụ:'}</span>
-            <strong>${item.sampledIon ? item.sampleLabel : langCode === 'en' ? 'Clean (NiCr)' : 'Sạch (NiCr)'}</strong>
+            <strong>${item.sampledIon || (langCode === 'en' ? 'Clean (NiCr)' : 'Sạch (NiCr)')}</strong>
           </div>
           <button type="button" id="ins-loop-wash" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionWashLoop')}</button>
         </div>
       `;
     } else if (item.kind === 'indicator_strip') {
+      const isLitmus = item.stripKind === 'litmus';
+      const readStr = item.isBleached
+        ? t('litmusBleached')
+        : item.sampledPH == null
+        ? (langCode === 'en' ? 'Untouched' : 'Chưa nhúng')
+        : isLitmus
+        ? `${item.sampledPH < 5.2 ? t('litmusRedAcid') : item.sampledPH > 8.2 ? t('litmusBlueBase') : t('litmusPurpleNeutral')} (${item.sampledFrom})`
+        : `pH ≈ ${item.sampledPH.toFixed(1)} (${item.sampledFrom})`;
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
-            <div class="text-sm font-bold">${t(item.stripKind === 'litmus' ? 'eq_litmus_paper' : 'eq_ph_strip')} ${item.label}</div>
+            <div class="text-sm font-bold">${t(isLitmus ? 'eq_litmus_paper' : 'eq_ph_strip')} ${item.label}</div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface flex items-center justify-between text-xs">
-            <span class="text-muted">${langCode === 'en' ? 'Reading:' : 'Kết quả đo:'}</span>
+            <span class="text-muted">${langCode === 'en' ? 'Reading:' : 'Kết quả:'}</span>
             <span class="flex items-center gap-2 font-mono font-bold">
               <span class="inline-block w-4 h-4 rounded border border-theme" style="background:${item.tipColor}"></span>
-              ${item.isBleached ? (langCode === 'en' ? 'Cl₂ Bleached' : 'Bị Cl₂ tẩy trắng') : item.sampledPH != null ? `pH ≈ ${item.sampledPH.toFixed(1)} (${item.sampledFrom})` : (langCode === 'en' ? 'Untouched' : 'Chưa nhúng')}
+              ${readStr}
             </span>
           </div>
           <button type="button" id="ins-strip-reset" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetStrip')}</button>
@@ -584,16 +673,19 @@ export class InspectorPanel {
             ${Object.values(ELECTRODE_MATERIALS)
               .map(
                 (m) => `<button type="button" class="el-mat-btn py-1.5 px-2 rounded-lg border text-xs font-semibold ${
-                  item.material === m.id ? 'border-accent bg-accent/15 text-accent' : 'border-theme bg-surface text-muted'
+                  item.material === m.id ? 'border-accent bg-accent/15 text-accent' : 'border-theme bg-surface text-muted hover:border-accent'
                 }" data-mat="${m.id}">${m.id}</button>`
               )
               .join('')}
           </div>
+          <div class="text-[11px] text-muted">${(ELECTRODE_MATERIALS[item.material]?.[langCode === 'en' ? 'nameEn' : 'nameVi']) || item.material}</div>
           ${item.polarityLabel ? `<div class="p-2 rounded border border-theme bg-surface text-xs font-mono text-center">${item.polarityLabel}</div>` : ''}
         </div>
       `;
-    } else if (item.kind === 'stir_bar' || item.kind === 'salt_bridge') {
-      const spc = APPARATUS[item.typeId];
+    } else if (item.kind === 'stir_bar') {
+      const spc = APPARATUS.stir_bar;
+      const hostV = item.inVesselId ? this.sim.getItem(item.inVesselId) : null;
+      const openVessels = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered);
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
@@ -603,6 +695,65 @@ export class InspectorPanel {
             </div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
           </div>
+          ${
+            hostV
+              ? `<div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-2 text-xs">
+                  <div class="flex justify-between">
+                    <span class="text-muted">${t('targetVessel')}</span>
+                    <strong class="font-mono">${t(APPARATUS[hostV.typeId].i18nKey)} ${hostV.label}</strong>
+                  </div>
+                  <span class="text-muted">${t('magStirLabel')}</span>
+                  <div class="grid grid-cols-4 gap-1.5">
+                    ${[0, 400, 800, 1200]
+                      .map(
+                        (rpm) => `<button type="button" class="sb-rpm-btn py-1 rounded border text-[11px] font-mono ${
+                          (hostV.magStirRpm || 0) === rpm ? 'border-accent bg-accent/15 font-bold text-accent' : 'border-theme bg-surface-alt text-muted'
+                        }" data-rpm="${rpm}">${rpm === 0 ? 'OFF' : `${rpm}`}</button>`
+                      )
+                      .join('')}
+                  </div>
+                  <button type="button" id="ins-sb-remove" class="py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent">${t('stirBarRemove')}</button>
+                </div>`
+              : `<div class="flex flex-col gap-2 text-xs">
+                  <p class="text-muted leading-snug">${t('stirBarHint')}</p>
+                  ${
+                    openVessels.length > 0
+                      ? `<div class="flex gap-1.5">
+                          <select id="sb-insert-sel" class="flex-1 px-2 py-1.5 rounded border border-theme bg-surface text-xs">
+                            ${openVessels.map((v) => `<option value="${v.id}">${t(APPARATUS[v.typeId].i18nKey)} ${v.label}</option>`).join('')}
+                          </select>
+                          <button type="button" id="ins-sb-insert" class="px-2.5 py-1.5 rounded bg-accent text-white text-xs font-semibold">${t('stirBarInsert')}</button>
+                        </div>`
+                      : ''
+                  }
+                </div>`
+          }
+        </div>
+      `;
+    } else if (item.kind === 'salt_bridge') {
+      const spc = APPARATUS.salt_bridge;
+      const vA = item.vesselAId ? this.sim.getItem(item.vesselAId) : null;
+      const vB = item.vesselBId ? this.sim.getItem(item.vesselBId) : null;
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t(spc.i18nKey)} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
+              <div class="text-[11px] text-muted">${spc.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          ${
+            item.isBroken
+              ? `<p class="text-xs text-red-400 font-medium">${t('alertToolBreak')}</p>`
+              : `<div class="p-2.5 rounded-lg border border-theme bg-surface text-xs">
+                  ${
+                    vA && vB
+                      ? `<div class="font-mono font-bold text-emerald-400">⚡ ${vA.label} ↔ ${vB.label}${(item.activeCurrentA || 0) > 1e-4 ? ` (${item.activeCurrentA.toFixed(2)} A)` : ''}</div>`
+                      : `<p class="text-muted">${t('saltBridgeHint')}</p>`
+                  }
+                </div>`
+          }
         </div>
       `;
     } else if (item.kind === 'vessel') {
@@ -771,7 +922,7 @@ export class InspectorPanel {
                 </div>
                 <div class="text-[11px] text-sky-400 font-mono" id="live-collected-cond">${
                   syrCondInfo.totalFluidMl > 0.0005 || syrCondInfo.isCondensing
-                    ? `${syrCondInfo.frozenMol > syrCondInfo.condensedMol ? '❄️' : '💧'} ${t(syrCondInfo.frozenMol > syrCondInfo.condensedMol ? 'syringeFrozenShort' : 'gasCondensedShort')}: ${syrCondInfo.totalFluidMl.toFixed(2)} mL H₂O`
+                    ? `${syrCondInfo.frozenMol > syrCondInfo.condensedMol ? '❄️' : '💧'} ${t(syrCondInfo.frozenMol > syrCondInfo.condensedMol ? 'syringeFrozenShort' : 'gasCondensedShort')}: ${syrCondInfo.totalFluidMl.toFixed(2)} mL ${syrCondInfo.condSpec}`
                     : ''
                 }</div>
               </div>`
@@ -1024,6 +1175,20 @@ export class InspectorPanel {
         item.waterFlowOn = !item.waterFlowOn;
         this.sim.emitChange();
       });
+      this.container.querySelector('#ins-cond-in-con')?.addEventListener('click', () => {
+        const srcId = this.container.querySelector('#cond-inlet-sel')?.value;
+        if (srcId) this.sim.connectTube(srcId, item.id);
+      });
+      this.container.querySelector('#ins-cond-in-dis')?.addEventListener('click', () => {
+        if (item.connectedFromId) this.sim.disconnectSyringe(item.connectedFromId);
+      });
+      this.container.querySelector('#ins-cond-out-con')?.addEventListener('click', () => {
+        const dstId = this.container.querySelector('#cond-outlet-sel')?.value;
+        if (dstId) this.sim.connectCondenserOutlet(item.id, dstId);
+      });
+      this.container.querySelector('#ins-cond-out-dis')?.addEventListener('click', () => {
+        this.sim.connectCondenserOutlet(item.id, null);
+      });
       this.container.querySelectorAll('.bur-rate-btn').forEach((btn) => {
         btn.addEventListener('click', () => this.sim.setBuretteValveRate(item.id, Number(btn.dataset.rate)));
       });
@@ -1074,6 +1239,19 @@ export class InspectorPanel {
     } else if (item.kind === 'electrode') {
       this.container.querySelectorAll('.el-mat-btn').forEach((btn) => {
         btn.addEventListener('click', () => this.sim.setElectrodeMaterial(item.id, btn.dataset.mat));
+      });
+    } else if (item.kind === 'stir_bar') {
+      this.container.querySelectorAll('.sb-rpm-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          if (item.inVesselId) this.sim.toggleMagneticStir(item.inVesselId, Number(btn.dataset.rpm));
+        });
+      });
+      this.container.querySelector('#ins-sb-insert')?.addEventListener('click', () => {
+        const vId = this.container.querySelector('#sb-insert-sel')?.value;
+        if (vId) this.sim.insertStirBarIntoVessel(item.id, vId, 800);
+      });
+      this.container.querySelector('#ins-sb-remove')?.addEventListener('click', () => {
+        this.sim.removeStirBarFromVessel(item.id);
       });
     }
   }
@@ -1232,7 +1410,7 @@ export class InspectorPanel {
         if (colCondEl) {
           colCondEl.textContent =
             syrCondInfo.totalFluidMl > 0.0005 || syrCondInfo.isCondensing
-              ? `${syrCondInfo.frozenMol > syrCondInfo.condensedMol ? '❄️' : '💧'} ${t(syrCondInfo.frozenMol > syrCondInfo.condensedMol ? 'syringeFrozenShort' : 'gasCondensedShort')}: ${syrCondInfo.totalFluidMl.toFixed(2)} mL H₂O`
+              ? `${syrCondInfo.frozenMol > syrCondInfo.condensedMol ? '❄️' : '💧'} ${t(syrCondInfo.frozenMol > syrCondInfo.condensedMol ? 'syringeFrozenShort' : 'gasCondensedShort')}: ${syrCondInfo.totalFluidMl.toFixed(2)} mL ${syrCondInfo.condSpec}`
               : '';
         }
       }

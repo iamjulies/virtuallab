@@ -107,7 +107,7 @@ export function computeTubingGeometry(vessel, target) {
     target.kind === 'gas_syringe'
       ? { x: target.x - tSpec.width / 2 + 2, y: target.y }
       : target.kind === 'condenser'
-      ? { x: target.x - tSpec.width / 2 + 4, y: target.y - 12 }
+      ? { x: target.x - tSpec.width * 0.47, y: target.y - 10 }
       : target.isInverted
       ? { x: target.x, y: target.y + tSpec.height / 2 - 4 }
       : { x: target.x, y: target.y - tSpec.height / 2 + (target.isStoppered ? -8 : 12) };
@@ -118,7 +118,7 @@ export function computeTubingGeometry(vessel, target) {
     target.kind === 'gas_syringe'
       ? { x: (p0.x + p3.x) * 0.5, y: Math.min(p0.y, p3.y) - 45 }
       : target.kind === 'condenser'
-      ? { x: p3.x - 24, y: p3.y - 36 }
+      ? { x: p3.x - 28, y: p3.y - 34 }
       : target.isInverted
       ? { x: p3.x - 16, y: p3.y + 38 }
       : { x: p3.x, y: archTopY };
@@ -156,9 +156,25 @@ export function computeTubingGeometry(vessel, target) {
   };
 }
 
+export function computeCondenserOutletGeometry(cond, receiver) {
+  const cSpec = APPARATUS.liebig_condenser;
+  const rSpec = APPARATUS[receiver.typeId] || APPARATUS.beaker_250;
+  const p0 = { x: cond.x + cSpec.width * 0.47, y: cond.y + 11 };
+  const p3 = { x: receiver.x, y: receiver.y - rSpec.height / 2 + 8 };
+  const midX = 0.5 * (p0.x + p3.x);
+  const p1 = { x: p0.x + 22, y: p0.y + 18 };
+  const p2 = { x: midX + (p3.x - midX) * 0.4, y: p3.y - 34 };
+  const points = [];
+  for (let i = 0; i <= 20; i++) {
+    points.push(cubicBezierPoint(i / 20, p0, p1, p2, p3));
+  }
+  return { p0, p1, p2, p3, points };
+}
+
 export function computeSyringeHeatCapacityJK(syringe) {
   let cpTotal = 34.0; // Borosilicate syringe barrel & glass plunger thermal mass
   cpTotal += (syringe.condensedWaterMol || 0) * CONSTANTS.CP_H2O_J_MOL_K;
+  cpTotal += (syringe.condensedEtOHMol || 0) * (SPECIES.C2H5OH_l?.cp || 112.3);
   cpTotal += (syringe.frozenWaterMol || 0) * CONSTANTS.CP_ICE_J_MOL_K;
   for (const [spId, n] of Object.entries(syringe.overflowMoles || {})) {
     if (n > 0 && SPECIES[spId]?.cp) {
@@ -191,12 +207,15 @@ export function computeSyringeGasVolumeMl(syringe, env) {
 }
 
 /**
- * Compute unified aqueous moles map combining condensed pure H2O(l) and overflowed solution inside Gas Syringe.
+ * Compute unified aqueous moles map combining condensed H2O(l)/C2H5OH(l) and overflowed solution inside Gas Syringe.
  */
 export function buildCombinedSyringeLiquidMoles(syringe) {
   const moles = { ...(syringe?.overflowMoles || {}) };
   if ((syringe?.condensedWaterMol || 0) > 1e-12) {
     moles.H2O_l = (moles.H2O_l || 0) + syringe.condensedWaterMol;
+  }
+  if ((syringe?.condensedEtOHMol || 0) > 1e-12) {
+    moles.C2H5OH_l = (moles.C2H5OH_l || 0) + syringe.condensedEtOHMol;
   }
   return moles;
 }
@@ -222,13 +241,14 @@ export function computeSyringeFrozenVolumeMl(syringe) {
 }
 
 /**
- * Compute liquid water + overflowed solution volume inside Gas Syringe barrel (mL).
+ * Compute liquid water + ethanol condensate + overflowed solution volume inside Gas Syringe barrel (mL).
  */
 export function computeSyringeLiquidVolumeMl(syringe, env) {
   const syrT = syringe.tempK ?? env.tempK;
   const condMl = ((syringe.condensedWaterMol || 0) * SPECIES.H2O_l.molarMass) / 0.997;
+  const condEtMl = ((syringe.condensedEtOHMol || 0) * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density;
   const overflowMl = computeLiquidVolumeL(syringe.overflowMoles || {}, syrT) * 1000;
-  return condMl + overflowMl;
+  return condMl + condEtMl + overflowMl;
 }
 
 export function computeSyringeTotalVolumeMl(syringe, env) {
@@ -261,37 +281,76 @@ export function stepSyringeThermodynamics(syringe, dt, env) {
       nPerm += syringe.gasMoles[g] || 0;
     }
   }
+
+  let reactionHeatJ = 0;
+  // Gas-phase salt deposition inside Gas Syringe: NH3(g) + HCl(g) -> NH4Cl(s) (or NH4+ + Cl- if wet)
+  const nSyrNH3 = syringe.gasMoles.NH3_g || 0;
+  const nSyrHCl = syringe.gasMoles.HCl_g || 0;
+  if (nSyrNH3 > 1e-9 && nSyrHCl > 1e-9 && syringe.tempK < 610) {
+    const dSal = Math.min(nSyrNH3, nSyrHCl) * Math.min(1, 14.0 * dt);
+    if (dSal > 1e-12) {
+      syringe.gasMoles.NH3_g = Math.max(0, nSyrNH3 - dSal);
+      syringe.gasMoles.HCl_g = Math.max(0, nSyrHCl - dSal);
+      if (syringe.gasMoles.NH3_g < 1e-13) syringe.gasMoles.NH3_g = 0;
+      if (syringe.gasMoles.HCl_g < 1e-13) syringe.gasMoles.HCl_g = 0;
+      if (!syringe.overflowMoles) syringe.overflowMoles = {};
+      const hasSyrWater = (syringe.condensedWaterMol || 0) + (syringe.overflowMoles.H2O_l || 0) > 2e-4;
+      if (hasSyrWater) {
+        syringe.overflowMoles.NH4_aq = (syringe.overflowMoles.NH4_aq || 0) + dSal;
+        syringe.overflowMoles.Cl_aq = (syringe.overflowMoles.Cl_aq || 0) + dSal;
+      } else {
+        syringe.overflowMoles.NH4Cl_s = (syringe.overflowMoles.NH4Cl_s || 0) + dSal;
+      }
+      reactionHeatJ += dSal * 176000;
+      syringe.nh4clSmokeTimer = 2.4;
+      syringe.lastNH4ClRxnFlag = true;
+    }
+  }
+
   const nVapor = syringe.gasMoles.H2O_g || 0;
   const nCond = syringe.condensedWaterMol || 0;
   const nFrozen = syringe.frozenWaterMol || 0;
   const nEtVapor = syringe.gasMoles.C2H5OH_g || 0;
+  const nCondEt = syringe.condensedEtOHMol || 0;
 
   const pExtBar = Math.max(0.05, env.pressureBar);
   const tBoilK = waterBoilingPointK(pExtBar);
+  const tBoilEtK = SPECIES.C2H5OH_l?.boilTempK || 351.44;
   const pSatBar = waterVaporPressureBar(syringe.tempK);
+  const pSatEtBar = ethanolVaporPressureBar(syringe.tempK);
   const isAboveBoil = pSatBar >= pExtBar * 0.999 || syringe.tempK >= tBoilK;
+  const isAboveBoilEt = pSatEtBar >= pExtBar * 0.995 || syringe.tempK >= tBoilEtK;
   const nVaporEq = isAboveBoil ? Infinity : nPerm * (pSatBar / Math.max(1e-6, pExtBar - pSatBar));
+  const nEtEq = isAboveBoilEt ? Infinity : nPerm * (pSatEtBar / Math.max(1e-6, pExtBar - pSatEtBar));
 
   let latentHeatJ = 0;
   let condenseRate = 0;
 
-  // Condense excess Ethanol vapor C2H5OH(g) into barrel liquid when barrel < EtOH boiling point
-  if (nEtVapor > 1e-9) {
-    const pSatEt = ethanolVaporPressureBar(syringe.tempK);
-    if (pSatEt < pExtBar * 0.995 && syringe.tempK < SPECIES.C2H5OH_l.boilTempK) {
-      const nEtEq = nPerm * (pSatEt / Math.max(1e-6, pExtBar - pSatEt));
-      if (nEtVapor > nEtEq) {
-        const ex = nEtVapor - nEtEq;
-        const dCondE = Math.min(ex, ex * Math.min(1, (0.65 + 2.5 * (1 - pSatEt / pExtBar)) * dt));
-        if (dCondE > 1e-13) {
-          syringe.gasMoles.C2H5OH_g = Math.max(0, nEtVapor - dCondE);
-          if (syringe.gasMoles.C2H5OH_g < 1e-13) syringe.gasMoles.C2H5OH_g = 0;
-          if (!syringe.overflowMoles) syringe.overflowMoles = {};
-          syringe.overflowMoles.C2H5OH_l = (syringe.overflowMoles.C2H5OH_l || 0) + dCondE;
-          latentHeatJ += dCondE * SPECIES.C2H5OH_l.dHVapJ;
-          condenseRate += dCondE / Math.max(1e-5, dt);
-        }
-      }
+  // Reversible condensation & re-evaporation of Ethanol vapor C2H5OH(g) <-> condensedEtOHMol
+  if (nEtVapor > 1e-9 && nEtVapor > nEtEq && !isAboveBoilEt) {
+    const ex = nEtVapor - nEtEq;
+    const dCondE = Math.min(ex, ex * Math.min(1, (0.65 + 2.5 * Math.max(0.05, 1 - pSatEtBar / pExtBar)) * dt));
+    if (dCondE > 1e-13) {
+      syringe.gasMoles.C2H5OH_g = Math.max(0, nEtVapor - dCondE);
+      if (syringe.gasMoles.C2H5OH_g < 1e-13) syringe.gasMoles.C2H5OH_g = 0;
+      syringe.condensedEtOHMol = nCondEt + dCondE;
+      latentHeatJ += dCondE * SPECIES.C2H5OH_l.dHVapJ;
+      condenseRate += dCondE / Math.max(1e-5, dt);
+    }
+  } else if (nCondEt > 1e-9 && (isAboveBoilEt || nEtVapor < nEtEq * 0.99)) {
+    let dEvapE = 0;
+    if (isAboveBoilEt) {
+      const excessHeatJ = Math.max(0, (syringe.tempK - tBoilEtK) * cTotal + ambientCoolingJ);
+      dEvapE = Math.min(nCondEt, excessHeatJ / SPECIES.C2H5OH_l.dHVapJ);
+    } else {
+      const defE = Math.max(0, nEtEq - nEtVapor);
+      dEvapE = Math.min(nCondEt, defE, defE * Math.min(1, 0.45 * dt));
+    }
+    if (dEvapE > 1e-13) {
+      syringe.condensedEtOHMol = Math.max(0, nCondEt - dEvapE);
+      if (syringe.condensedEtOHMol < 1e-13) syringe.condensedEtOHMol = 0;
+      syringe.gasMoles.C2H5OH_g = nEtVapor + dEvapE;
+      latentHeatJ -= dEvapE * SPECIES.C2H5OH_l.dHVapJ;
     }
   }
 
@@ -311,7 +370,7 @@ export function stepSyringeThermodynamics(syringe, dt, env) {
         syringe.condensedWaterMol = nCond + dCond;
         latentHeatJ += dCond * CONSTANTS.DELTA_H_VAP_WATER_J;
       }
-      condenseRate = dCond / Math.max(1e-5, dt);
+      condenseRate += dCond / Math.max(1e-5, dt);
     }
   } else if (nCond > 1e-9 && (isAboveBoil || nVapor < nVaporEq * 0.99)) {
     // Condensed liquid droplets re-evaporate if dry gas mixes in or barrel rises to boiling point
@@ -331,9 +390,10 @@ export function stepSyringeThermodynamics(syringe, dt, env) {
     }
   }
 
-  let newTempK = syringe.tempK + (ambientCoolingJ + latentHeatJ) / cTotal;
-  if (latentHeatJ > 0 && newTempK > tBoilK) {
-    newTempK = Math.max(syringe.tempK, Math.min(newTempK, tBoilK));
+  let newTempK = syringe.tempK + (ambientCoolingJ + latentHeatJ + reactionHeatJ) / cTotal;
+  const activeCondCeilingK = nVapor > 1e-9 ? tBoilK : nEtVapor > 1e-9 ? tBoilEtK : tBoilK;
+  if (latentHeatJ > 0 && newTempK > activeCondCeilingK) {
+    newTempK = Math.max(syringe.tempK, Math.min(newTempK, activeCondCeilingK));
   }
   newTempK = Math.max(200, Math.min(600, newTempK));
 
