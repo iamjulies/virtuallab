@@ -1,4 +1,4 @@
-import { APPARATUS } from '../data/apparatus.js';
+import { APPARATUS, getStandGeometry } from '../data/apparatus.js';
 import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
 import { GAS_DISPLAY_META, SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
@@ -15,6 +15,14 @@ import {
   computeSyringeTotalVolumeMl,
   computeTubingGeometry,
 } from '../engine/gasNetwork.js';
+import { computeWashBottleStreamArc } from '../engine/apparatusTools.js';
+
+function renderFlipButtonHtml(item, t) {
+  if (!APPARATUS[item.typeId]?.flippable) return '';
+  return `<button type="button" id="ins-flip-x" class="px-2 py-1 rounded-lg border ${
+    item.flippedX ? 'border-accent bg-accent/15 text-accent font-semibold' : 'border-theme bg-surface text-main'
+  } text-xs hover:border-accent" title="${t(item.flippedX ? 'flipDirRight' : 'flipDirLeft')}">${t('actionFlipHorizontal')}</button>`;
+}
 
 const CHART_PALETTE = [
   '#38bdf8',
@@ -145,11 +153,14 @@ export class InspectorPanel {
     }
     if (item.kind === 'stand') {
       const children = this.sim.items.filter((i) => i.clampedToId === item.id).map((i) => i.id).join(',');
-      return `st|${item.id}|${children}|${langCode}|${logLen}`;
+      return `st|${item.id}|${item.flippedX ? 1 : 0}|${children}|${langCode}|${logLen}`;
     }
     if (item.kind === 'gas_syringe') {
       const hasIce = (item.frozenWaterMol || 0) > 1e-5 ? 1 : 0;
-      return `g|${item.id}|${hasIce}|${item.connectedFromId}|${item.clampedToId}|${standCount}|${item.isBroken}|${langCode}|${logLen}`;
+      return `g|${item.id}|${item.flippedX ? 1 : 0}|${hasIce}|${item.connectedFromId}|${item.clampedToId}|${standCount}|${item.isBroken}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'wash_bottle') {
+      return `wb|${item.id}|${item.flippedX ? 1 : 0}|${item.isSpraying ? 1 : 0}|${langCode}|${logLen}`;
     }
     if (item.kind === 'filter_funnel' || item.kind === 'burette') {
       const spKeys = Object.keys(item.moles || {}).filter((k) => item.moles[k] > 1e-10).sort().join(',');
@@ -169,17 +180,17 @@ export class InspectorPanel {
       return `el|${item.id}|${item.material}|${item.dockedVesselId || ''}|${item.polarityLabel || ''}|${item.platedMaterial || ''}|${item.platedQuality || ''}|${item.cathodicProtectedActive ? 1 : 0}|${langCode}|${logLen}`;
     }
     if (item.kind === 'splint') {
-      return `sp|${item.id}|${item.mode}|${langCode}|${logLen}`;
+      return `sp|${item.id}|${item.flippedX ? 1 : 0}|${item.mode}|${langCode}|${logLen}`;
     }
     if (item.kind === 'condenser') {
       const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered).length;
-      return `co|${item.id}|${item.isBroken ? 1 : 0}|${item.waterFlowOn ? 1 : 0}|${item.clampedToId}|${item.connectedFromId || ''}|${item.outletTargetId || ''}|${vCnt}|${langCode}|${logLen}`;
+      return `co|${item.id}|${item.flippedX ? 1 : 0}|${item.isBroken ? 1 : 0}|${item.waterFlowOn ? 1 : 0}|${item.clampedToId}|${item.connectedFromId || ''}|${item.outletTargetId || ''}|${vCnt}|${langCode}|${logLen}`;
     }
     if (item.kind === 'flame_loop') {
-      return `fl|${item.id}|${item.sampledIon || ''}|${langCode}|${logLen}`;
+      return `fl|${item.id}|${item.flippedX ? 1 : 0}|${item.sampledIon || ''}|${langCode}|${logLen}`;
     }
     if (item.kind === 'indicator_strip') {
-      return `ind|${item.id}|${item.stripKind}|${item.sampledPH ?? 'null'}|${item.tipColor}|${item.isBleached ? 1 : 0}|${langCode}|${logLen}`;
+      return `ind|${item.id}|${item.flippedX ? 1 : 0}|${item.stripKind}|${item.sampledPH ?? 'null'}|${item.tipColor}|${item.isBleached ? 1 : 0}|${langCode}|${logLen}`;
     }
     if (item.kind === 'stir_bar') {
       const host = item.inVesselId ? this.sim.getItem(item.inVesselId) : null;
@@ -330,7 +341,10 @@ export class InspectorPanel {
               <div class="text-sm font-bold">🗜️ ${t('standTitle')} ${item.label}</div>
               <div class="text-[11px] text-muted">${stSpec.materialSpec} · ${stSpec.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${renderFlipButtonHtml(item, t)}
+              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            </div>
           </div>
           <div class="flex flex-col gap-1.5">
             <div class="text-xs font-medium text-muted">${t('standClampedList')}</div>
@@ -372,7 +386,10 @@ export class InspectorPanel {
               <div class="text-sm font-bold">${t('eq_gas_syringe')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
               <div class="text-[11px] text-muted">${syrSpec.materialSpec} · ${syrSpec.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${renderFlipButtonHtml(item, t)}
+              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            </div>
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
@@ -466,20 +483,33 @@ export class InspectorPanel {
         </div>
       `;
     } else if (item.kind === 'wash_bottle') {
+      const wbArc = computeWashBottleStreamArc(item, this.sim.items, 482, CONSTANTS.GRAVITY_PX_S2 || 1800);
+      const wbCatchLabel = wbArc?.hitTarget
+        ? `🎯 ${t(APPARATUS[wbArc.hitTarget.typeId].i18nKey)} ${wbArc.hitTarget.label}`
+        : t('syringeCatchMiss');
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t('eq_wash_bottle')} ${item.label}</div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${renderFlipButtonHtml(item, t)}
+              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            </div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface flex justify-between items-center">
             <span class="text-xs text-muted">H₂O(l)</span>
             <strong class="text-sm font-mono text-sky-400" id="live-wb-vol">${(item.waterMl || 0).toFixed(1)} / 250 mL</strong>
           </div>
+          <div class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-[11px] flex items-center justify-between gap-2">
+            <span class="text-muted">${t('syringeCatchHint')}</span>
+            <span class="font-semibold truncate" id="live-wb-catch">${wbCatchLabel}</span>
+          </div>
           <div class="grid grid-cols-2 gap-2">
             <button type="button" id="ins-wb-squirt" class="py-1.5 px-2 rounded-lg bg-sky-600 text-white text-xs font-semibold hover:bg-sky-500">${t('actionSquirtWash')}</button>
-            <button type="button" id="ins-wb-refill" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionRefillWash')}</button>
+            <button type="button" id="ins-wb-spray-toggle" class="py-1.5 px-2 rounded-lg border ${item.isSpraying ? 'border-sky-500 bg-sky-500/20 text-sky-400 font-semibold' : 'border-theme bg-surface text-main font-medium'} text-xs hover:border-accent">${t(item.isSpraying ? 'actionSprayContinuousStop' : 'actionSprayContinuousStart')}</button>
           </div>
+          <button type="button" id="ins-wb-refill" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionRefillWash')}</button>
+          <p class="text-[11px] text-muted leading-snug">${t('washBottleAimHint')}</p>
         </div>
       `;
     } else if (item.kind === 'condenser') {
@@ -490,7 +520,10 @@ export class InspectorPanel {
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t('eq_liebig_condenser')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${renderFlipButtonHtml(item, t)}
+              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            </div>
           </div>
           ${
             item.isBroken
@@ -589,7 +622,10 @@ export class InspectorPanel {
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t('eq_splint')} ${item.label}</div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${renderFlipButtonHtml(item, t)}
+              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            </div>
           </div>
           <div class="text-xs text-muted">${t('splintModeLabel')}</div>
           <div class="grid grid-cols-3 gap-1.5">
@@ -612,7 +648,10 @@ export class InspectorPanel {
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t('eq_flame_loop')} ${item.label}</div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${renderFlipButtonHtml(item, t)}
+              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            </div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs font-mono flex justify-between">
             <span class="text-muted">${langCode === 'en' ? 'Adsorbed Ion:' : 'Ion hấp phụ:'}</span>
@@ -634,7 +673,10 @@ export class InspectorPanel {
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t(isLitmus ? 'eq_litmus_paper' : 'eq_ph_strip')} ${item.label}</div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${renderFlipButtonHtml(item, t)}
+              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            </div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface flex items-center justify-between text-xs">
             <span class="text-muted">${langCode === 'en' ? 'Reading:' : 'Kết quả:'}</span>
@@ -1153,6 +1195,9 @@ export class InspectorPanel {
     this.container.querySelector('#ins-delete')?.addEventListener('click', () => {
       this.sim.removeApparatus(item.id);
     });
+    this.container.querySelector('#ins-flip-x')?.addEventListener('click', () => {
+      this.sim.toggleItemFlipX(item.id);
+    });
 
     if (item.kind === 'scale') {
       this.container.querySelector('#ins-tare')?.addEventListener('click', () => this.sim.tareScale(item.id));
@@ -1200,7 +1245,7 @@ export class InspectorPanel {
         } else {
           const st = this.sim.items.find((i) => i.kind === 'stand');
           if (st) {
-            item.x = st.x - 45;
+            item.x = getStandGeometry(st).clampTargetX(item.kind);
             item.y = Math.min(item.y, 330);
             this.sim.attachToStand(item.id, st.id);
           }
@@ -1232,7 +1277,7 @@ export class InspectorPanel {
         } else {
           const st = this.sim.items.find((i) => i.kind === 'stand');
           if (st) {
-            item.x = st.x - 28;
+            item.x = getStandGeometry(st).clampTargetX(item.kind);
             item.y = Math.min(item.y, 340);
             this.sim.attachToStand(item.id, st.id);
           }
@@ -1259,7 +1304,7 @@ export class InspectorPanel {
         } else {
           const st = this.sim.items.find((i) => i.kind === 'stand');
           if (st) {
-            item.x = st.x - 28;
+            item.x = getStandGeometry(st).clampTargetX(item.kind);
             item.y = Math.min(item.y, 320);
             this.sim.attachToStand(item.id, st.id);
           }
@@ -1298,6 +1343,7 @@ export class InspectorPanel {
       });
     } else if (item.kind === 'wash_bottle') {
       this.container.querySelector('#ins-wb-squirt')?.addEventListener('click', () => this.sim.washBottleSquirt(item.id, null, 5.0));
+      this.container.querySelector('#ins-wb-spray-toggle')?.addEventListener('click', () => this.sim.toggleWashBottleSpray(item.id));
       this.container.querySelector('#ins-wb-refill')?.addEventListener('click', () => {
         item.waterMl = 250;
         this.sim.recomputeScaleReadings();
@@ -1447,6 +1493,19 @@ export class InspectorPanel {
       const sEl = this.container.querySelector('#live-pip-src');
       if (vEl) vEl.textContent = `${(item.volumeMl || 0).toFixed(2)} / 10.00 mL`;
       if (sEl) sEl.textContent = item.sourceLabel || '—';
+      return;
+    }
+
+    if (item.kind === 'wash_bottle') {
+      const volEl = this.container.querySelector('#live-wb-vol');
+      const catchEl = this.container.querySelector('#live-wb-catch');
+      if (volEl) volEl.textContent = `${(item.waterMl || 0).toFixed(1)} / 250 mL`;
+      if (catchEl) {
+        const wbArc = computeWashBottleStreamArc(item, this.sim.items, 482, CONSTANTS.GRAVITY_PX_S2 || 1800);
+        catchEl.textContent = wbArc?.hitTarget
+          ? `🎯 ${t(APPARATUS[wbArc.hitTarget.typeId].i18nKey)} ${wbArc.hitTarget.label}`
+          : t('syringeCatchMiss');
+      }
       return;
     }
 

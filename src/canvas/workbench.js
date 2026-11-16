@@ -1,4 +1,10 @@
-import { APPARATUS, clampItemToStandY } from '../data/apparatus.js';
+import {
+  APPARATUS,
+  clampItemToStandY,
+  getCondenserPorts,
+  getStandGeometry,
+  getSyringeGeometry,
+} from '../data/apparatus.js';
 import { CONSTANTS } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computePH, computeSolutionVisuals } from '../engine/equilibrium.js';
@@ -7,10 +13,13 @@ import {
   checkFlameLoopInteractions,
   checkIndicatorStripInteractions,
   checkSplintInteractions,
+  computeWashBottleStreamArc,
   syncDockedToolPositions,
 } from '../engine/apparatusTools.js';
 import { renderActiveReagentTransfer } from './reagentRenderer.js';
 import {
+  beginCanvasLabelFrame,
+  flushCanvasLabelFrame,
   renderBurner,
   renderGasSyringe,
   renderPipette,
@@ -19,6 +28,7 @@ import {
   renderScale,
   renderTubingConnections,
   renderVessel,
+  setCurrentLabelItemId,
 } from './vesselRenderer.js';
 import {
   renderBurette,
@@ -114,9 +124,7 @@ export class LabWorkbenchCanvas {
     for (let i = this.sim.items.length - 1; i >= 0; i--) {
       const c = this.sim.items[i];
       if (c.kind !== 'condenser' || c.isBroken) continue;
-      const halfW = (APPARATUS.liebig_condenser?.width || 152) / 2;
-      const portIn = { x: c.x - halfW * 0.94, y: c.y - 10 };
-      const portOut = { x: c.x + halfW * 0.94, y: c.y + 11 };
+      const { inlet: portIn, outlet: portOut } = getCondenserPorts(c);
       if (Math.hypot(lx - portIn.x, ly - portIn.y) <= 13) {
         return { cond: c, port: 'inlet', origin: portIn };
       }
@@ -288,7 +296,8 @@ export class LabWorkbenchCanvas {
       } else if (created && hoverSyr && payloadId === 'pipette_10' && !hoverSyr.isBroken) {
         const drew = this.sim.pipetteDrawFromSyringe(hoverSyr.id, created.capacityMl || 10.0, created);
         if (drew > 0) {
-          created.x = Math.max(45, hoverSyr.x - APPARATUS.gas_syringe.width / 2 - 24);
+          const syrG = getSyringeGeometry(hoverSyr);
+          created.x = Math.max(45, Math.min(BENCH_LOGICAL_W - 45, syrG.nozzleX - syrG.barrelDir * 24));
           created.y = BENCH_FLOOR_Y - spec.height / 2 + 2;
           created.fallStartY = null;
         }
@@ -369,8 +378,7 @@ export class LabWorkbenchCanvas {
       if (stand.kind !== 'stand') continue;
       const sSpec = APPARATUS.retort_stand;
       const standTop = stand.y - sSpec.height / 2;
-      const rodX = stand.x + 36;
-      const targetX = item.kind === 'gas_syringe' ? rodX - 45 : rodX - 28;
+      const targetX = getStandGeometry(stand).clampTargetX(item.kind);
       const distX = Math.abs(item.x - targetX);
       const maxPullDist = item.kind === 'gas_syringe' ? 88 : item.kind === 'burette' || item.kind === 'condenser' ? 68 : 58;
       if (distX <= maxPullDist && item.y >= standTop + 8 && item.y <= BENCH_FLOOR_Y - 10) {
@@ -408,6 +416,7 @@ export class LabWorkbenchCanvas {
       }
 
       const hit = this.hitTestItem(pt.x, pt.y);
+      this.hoverItemId = hit ? hit.id : null;
       if (hit) {
         this.sim.selectedId = hit.id;
         hit.isDragging = true;
@@ -472,6 +481,14 @@ export class LabWorkbenchCanvas {
         this.sim.toggleMagneticStir(hit.id);
       } else if (hit && hit.kind === 'stir_bar' && hit.inVesselId) {
         this.sim.toggleMagneticStir(hit.inVesselId);
+      } else if (hit && hit.kind === 'wash_bottle') {
+        this.sim.toggleWashBottleSpray(hit.id);
+      }
+    });
+
+    this.canvas.addEventListener('pointerleave', () => {
+      if (!this.dragState && !this.portDragState) {
+        this.hoverItemId = null;
       }
     });
 
@@ -492,6 +509,7 @@ export class LabWorkbenchCanvas {
       if (!this.dragState) {
         const portHover = this.findCondenserPortAt(pt.x, pt.y);
         if (portHover) {
+          this.hoverItemId = portHover.cond.id;
           this.canvas.style.cursor = 'crosshair';
           return;
         }
@@ -559,7 +577,7 @@ export class LabWorkbenchCanvas {
             this.dragState.clampStandId = stand.id;
             item.clampedToId = stand.id;
             if (item.kind === 'burette' || item.kind === 'condenser' || item.kind === 'filter_funnel') {
-              const snapX = stand.x + 8;
+              const snapX = getStandGeometry(stand).clampTargetX(item.kind);
               if (Math.abs(item.x - snapX) < 32) item.x = snapX;
             }
           } else {
@@ -577,9 +595,8 @@ export class LabWorkbenchCanvas {
       } else if (item.kind === 'indicator_strip') {
         checkIndicatorStripInteractions(this.sim, item);
       } else if (item.kind === 'wash_bottle') {
-        const tgt = this.findVesselAt(item.x - 24, item.y, null, true);
-        this.dropTargetVesselId = tgt ? tgt.id : null;
-        item.isSpraying = Boolean(tgt);
+        const arc = computeWashBottleStreamArc(item, this.sim.items, BENCH_FLOOR_Y, CONSTANTS.GRAVITY_PX_S2 || 1800);
+        this.dropTargetVesselId = arc.hitTarget ? arc.hitTarget.id : null;
       } else if (item.kind === 'stir_bar' || item.kind === 'electrode' || item.kind === 'filter_funnel') {
         const tgt = this.findVesselAt(item.x, item.y + 18, item.id, false);
         this.dropTargetVesselId = tgt && !tgt.isStoppered ? tgt.id : null;
@@ -696,7 +713,6 @@ export class LabWorkbenchCanvas {
         const pipTargetId = this.dragState.pipetteTargetId;
         if (item) {
           item.isDragging = false;
-          if (item.kind === 'wash_bottle') item.isSpraying = false;
           if (item.kind === 'stir_bar') {
             const tgt = this.findVesselAt(item.x, item.y + 10, null, false);
             if (tgt && !tgt.isStoppered) {
@@ -749,7 +765,8 @@ export class LabWorkbenchCanvas {
             } else if (tgt && tgt.kind === 'gas_syringe' && !tgt.isBroken && (item.volumeMl || 0) <= 0.05) {
               this.sim.pipetteDrawFromSyringe(tgt.id, item.capacityMl || 10.0, item);
               const pSpec = APPARATUS[item.typeId];
-              item.x = Math.max(45, tgt.x - APPARATUS.gas_syringe.width / 2 - 24);
+              const syrG = getSyringeGeometry(tgt);
+              item.x = Math.max(45, Math.min(BENCH_LOGICAL_W - 45, syrG.nozzleX - syrG.barrelDir * 24));
               item.y = BENCH_FLOOR_Y - pSpec.height / 2 + 2;
               item.fallStartY = null;
             }
@@ -950,7 +967,16 @@ export class LabWorkbenchCanvas {
     ctx.lineTo(BENCH_LOGICAL_W, BENCH_FLOOR_Y);
     ctx.stroke();
 
-    // 2. Render supports & stands behind, clamp jaws, then Syringes, Vessels, and Pipettes on top
+    // 2. Render supports & stands behind, clamp jaws, then Syringes, Vessels, and Pipettes on top.
+    // Floating Canvas label pills auto-hide by default: show only hovered/dragged apparatus, drawn on the top layer.
+    const activeTooltipIds = new Set();
+    if (this.hoverItemId) activeTooltipIds.add(this.hoverItemId);
+    if (this.dragState?.itemId) activeTooltipIds.add(this.dragState.itemId);
+    if (this.dragState?.pourTargetId) activeTooltipIds.add(this.dragState.pourTargetId);
+    if (this.dragState?.pipetteTargetId) activeTooltipIds.add(this.dragState.pipetteTargetId);
+    if (this.portDragState?.condId) activeTooltipIds.add(this.portDragState.condId);
+    beginCanvasLabelFrame(activeTooltipIds);
+
     renderTubingConnections(ctx, this.sim.items, this.isDark, timeNow, this.langCode);
 
     const ordered = [
@@ -968,6 +994,7 @@ export class LabWorkbenchCanvas {
     for (const item of ordered) {
       const isSelected = item.id === this.sim.selectedId;
       const isDropTgt = item.id === this.dropTargetVesselId;
+      setCurrentLabelItemId(item.id);
       if (item.kind === 'stand') {
         renderRetortStand(ctx, item, isSelected, this.isDark);
       } else if (item.kind === 'scale') {
@@ -991,7 +1018,7 @@ export class LabWorkbenchCanvas {
       } else if (item.kind === 'filter_funnel') {
         renderFilterFunnel(ctx, item, isSelected, isDropTgt, this.isDark, this.langCode, timeNow);
       } else if (item.kind === 'wash_bottle') {
-        renderWashBottle(ctx, item, isSelected, this.isDark, this.langCode);
+        renderWashBottle(ctx, item, isSelected, this.isDark, this.langCode, timeNow);
       } else if (item.kind === 'condenser') {
         renderLiebigCondenser(ctx, item, isSelected, this.isDark, timeNow, this.langCode);
       } else if (item.kind === 'burette') {
@@ -1017,6 +1044,7 @@ export class LabWorkbenchCanvas {
         }
       }
     }
+    setCurrentLabelItemId(null);
 
     if (this.portDragState) {
       const pd = this.portDragState;
@@ -1066,6 +1094,42 @@ export class LabWorkbenchCanvas {
           ctx.fillStyle = 'rgba(16, 185, 129, 0.85)';
           ctx.beginPath();
           ctx.arc(aimArc.hitX, aimArc.hitY, 4.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+
+    // Show parabolic aim trajectory guide when selecting/dragging a Wash Bottle with water
+    if (
+      selItem &&
+      selItem.kind === 'wash_bottle' &&
+      (selItem.waterMl || 0) > 0.1 &&
+      !selItem.isSpraying &&
+      (selItem.squirtTimer || 0) <= 0
+    ) {
+      const wbArc = computeWashBottleStreamArc(
+        selItem,
+        this.sim.items,
+        BENCH_FLOOR_Y,
+        CONSTANTS.GRAVITY_PX_S2 || 1800
+      );
+      if (wbArc.points.length >= 2) {
+        ctx.save();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = wbArc.hitTarget ? 'rgba(14, 165, 233, 0.85)' : 'rgba(148, 163, 184, 0.42)';
+        ctx.lineWidth = wbArc.hitTarget ? 2.0 : 1.3;
+        ctx.beginPath();
+        ctx.moveTo(wbArc.points[0].x, wbArc.points[0].y);
+        for (let i = 1; i < wbArc.points.length; i++) {
+          ctx.lineTo(wbArc.points[i].x, wbArc.points[i].y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (wbArc.hitTarget) {
+          ctx.fillStyle = 'rgba(14, 165, 233, 0.9)';
+          ctx.beginPath();
+          ctx.arc(wbArc.hitX, wbArc.hitY, 4.2, 0, Math.PI * 2);
           ctx.fill();
         }
         ctx.restore();
@@ -1135,6 +1199,9 @@ export class LabWorkbenchCanvas {
 
     // 5. Render particles (bubbles, steam, Na yellow flame, sparks, glass shards)
     this.particles.render(ctx);
+
+    // 6. Render hovered/dragged Canvas tooltip pills on the very top layer above vapor/steam/smoke!
+    flushCanvasLabelFrame(ctx);
 
     ctx.restore();
   }

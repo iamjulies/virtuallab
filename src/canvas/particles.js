@@ -1,5 +1,5 @@
 import { CONSTANTS } from '../data/constants.js';
-import { APPARATUS } from '../data/apparatus.js';
+import { APPARATUS, getCondenserPorts, getSyringeGeometry } from '../data/apparatus.js';
 import { NON_STEAM_GAS_IDS, SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl } from '../engine/equilibrium.js';
 import { getSyringeNozzlePos } from '../engine/gasNetwork.js';
@@ -48,11 +48,11 @@ export class ParticleSystem {
     if (item.kind === 'filter_funnel' || item.kind === 'burette' || item.kind === 'condenser') {
       const rate = metrics.rateMlS || 0;
       if (rate > 0.05 && Math.random() < Math.min(0.85, rate * dt * 8)) {
-        const dropX = item.kind === 'condenser' ? item.x + 68 : item.x;
-        const dropY =
-          item.kind === 'condenser'
-            ? item.y + 18
-            : item.y + (APPARATUS[item.typeId]?.height || 92) / 2;
+        const condSpout = item.kind === 'condenser' ? getCondenserPorts(item).spout : null;
+        const dropX = condSpout ? condSpout.x : item.x;
+        const dropY = condSpout
+          ? condSpout.y
+          : item.y + (APPARATUS[item.typeId]?.height || 92) / 2;
         this.particles.push({
           kind: 'drip',
           x: dropX,
@@ -91,22 +91,45 @@ export class ParticleSystem {
       return;
     }
 
+    if (item.kind === 'wash_bottle' && metrics.squirtArc) {
+      const arc = metrics.squirtArc;
+      if (arc.hitX != null && Math.random() < 0.72) {
+        const sx = arc.hitX + (Math.random() - 0.5) * 6;
+        const sy = arc.hitY;
+        this.particles.push({
+          kind: 'drip',
+          x: sx,
+          y: sy - 2,
+          vx: (arc.dir || -1) * (12 + Math.random() * 24) + (Math.random() - 0.5) * 26,
+          vy: -(24 + Math.random() * 28),
+          g: 980,
+          r: 1.5 + Math.random() * 1.1,
+          stopY: arc.hitY + 3,
+          life: 0,
+          maxLife: 0.28,
+          color: 'rgba(186, 230, 253, 0.88)',
+          splashed: false,
+        });
+      }
+      return;
+    }
+
     if (item.kind === 'gas_syringe') {
-      const sSpec = APPARATUS.gas_syringe;
-      const nozzle = getSyringeNozzlePos(item);
+      const syrGeom = getSyringeGeometry(item);
+      const nozzle = { x: syrGeom.nozzleX, y: syrGeom.nozzleY };
 
       // 1. Rear collar spill when 250 mL syringe overflows
       if ((metrics.overflowOutRateMlS || 0) > 0.5) {
         const rate = Math.min(60, 14 + metrics.overflowOutRateMlS * 0.45);
         const dropCount = Math.floor(rate * dt) + (Math.random() < (rate * dt) % 1 ? 1 : 0);
-        const rearX = item.x - sSpec.width / 2 + (sSpec.barrelLeftOffset || 20) + (sSpec.barrelW || 192);
+        const rearX = syrGeom.rearX;
         const col = metrics.overflowOutColor || 'rgba(186, 230, 253, 0.85)';
         for (let i = 0; i < dropCount; i++) {
           this.particles.push({
             kind: 'drip',
             x: rearX + (Math.random() - 0.5) * 4,
             y: item.y + (Math.random() - 0.5) * 16,
-            vx: 45 + Math.random() * 75,
+            vx: syrGeom.barrelDir * (45 + Math.random() * 75),
             vy: -15 + Math.random() * 35,
             r: 2.3 + Math.random() * 2.2,
             life: 0,
@@ -128,7 +151,7 @@ export class ParticleSystem {
             kind: 'drip',
             x: nozzle.x + (Math.random() - 0.5) * 2.5,
             y: nozzle.y + (Math.random() - 0.5) * 2.5,
-            vx: -48 + (Math.random() - 0.5) * 8,
+            vx: syrGeom.dischargeVx + (Math.random() - 0.5) * 8,
             vy: 14 + (Math.random() - 0.5) * 6,
             g: CONSTANTS.GRAVITY_PX_S2 || 1800,
             r: 2.1 + Math.random() * 1.4,
@@ -173,6 +196,7 @@ export class ParticleSystem {
           ? 'rgba(226, 232, 240, 0.20)'
           : 'rgba(100, 116, 139, 0.18)';
 
+        const outDir = -syrGeom.barrelDir;
         const ratePlume = nozzlePlume?.nozzleFilamentRate || 14;
         const filW = (nozzlePlume?.filamentWidth || 2.4) === 2.8 ? 3.2 : 2.4;
         const pCount = Math.floor(ratePlume * dt) + (Math.random() < (ratePlume * dt) % 1 ? 1 : 0);
@@ -182,7 +206,7 @@ export class ParticleSystem {
               kind: 'gas_filament',
               x: nozzle.x,
               y: nozzle.y + (Math.random() - 0.5) * 3,
-              vx: -(28 + Math.random() * 24),
+              vx: outDir * (28 + Math.random() * 24),
               vy: -(32 + Math.random() * 44),
               phase: Math.random() * Math.PI * 2,
               trail: [{ x: nozzle.x, y: nozzle.y }],
@@ -194,9 +218,9 @@ export class ParticleSystem {
           } else {
             this.particles.push({
               kind: 'gas_cloud',
-              x: nozzle.x - 4,
+              x: nozzle.x + outDir * 4,
               y: nozzle.y - 2,
-              vx: -(16 + Math.random() * 18),
+              vx: outDir * (16 + Math.random() * 18),
               vy: -(38 + Math.random() * 34),
               phase: Math.random() * Math.PI * 2,
               r: 6 + Math.random() * 5,

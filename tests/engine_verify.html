@@ -18,7 +18,16 @@
 
   <script type="module">
     import { CONSTANTS, nonVolatileSoluteMoles, solutionBoilingPointK, waterBoilingPointK } from '../src/data/constants.js';
-    import { APPARATUS, APPARATUS_ORDER, clampItemToStandY, getClampNeckOffsetY } from '../src/data/apparatus.js';
+    import {
+      APPARATUS,
+      APPARATUS_ORDER,
+      clampItemToStandY,
+      getClampNeckOffsetY,
+      getCondenserPorts,
+      getProbeTipPos,
+      getStandGeometry,
+      getSyringeGeometry,
+    } from '../src/data/apparatus.js';
     import {
       GAS_DISPLAY_META,
       REAGENT_CATEGORIES,
@@ -29,7 +38,13 @@
       getGasRelativeAirDensity,
     } from '../src/data/species.js';
     import { REACTIONS } from '../src/data/reactions.js';
-    import { computeVesselFluidGeometry } from '../src/canvas/vesselRenderer.js';
+    import {
+      beginCanvasLabelFrame,
+      computeVesselFluidGeometry,
+      drawLabelPill,
+      flushCanvasLabelFrame,
+      getThemePalette,
+    } from '../src/canvas/vesselRenderer.js';
     import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
     import { ParticleSystem } from '../src/canvas/particles.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
@@ -40,6 +55,7 @@
       DRY_SALT_PAIRINGS,
     } from '../src/engine/chemistry.js';
     import { LabSimulation } from '../src/engine/simulation.js';
+    import { computeWashBottleStreamArc } from '../src/engine/apparatusTools.js';
     import { calcEvaporationRateMol, computeSteamOpacity } from '../src/engine/thermodynamics.js';
     import {
       computeContentsMassG,
@@ -2390,15 +2406,15 @@
       );
     }
 
-    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.5 Sync
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.6 Sync
     {
       const allTranslated = APPARATUS_ORDER.every((id) => {
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_v2+build.5';
+      const expectedBuild = 'virlab_v2+build.6';
       assert(
-        'Build virlab_v2+build.5 parity: All 27 apparatus translated in VI/EN, IUPAC spellings enforced',
+        'Build virlab_v2+build.6 parity: All 27 apparatus translated in VI/EN, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 27 &&
           allTranslated &&
           I18N.vi.appSubtitle.includes(expectedBuild) &&
@@ -2860,6 +2876,164 @@
         'Phenomena #3 Silver Mirror, #5 Mechanochem CuO, #6 Oxyhydrogen Blast, #7 AgCl UV Fix, #8 Graham 59.4%, #9 Cu Etch & #10 Cathodic Prot all pass',
         okMir && okMech && okOxDet && okPhoto && okGraham && qualLow === 'smooth' && qualHigh === 'burned' && etchedComplex > 1e-6 && okProt,
         `mir=${okMir}, mech=${okMech}, oxDet=${okOxDet}, photo=${okPhoto}(agD=${agDark.toFixed(3)}), graham=${((tubeG.ringPosFrac||0)*100).toFixed(1)}%, plate=${qualLow}->${qualHigh}, etch=${(etchedComplex*1000).toFixed(2)}m, prot=${okProt}`
+      );
+    }
+
+    // TEST 65: Left-Right Flip (flippedX) physical + port parity across Stand, Condenser, Gas Syringe & Probes
+    {
+      const sim = new LabSimulation();
+      const stand = sim.createApparatus('retort_stand', 400, 329);
+      const beaker = sim.createApparatus('beaker_250', 408, 220);
+      sim.attachToStand(beaker.id, stand.id);
+      const rodBefore = getStandGeometry(stand).rodX;
+      const beakerBeforeX = beaker.x;
+      sim.toggleItemFlipX(stand.id);
+      const rodAfter = getStandGeometry(stand).rodX;
+      const okStand = rodBefore > stand.x && rodAfter < stand.x && beakerBeforeX < rodBefore && beaker.x > rodAfter;
+
+      const cond = sim.createApparatus('liebig_condenser', 300, 200);
+      const pDef = getCondenserPorts(cond);
+      sim.toggleItemFlipX(cond.id);
+      const pFlip = getCondenserPorts(cond);
+      const okCond = pDef.inlet.x < cond.x && pFlip.inlet.x > cond.x && pDef.spout.x > cond.x && pFlip.spout.x < cond.x && pFlip.tiltAngle < 0;
+
+      const syr = sim.createApparatus('gas_syringe', 400, 260);
+      const recvRight = sim.createApparatus('beaker_250', 560, 427);
+      const gBefore = getSyringeGeometry(syr);
+      sim.toggleItemFlipX(syr.id);
+      const gAfter = getSyringeGeometry(syr);
+      const arcFlip = computeSyringeDischargeArc(syr, sim.items, 482, 1800);
+      const okSyr = gBefore.nozzleX < syr.x && gAfter.nozzleX > syr.x && gAfter.dischargeVx > 0 && arcFlip.hitTargetVessel?.id === recvRight.id;
+
+      const acidBeaker = sim.createApparatus('beaker_250', 220, 427);
+      acidBeaker.moles = { H2O_l: 3.0, H_aq: 0.3, Cl_aq: 0.3 };
+      const lit = sim.createApparatus('litmus_paper', acidBeaker.x - 24, acidBeaker.y);
+      sim.toggleItemFlipX(lit.id);
+      const litTip = getProbeTipPos(lit);
+      stepSeconds(sim, 0.1, 0.05);
+      const okProbe = litTip.x > lit.x && lit.sampledPH != null && lit.sampledPH < 2.0;
+
+      assert(
+        'Left-Right Flip (flippedX): Stand swings clamped child across rod; Condenser & Gas Syringe flip ports/arcs; Flipped Litmus samples acid cleanly',
+        okStand && okCond && okSyr && okProbe,
+        `stand=${okStand}(rod:${rodBefore}->${rodAfter},childX=${beaker.x}), cond=${okCond}, syr=${okSyr}(hit=${arcFlip.hitTargetVessel?.id}), probe=${okProbe}(pH=${lit.sampledPH?.toFixed(2)})`
+      );
+    }
+
+    // TEST 66: Wash Bottle parabolic trajectory hits Beaker/Dish/Funnel & supports continuous spray + stoppered block
+    {
+      const sim = new LabSimulation();
+      const targetBeaker = sim.createApparatus('beaker_250', 240, 427);
+      const wb = sim.createApparatus('wash_bottle', 355, 422);
+      const arcHit = computeWashBottleStreamArc(wb, sim.items, 482, 1800);
+      const squirted = sim.washBottleSquirt(wb.id, null, 8.0);
+      const waterAfterSquirt = targetBeaker.moles.H2O_l || 0;
+
+      // Toggle continuous spray and step 0.5s
+      sim.toggleWashBottleSpray(wb.id, true);
+      stepSeconds(sim, 0.5, 0.05);
+      const waterAfterSpray = targetBeaker.moles.H2O_l || 0;
+      sim.toggleWashBottleSpray(wb.id, false);
+
+      // Flip Wash Bottle right toward Porcelain Dish & test stoppered Erlenmeyer block
+      const dishRight = sim.createApparatus('porcelain_dish', 505, 460);
+      sim.toggleItemFlipX(wb.id);
+      const flippedArc = computeWashBottleStreamArc(wb, sim.items, 482, 1800);
+
+      const stopperedFlask = sim.createApparatus('erlenmeyer_250', 700, 399);
+      stopperedFlask.isStoppered = true;
+      const wb2 = sim.createApparatus('wash_bottle', 805, 422);
+      const blockedArc = computeWashBottleStreamArc(wb2, sim.items, 482, 1800);
+
+      assert(
+        'Wash Bottle parabolic jet hits Beaker & flipped Dish, draws active stream arc, steps continuous spray & blocks stoppered flask',
+        arcHit.hitTarget?.id === targetBeaker.id &&
+          Math.abs(squirted - 8.0) < 0.01 &&
+          (wb.squirtTimer || 0) > 0 &&
+          waterAfterSpray > waterAfterSquirt + 0.1 &&
+          flippedArc.hitTarget?.id === dishRight.id &&
+          blockedArc.hitTarget === null &&
+          blockedArc.blockedByStopper === true,
+        `hit=${arcHit.hitTarget?.label}, sq=${squirted.toFixed(1)}, H2O:${waterAfterSquirt.toFixed(2)}->${waterAfterSpray.toFixed(2)}, flipHit=${flippedArc.hitTarget?.label}, blocked=${blockedArc.blockedByStopper}`
+      );
+    }
+
+    // TEST 67: Mortar & Pestle powder visuals + brittle salt comminution vs ductile Zn / soft Na mechanics
+    {
+      const sim = new LabSimulation();
+      const mortarSalt = sim.createApparatus('mortar_pestle', 200, 451);
+      sim.addReagentToVessel(mortarSalt.id, 'cuso4_5h2o', 2.0, { silentAnim: true, fine: false });
+      sim.grindMortar(mortarSalt.id);
+      const beakerDest = sim.createApparatus('beaker_250', 340, 427);
+      sim.transferSolidsToVessel(mortarSalt.id, beakerDest.id, 1.0);
+
+      const mortarMetal = sim.createApparatus('mortar_pestle', 520, 451);
+      mortarMetal.moles = { Zn_s: 0.05, Na_s: 0.02 };
+      mortarMetal.particleCounts = { Zn_s: 8, Na_s: 2 };
+      sim.grindMortar(mortarMetal.id);
+
+      // Smoke check renderVesselSolids with fine ground powder vs flattened metals on offscreen Canvas
+      const cvs = document.createElement('canvas');
+      cvs.width = 160;
+      cvs.height = 160;
+      const ctx = cvs.getContext('2d');
+      let renderErr = null;
+      try {
+        renderVesselSolids(ctx, beakerDest, { left: 10, right: 150, bottom: 140, top: 20, width: 140 }, false, 140);
+        renderVesselSolids(ctx, mortarMetal, { left: 10, right: 150, bottom: 140, top: 20, width: 140 }, false, 140);
+      } catch (err) {
+        renderErr = err?.message || String(err);
+      }
+
+      assert(
+        'Mortar & Pestle renders & transfers fine CuSO4·5H2O powder while ductile Zn & soft Na flatten without powdering',
+        beakerDest.groundPowderMap?.CuSO4_5H2O_s === true &&
+          (beakerDest.particleCounts.CuSO4_5H2O_s || 0) >= 600 &&
+          !mortarMetal.groundPowderMap?.Zn_s &&
+          !mortarMetal.groundPowderMap?.Na_s &&
+          mortarMetal.flattenedMetalMap?.Zn_s === true &&
+          mortarMetal.flattenedMetalMap?.Na_s === true &&
+          (mortarMetal.particleCounts.Zn_s || 0) <= 36 &&
+          (mortarMetal.particleCounts.Na_s || 0) <= 10 &&
+          renderErr === null,
+        `powderTransferred=${beakerDest.groundPowderMap?.CuSO4_5H2O_s}, znFlat=${mortarMetal.flattenedMetalMap?.Zn_s}(n=${mortarMetal.particleCounts.Zn_s}), naFlat=${mortarMetal.flattenedMetalMap?.Na_s}(n=${mortarMetal.particleCounts.Na_s}), err=${renderErr}`
+      );
+    }
+
+    // TEST 68: Hover-Only Canvas Tooltip Pills & Deferred Top-Layer Flush (never hidden under steam)
+    {
+      const cvs = document.createElement('canvas');
+      cvs.width = 240;
+      cvs.height = 120;
+      const ctx = cvs.getContext('2d');
+      const pal = getThemePalette(true);
+      let drawnCalls = 0;
+      const origFillText = ctx.fillText.bind(ctx);
+      ctx.fillText = (...args) => {
+        drawnCalls += 1;
+        return origFillText(...args);
+      };
+
+      // Frame 1: no item hovered -> 0 pills rendered during body pass or after flush
+      beginCanvasLabelFrame(new Set());
+      drawLabelPill(ctx, 120, 40, 'Hidden Pill', { pal, itemId: 'item_a' });
+      const beforeFlushNone = drawnCalls;
+      flushCanvasLabelFrame(ctx);
+      const afterFlushNone = drawnCalls;
+
+      // Frame 2: item_a hovered -> deferred during drawLabelPill (0 before flush), rendered cleanly upon flush (after particles!)
+      drawnCalls = 0;
+      beginCanvasLabelFrame(new Set(['item_a']));
+      drawLabelPill(ctx, 120, 40, 'Hovered Pill', { pal, itemId: 'item_a' });
+      drawLabelPill(ctx, 120, 70, 'Other Unhovered', { pal, itemId: 'item_b' });
+      const midFrameDeferred = drawnCalls;
+      flushCanvasLabelFrame(ctx);
+      const afterFlushHover = drawnCalls;
+
+      assert(
+        'Canvas Tooltip Pills auto-hide unless hovered/dragged and defer drawing until post-particle top layer',
+        beforeFlushNone === 0 && afterFlushNone === 0 && midFrameDeferred === 0 && afterFlushHover === 1,
+        `none=(${beforeFlushNone},${afterFlushNone}), hoverDeferred=${midFrameDeferred}, afterFlush=${afterFlushHover}`
       );
     }
 

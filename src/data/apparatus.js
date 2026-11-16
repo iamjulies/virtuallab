@@ -238,6 +238,7 @@ export const APPARATUS = {
     kind: 'gas_syringe',
     category: 'vessels',
     supportsClamp: true,
+    flippable: true,
     i18nKey: 'eq_gas_syringe',
     isoStandard: 'Borosilicate 3.3 Gastight · Luer Lock (Ø47.8×290 mm · Max 2.05 bar / 30 psi)',
     materialSpec: 'Borosilicate 3.3 + PTFE',
@@ -274,6 +275,7 @@ export const APPARATUS = {
     id: 'retort_stand',
     kind: 'stand',
     category: 'vessels',
+    flippable: true,
     i18nKey: 'eq_retort_stand',
     isoStandard: 'Heavy Base + Steel Rod · Bosshead Clamp',
     materialSpec: 'Cast Iron + 304 Stainless Steel',
@@ -304,6 +306,7 @@ export const APPARATUS = {
     kind: 'wash_bottle',
     category: 'separation',
     breakable: false,
+    flippable: true,
     i18nKey: 'eq_wash_bottle',
     isoStandard: 'LDPE Squeeze Bottle (250 mL H₂O)',
     materialSpec: 'LDPE + PTFE Nozzle',
@@ -387,6 +390,7 @@ export const APPARATUS = {
     category: 'thermal',
     supportsClamp: true,
     breakable: true,
+    flippable: true,
     i18nKey: 'eq_liebig_condenser',
     isoStandard: 'DIN 12576 · Liebig Straight Condenser',
     materialSpec: 'Borosilicate 3.3 Cooling Jacket',
@@ -401,6 +405,7 @@ export const APPARATUS = {
     kind: 'splint',
     category: 'thermal',
     breakable: false,
+    flippable: true,
     i18nKey: 'eq_splint',
     isoStandard: 'Wooden Gas-Test Splint (H₂ / O₂)',
     materialSpec: 'Seasoned Birch Wood',
@@ -413,6 +418,7 @@ export const APPARATUS = {
     kind: 'flame_loop',
     category: 'thermal',
     breakable: false,
+    flippable: true,
     i18nKey: 'eq_flame_loop',
     isoStandard: 'Nichrome / Pt Flame Spectroscopy Wire',
     materialSpec: 'NiCr 80/20 + Glass Rod',
@@ -446,6 +452,7 @@ export const APPARATUS = {
     stripKind: 'litmus',
     category: 'titration',
     breakable: false,
+    flippable: true,
     i18nKey: 'eq_litmus_paper',
     isoStandard: 'Neutral Azolitmin Litmus Strip (pH 4.5–8.3)',
     materialSpec: 'Impregnated Cellulose Strip',
@@ -459,6 +466,7 @@ export const APPARATUS = {
     stripKind: 'universal',
     category: 'titration',
     breakable: false,
+    flippable: true,
     i18nKey: 'eq_ph_strip',
     isoStandard: 'Universal Indicator Strip (pH 1–14)',
     materialSpec: 'Multi-dye Cellulose Paper',
@@ -647,4 +655,84 @@ export function clampItemToStandY(itemSpec, stand, floorY = 482, candidateY = 0,
   const minItemY = standTop + 14 - neckOff;
   const maxItemY = Math.min(floorY - itemSpec.height / 2 - floorPad, standBot - 22 - neckOff);
   return Math.max(minItemY, Math.min(maxItemY, candidateY));
+}
+
+/**
+ * Shared Left-Right flip geometry helpers so Canvas rendering, port handles, and physics share exact coordinates.
+ */
+export function getStandGeometry(stand) {
+  const rodSide = stand?.flippedX ? -1 : 1; // +1: rod on right, clamp reaches left (-1)
+  const armDir = -rodSide;
+  const rodX = (stand?.x || 0) + rodSide * 36;
+  return {
+    rodSide,
+    armDir,
+    rodX,
+    clampTargetX(kind) {
+      return rodX + armDir * (kind === 'gas_syringe' ? 45 : 28);
+    },
+  };
+}
+
+export function getCondenserPorts(cond) {
+  const halfW = (APPARATUS.liebig_condenser?.width || 152) / 2;
+  const dir = cond?.flippedX ? -1 : 1; // +1: left inlet -> right outlet tilted +0.14 rad
+  return {
+    dir,
+    tiltAngle: dir * 0.14,
+    inlet: { x: cond.x - dir * halfW * 0.94, y: cond.y - 10 },
+    outlet: { x: cond.x + dir * halfW * 0.94, y: cond.y + 11 },
+    spout: { x: cond.x + dir * 68, y: cond.y + 18 },
+  };
+}
+
+export function getSyringeGeometry(syringe) {
+  const sSpec = APPARATUS.gas_syringe;
+  const w = sSpec.width;
+  const barrelW = sSpec.barrelW || 192;
+  const barrelH = sSpec.barrelH || 54;
+  const collarH = sSpec.collarH || 64;
+  const off = sSpec.barrelLeftOffset || 20;
+  const flipped = Boolean(syringe?.flippedX);
+  const barrelDir = flipped ? -1 : 1; // +1: nozzle left, barrel runs right; -1: nozzle right, barrel runs left
+  const frontX = flipped ? syringe.x + w / 2 - off : syringe.x - w / 2 + off;
+  const rearX = frontX + barrelDir * barrelW;
+  const barrelLeft = Math.min(frontX, rearX);
+  const barrelRight = Math.max(frontX, rearX);
+  const nozzleX = frontX - barrelDir * 18;
+  return {
+    flipped,
+    barrelDir,
+    w,
+    barrelW,
+    barrelH,
+    collarH,
+    frontX,
+    rearX,
+    barrelLeft,
+    barrelRight,
+    nozzleX,
+    nozzleY: syringe.y,
+    travelStartX: frontX + barrelDir * 8,
+    travelSpan: barrelW - 26,
+    dischargeVx: -barrelDir * 48,
+  };
+}
+
+export function getProbeTipPos(item) {
+  const dir = item?.flippedX ? 1 : -1; // -1: functional tip on left (default), +1: flipped right
+  if (item.kind === 'wash_bottle') {
+    const topY = item.y - (APPARATUS.wash_bottle?.height || 120) / 2;
+    return { x: item.x + dir * 24, y: topY + 12, dir };
+  }
+  if (item.kind === 'splint') {
+    return { x: item.x + dir * 52, y: item.y, visualTipX: item.x + dir * 48, dir };
+  }
+  if (item.kind === 'flame_loop') {
+    return { x: item.x + dir * 50, y: item.y, loopCenterX: item.x + dir * 47, dir };
+  }
+  if (item.kind === 'indicator_strip') {
+    return { x: item.x + dir * 24, y: item.y, dir };
+  }
+  return { x: item.x, y: item.y, dir };
 }

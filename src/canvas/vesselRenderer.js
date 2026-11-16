@@ -1,4 +1,10 @@
-import { APPARATUS, getClampNeckOffsetY } from '../data/apparatus.js';
+import {
+  APPARATUS,
+  getClampNeckOffsetY,
+  getCondenserPorts,
+  getStandGeometry,
+  getSyringeGeometry,
+} from '../data/apparatus.js';
 import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
 import {
@@ -144,7 +150,35 @@ function xFallback() {
   return 0;
 }
 
-export function drawLabelPill(ctx, cx, cy, text, opts = {}) {
+let _labelFrameActive = false;
+let _allowedLabelIds = null;
+let _currentLabelItemId = null;
+let _deferredPills = [];
+
+export function beginCanvasLabelFrame(allowedIds = null) {
+  _labelFrameActive = Boolean(allowedIds);
+  _allowedLabelIds = allowedIds;
+  _currentLabelItemId = null;
+  _deferredPills = [];
+}
+
+export function setCurrentLabelItemId(id) {
+  _currentLabelItemId = id || null;
+}
+
+export function flushCanvasLabelFrame(ctx) {
+  if (_deferredPills.length > 0) {
+    for (const p of _deferredPills) {
+      renderLabelPillImmediate(ctx, p.cx, p.cy, p.text, p.opts);
+    }
+  }
+  _labelFrameActive = false;
+  _allowedLabelIds = null;
+  _currentLabelItemId = null;
+  _deferredPills = [];
+}
+
+function renderLabelPillImmediate(ctx, cx, cy, text, opts = {}) {
   const { pal, borderColor, font = '600 11px system-ui, sans-serif', alpha = 1.0, height = 20 } = opts;
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -163,6 +197,23 @@ export function drawLabelPill(ctx, cx, cy, text, opts = {}) {
   ctx.textBaseline = 'middle';
   ctx.fillText(text, cx, cy + height / 2 + 0.5);
   ctx.restore();
+}
+
+export function drawLabelPill(ctx, cx, cy, text, opts = {}) {
+  if (_labelFrameActive) {
+    const itemId = opts.itemId ?? _currentLabelItemId;
+    const isMatched = opts.alwaysShow
+      ? true
+      : Array.isArray(opts.itemIds)
+      ? opts.itemIds.some((id) => _allowedLabelIds?.has(id))
+      : Boolean(itemId && _allowedLabelIds?.has(itemId));
+    if (!isMatched) return;
+    if (!opts.immediate) {
+      _deferredPills.push({ cx, cy, text, opts });
+      return;
+    }
+  }
+  renderLabelPillImmediate(ctx, cx, cy, text, opts);
 }
 
 function getDominantSyringeGasFormula(syringe, langCode) {
@@ -419,14 +470,14 @@ function renderBrokenSyringe(ctx, item, pal, isSelected) {
     ctx.fillStyle = item.spilledPuddleColor;
     ctx.globalAlpha = 0.68;
     ctx.beginPath();
-    ctx.ellipse(x - 10, bottom - 1, 78, 5.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(x - (item.flippedX ? -10 : 10), bottom - 1, 78, 5.5, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
   }
 
   // Cracked Luer tip + shattered barrel base fragments
   ctx.fillStyle = '#94a3b8';
-  ctx.fillRect(x - 110, bottom - 14, 16, 7);
+  ctx.fillRect(item.flippedX ? x + 94 : x - 110, bottom - 14, 16, 7);
   ctx.fillStyle = pal.glassFill;
   ctx.strokeStyle = isSelected ? '#3b82f6' : '#ef4444';
   ctx.lineWidth = isSelected ? 2 : 1.5;
@@ -471,7 +522,7 @@ export function renderRetortStand(ctx, stand, isSelected, isDark) {
   const h = spec.height;
   const top = y - h / 2;
   const bottom = y + h / 2;
-  const rodX = x + 36;
+  const { rodX } = getStandGeometry(stand);
 
   ctx.save();
   if (stand.landingTilt) {
@@ -524,7 +575,7 @@ export function renderRetortStand(ctx, stand, isSelected, isDark) {
 export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
   if (!stand || !clampedItem || clampedItem.isShattered || clampedItem.isBroken) return;
   const stSpec = APPARATUS.retort_stand;
-  const rodX = stand.x + 36;
+  const { rodX, rodSide, armDir } = getStandGeometry(stand);
   const standTop = stand.y - stSpec.height / 2;
   const standBot = stand.y + stSpec.height / 2;
   const spec = APPARATUS[clampedItem.typeId];
@@ -533,10 +584,9 @@ export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
   let attachX = clampedItem.x;
   let attachY = clampedItem.y + getClampNeckOffsetY(spec);
   if (isSyr) {
-    const barrelLeft = clampedItem.x - spec.width / 2 + (spec.barrelLeftOffset || 20);
-    const barrelRight = barrelLeft + (spec.barrelW || 192);
-    // Grip rear collar/barrel section horizontally closest to stand rod without crossing the graduations
-    attachX = Math.max(barrelLeft + 32, Math.min(barrelRight - 14, rodX - 24));
+    const { barrelLeft, barrelRight } = getSyringeGeometry(clampedItem);
+    // Grip rear/middle barrel section horizontally closest to stand rod without crossing the graduations
+    attachX = Math.max(barrelLeft + 32, Math.min(barrelRight - 14, rodX + armDir * 24));
   }
   // Keep bosshead clamp strictly mounted along the stainless steel rod shaft
   attachY = Math.max(standTop + 14, Math.min(standBot - 22, attachY));
@@ -551,7 +601,7 @@ export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
   ctx.fill();
   ctx.stroke();
   ctx.fillStyle = '#f59e0b';
-  ctx.fillRect(rodX + 8, attachY - 3, 6, 6);
+  ctx.fillRect(rodSide > 0 ? rodX + 8 : rodX - 14, attachY - 3, 6, 6);
 
   // Horizontal stainless clamp extension rod (stops cleanly at barrel/neck grip edge)
   const jawRadius = isSyr ? (spec.barrelH || 54) / 2 + 2 : Math.max(13, (spec.neckRadius || 16) + 2);
@@ -598,11 +648,8 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   }
 
   const { x, y } = item;
-  const w = spec.width;
-  const barrelW = spec.barrelW || 192;
-  const barrelH = spec.barrelH || 54;
-  const collarH = spec.collarH || 64;
-  const barrelLeft = x - w / 2 + (spec.barrelLeftOffset || 20);
+  const syrGeom = getSyringeGeometry(item);
+  const { barrelDir, barrelW, barrelH, collarH, frontX, rearX, barrelLeft, barrelRight, nozzleX, travelStartX, travelSpan } = syrGeom;
   const barrelTop = y - barrelH / 2;
 
   const gasVolMl = computeSyringeGasVolumeMl(item, env);
@@ -618,12 +665,16 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   const totalFluidMl = totalLiqMl + frozenMl;
   const totalVolMl = computeSyringeTotalVolumeMl(item, env);
 
-  // Calibrate stroke: 0 mL tick aligns directly with chamber front face; travel span = 166 px
-  const travelStart = barrelLeft + 8;
-  const travelSpan = barrelW - 26;
+  // Calibrate stroke: 0 mL tick aligns near front face; plunger advances along barrelDir
   const ratio = Math.max(0, Math.min(1, totalVolMl / spec.maxVolumeMl));
-  const plungerFaceX = travelStart + ratio * travelSpan;
-  const activeChamberRight = Math.max(barrelLeft + 3, plungerFaceX);
+  const plungerFaceX = travelStartX + barrelDir * (ratio * travelSpan);
+  const frontInnerX = frontX + barrelDir * 2;
+  const minChamberFace = frontX + barrelDir * 3;
+  const activeChamberFace =
+    barrelDir > 0 ? Math.max(minChamberFace, plungerFaceX) : Math.min(minChamberFace, plungerFaceX);
+  const chamberLeft = Math.min(frontInnerX, activeChamberFace);
+  const chamberRight = Math.max(frontInnerX, activeChamberFace);
+  const chamberW = Math.max(0, chamberRight - chamberLeft);
 
   const syrTempC = kelvinToCelsius(syrTempK);
   const overP = (item.internalPressureBar || env.pressureBar) - env.pressureBar;
@@ -655,20 +706,22 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
     ctx.fillStyle = item.spilledPuddleColor;
     ctx.globalAlpha = 0.5;
     ctx.beginPath();
-    ctx.ellipse(barrelLeft - 8, barrelTop + barrelH + 10, 26, 3.8, 0, 0, Math.PI * 2);
+    ctx.ellipse(frontX - barrelDir * 8, barrelTop + barrelH + 10, 26, 3.8, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
 
-  // Stainless steel / Chrome Luer-Lock precision connector tip on left
+  // Stainless steel / Chrome Luer-Lock precision connector tip on nozzle end (left or right if flipped)
+  const tipMinX = Math.min(nozzleX, frontX - barrelDir * 7);
+  const collarMinX = Math.min(frontX, frontX - barrelDir * 8);
   ctx.fillStyle = '#94a3b8';
   ctx.strokeStyle = '#475569';
   ctx.lineWidth = 1;
-  ctx.fillRect(barrelLeft - 18, y - 3.5, 11, 7);
-  ctx.strokeRect(barrelLeft - 18, y - 3.5, 11, 7);
+  ctx.fillRect(tipMinX, y - 3.5, 11, 7);
+  ctx.strokeRect(tipMinX, y - 3.5, 11, 7);
   ctx.fillStyle = '#cbd5e1';
-  ctx.fillRect(barrelLeft - 8, y - 7, 8, 14);
-  ctx.strokeRect(barrelLeft - 8, y - 7, 8, 14);
+  ctx.fillRect(collarMinX, y - 7, 8, 14);
+  ctx.strokeRect(collarMinX, y - 7, 8, 14);
 
   // Borosilicate 3.3 Barrel (Ø 47.8 mm OD) + Rear Flared Flange (Ø 57 mm OD)
   ctx.fillStyle = pal.glassFill;
@@ -688,20 +741,19 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
 
   ctx.fillStyle = pal.glassFill;
   ctx.beginPath();
-  ctx.roundRect(barrelLeft + barrelW - 4, y - collarH / 2, 7, collarH, 3);
+  ctx.roundRect(rearX - (barrelDir > 0 ? 4 : 3), y - collarH / 2, 7, collarH, 3);
   ctx.fill();
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  // Inner chamber strictly clipped to [barrelLeft + 2 .. plungerFaceX] — NEVER bleeds behind piston!
-  const chamberW = Math.max(0, activeChamberRight - (barrelLeft + 2));
+  // Inner chamber strictly clipped to [frontInnerX .. plungerFaceX]
   if (chamberW > 0.5) {
     ctx.save();
     ctx.beginPath();
     ctx.roundRect(barrelLeft + 2, barrelTop + 2, barrelW - 4, barrelH - 4, 4);
     ctx.clip();
     ctx.beginPath();
-    ctx.rect(barrelLeft + 2, barrelTop + 2, chamberW, barrelH - 4);
+    ctx.rect(chamberLeft, barrelTop + 2, chamberW, barrelH - 4);
     ctx.clip();
 
     const innerTop = barrelTop + 2;
@@ -711,7 +763,7 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
     // 1. Gas phase color fill inside expanded chamber
     if (gasVolMl > 0.05) {
       ctx.fillStyle = gasChamberFill;
-      ctx.fillRect(barrelLeft + 2, innerTop, chamberW, innerH);
+      ctx.fillRect(chamberLeft, innerTop, chamberW, innerH);
     }
 
     // 2. Unified aqueous liquid + condensate + frozen ice strictly confined ahead of plunger face!
@@ -735,28 +787,25 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
       const iceEdge = isDark ? 'rgba(248, 250, 252, 0.72)' : 'rgba(56, 189, 248, 0.65)';
 
       if (chamberW < 8) {
-        // Tiny condensate/ice volume near 0 mL:
-        // pool proportionally in the front nose gap strictly inside [barrelLeft+2 .. plungerFaceX]
         const miniFrac = Math.max(0.16, Math.min(1, totalFluidMl / 2.2));
         const miniH = innerH * miniFrac;
         const poolY = innerBot - miniH;
         const iceH = miniH * iceFrac;
         if (totalLiqMl > 0.002) {
           ctx.fillStyle = liqColor;
-          ctx.fillRect(barrelLeft + 2, poolY + iceH, chamberW, miniH - iceH);
+          ctx.fillRect(chamberLeft, poolY + iceH, chamberW, miniH - iceH);
         }
         if (frozenMl > 0.002) {
           ctx.fillStyle = iceFill;
-          ctx.fillRect(barrelLeft + 2, poolY, chamberW, Math.max(2, iceH));
+          ctx.fillRect(chamberLeft, poolY, chamberW, Math.max(2, iceH));
         }
         ctx.strokeStyle = frozenMl > 0.002 ? iceEdge : 'rgba(255, 255, 255, 0.68)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(barrelLeft + 2, poolY);
-        ctx.lineTo(activeChamberRight, poolY);
+        ctx.moveTo(chamberLeft, poolY);
+        ctx.lineTo(chamberRight, poolY);
         ctx.stroke();
       } else {
-        // Horizontal cylinder pool: height derived from cross-section volume fraction
         const areaFrac = totalFluidMl / Math.max(totalFluidMl + gasVolMl, 1e-6);
         const hFrac = cylinderFillHeightFraction(areaFrac);
         const poolH = Math.max(2.5, innerH * hFrac);
@@ -765,16 +814,16 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
 
         if (totalLiqMl > 0.002) {
           ctx.fillStyle = liqColor;
-          ctx.fillRect(barrelLeft + 2, poolY + iceH, chamberW, Math.max(0, poolH - iceH));
+          ctx.fillRect(chamberLeft, poolY + iceH, chamberW, Math.max(0, poolH - iceH));
         }
         if (frozenMl > 0.002) {
           ctx.fillStyle = iceFill;
-          ctx.fillRect(barrelLeft + 2, poolY, chamberW, Math.max(2.2, iceH));
+          ctx.fillRect(chamberLeft, poolY, chamberW, Math.max(2.2, iceH));
           ctx.strokeStyle = iceEdge;
           ctx.lineWidth = 0.85;
           ctx.beginPath();
           for (let k = 0; k < Math.min(6, Math.floor(chamberW / 14)); k++) {
-            const cx = barrelLeft + 8 + k * 14;
+            const cx = chamberLeft + 6 + k * 14;
             ctx.moveTo(cx, poolY + 1);
             ctx.lineTo(cx + 5, poolY + Math.min(iceH, 5));
           }
@@ -785,36 +834,34 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
           ctx.strokeStyle = frozenMl > 0.002 ? iceEdge : 'rgba(255, 255, 255, 0.68)';
           ctx.lineWidth = 1.1;
           ctx.beginPath();
-          ctx.moveTo(barrelLeft + 2, poolY);
-          ctx.lineTo(activeChamberRight, poolY);
+          ctx.moveTo(chamberLeft, poolY);
+          ctx.lineTo(chamberRight, poolY);
           ctx.stroke();
         }
       }
 
-      // Condensation micro-droplets strictly inside active gas chamber above pool when >= 0°C
       if (condensedMl > 0.002 && syrTempK >= 273.15 && chamberW >= 12) {
         ctx.fillStyle = 'rgba(186, 230, 253, 0.84)';
         const nDrops = Math.min(10, Math.max(3, Math.floor(chamberW / 12)));
         for (let i = 0; i < nDrops; i++) {
-          const dx = barrelLeft + 6 + ((i * 0.618 + 0.13) % 1) * Math.max(4, chamberW - 8);
+          const dx = chamberLeft + 4 + ((i * 0.618 + 0.13) % 1) * Math.max(4, chamberW - 8);
           const dy = innerTop + 4 + ((i * 0.37) % 1) * Math.max(6, innerH * 0.55);
           ctx.beginPath();
           ctx.arc(dx, dy, 1.1 + (i % 3) * 0.4, 0, Math.PI * 2);
           ctx.fill();
         }
       }
-      // White NH4Cl(s) snow/powder aerosol coating barrel chamber when NH3 + HCl react inside syringe
       if (nh4clMol > 1e-6 || (item.nh4clSmokeTimer || 0) > 0) {
         const sAlpha = Math.min(0.85, Math.max((item.nh4clSmokeTimer || 0) * 0.3, Math.min(1, nh4clMol * 250) * 0.72));
         if ((item.nh4clSmokeTimer || 0) > 0) {
           ctx.fillStyle = `rgba(248, 250, 252, ${(0.22 * Math.min(1, item.nh4clSmokeTimer)).toFixed(2)})`;
-          ctx.fillRect(barrelLeft + 2, innerTop, chamberW, innerH);
+          ctx.fillRect(chamberLeft, innerTop, chamberW, innerH);
         }
         if (nh4clMol > 1e-6) {
           ctx.fillStyle = `rgba(248, 250, 252, ${sAlpha.toFixed(2)})`;
           const nSpecks = Math.min(18, Math.max(4, Math.floor(chamberW / 8)));
           for (let k = 0; k < nSpecks; k++) {
-            const sx = barrelLeft + 6 + ((k * 0.618 + 0.11) % 1) * Math.max(4, chamberW - 8);
+            const sx = chamberLeft + 4 + ((k * 0.618 + 0.11) % 1) * Math.max(4, chamberW - 8);
             const sy = innerBot - 2.5 - (k % 3) * 1.4;
             ctx.beginPath();
             ctx.arc(sx, sy, 1.3 + (k % 2) * 0.5, 0, Math.PI * 2);
@@ -832,20 +879,18 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
       fGrad.addColorStop(0.5, isDark ? `rgba(241, 245, 249, ${0.12 * syrFrost})` : `rgba(224, 242, 254, ${0.22 * syrFrost})`);
       fGrad.addColorStop(1, isDark ? `rgba(224, 242, 254, ${0.38 * syrFrost})` : `rgba(186, 230, 253, ${0.46 * syrFrost})`);
       ctx.fillStyle = fGrad;
-      ctx.fillRect(barrelLeft + 2, innerTop, chamberW, innerH);
+      ctx.fillRect(chamberLeft, innerTop, chamberW, innerH);
       ctx.strokeStyle = isDark ? `rgba(248, 250, 252, ${0.55 * syrFrost})` : `rgba(14, 165, 233, ${0.45 * syrFrost})`;
       ctx.lineWidth = 0.85;
       for (let i = 0; i < 6; i++) {
-        const fx = barrelLeft + 8 + ((i * 0.618 + 0.1) % 1) * Math.max(8, barrelW - 18);
+        const fx = chamberLeft + 4 + ((i * 0.618 + 0.1) % 1) * Math.max(6, chamberW - 8);
         const fy = innerTop + 5 + ((i * 0.41) % 1) * Math.max(6, innerH - 10);
-        if (fx <= activeChamberRight - 3) {
-          ctx.beginPath();
-          ctx.moveTo(fx - 2.6, fy);
-          ctx.lineTo(fx + 2.6, fy);
-          ctx.moveTo(fx, fy - 2.6);
-          ctx.lineTo(fx, fy + 2.6);
-          ctx.stroke();
-        }
+        ctx.beginPath();
+        ctx.moveTo(fx - 2.6, fy);
+        ctx.lineTo(fx + 2.6, fy);
+        ctx.moveTo(fx, fy - 2.6);
+        ctx.lineTo(fx, fy + 2.6);
+        ctx.stroke();
       }
     }
 
@@ -856,28 +901,29 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   if ((item.inflowLiquidTimer || 0) > 0 && (item.inflowLiquidRateMlS || 0) > 0.05) {
     const jetCol = item.inflowLiquidColor || 'rgba(186, 230, 253, 0.9)';
     const pulse = (timeNow * 14) % 1;
+    const endJet = frontX + barrelDir * (10 + pulse * 18);
     ctx.save();
     ctx.strokeStyle = jetCol;
     ctx.lineWidth = 4;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(barrelLeft - 14, y);
-    ctx.lineTo(Math.min(activeChamberRight, barrelLeft + 10 + pulse * 18), y);
+    ctx.moveTo(frontX - barrelDir * 14, y);
+    ctx.lineTo(barrelDir > 0 ? Math.min(chamberRight, endJet) : Math.max(chamberLeft, endJet), y);
     ctx.stroke();
     ctx.restore();
   }
 
   // Rear collar spill stream when full 250 mL syringe overflows
   if ((item.overflowOutRateMlS || 0) > 0.5) {
-    const rearX = barrelLeft + barrelW + 3;
+    const rearEdgeX = rearX + barrelDir * 3;
     const wobble = Math.sin((timeNow || 0) * 18) * 1.8;
     ctx.save();
     ctx.strokeStyle = item.overflowOutColor || 'rgba(186, 230, 253, 0.88)';
     ctx.lineWidth = Math.min(6, 2.4 + Math.sqrt(item.overflowOutRateMlS) * 0.3);
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(rearX, y + 10);
-    ctx.quadraticCurveTo(rearX + 18 + wobble, y + 32, rearX + 24, y + 70);
+    ctx.moveTo(rearEdgeX, y + 10);
+    ctx.quadraticCurveTo(rearEdgeX + barrelDir * 18 + wobble, y + 32, rearEdgeX + barrelDir * 24, y + 70);
     ctx.stroke();
     ctx.restore();
   }
@@ -904,35 +950,40 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   }
 
   // Ground-glass frosted plunger piston + twin black PTFE O-ring seals + pull rod
-  // Front piston sealing face sits cleanly AT plungerFaceX!
   const pistonW = 16;
-  const rodTailX = plungerFaceX + travelSpan * 0.42 + 44;
+  const pistonMinX = Math.min(plungerFaceX, plungerFaceX + barrelDir * pistonW);
+  const rodStartX = plungerFaceX + barrelDir * pistonW;
+  const rodTailX = plungerFaceX + barrelDir * (travelSpan * 0.42 + 44);
   ctx.fillStyle = isDark ? 'rgba(203, 213, 225, 0.35)' : 'rgba(241, 245, 249, 0.72)';
   ctx.strokeStyle = pal.glassStroke;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(plungerFaceX, barrelTop + 4, pistonW, barrelH - 8, 2);
+  ctx.roundRect(pistonMinX, barrelTop + 4, pistonW, barrelH - 8, 2);
   ctx.fill();
   ctx.stroke();
   // Dual PTFE Teflon sealing rings
   ctx.fillStyle = '#0f172a';
-  ctx.fillRect(plungerFaceX + 2, barrelTop + 3, 3.2, barrelH - 6);
-  ctx.fillRect(plungerFaceX + 10.5, barrelTop + 3, 3.2, barrelH - 6);
+  const seal1 = plungerFaceX + barrelDir * 2;
+  const seal2 = plungerFaceX + barrelDir * 10.5;
+  ctx.fillRect(barrelDir > 0 ? seal1 : seal1 - 3.2, barrelTop + 3, 3.2, barrelH - 6);
+  ctx.fillRect(barrelDir > 0 ? seal2 : seal2 - 3.2, barrelTop + 3, 3.2, barrelH - 6);
   // Frosted glass plunger rod + ring grip
+  const rodSpan = Math.max(16, Math.abs(rodTailX - rodStartX));
+  const rodRectX = barrelDir > 0 ? rodStartX : rodStartX - rodSpan;
   ctx.fillStyle = isDark ? 'rgba(148, 163, 184, 0.65)' : 'rgba(100, 116, 139, 0.6)';
-  ctx.fillRect(plungerFaceX + pistonW, y - 4.5, Math.max(16, rodTailX - (plungerFaceX + pistonW)), 9);
+  ctx.fillRect(rodRectX, y - 4.5, rodSpan, 9);
   ctx.strokeStyle = pal.glassStroke;
   ctx.lineWidth = 2.2;
   ctx.beginPath();
-  ctx.roundRect(rodTailX, y - 16, 8, 32, 3);
+  ctx.roundRect(barrelDir > 0 ? rodTailX : rodTailX - 8, y - 16, 8, 32, 3);
   ctx.stroke();
 
-  // Ceramic enamel graduations every 10 mL (0..250 mL) + major numeric ticks every 50 mL
+  // Ceramic enamel graduations every 10 mL (0..250 mL) + major numeric ticks every 50 mL (never mirrored!)
   ctx.font = '600 7.5px system-ui, sans-serif';
   ctx.textBaseline = 'top';
   ctx.textAlign = 'center';
   for (let ml = 0; ml <= 250; ml += 10) {
-    const tx = travelStart + (ml / 250) * travelSpan;
+    const tx = travelStartX + barrelDir * ((ml / 250) * travelSpan);
     const isMajor50 = ml % 50 === 0;
     const len = isMajor50 ? 11 : 6;
     ctx.strokeStyle = isMajor50 ? pal.tickStroke : pal.tickMinor;
@@ -948,9 +999,9 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   }
   ctx.fillStyle = pal.enamelText;
   ctx.font = '600 7px system-ui, sans-serif';
-  ctx.textAlign = 'right';
+  ctx.textAlign = barrelDir > 0 ? 'right' : 'left';
   ctx.textBaseline = 'bottom';
-  ctx.fillText('250 mL · ±1.5% · ID 42.9mm', barrelLeft + barrelW - 10, barrelTop + barrelH - 4);
+  ctx.fillText('250 mL · ±1.5% · ID 42.9mm', barrelDir > 0 ? barrelRight - 10 : barrelLeft + 10, barrelTop + barrelH - 4);
 
   // Live Gas + Liquid + Temperature Badge below syringe
   const gasTag = getDominantSyringeGasFormula(item, langCode);
@@ -1288,6 +1339,7 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
         borderColor: '#38bdf8',
         font: '600 10.5px system-ui, sans-serif',
         height: 19,
+        itemIds: [v.id, target.id],
       });
     } else if (isGasFlowing) {
       const tFlowC = kelvinToCelsius(v.tubeFlowTempK ?? v.tempK);
@@ -1298,6 +1350,7 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
         font: '600 10.5px system-ui, sans-serif',
         height: 19,
         alpha,
+        itemIds: [v.id, target.id],
       });
     }
 
@@ -2025,23 +2078,14 @@ export function renderVessel(ctx, vessel, opts) {
   pillParts.push(`${Math.abs(tDisp) < 10 ? tDisp.toFixed(1) : tDisp.toFixed(0)}°C`);
 
   const pillText = pillParts.join(' · ');
-  ctx.save();
-  ctx.font = '600 11.5px system-ui, sans-serif';
-  const textW = ctx.measureText(pillText).width + 14;
   const py = top - 24;
-  ctx.fillStyle = pal.badgeBg;
-  ctx.strokeStyle = isSelected ? '#3b82f6' : pal.badgeBorder;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.roundRect(x - textW / 2, py, textW, 20, 6);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = pal.textPrimary;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(pillText, x, py + 10.5);
-  ctx.restore();
+  drawLabelPill(ctx, x, py, pillText, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : pal.badgeBorder,
+    font: '600 11.5px system-ui, sans-serif',
+    height: 20,
+    itemId: vessel.id,
+  });
 
   // Escaping Hot Vapor / Gas Plume Temperature Label ("nhãn mác" on vapor stream)
   if ((vessel.gasOutBannerTimer || 0) > 0 && !vessel.isStoppered && vessel.lastGasOutFormula) {
@@ -2071,6 +2115,7 @@ export function renderVessel(ctx, vessel, opts) {
       font: '600 10.5px system-ui, sans-serif',
       height: 19,
       alpha: fadeAlpha,
+      itemId: vessel.id,
     });
   }
 }

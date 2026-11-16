@@ -91,7 +91,14 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     const vType = sp.visualType || 'white_powder';
     if (vType === 'water_ice') continue; // Rendered as translucent crystalline ice matrix in vesselRenderer.js
 
+    const isGroundPowder =
+      !sp.isDenseMetal &&
+      spId !== 'Na_s' &&
+      (Boolean(vessel.groundPowderMap?.[spId]) || (vessel.particleCounts?.[spId] || 0) >= 200);
+    const isFlattenedMetal = Boolean(vessel.flattenedMetalMap?.[spId]);
+
     if (
+      isGroundPowder ||
       vType === 'white_powder' ||
       vType === 'brown_powder' ||
       vType === 'gray_white_powder' ||
@@ -100,22 +107,44 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     ) {
       const heapH = Math.min(24, 3 + Math.sqrt(massG) * 5.5);
       const isNeutralWhite =
-        vType === 'white_powder' && (sp.color === '#e2e8f0' || sp.color === '#f8fafc' || sp.color === '#f1f5f9');
+        (vType === 'white_powder' || isGroundPowder) &&
+        (sp.color === '#e2e8f0' || sp.color === '#f8fafc' || sp.color === '#f1f5f9');
+      const fillCol = isNeutralWhite ? '#f1f5f9' : sp.color || '#f1f5f9';
+      const strokeCol =
+        isNeutralWhite && sp.highlightColor === '#ffffff' ? '#cbd5e1' : sp.highlightColor || '#cbd5e1';
+
       ctx.save();
-      ctx.fillStyle = isNeutralWhite ? '#f1f5f9' : sp.color || '#f1f5f9';
+      ctx.fillStyle = fillCol;
       ctx.beginPath();
       ctx.moveTo(left + 4, bottom);
       ctx.quadraticCurveTo(left + width * 0.5, bottom - heapH * 1.6, right - 4, bottom);
       ctx.closePath();
       ctx.fill();
-      ctx.strokeStyle = isNeutralWhite && sp.highlightColor === '#ffffff' ? '#cbd5e1' : sp.highlightColor || '#cbd5e1';
+      ctx.strokeStyle = strokeCol;
       ctx.lineWidth = 0.8;
       ctx.stroke();
+
+      // Fine crystalline micro-powder specks overlay (0.7–1.35 px granules) when mechanically ground fine
+      if (isGroundPowder) {
+        const speckCount = Math.min(54, Math.max(20, Math.round(18 + massG * 10)));
+        const spanW = Math.max(10, width - 14);
+        for (let k = 0; k < speckCount; k++) {
+          const ux = seeded(k, spId.length * 19 + 7);
+          const archMaxH = Math.max(2, heapH * 0.82 * (1 - Math.abs(ux - 0.5) * 1.55));
+          const sx = left + 7 + ux * spanW;
+          const sy = bottom - 1.5 - seeded(k, 89) * archMaxH;
+          const sr = 0.65 + seeded(k, 43) * 0.7;
+          ctx.fillStyle = k % 3 === 0 ? strokeCol : 'rgba(255, 255, 255, 0.45)';
+          ctx.beginPath();
+          ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
       ctx.restore();
       continue;
     }
 
-    const grainCount = Math.min(22, Math.max(2, Math.round(2 + Math.sqrt(massG) * 5)));
+    const grainCount = Math.min(isFlattenedMetal ? 28 : 22, Math.max(2, Math.round(2 + Math.sqrt(massG) * 5)));
     const baseSize = Math.min(8.5, 3.2 + Math.cbrt(massG) * 2.2);
 
     for (let i = 0; i < grainCount; i++) {
@@ -125,7 +154,8 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
 
       ctx.save();
       ctx.translate(gx, gy);
-      ctx.rotate(seeded(i, 53) * Math.PI);
+      ctx.rotate(isFlattenedMetal ? (seeded(i, 53) - 0.5) * 0.35 : seeded(i, 53) * Math.PI);
+      if (isFlattenedMetal) ctx.scale(1.38, 0.52);
 
       if (vType === 'white_pellet' || vType === 'pellet') {
         ctx.beginPath();
@@ -289,14 +319,17 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       ctx.lineWidth = 0.8;
       ctx.stroke();
     } else {
-      // Dry cut Sodium block sitting on vessel bottom
+      // Dry cut Sodium block sitting on vessel bottom (flattened smeared ribbon if pressed in Mortar)
       const nx = left + width * 0.5;
-      const ny = bottom - radius - 1;
+      const flatNa = Boolean(vessel.flattenedMetalMap?.Na_s);
+      const rectW = flatNa ? radius * 2.75 : radius * 2;
+      const rectH = flatNa ? radius * 0.72 : radius * 1.5;
+      const ny = bottom - rectH * 0.5 - 1;
       ctx.fillStyle = '#cbd5e1';
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.rect(nx - radius, ny - radius * 0.75, radius * 2, radius * 1.5);
+      ctx.roundRect(nx - rectW * 0.5, ny - rectH * 0.5, rectW, rectH, flatNa ? 3 : 1);
       ctx.fill();
       ctx.stroke();
     }

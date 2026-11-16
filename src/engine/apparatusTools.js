@@ -1,4 +1,4 @@
-import { APPARATUS } from '../data/apparatus.js';
+import { APPARATUS, getCondenserPorts, getProbeTipPos } from '../data/apparatus.js';
 import { CONSTANTS } from '../data/constants.js';
 import { SPECIES, createZeroGasMap } from '../data/species.js';
 import {
@@ -49,6 +49,83 @@ function findOpenVesselBelowPoint(items, x, y, maxDx = 48, minDy = 10, maxDy = 2
     }
   }
   return best;
+}
+
+/**
+ * Compute parabolic water jet trajectory from a Wash Bottle PTFE spout under gravity,
+ * hitting any open vessel (beaker, erlenmeyer, test tube, dish, mortar) or Filter Funnel.
+ */
+export function computeWashBottleStreamArc(
+  wb,
+  items = [],
+  benchFloorY = 482,
+  gravityPxS2 = CONSTANTS.GRAVITY_PX_S2 || 1800
+) {
+  const { x: spoutX, y: spoutY, dir } = getProbeTipPos(wb);
+  const vx0 = dir * 195;
+  const vy0 = -515;
+  const dtStep = 0.004;
+  const points = [{ x: spoutX, y: spoutY }];
+  let hitTarget = null;
+  let blockedByStopper = false;
+  let hitX = spoutX;
+  let hitY = Math.min(benchFloorY, spoutY);
+  let prevX = spoutX;
+  let prevY = spoutY;
+
+  for (let i = 1; i <= 360; i++) {
+    const t = i * dtStep;
+    const px = spoutX + vx0 * t;
+    const py = spoutY + vy0 * t + 0.5 * gravityPxS2 * t * t;
+    const vyNow = vy0 + gravityPxS2 * t;
+
+    if (vyNow >= -10 && i >= 6) {
+      for (const dst of items) {
+        if (dst.id === wb.id || dst.isShattered || dst.isBroken || dst.isInverted) continue;
+        if (dst.kind !== 'vessel' && dst.kind !== 'filter_funnel') continue;
+        const dSpec = APPARATUS[dst.typeId];
+        if (!dSpec) continue;
+        const rimY =
+          dst.kind === 'filter_funnel'
+            ? dst.y - dSpec.height / 2 + 4
+            : dst.y - dSpec.height / 2 + 2;
+        const halfMouth =
+          dst.kind === 'filter_funnel'
+            ? 31
+            : Math.max(20, dSpec.neckRadius || dSpec.width * 0.44);
+
+        const crossRim = prevY <= rimY + 6 && py >= rimY - 4;
+        const inMouthBand = py >= rimY - 5 && py <= rimY + 18 && i <= 22;
+        if ((crossRim || inMouthBand) && Math.abs(px - dst.x) <= halfMouth + 5) {
+          if (dst.isStoppered) {
+            blockedByStopper = true;
+            hitX = px;
+            hitY = rimY - 5;
+            points.push({ x: hitX, y: hitY });
+            return { spoutX, spoutY, dir, points, hitTarget: null, blockedByStopper, hitX, hitY };
+          }
+          hitTarget = dst;
+          hitX = px;
+          hitY = rimY + 3;
+          points.push({ x: hitX, y: hitY });
+          return { spoutX, spoutY, dir, points, hitTarget, blockedByStopper: false, hitX, hitY };
+        }
+      }
+    }
+
+    if (py >= benchFloorY) {
+      const f = (benchFloorY - prevY) / Math.max(1e-6, py - prevY);
+      hitX = prevX + (px - prevX) * f;
+      hitY = benchFloorY;
+      points.push({ x: hitX, y: hitY });
+      return { spoutX, spoutY, dir, points, hitTarget: null, blockedByStopper: false, hitX, hitY };
+    }
+
+    points.push({ x: px, y: py });
+    prevX = px;
+    prevY = py;
+  }
+  return { spoutX, spoutY, dir, points, hitTarget, blockedByStopper, hitX, hitY };
 }
 
 /**
@@ -252,8 +329,9 @@ function stepLiebigCondenser(sim, cond, dt) {
   if (totalInMol <= 1e-9) return;
 
   const eff = cond.waterFlowOn ? 0.94 : 0.22;
-  const spoutX = cond.x + 68;
-  const spoutY = cond.y + 18;
+  const { spout } = getCondenserPorts(cond);
+  const spoutX = spout.x;
+  const spoutY = spout.y;
   let dst = null;
   if (cond.outletTargetId) {
     const oDst = sim.getItem(cond.outletTargetId);
@@ -346,8 +424,7 @@ function stepPneumaticTrough(sim) {
  */
 export function checkSplintInteractions(sim, splint) {
   if (!splint || splint.kind !== 'splint') return null;
-  const tipX = splint.x - 52;
-  const tipY = splint.y;
+  const { x: tipX, y: tipY } = getProbeTipPos(splint);
 
   // 1. Auto-light splint near lit Alcohol Burner
   for (const b of sim.items) {
@@ -495,8 +572,7 @@ export function checkSplintInteractions(sim, splint) {
  */
 export function checkFlameLoopInteractions(sim, loop) {
   if (!loop || loop.kind !== 'flame_loop') return;
-  const tipX = loop.x - 50;
-  const tipY = loop.y;
+  const { x: tipX, y: tipY } = getProbeTipPos(loop);
 
   // 1. Sample from vessel interior/liquid
   for (const v of sim.items) {
@@ -548,8 +624,7 @@ export function checkFlameLoopInteractions(sim, loop) {
  */
 export function checkIndicatorStripInteractions(sim, strip) {
   if (!strip || strip.kind !== 'indicator_strip') return;
-  const tipX = strip.x - 24;
-  const tipY = strip.y;
+  const { x: tipX, y: tipY } = getProbeTipPos(strip);
 
   for (const v of sim.items) {
     if (v.kind !== 'vessel' || v.isShattered) continue;
@@ -696,19 +771,25 @@ export function stepApparatusTools(sim, dt, realDeltaSec) {
           it.flameTestIon = null;
         }
       }
-    } else if (it.kind === 'wash_bottle' && it.isSpraying) {
-      const target = findOpenVesselBelowPoint(sim.items, it.x - 24, it.y - 10, 85, -40, 260) ||
-        sim.items.find((f) => f.kind === 'filter_funnel' && Math.hypot(f.x - (it.x - 24), f.y - it.y) <= 85);
-      const waterMl = Math.min(it.waterMl || 0, 6.0 * dt);
-      if (waterMl > 1e-4) {
-        it.waterMl -= waterMl;
-        if (target) {
-          const addMol = (waterMl * 0.997) / SPECIES.H2O_l.molarMass;
-          target.moles.H2O_l = (target.moles.H2O_l || 0) + addMol;
-          it.sprayTargetId = target.id;
+    } else if (it.kind === 'wash_bottle') {
+      if ((it.squirtTimer || 0) > 0) {
+        it.squirtTimer = Math.max(0, it.squirtTimer - realDeltaSec);
+      }
+      if (it.isSpraying) {
+        const arc = computeWashBottleStreamArc(it, sim.items, 482, CONSTANTS.GRAVITY_PX_S2 || 1800);
+        const waterMl = Math.min(it.waterMl || 0, 6.0 * dt);
+        if (waterMl > 1e-4) {
+          it.waterMl -= waterMl;
+          it.squirtArc = arc;
+          it.squirtTimer = Math.max(it.squirtTimer || 0, 0.1);
+          it.sprayTargetId = arc.hitTarget ? arc.hitTarget.id : null;
+          if (arc.hitTarget) {
+            const addMol = (waterMl * 0.997) / SPECIES.H2O_l.molarMass;
+            arc.hitTarget.moles.H2O_l = (arc.hitTarget.moles.H2O_l || 0) + addMol;
+          }
+        } else {
+          it.isSpraying = false;
         }
-      } else {
-        it.isSpraying = false;
       }
     }
   }
@@ -770,15 +851,42 @@ function stepDiffusionTube(sim, tube, dt) {
 export function grindMortarSolids(sim, mortarId) {
   const m = sim.getItem(mortarId);
   if (!m || !APPARATUS[m.typeId]?.isMortar) return false;
+  m.groundPowderMap = m.groundPowderMap || {};
+  m.flattenedMetalMap = m.flattenedMetalMap || {};
   let groundAny = false;
-  const names = [];
+  const brittleNames = [];
+  const metalNames = [];
+  let hasSoftNa = false;
+  let hasDuctileZnOrMetal = false;
+
   for (const [spId, n] of Object.entries(m.moles)) {
     const sp = SPECIES[spId];
-    if (sp && sp.phase === 's' && n > 1e-8) {
-      const cur = m.particleCounts[spId] || 6;
-      m.particleCounts[spId] = Math.min(2400, Math.max(600, cur * 24));
+    if (!sp || sp.phase !== 's' || n <= 1e-8) continue;
+    const beh = sp.mechanicalBehavior;
+    const cur = m.particleCounts[spId] || 6;
+
+    if (spId === 'Na_s' || beh === 'soft_metal') {
+      // Soft alkali metal (Mohs ~0.5): smears/flattens rather than shattering to dust
+      m.particleCounts[spId] = Math.min(10, Math.max(4, cur));
+      m.flattenedMetalMap[spId] = true;
+      delete m.groundPowderMap[spId];
+      hasSoftNa = true;
       groundAny = true;
-      names.push(sp.formula || spId);
+      metalNames.push(sp.formula || spId);
+    } else if (sp.isDenseMetal || beh === 'ductile_metal') {
+      // Malleable/ductile metal (Zn, Cu, Ag): deforms into thin sheared plates rather than brittle micro-powder
+      m.particleCounts[spId] = Math.min(36, Math.max(14, cur + 8));
+      m.flattenedMetalMap[spId] = true;
+      delete m.groundPowderMap[spId];
+      hasDuctileZnOrMetal = true;
+      groundAny = true;
+      metalNames.push(sp.formula || spId);
+    } else {
+      // Brittle ionic crystals / hydrates / pellets comminute cleanly into fine micro-powder
+      m.particleCounts[spId] = Math.min(2400, Math.max(600, cur * 24));
+      m.groundPowderMap[spId] = true;
+      groundAny = true;
+      brittleNames.push(sp.formula || spId);
     }
   }
 
@@ -798,6 +906,8 @@ export function grindMortarSolids(sim, mortarId) {
       m.moles.H2O_l = (m.moles.H2O_l || 0) + 5 * dXi;
       m.particleCounts.CuOH2_s = 1200;
       m.particleCounts.Na2SO4_s = 1200;
+      m.groundPowderMap.CuOH2_s = true;
+      m.groundPowderMap.Na2SO4_s = true;
       // Exothermic lattice metathesis releases crystal water & heats paste noticeably
       m.tempK = Math.min(395, m.tempK + (dXi * 62000) / Math.max(40, cTot));
       groundAny = true;
@@ -815,15 +925,34 @@ export function grindMortarSolids(sim, mortarId) {
 
   if (groundAny) {
     m.grindAnimTimer = 1.1;
-    sim.addLog({
-      type: 'reaction',
-      equation: `${names.join(' + ')} (tinh thể lớn) —(Nghiền cối chày)→ Bột mịn (A_rắn ↑↑)`,
-      nameVi: `Đã nghiền mịn ${names.join(', ')} bằng Cối & Chày sứ`,
-      nameEn: `Ground ${names.join(', ')} into fine powder (Noyes–Whitney area ↑)`,
-      descVi: 'Giảm kích thước hạt giúp tăng diện tích bề mặt tiếp xúc A_rắn, đẩy mạnh tốc độ hòa tan và phản ứng.',
-      descEn: 'Reducing solid particle radius sharply increases reactive surface area A_solid.',
-      vesselLabel: m.label,
-    });
+    if (brittleNames.length > 0) {
+      sim.addLog({
+        type: 'reaction',
+        equation: `${brittleNames.join(' + ')} (tinh thể lớn) —(Nghiền cối chày)→ Bột mịn (A_rắn ↑↑)`,
+        nameVi: `Đã nghiền mịn ${brittleNames.join(', ')} bằng Cối & Chày sứ`,
+        nameEn: `Ground ${brittleNames.join(', ')} into fine powder (Noyes–Whitney area ↑)`,
+        descVi: 'Tinh thể ion/muối giòn vỡ thành bột mịn làm tăng mạnh diện tích bề mặt A_rắn và tốc độ phản ứng.',
+        descEn: 'Brittle crystals shatter into fine micro-powder, sharply increasing reactive surface area A_solid.',
+        vesselLabel: m.label,
+      });
+    }
+    if (metalNames.length > 0) {
+      sim.addLog({
+        type: 'reaction',
+        equation: `${metalNames.join(' + ')} —(Ép chày sứ)→ Dát mỏng / Trượt dẻo (Không vỡ bột)`,
+        nameVi: `Biến dạng dẻo kim loại: ${metalNames.join(', ')}`,
+        nameEn: `Metallic plasticity: ${metalNames.join(', ')} deformed/flattened without powdering`,
+        descVi: hasSoftNa && hasDuctileZnOrMetal
+          ? 'Sodium (Na) rất mềm bị ép dẹt/bết dính, còn Zinc (Zn) có liên kết kim loại trượt dẻo chỉ xước/bẹp cạnh nhẹ — không tán thành bột mịn được.'
+          : hasSoftNa
+          ? 'Sodium (Na) cực mềm (độ cứng Mohs ~0.5) nên chỉ bị miết dẹt trên thành cối chứ không vỡ thành bột như muối giòn.'
+          : 'Zinc (Zn) và kim loại có mạng tinh thể trượt dẻo dưới lực nghiền: hạt bị dát mỏng và nứt nhẹ tăng nhẹ mép tiếp xúc, không nghiền thành bột mịn bằng chày tay.',
+        descEn: hasSoftNa && !hasDuctileZnOrMetal
+          ? 'Soft alkali Sodium (Mohs ~0.5) smears and flattens under the porcelain pestle instead of shattering into powder.'
+          : 'Ductile metals undergo plastic slip rather than brittle fracture, flattening into thin metallic flakes with only modest edge exposure.',
+        vesselLabel: m.label,
+      });
+    }
     sim.recomputeScaleReadings();
     sim.emitChange();
   }

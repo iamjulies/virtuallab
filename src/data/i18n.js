@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_v2+build.5',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_v2+build.6',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -327,10 +327,16 @@ export const I18N = {
     platedCuSmooth: 'Mạ Cu(s) bám mịn màu đỏ hồng',
     platedCuBurned: 'Mạ Cu(s) cháy đen do mật độ dòng J cao',
     actionClearElectrodes: 'Tẩy / Đổi cực mới',
+    actionFlipHorizontal: '⇄ Lật trái–phải',
+    flipDirLeft: 'Hướng Trái',
+    flipDirRight: 'Hướng Phải',
+    actionSprayContinuousStart: '💦 Xịt tia liên tục',
+    actionSprayContinuousStop: '⏹️ Ngưng xịt nước',
+    washBottleAimHint: 'Kéo hoặc lật trái–phải để hướng tia nước parabol vào cốc, phễu lọc, chén hoặc cối; double-click để bật/tắt tia liên tục.',
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_v2+build.5',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_v2+build.6',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -642,5 +648,11 @@ export const I18N = {
     platedCuSmooth: 'Smooth salmon-pink Cu(s) electroplate',
     platedCuBurned: 'Dark powdery burned Cu(s) deposit (high J)',
     actionClearElectrodes: 'Strip Coating / Reset Rod',
+    actionFlipHorizontal: '⇄ Flip L–R',
+    flipDirLeft: 'Facing Left',
+    flipDirRight: 'Facing Right',
+    actionSprayContinuousStart: '💦 Continuous Jet',
+    actionSprayContinuousStop: '⏹️ Stop Water Jet',
+    washBottleAimHint: 'Drag or flip L–R to aim the parabolic distilled water jet into any beaker, funnel, dish, or mortar; double-click to toggle continuous spray.',
   }
 };

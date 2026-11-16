@@ -1,8 +1,8 @@
-import { APPARATUS } from '../data/apparatus.js';
+import { APPARATUS, getCondenserPorts, getProbeTipPos } from '../data/apparatus.js';
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, computeSolutionVisuals, computePH } from '../engine/equilibrium.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
-import { drawLabelPill, getThemePalette } from './vesselRenderer.js';
+import { drawLabelPill, getThemePalette, setCurrentLabelItemId } from './vesselRenderer.js';
 
 function drawSelectionGlow(ctx, isSelected, isDropTarget) {
   if (isDropTarget) {
@@ -187,24 +187,25 @@ export function renderFilterFunnel(ctx, item, isSelected, isDropTarget, isDark, 
   ctx.restore();
 }
 
-export function renderWashBottle(ctx, item, isSelected, isDark, langCode = 'vi') {
+export function renderWashBottle(ctx, item, isSelected, isDark, langCode = 'vi', timeNow = 0) {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
   const spec = APPARATUS.wash_bottle;
   const topY = y - spec.height / 2;
   const botY = y + spec.height / 2;
   const w = 40;
+  const dir = item.flippedX ? 1 : -1; // -1: spout top-left (default), +1: flipped top-right
 
   ctx.save();
   drawSelectionGlow(ctx, isSelected, false);
 
-  // Curved PTFE squeeze spout extending top-left
+  // Curved PTFE squeeze spout extending left or right
   ctx.strokeStyle = isDark ? '#e2e8f0' : '#475569';
   ctx.lineWidth = 3;
   ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.moveTo(x, topY + 28);
-  ctx.quadraticCurveTo(x - 4, topY + 4, x - 24, topY + 12);
+  ctx.quadraticCurveTo(x + dir * 4, topY + 4, x + dir * 24, topY + 12);
   ctx.stroke();
 
   // Blue polypropylene cap collar
@@ -237,6 +238,47 @@ export function renderWashBottle(ctx, item, isSelected, isDark, langCode = 'vi')
   ctx.textAlign = 'center';
   ctx.fillText('H₂O', x, y + 18);
 
+  // Active parabolic distilled water stream shooting from curved PTFE spout!
+  if (((item.squirtTimer || 0) > 0 || item.isSpraying) && item.squirtArc?.points?.length >= 2) {
+    const pts = item.squirtArc.points;
+    const fadeAlpha = item.isSpraying ? 1.0 : Math.min(1, (item.squirtTimer || 0) / 0.2);
+    ctx.save();
+    ctx.globalAlpha = fadeAlpha;
+    ctx.strokeStyle = isDark ? 'rgba(125, 211, 252, 0.92)' : 'rgba(14, 165, 233, 0.85)';
+    ctx.lineWidth = 2.8;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      ctx.lineTo(pts[i].x, pts[i].y);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+
+    // Animated jet glint droplets & landing splash ring
+    ctx.fillStyle = '#e0f2fe';
+    for (let k = 0; k < 4; k++) {
+      const idx = Math.min(pts.length - 1, Math.floor((((timeNow * 2.6 + k * 0.25) % 1)) * pts.length));
+      const gp = pts[idx];
+      ctx.beginPath();
+      ctx.arc(gp.x, gp.y, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (item.squirtArc.hitX != null) {
+      const rSplash = 3 + ((timeNow * 14) % 4);
+      ctx.strokeStyle = isDark ? 'rgba(186, 230, 253, 0.65)' : 'rgba(2, 132, 199, 0.6)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(item.squirtArc.hitX, item.squirtArc.hitY, rSplash * 1.4, rSplash * 0.55, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   drawLabelPill(ctx, x, topY + 4, `💦 ${(item.waterMl || 0).toFixed(0)} mL`, {
     pal,
     borderColor: isSelected ? '#3b82f6' : null,
@@ -255,13 +297,14 @@ export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0
     return;
   }
   const halfW = spec.width / 2;
+  const ports = getCondenserPorts(item);
 
   ctx.save();
   drawSelectionGlow(ctx, isSelected, false);
 
-  // Outer tilted glass water jacket
+  // Outer tilted glass water jacket (direction matches ports.tiltAngle: +0.14 or -0.14 when flipped)
   ctx.translate(x, y);
-  ctx.rotate(0.14);
+  ctx.rotate(ports.tiltAngle);
 
   // Inner vapor bore tube
   ctx.fillStyle = isDark ? 'rgba(226, 232, 240, 0.25)' : 'rgba(148, 163, 184, 0.35)';
@@ -284,10 +327,10 @@ export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  // Water inlet (bottom right) & outlet (top left) hose barbs
+  // Water hose barbs mirrored around center when flipped
   ctx.fillStyle = '#0ea5e9';
-  ctx.fillRect(-halfW + 32, -23, 7, 7);
-  ctx.fillRect(halfW - 40, 16, 7, 7);
+  ctx.fillRect(ports.dir > 0 ? -halfW + 32 : halfW - 39, -23, 7, 7);
+  ctx.fillRect(ports.dir > 0 ? halfW - 40 : -halfW + 33, 16, 7, 7);
 
   if (item.waterFlowOn) {
     const phase = (timeNow * 24) % 18;
@@ -295,7 +338,7 @@ export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0
     ctx.lineWidth = 1.2;
     for (let px = -30 + phase; px < 35; px += 18) {
       ctx.beginPath();
-      ctx.moveTo(px + 6, -10);
+      ctx.moveTo(px + ports.dir * 6, -10);
       ctx.lineTo(px, -10);
       ctx.stroke();
     }
@@ -303,9 +346,9 @@ export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0
 
   ctx.restore();
 
-  // Intuitive Left Inlet & Right Outlet tube drag ports (in world coordinates matching rotated endpoints)
-  const portIn = { x: x - halfW * 0.94, y: y - 10 };
-  const portOut = { x: x + halfW * 0.94, y: y + 11 };
+  // Intuitive Vapor Inlet & Condensate Outlet tube drag ports (in world coordinates matching rotated endpoints)
+  const portIn = ports.inlet;
+  const portOut = ports.outlet;
   for (const [port, connected, color] of [
     [portIn, Boolean(item.connectedFromId), '#f59e0b'],
     [portOut, Boolean(item.outletTargetId), '#0ea5e9'],
@@ -440,21 +483,23 @@ export function renderSplint(ctx, item, isSelected, isDark, timeNow = 0) {
   drawSelectionGlow(ctx, isSelected, false);
 
   // Wooden birch body
+  const tip = getProbeTipPos(item);
+  const dir = tip.dir;
   ctx.fillStyle = '#d97706';
   ctx.strokeStyle = isSelected ? '#3b82f6' : '#92400e';
   ctx.lineWidth = isSelected ? 2 : 1;
   ctx.beginPath();
-  ctx.roundRect(x - 46, y - 3, 96, 6, 2);
+  ctx.roundRect(dir < 0 ? x - 46 : x - 50, y - 3, 96, 6, 2);
   ctx.fill();
   ctx.stroke();
   ctx.shadowBlur = 0;
 
-  const tipX = x - 48;
+  const tipX = tip.visualTipX;
   const isO2Flare = item.mode === 'burning' && (item.o2FlareTimer || 0) > 0;
   if (item.mode === 'burning' || item.mode === 'glowing') {
     // Charred tip + glowing ember
     ctx.fillStyle = '#1f2937';
-    ctx.fillRect(tipX - 2, y - 3.2, 8, 6.4);
+    ctx.fillRect(tipX - 4, y - 3.2, 8, 6.4);
     const pulse = 0.78 + Math.sin(timeNow * 14) * 0.22;
     const haloR = isO2Flare ? 34 : item.mode === 'burning' ? 16 : 10;
     const g = ctx.createRadialGradient(tipX, y, 1, tipX, y, haloR);
@@ -512,34 +557,36 @@ export function renderSplint(ctx, item, isSelected, isDark, timeNow = 0) {
 export function renderFlameLoop(ctx, item, isSelected, isDark, timeNow = 0) {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
+  const tip = getProbeTipPos(item);
+  const dir = tip.dir;
   ctx.save();
   drawSelectionGlow(ctx, isSelected, false);
 
-  // Borosilicate handle (right half)
+  // Borosilicate handle
   ctx.fillStyle = isDark ? 'rgba(186, 230, 253, 0.35)' : 'rgba(148, 163, 184, 0.45)';
   ctx.strokeStyle = isSelected ? '#3b82f6' : pal.glassStroke;
   ctx.lineWidth = 1.4;
   ctx.beginPath();
-  ctx.roundRect(x - 6, y - 3.5, 58, 7, 3.5);
+  ctx.roundRect(dir < 0 ? x - 6 : x - 52, y - 3.5, 58, 7, 3.5);
   ctx.fill();
   ctx.stroke();
 
-  // Twisted Nichrome wire + sample loop at left tip
+  // Twisted Nichrome wire + sample loop at active tip
   ctx.strokeStyle = '#94a3b8';
   ctx.lineWidth = 1.6;
   ctx.beginPath();
-  ctx.moveTo(x - 6, y);
-  ctx.lineTo(x - 42, y);
+  ctx.moveTo(x - dir * 6, y);
+  ctx.lineTo(x + dir * 42, y);
   ctx.stroke();
   ctx.beginPath();
-  ctx.arc(x - 47, y, 5, 0, Math.PI * 2);
+  ctx.arc(tip.loopCenterX, y, 5, 0, Math.PI * 2);
   ctx.stroke();
 
   if (item.sampledIon) {
     // Subtle wet solution film on wire loop — color reveals ONLY upon heating in burner flame!
     ctx.fillStyle = item.sampledIon === 'Cu²⁺' ? 'rgba(56, 189, 248, 0.42)' : 'rgba(226, 232, 240, 0.42)';
     ctx.beginPath();
-    ctx.arc(x - 47, y, 4.0, 0, Math.PI * 2);
+    ctx.arc(tip.loopCenterX, y, 4.0, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -555,6 +602,7 @@ export function renderFlameLoop(ctx, item, isSelected, isDark, timeNow = 0) {
 export function renderIndicatorStrip(ctx, item, isSelected, isDark, langCode = 'vi') {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
+  const { dir } = getProbeTipPos(item);
   const isLit = item.stripKind === 'litmus';
   const dryBase = isLit ? '#8b5cf6' : '#facc15';
   const wetColor = item.tipColor || dryBase;
@@ -562,7 +610,7 @@ export function renderIndicatorStrip(ctx, item, isSelected, isDark, langCode = '
   ctx.save();
   drawSelectionGlow(ctx, isSelected, false);
 
-  // Dry right handle half
+  // Dry handle half
   ctx.fillStyle = dryBase;
   ctx.strokeStyle = isSelected ? '#3b82f6' : isDark ? '#475569' : '#94a3b8';
   ctx.lineWidth = isSelected ? 2 : 1.1;
@@ -571,9 +619,9 @@ export function renderIndicatorStrip(ctx, item, isSelected, isDark, langCode = '
   ctx.fill();
   ctx.stroke();
 
-  // Immersed / sampled left half
+  // Immersed / sampled tip half (left by default, right if flipped)
   ctx.fillStyle = wetColor;
-  ctx.fillRect(x - 27.5, y - 5.5, 25, 11);
+  ctx.fillRect(dir < 0 ? x - 27.5 : x + 2.5, y - 5.5, 25, 11);
   ctx.shadowBlur = 0;
 
   let txt;
@@ -741,6 +789,7 @@ export function renderSaltBridge(ctx, item, items = [], isSelected = false, isDa
     borderColor: bridged ? '#10b981' : isSelected ? '#3b82f6' : null,
     font: '600 10.5px system-ui, sans-serif',
     height: 18,
+    itemIds: [item.id, item.vesselAId, item.vesselBId].filter(Boolean),
   });
   ctx.restore();
 }
@@ -923,6 +972,7 @@ export function renderDcPowerAndWires(ctx, items, selectedId, isDark) {
       borderColor: sup.powerOn ? '#10b981' : isSelected ? '#3b82f6' : null,
       font: '600 10.5px system-ui, sans-serif',
       height: 18,
+      itemId: sup.id,
     });
     ctx.restore();
   }
@@ -1028,6 +1078,7 @@ export function renderVoltAmmeterAndWires(ctx, items, selectedId, isDark) {
       borderColor: meter.cathodicProtectedActive ? '#10b981' : isSelected ? '#3b82f6' : null,
       font: '600 10.5px system-ui, sans-serif',
       height: 18,
+      itemId: meter.id,
     });
     ctx.restore();
   }

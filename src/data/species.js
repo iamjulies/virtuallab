@@ -81,6 +81,7 @@ export const SPECIES = {
     color: '#cbd5e1',
     highlightColor: '#f8fafc',
     visualType: 'sodium_metal',
+    mechanicalBehavior: 'soft_metal',
     renderLayer: 'floating_metal',
   },
   Zn_s: {
@@ -89,6 +90,7 @@ export const SPECIES = {
     name: 'Zinc',
     phase: 's',
     isDenseMetal: true,
+    mechanicalBehavior: 'ductile_metal',
     molarMass: AW.Zn,
     density: 7.14,
     cp: 25.4,

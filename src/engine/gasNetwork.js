@@ -6,7 +6,7 @@ import {
   NON_STEAM_GAS_IDS,
   SPECIES,
 } from '../data/species.js';
-import { APPARATUS } from '../data/apparatus.js';
+import { APPARATUS, getCondenserPorts, getSyringeGeometry } from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, solutionFreezingPointK } from './equilibrium.js';
 
 export const NON_STEAM_GASES = NON_STEAM_GAS_IDS;
@@ -14,11 +14,10 @@ export const ALL_GASES = ALL_GAS_IDS;
 const createEmptyGasMap = createZeroGasMap;
 
 export function getSyringeNozzlePos(syringe) {
-  const sSpec = APPARATUS.gas_syringe;
-  const barrelLeft = syringe.x - sSpec.width / 2 + (sSpec.barrelLeftOffset || 20);
+  const { nozzleX, nozzleY } = getSyringeGeometry(syringe);
   return {
-    x: barrelLeft - 18,
-    y: syringe.y,
+    x: nozzleX,
+    y: nozzleY,
   };
 }
 
@@ -32,8 +31,8 @@ export function computeSyringeDischargeArc(
   benchFloorY = 482,
   gravityPxS2 = CONSTANTS.GRAVITY_PX_S2 || 1800
 ) {
-  const { x: nozzleX, y: nozzleY } = getSyringeNozzlePos(syringe);
-  const vx0 = -48; // Gentle horizontal leftward stream velocity out of Luer tip
+  const { nozzleX, nozzleY, dischargeVx } = getSyringeGeometry(syringe);
+  const vx0 = dischargeVx; // Gentle horizontal stream velocity out of Luer tip (left or right when flipped)
   const vy0 = 14;
   const dtStep = 0.004;
   const points = [{ x: nozzleX, y: nozzleY }];
@@ -108,14 +107,16 @@ export function cubicBezierPoint(t, p0, p1, p2, p3) {
 export function computeTubingGeometry(vessel, target) {
   const vSpec = APPARATUS[vessel.typeId] || APPARATUS.erlenmeyer_250;
   const tSpec = APPARATUS[target.typeId] || APPARATUS.gas_syringe;
+  const condPorts = target.kind === 'condenser' ? getCondenserPorts(target) : null;
+  const syrNozzle = target.kind === 'gas_syringe' ? getSyringeGeometry(target) : null;
   const p0 = vessel.isInverted
     ? { x: vessel.x, y: vessel.y + vSpec.height / 2 + 8 }
     : { x: vessel.x, y: vessel.y - vSpec.height / 2 - 8 };
   const p3 =
     target.kind === 'gas_syringe'
-      ? { x: target.x - tSpec.width / 2 + 2, y: target.y }
+      ? { x: syrNozzle.nozzleX, y: syrNozzle.nozzleY }
       : target.kind === 'condenser'
-      ? { x: target.x - tSpec.width * 0.47, y: target.y - 10 }
+      ? condPorts.inlet
       : target.isInverted
       ? { x: target.x, y: target.y + tSpec.height / 2 - 4 }
       : { x: target.x, y: target.y - tSpec.height / 2 + (target.isStoppered ? -8 : 12) };
@@ -126,7 +127,7 @@ export function computeTubingGeometry(vessel, target) {
     target.kind === 'gas_syringe'
       ? { x: (p0.x + p3.x) * 0.5, y: Math.min(p0.y, p3.y) - 45 }
       : target.kind === 'condenser'
-      ? { x: p3.x - 28, y: p3.y - 34 }
+      ? { x: p3.x - condPorts.dir * 28, y: p3.y - 34 }
       : target.isInverted
       ? { x: p3.x - 16, y: p3.y + 38 }
       : { x: p3.x, y: archTopY };
@@ -165,12 +166,12 @@ export function computeTubingGeometry(vessel, target) {
 }
 
 export function computeCondenserOutletGeometry(cond, receiver) {
-  const cSpec = APPARATUS.liebig_condenser;
   const rSpec = APPARATUS[receiver.typeId] || APPARATUS.beaker_250;
-  const p0 = { x: cond.x + cSpec.width * 0.47, y: cond.y + 11 };
+  const { outlet, dir } = getCondenserPorts(cond);
+  const p0 = outlet;
   const p3 = { x: receiver.x, y: receiver.y - rSpec.height / 2 + 8 };
   const midX = 0.5 * (p0.x + p3.x);
-  const p1 = { x: p0.x + 22, y: p0.y + 18 };
+  const p1 = { x: p0.x + dir * 22, y: p0.y + 18 };
   const p2 = { x: midX + (p3.x - midX) * 0.4, y: p3.y - 34 };
   const points = [];
   for (let i = 0; i <= 20; i++) {

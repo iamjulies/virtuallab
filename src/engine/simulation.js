@@ -5,7 +5,7 @@ import {
   SPECIES,
   STARTER_REAGENTS,
 } from '../data/species.js';
-import { APPARATUS, clampItemToStandY } from '../data/apparatus.js';
+import { APPARATUS, clampItemToStandY, getStandGeometry, getSyringeGeometry } from '../data/apparatus.js';
 import {
   calcSolidTransferRatio,
   computeContentsMassG,
@@ -18,7 +18,12 @@ import {
 } from './equilibrium.js';
 import { enforceDryPhaseBoundary, stepVesselChemistry } from './chemistry.js';
 import { ELECTRODE_MATERIALS, stepElectrochemistry } from './electrochemistry.js';
-import { grindMortarSolids, stepApparatusTools, syncDockedToolPositions } from './apparatusTools.js';
+import {
+  computeWashBottleStreamArc,
+  grindMortarSolids,
+  stepApparatusTools,
+  syncDockedToolPositions,
+} from './apparatusTools.js';
 import { computeHeatCapacityJK, computeSteamOpacity, stepVesselThermodynamics } from './thermodynamics.js';
 import {
   ALL_GASES,
@@ -184,12 +189,15 @@ export class LabSimulation {
       landingTiltVel: 0,
       restingOnId: null,
       clampedToId: null,
+      flippedX: false,
     };
 
     if (spec.kind === 'vessel') {
       Object.assign(base, {
         moles: {},
         particleCounts: {},
+        groundPowderMap: {},
+        flattenedMetalMap: {},
         tempK: this.environment.tempK,
         internalPressureBar: this.environment.pressureBar,
         isStoppered: false,
@@ -301,6 +309,8 @@ export class LabSimulation {
         waterMl: 250,
         isSpraying: false,
         sprayTargetId: null,
+        squirtTimer: 0,
+        squirtArc: null,
         isBroken: false,
       });
     } else if (spec.kind === 'condenser') {
@@ -546,6 +556,22 @@ export class LabSimulation {
     return true;
   }
 
+  toggleItemFlipX(itemId) {
+    const item = this.getItem(itemId);
+    if (!item || !APPARATUS[item.typeId]?.flippable) return false;
+    item.flippedX = !item.flippedX;
+    if (item.kind === 'stand') {
+      const { armDir, rodX } = getStandGeometry(item);
+      for (const child of this.items) {
+        if (child.clampedToId !== item.id) continue;
+        const d = child.kind === 'gas_syringe' ? 45 : 28;
+        child.x = Math.max(50, Math.min(910, rodX + armDir * d));
+      }
+    }
+    this.emitChange();
+    return true;
+  }
+
   setupPreset(presetName) {
     this.items = [];
     this.logs = [];
@@ -591,7 +617,7 @@ export class LabSimulation {
       const beaker = this.createApparatus('beaker_250', 340, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
       const funnel = this.createApparatus('filter_funnel', 340, beaker.y - APPARATUS.beaker_250.height / 2 - APPARATUS.filter_funnel.height * 0.18);
       funnel.mountedOnVesselId = beaker.id;
-      this.createApparatus('wash_bottle', 510, SIM_BENCH_FLOOR_Y - APPARATUS.wash_bottle.height / 2 + 2);
+      this.createApparatus('wash_bottle', 450, SIM_BENCH_FLOOR_Y - APPARATUS.wash_bottle.height / 2 + 2);
       this.createApparatus('beaker_tall_250', 180, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_tall_250.height / 2 + 2);
       this.selectedId = funnel.id;
     } else if (presetName === 'daniell_cell') {
@@ -1099,7 +1125,7 @@ export class LabSimulation {
       }
       transferredMl += liqMl * liqMoveFrac;
       this.activePourStream = {
-        fromX: syr.x - (APPARATUS.gas_syringe.width / 2 - 2),
+        fromX: getSyringeGeometry(syr).nozzleX,
         fromY: syr.y,
         toX: dst.x,
         toY: dst.y - APPARATUS[dst.typeId].height * 0.28,
@@ -1780,8 +1806,21 @@ export class LabSimulation {
       const srcCnt = src.particleCounts?.[spId] || 6;
       const mvCnt = Math.max(1, Math.round(srcCnt * frac));
       dst.particleCounts[spId] = (dst.particleCounts[spId] || 0) + mvCnt;
-      if (frac >= 0.99) delete src.particleCounts[spId];
-      else if (src.particleCounts) src.particleCounts[spId] = Math.max(1, srcCnt - mvCnt);
+      if (src.groundPowderMap?.[spId]) {
+        dst.groundPowderMap = dst.groundPowderMap || {};
+        dst.groundPowderMap[spId] = true;
+      }
+      if (src.flattenedMetalMap?.[spId]) {
+        dst.flattenedMetalMap = dst.flattenedMetalMap || {};
+        dst.flattenedMetalMap[spId] = true;
+      }
+      if (frac >= 0.99) {
+        delete src.particleCounts[spId];
+        if (src.groundPowderMap) delete src.groundPowderMap[spId];
+        if (src.flattenedMetalMap) delete src.flattenedMetalMap[spId];
+      } else if (src.particleCounts) {
+        src.particleCounts[spId] = Math.max(1, srcCnt - mvCnt);
+      }
       if (sp.isPrecipitate) dst.precipitateSettle[spId] = 0.05;
       totalMol += d;
     }
@@ -1835,26 +1874,63 @@ export class LabSimulation {
     return actualMl;
   }
 
+  toggleWashBottleSpray(bottleId, active = null) {
+    const wb = this.getItem(bottleId);
+    if (!wb || wb.kind !== 'wash_bottle') return false;
+    const next = active === null ? !wb.isSpraying : Boolean(active);
+    if (next && (wb.waterMl || 0) <= 0.1) {
+      wb.isSpraying = false;
+      this.emitChange();
+      return false;
+    }
+    wb.isSpraying = next;
+    if (next) {
+      const arc = computeWashBottleStreamArc(wb, this.items, SIM_BENCH_FLOOR_Y, CONSTANTS.GRAVITY_PX_S2 || 1800);
+      wb.squirtArc = arc;
+      wb.squirtTimer = 0.25;
+      wb.sprayTargetId = arc.hitTarget ? arc.hitTarget.id : null;
+    }
+    this.emitChange();
+    return wb.isSpraying;
+  }
+
   washBottleSquirt(bottleId, targetId = null, volMl = 5.0) {
     const wb = this.getItem(bottleId);
     if (!wb || wb.kind !== 'wash_bottle' || (wb.waterMl || 0) <= 0.1) return 0;
     const actual = Math.min(wb.waterMl, volMl);
-    const tgt = targetId
-      ? this.getItem(targetId)
-      : this.items.find((i) => (i.kind === 'vessel' || i.kind === 'filter_funnel') && !i.isShattered && !i.isStoppered && Math.hypot(i.x - (wb.x - 24), i.y - wb.y) <= 105);
+    const arc = computeWashBottleStreamArc(wb, this.items, SIM_BENCH_FLOOR_Y, CONSTANTS.GRAVITY_PX_S2 || 1800);
+    const explicitTgt = targetId ? this.getItem(targetId) : null;
+    const tgt = explicitTgt && !explicitTgt.isShattered && !explicitTgt.isBroken ? explicitTgt : arc.hitTarget;
     wb.waterMl -= actual;
-    if (tgt && (tgt.kind === 'vessel' || tgt.kind === 'filter_funnel') && !tgt.isStoppered) {
+
+    let visualArc = arc;
+    if (explicitTgt && tgt && (!arc.hitTarget || arc.hitTarget.id !== tgt.id)) {
+      const tSpec = APPARATUS[tgt.typeId] || {};
+      const dstX = tgt.x;
+      const dstY =
+        tgt.kind === 'filter_funnel'
+          ? tgt.y - tSpec.height / 2 + 4
+          : tgt.y - (tSpec.height || 80) / 2 + 4;
+      const pts = [];
+      const peakY = Math.min(arc.spoutY, dstY) - 44;
+      const ctrlX = (arc.spoutX + dstX) * 0.5;
+      for (let k = 0; k <= 18; k++) {
+        const u = k / 18;
+        const omt = 1 - u;
+        pts.push({
+          x: omt * omt * arc.spoutX + 2 * omt * u * ctrlX + u * u * dstX,
+          y: omt * omt * arc.spoutY + 2 * omt * u * peakY + u * u * dstY,
+        });
+      }
+      visualArc = { ...arc, points: pts, hitTarget: tgt, hitX: dstX, hitY: dstY };
+    }
+
+    wb.squirtArc = visualArc;
+    wb.squirtTimer = 0.55;
+    wb.sprayTargetId = tgt ? tgt.id : null;
+
+    if (tgt && (tgt.kind === 'vessel' || tgt.kind === 'filter_funnel') && !tgt.isStoppered && !tgt.isInverted) {
       tgt.moles.H2O_l = (tgt.moles.H2O_l || 0) + (actual * 0.997) / CONSTANTS.M_H2O;
-      this.activePourStream = {
-        fromX: wb.x - 22,
-        fromY: wb.y - 42,
-        toX: tgt.x,
-        toY: tgt.y - 24,
-        color: 'rgba(186, 230, 253, 0.85)',
-        rateMlS: actual * 2.5,
-        timer: 0.35,
-        pouredMl: actual,
-      };
     }
     this.recomputeScaleReadings();
     this.emitChange();
@@ -2211,7 +2287,7 @@ export class LabSimulation {
     if (pip.kind === 'pipette') {
       pip.drawAnimTimer = 0.68;
       pip.drawAnimColor = vis.css;
-      pip.drawFromX = syr.x - (APPARATUS.gas_syringe.width / 2 - 4);
+      pip.drawFromX = getSyringeGeometry(syr).nozzleX;
       pip.drawFromY = syr.y;
       if (this.visualHooks.onAlert) {
         this.visualHooks.onAlert('pipette_suck', { x: pip.drawFromX, y: pip.drawFromY }, {
@@ -4032,6 +4108,8 @@ export class LabSimulation {
           this.visualHooks.onParticlesNeeded(item, { gasId: item.gasBubbleType, rateMolS: item.gasBubbleRate });
         } else if (item.kind === 'vessel' && (item.troughOverfillRate || 0) > 1e-4) {
           this.visualHooks.onParticlesNeeded(item, { troughOverfillRate: item.troughOverfillRate, troughOverfillX: item.troughOverfillX });
+        } else if (item.kind === 'wash_bottle' && ((item.squirtTimer || 0) > 0 || item.isSpraying) && item.squirtArc) {
+          this.visualHooks.onParticlesNeeded(item, { squirtArc: item.squirtArc, activeSpray: true });
         }
       }
     }
