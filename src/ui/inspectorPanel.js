@@ -177,7 +177,9 @@ export class InspectorPanel {
       return `dtube|${item.id}|${item.leftGasId || ''}|${item.rightGasId || ''}|${(item.ringGrowth || 0) > 0.05 ? 1 : 0}|${item.isBroken ? 1 : 0}|${langCode}|${logLen}`;
     }
     if (item.kind === 'electrode') {
-      return `el|${item.id}|${item.material}|${item.dockedVesselId || ''}|${item.polarityLabel || ''}|${item.platedMaterial || ''}|${item.platedQuality || ''}|${item.cathodicProtectedActive ? 1 : 0}|${langCode}|${logLen}`;
+      const mountedTube = this.sim.items.find((i) => i.mountedOverElectrodeId === item.id);
+      const colCnt = this.sim.items.filter((i) => !i.isBroken && !i.isShattered && (i.kind === 'gas_syringe' || i.kind === 'vessel')).length;
+      return `el|${item.id}|${item.material}|${item.dockedVesselId || ''}|${item.polarityLabel || ''}|${item.platedMaterial || ''}|${item.platedQuality || ''}|${item.cathodicProtectedActive ? 1 : 0}|${item.gasTargetId || ''}|${mountedTube?.id || ''}|${colCnt}|${langCode}|${logLen}`;
     }
     if (item.kind === 'splint') {
       return `sp|${item.id}|${item.flippedX ? 1 : 0}|${item.mode}|${langCode}|${logLen}`;
@@ -516,6 +518,8 @@ export class InspectorPanel {
       const stands = this.sim.items.filter((i) => i.kind === 'stand');
       const inletSrcs = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && APPARATUS[i.typeId]?.stopperable);
       const outletDsts = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered && i.id !== item.connectedFromId);
+      const curInlet = item.connectedFromId ? this.sim.getItem(item.connectedFromId) : null;
+      const curOutlet = item.outletTargetId ? this.sim.getItem(item.outletTargetId) : null;
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
@@ -535,27 +539,29 @@ export class InspectorPanel {
                 <div class="flex flex-col gap-2 pt-1 border-t border-theme/50 text-xs">
                   <div class="flex flex-col gap-1">
                     <span class="text-muted">${t('condInletLabel')}</span>
-                    <div class="flex gap-1.5">
-                      <select id="cond-inlet-sel" class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs">
-                        ${inletSrcs.length === 0 ? `<option value="">—</option>` : inletSrcs.map((v) => `<option value="${v.id}" ${item.connectedFromId === v.id ? 'selected' : ''}>${t(APPARATUS[v.typeId].i18nKey)} ${v.label}</option>`).join('')}
-                      </select>
+                    <div class="flex items-center gap-1.5">
+                      <div class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs truncate">
+                        ${curInlet ? `${t(APPARATUS[curInlet.typeId].i18nKey)} ${curInlet.label}` : '—'}
+                      </div>
+                      <button type="button" id="ins-cond-in-pick" ${inletSrcs.length === 0 ? 'disabled' : ''} class="px-2 py-1 rounded bg-amber-600 text-white text-xs font-semibold hover:opacity-90 disabled:opacity-40">${t('btnPickOnBench')}</button>
                       ${
                         item.connectedFromId
                           ? `<button type="button" id="ins-cond-in-dis" class="px-2 py-1 rounded border border-red-500/40 bg-red-500/10 text-red-400 text-xs">${t('condDisconnect')}</button>`
-                          : `<button type="button" id="ins-cond-in-con" ${inletSrcs.length === 0 ? 'disabled' : ''} class="px-2 py-1 rounded bg-amber-600 text-white text-xs font-semibold disabled:opacity-40">${t('condConnectInlet')}</button>`
+                          : ''
                       }
                     </div>
                   </div>
                   <div class="flex flex-col gap-1">
                     <span class="text-muted">${t('condOutletLabel')}</span>
-                    <div class="flex gap-1.5">
-                      <select id="cond-outlet-sel" class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs">
-                        ${outletDsts.length === 0 ? `<option value="">—</option>` : outletDsts.map((v) => `<option value="${v.id}" ${item.outletTargetId === v.id ? 'selected' : ''}>${t(APPARATUS[v.typeId].i18nKey)} ${v.label}</option>`).join('')}
-                      </select>
+                    <div class="flex items-center gap-1.5">
+                      <div class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs truncate">
+                        ${curOutlet ? `${t(APPARATUS[curOutlet.typeId].i18nKey)} ${curOutlet.label}` : '—'}
+                      </div>
+                      <button type="button" id="ins-cond-out-pick" ${outletDsts.length === 0 ? 'disabled' : ''} class="px-2 py-1 rounded bg-sky-600 text-white text-xs font-semibold hover:opacity-90 disabled:opacity-40">${t('btnPickOnBench')}</button>
                       ${
                         item.outletTargetId
                           ? `<button type="button" id="ins-cond-out-dis" class="px-2 py-1 rounded border border-red-500/40 bg-red-500/10 text-red-400 text-xs">${t('condDisconnect')}</button>`
-                          : `<button type="button" id="ins-cond-out-con" ${outletDsts.length === 0 ? 'disabled' : ''} class="px-2 py-1 rounded bg-sky-600 text-white text-xs font-semibold disabled:opacity-40">${t('condConnectOutlet')}</button>`
+                          : ''
                       }
                     </div>
                   </div>
@@ -721,6 +727,8 @@ export class InspectorPanel {
       `;
     } else if (item.kind === 'volt_ammeter') {
       const dockedEls = this.sim.items.filter((i) => i.kind === 'electrode');
+      const posEl = item.posElectrodeId ? this.sim.getItem(item.posElectrodeId) : null;
+      const negEl = item.negElectrodeId ? this.sim.getItem(item.negElectrodeId) : null;
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
@@ -740,12 +748,12 @@ export class InspectorPanel {
             ${['voltmeter', 'ammeter', 'short'].map((m) => `<button type="button" class="vm-mode-btn py-1.5 px-2.5 rounded-lg border text-xs font-semibold text-left ${item.mode === m ? 'border-accent bg-accent/15 text-accent' : 'border-theme bg-surface text-muted'}" data-mode="${m}">${t(m === 'voltmeter' ? 'dmmModeVolt' : m === 'ammeter' ? 'dmmModeAmp' : 'dmmModeShort')}</button>`).join('')}
           </div>
           ${dockedEls.length >= 2 ? `<div class="grid grid-cols-2 gap-1.5 text-xs pt-1 border-t border-theme/50">
-            <label class="flex flex-col gap-1"><span class="text-red-400 font-semibold">+ Lead (Red)</span>
-              <select id="vm-pos-sel" class="px-2 py-1 rounded border border-theme bg-surface font-mono">${dockedEls.map((e) => `<option value="${e.id}" ${item.posElectrodeId === e.id ? 'selected' : ''}>${e.label} (${e.material})</option>`).join('')}</select>
-            </label>
-            <label class="flex flex-col gap-1"><span class="text-slate-400 font-semibold">− COM (Black)</span>
-              <select id="vm-neg-sel" class="px-2 py-1 rounded border border-theme bg-surface font-mono">${dockedEls.map((e) => `<option value="${e.id}" ${item.negElectrodeId === e.id ? 'selected' : ''}>${e.label} (${e.material})</option>`).join('')}</select>
-            </label>
+            <div class="flex flex-col gap-1"><span class="text-red-400 font-semibold">+ Lead (Red)</span>
+              <button type="button" id="ins-vm-pos-pick" class="px-2 py-1 rounded border border-red-500/40 bg-surface text-left font-mono hover:border-red-400 truncate" title="${t('btnPickOnBench')}">🎯 ${posEl ? `${posEl.label} (${posEl.material})` : t('btnPickOnBench')}</button>
+            </div>
+            <div class="flex flex-col gap-1"><span class="text-slate-400 font-semibold">− COM (Black)</span>
+              <button type="button" id="ins-vm-neg-pick" class="px-2 py-1 rounded border border-theme bg-surface text-left font-mono hover:border-accent truncate" title="${t('btnPickOnBench')}">🎯 ${negEl ? `${negEl.label} (${negEl.material})` : t('btnPickOnBench')}</button>
+            </div>
           </div>` : `<p class="text-[11px] text-muted">${t('dmmWiringHint')}</p>`}
         </div>
       `;
@@ -776,6 +784,11 @@ export class InspectorPanel {
         </div>
       `;
     } else if (item.kind === 'electrode') {
+      const collectorTarget = item.gasTargetId ? this.sim.getItem(item.gasTargetId) : null;
+      const mountedTube = this.sim.items.find((i) => i.mountedOverElectrodeId === item.id);
+      const collectorCandidates = this.sim.items.filter(
+        (i) => !i.isBroken && !i.isShattered && (i.kind === 'gas_syringe' || (i.kind === 'vessel' && i.id !== item.dockedVesselId))
+      );
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
@@ -796,6 +809,22 @@ export class InspectorPanel {
           ${item.polarityLabel ? `<div class="p-2 rounded border border-theme bg-surface text-xs font-mono text-center">${item.polarityLabel}</div>` : ''}
           ${item.platedMaterial === 'Cu' && (item.platedCuMol || 0) > 1e-7 ? `<div class="p-2 rounded border border-amber-500/40 bg-amber-500/10 text-xs flex items-center justify-between gap-2"><span>${t(item.platedQuality === 'burned' ? 'platedCuBurned' : 'platedCuSmooth')} (${((item.platedCuMol || 0) * 63.546 * 1000).toFixed(1)} mg)</span><button type="button" id="ins-el-strip" class="px-2 py-0.5 rounded border border-theme bg-surface text-[11px]">${t('actionClearElectrodes')}</button></div>` : ''}
           ${item.cathodicProtectedActive ? `<div class="p-2 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs font-semibold text-center">${t('dmmCathProtBadge')}</div>` : ''}
+          ${item.dockedVesselId ? `
+            <div class="pt-2 border-t border-theme/50 flex flex-col gap-1.5 text-xs">
+              <div class="text-muted font-medium">${t('elCollectorLabel')} ${
+                collectorTarget
+                  ? `<span class="text-emerald-400 font-semibold">${t(APPARATUS[collectorTarget.typeId]?.i18nKey || 'eq_gas_syringe')} ${collectorTarget.label}</span>`
+                  : mountedTube
+                  ? `<span class="text-sky-400 font-semibold">${t(APPARATUS[mountedTube.typeId]?.i18nKey || 'eq_test_tube_50')} ${mountedTube.label}</span>`
+                  : '—'
+              }</div>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button type="button" id="ins-el-mount-tube" class="py-1.5 px-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 font-semibold text-xs hover:bg-sky-500/20">${t('elCollectMountTube')}</button>
+                <button type="button" id="ins-el-pick-collector" ${collectorCandidates.length === 0 ? 'disabled' : ''} class="py-1.5 px-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 font-semibold text-xs hover:bg-emerald-500/20 disabled:opacity-40">${t('elCollectPickTarget')}</button>
+              </div>
+              ${item.gasTargetId || mountedTube ? `<button type="button" id="ins-el-clear-collector" class="py-1 px-2 rounded border border-red-500/40 bg-red-500/10 text-red-400 text-xs">${t('elCollectDetach')}</button>` : ''}
+            </div>
+          ` : ''}
         </div>
       `;
     } else if (item.kind === 'stir_bar') {
@@ -834,12 +863,7 @@ export class InspectorPanel {
                   <p class="text-muted leading-snug">${t('stirBarHint')}</p>
                   ${
                     openVessels.length > 0
-                      ? `<div class="flex gap-1.5">
-                          <select id="sb-insert-sel" class="flex-1 px-2 py-1.5 rounded border border-theme bg-surface text-xs">
-                            ${openVessels.map((v) => `<option value="${v.id}">${t(APPARATUS[v.typeId].i18nKey)} ${v.label}</option>`).join('')}
-                          </select>
-                          <button type="button" id="ins-sb-insert" class="px-2.5 py-1.5 rounded bg-accent text-white text-xs font-semibold">${t('stirBarInsert')}</button>
-                        </div>`
+                      ? `<button type="button" id="ins-sb-pick-insert" class="w-full py-1.5 px-2.5 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">${t('stirBarInsert')} · ${t('btnPickOnBench')}</button>`
                       : ''
                   }
                 </div>`
@@ -1316,16 +1340,26 @@ export class InspectorPanel {
         item.waterFlowOn = !item.waterFlowOn;
         this.sim.emitChange();
       });
-      this.container.querySelector('#ins-cond-in-con')?.addEventListener('click', () => {
-        const srcId = this.container.querySelector('#cond-inlet-sel')?.value;
-        if (srcId) this.sim.connectTube(srcId, item.id);
+      this.container.querySelector('#ins-cond-in-pick')?.addEventListener('click', () => {
+        const srcs = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && APPARATUS[i.typeId]?.stopperable);
+        if (srcs.length === 0) return;
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: srcs.map((s) => s.id),
+          promptText: `${t('condInletLabel')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.connectTube(picked.id, item.id),
+        });
       });
       this.container.querySelector('#ins-cond-in-dis')?.addEventListener('click', () => {
         if (item.connectedFromId) this.sim.disconnectSyringe(item.connectedFromId);
       });
-      this.container.querySelector('#ins-cond-out-con')?.addEventListener('click', () => {
-        const dstId = this.container.querySelector('#cond-outlet-sel')?.value;
-        if (dstId) this.sim.connectCondenserOutlet(item.id, dstId);
+      this.container.querySelector('#ins-cond-out-pick')?.addEventListener('click', () => {
+        const dsts = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered && i.id !== item.connectedFromId);
+        if (dsts.length === 0) return;
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: dsts.map((d) => d.id),
+          promptText: `${t('condOutletLabel')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.connectCondenserOutlet(item.id, picked.id),
+        });
       });
       this.container.querySelector('#ins-cond-out-dis')?.addEventListener('click', () => {
         this.sim.connectCondenserOutlet(item.id, null);
@@ -1385,11 +1419,23 @@ export class InspectorPanel {
       this.container.querySelectorAll('.vm-mode-btn').forEach((btn) => {
         btn.addEventListener('click', () => this.sim.setVoltAmmeterState(item.id, { mode: btn.dataset.mode }));
       });
-      this.container.querySelector('#vm-pos-sel')?.addEventListener('change', (e) => {
-        this.sim.setVoltAmmeterState(item.id, { posElectrodeId: Number(e.target.value) });
+      this.container.querySelector('#ins-vm-pos-pick')?.addEventListener('click', () => {
+        const els = this.sim.items.filter((i) => i.kind === 'electrode' && i.id !== item.negElectrodeId);
+        if (els.length === 0) return;
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: els.map((e) => e.id),
+          promptText: `+ Lead (Red) — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.setVoltAmmeterState(item.id, { posElectrodeId: picked.id }),
+        });
       });
-      this.container.querySelector('#vm-neg-sel')?.addEventListener('change', (e) => {
-        this.sim.setVoltAmmeterState(item.id, { negElectrodeId: Number(e.target.value) });
+      this.container.querySelector('#ins-vm-neg-pick')?.addEventListener('click', () => {
+        const els = this.sim.items.filter((i) => i.kind === 'electrode' && i.id !== item.posElectrodeId);
+        if (els.length === 0) return;
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: els.map((e) => e.id),
+          promptText: `− COM (Black) — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.setVoltAmmeterState(item.id, { negElectrodeId: picked.id }),
+        });
       });
     } else if (item.kind === 'diffusion_tube') {
       this.container.querySelector('#diff-left-nh3')?.addEventListener('click', () => this.sim.dropDiffusionReagent(item.id, 'left', 'NH3_g'));
@@ -1402,15 +1448,42 @@ export class InspectorPanel {
         btn.addEventListener('click', () => this.sim.setElectrodeMaterial(item.id, btn.dataset.mat));
       });
       this.container.querySelector('#ins-el-strip')?.addEventListener('click', () => this.sim.clearElectrodePlating(item.id));
+      this.container.querySelector('#ins-el-mount-tube')?.addEventListener('click', () => {
+        this.sim.mountCollectorTubeOverElectrode(item.id);
+      });
+      this.container.querySelector('#ins-el-pick-collector')?.addEventListener('click', () => {
+        const cands = this.sim.items.filter(
+          (i) => !i.isBroken && !i.isShattered && (i.kind === 'gas_syringe' || (i.kind === 'vessel' && i.id !== item.dockedVesselId))
+        );
+        if (cands.length === 0) return;
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: cands.map((c) => c.id),
+          promptText: `${t('elCollectPickTarget')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.connectElectrodeCollector(item.id, picked.id),
+        });
+      });
+      this.container.querySelector('#ins-el-clear-collector')?.addEventListener('click', () => {
+        this.sim.connectElectrodeCollector(item.id, null);
+        const mountedTube = this.sim.items.find((i) => i.mountedOverElectrodeId === item.id);
+        if (mountedTube) {
+          mountedTube.mountedOverElectrodeId = null;
+          this.sim.emitChange();
+        }
+      });
     } else if (item.kind === 'stir_bar') {
       this.container.querySelectorAll('.sb-rpm-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
           if (item.inVesselId) this.sim.toggleMagneticStir(item.inVesselId, Number(btn.dataset.rpm));
         });
       });
-      this.container.querySelector('#ins-sb-insert')?.addEventListener('click', () => {
-        const vId = this.container.querySelector('#sb-insert-sel')?.value;
-        if (vId) this.sim.insertStirBarIntoVessel(item.id, vId, 800);
+      this.container.querySelector('#ins-sb-pick-insert')?.addEventListener('click', () => {
+        const vs = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered);
+        if (vs.length === 0) return;
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: vs.map((v) => v.id),
+          promptText: `${t('stirBarInsert')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.insertStirBarIntoVessel(item.id, picked.id, 800),
+        });
       });
       this.container.querySelector('#ins-sb-remove')?.addEventListener('click', () => {
         this.sim.removeStirBarFromVessel(item.id);

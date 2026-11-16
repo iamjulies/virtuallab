@@ -255,7 +255,7 @@ export function stepElectrochemistry(sim, dt) {
           v.particleCounts.Cu_s = Math.max(v.particleCounts.Cu_s || 0, 900);
           const dH2Co = (neMol * 0.15) / 2;
           if ((v.moles.H2O_l || 0) > dH2Co * 2) {
-            sim.emitElectrolysisGas(v, 'H2_g', dH2Co, elNeg.x);
+            sim.emitElectrolysisGas(v, 'H2_g', dH2Co, elNeg.x, elNeg);
             elNeg.gasBubbleType = 'H2_g';
             elNeg.gasBubbleRate = dH2Co / Math.max(1e-4, dt);
           }
@@ -275,7 +275,7 @@ export function stepElectrochemistry(sim, dt) {
       } else if ((v.moles.H_aq || 0) > neMol * 1.2) {
         const dH2 = neMol / 2;
         addMolSafe(v.moles, 'H_aq', -2 * dH2);
-        sim.emitElectrolysisGas(v, 'H2_g', dH2, elNeg.x);
+        sim.emitElectrolysisGas(v, 'H2_g', dH2, elNeg.x, elNeg);
         elNeg.gasBubbleType = 'H2_g';
         elNeg.gasBubbleRate = dH2 / Math.max(1e-4, dt);
         cathDesc = '2H⁺ + 2e⁻ → H₂(g)↑';
@@ -283,7 +283,7 @@ export function stepElectrochemistry(sim, dt) {
         const dH2 = neMol / 2;
         addMolSafe(v.moles, 'H2O_l', -2 * dH2);
         addMolSafe(v.moles, 'OH_aq', 2 * dH2);
-        sim.emitElectrolysisGas(v, 'H2_g', dH2, elNeg.x);
+        sim.emitElectrolysisGas(v, 'H2_g', dH2, elNeg.x, elNeg);
         elNeg.gasBubbleType = 'H2_g';
         elNeg.gasBubbleRate = dH2 / Math.max(1e-4, dt);
       }
@@ -301,7 +301,7 @@ export function stepElectrochemistry(sim, dt) {
       } else if (cCl >= 0.45 && (v.moles.Cl_aq || 0) > neMol) {
         const dCl2 = neMol / 2;
         addMolSafe(v.moles, 'Cl_aq', -2 * dCl2);
-        sim.emitElectrolysisGas(v, 'Cl2_g', dCl2, elPos.x);
+        sim.emitElectrolysisGas(v, 'Cl2_g', dCl2, elPos.x, elPos);
         elPos.gasBubbleType = 'Cl2_g';
         elPos.gasBubbleRate = dCl2 / Math.max(1e-4, dt);
         anDesc = '2Cl⁻ → Cl₂(g)↑ + 2e⁻';
@@ -309,7 +309,7 @@ export function stepElectrochemistry(sim, dt) {
         const dO2 = neMol / 4;
         addMolSafe(v.moles, 'H2O_l', -2 * dO2);
         addMolSafe(v.moles, 'H_aq', 4 * dO2);
-        sim.emitElectrolysisGas(v, 'O2_g', dO2, elPos.x);
+        sim.emitElectrolysisGas(v, 'O2_g', dO2, elPos.x, elPos);
         elPos.gasBubbleType = 'O2_g';
         elPos.gasBubbleRate = dO2 / Math.max(1e-4, dt);
       }
@@ -391,7 +391,7 @@ export function stepElectrochemistry(sim, dt) {
         if ((v.moles.H_aq || 0) > 1e-6) {
           const dH2 = Math.min(v.moles.H_aq / 2, neMol / 2);
           addMolSafe(v.moles, 'H_aq', -2 * dH2);
-          sim.emitElectrolysisGas(v, 'H2_g', dH2, cathEl.x);
+          sim.emitElectrolysisGas(v, 'H2_g', dH2, cathEl.x, cathEl);
           cathEl.gasBubbleType = 'H2_g';
           cathEl.gasBubbleRate = dH2 / Math.max(1e-4, dt);
         }
@@ -475,7 +475,7 @@ function stepGalvanicInstrument(sim, inst, elPos, elNeg, infoPos, infoNeg, items
   } else if ((cathInfo.vessel.moles.H_aq || 0) > 1e-5) {
     const dH2 = Math.min(cathInfo.vessel.moles.H_aq / 2, neMol / 2);
     addMolSafe(cathInfo.vessel.moles, 'H_aq', -2 * dH2);
-    sim.emitElectrolysisGas(cathInfo.vessel, 'H2_g', dH2, cathEl.x);
+    sim.emitElectrolysisGas(cathInfo.vessel, 'H2_g', dH2, cathEl.x, cathEl);
     cathEl.gasBubbleType = 'H2_g';
     cathEl.gasBubbleRate = dH2 / Math.max(1e-4, dt);
   }

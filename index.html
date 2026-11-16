@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>ChemLab Studio — virlab_v2+build.6</title>
+  <title>ChemLab Studio — virlab_v2+build.7</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./assets/icon.svg" />
   <meta name="theme-color" content="#2563eb" />
@@ -37,6 +37,10 @@
           </div>
           <div class="workbench-canvas-wrap">
             <canvas id="workbench-canvas" class="workbench-canvas"></canvas>
+            <div id="bench-pick-banner" class="bench-pick-banner hidden">
+              <span id="bench-pick-text"></span>
+              <button type="button" id="bench-pick-cancel" class="px-2.5 py-1 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent shrink-0 whitespace-nowrap"></button>
+            </div>
           </div>
         </section>
 

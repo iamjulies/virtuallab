@@ -47,7 +47,9 @@
     } from '../src/canvas/vesselRenderer.js';
     import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
     import { ParticleSystem } from '../src/canvas/particles.js';
+    import { renderElectrodeCollectorTubes } from '../src/canvas/toolRenderer.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
+    import { DosingModal } from '../src/ui/dosingModal.js';
     import {
       enforceDryPhaseBoundary,
       getEffectiveRateConstant,
@@ -2406,22 +2408,28 @@
       );
     }
 
-    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.6 Sync
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.7 Sync
     {
       const allTranslated = APPARATUS_ORDER.every((id) => {
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_v2+build.6';
+      const expectedBuild = 'virlab_v2+build.7';
+      const newKeysPresent =
+        Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
+        Boolean(I18N.vi.elCollectMountTube && I18N.en.elCollectMountTube) &&
+        Boolean(I18N.vi.elCollectPickTarget && I18N.en.elCollectPickTarget) &&
+        Boolean(I18N.vi.alertCl2Extinguish && I18N.en.alertCl2Extinguish);
       assert(
-        'Build virlab_v2+build.6 parity: All 27 apparatus translated in VI/EN, IUPAC spellings enforced',
+        'Build virlab_v2+build.7 parity: All 27 apparatus translated in VI/EN, new pick/electrode/Cl2 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 27 &&
           allTranslated &&
+          newKeysPresent &&
           I18N.vi.appSubtitle.includes(expectedBuild) &&
           I18N.en.appSubtitle.includes(expectedBuild) &&
           I18N.vi.eq_burette_50.includes('Buret') &&
           !I18N.vi.reg_na.toLowerCase().includes('natri'),
-        `count=${APPARATUS_ORDER.length}, allI18n=${allTranslated}, sub=${I18N.vi.appSubtitle}`
+        `count=${APPARATUS_ORDER.length}, allI18n=${allTranslated}, newKeys=${newKeysPresent}, sub=${I18N.vi.appSubtitle}`
       );
     }
 
@@ -2477,18 +2485,18 @@
       );
     }
 
-    // TEST 64: NH3 + HCl open-air fume reaction produces ONLY gentle gas_cloud mist (ZERO stopper_fly / shockwave / shards)
+    // TEST 64: NH3 + HCl open-air fume reaction produces curling smoke_ribbon threads (ZERO stopper_fly / shockwave / shards)
     {
       const ps = new ParticleSystem();
       for (let i = 0; i < 40; i++) {
         ps.emitBurst('nh3_hcl_smoke', 300, 350, { intensity: 1.0 });
       }
       const badTypes = ps.particles.filter((p) => p.kind === 'stopper_fly' || p.kind === 'shockwave' || p.kind === 'glass_triangle').length;
-      const goodClouds = ps.particles.filter((p) => p.kind === 'gas_cloud').length;
+      const goodRibbons = ps.particles.filter((p) => p.kind === 'smoke_ribbon' || p.kind === 'gas_cloud').length;
       assert(
-        'Open-air NH3 + HCl white fume plume spawns gentle gas_cloud particles with ZERO stopper_fly / shockwave / shards',
-        badTypes === 0 && goodClouds > 0 && goodClouds < 45,
-        `badTypes=${badTypes}, gasClouds=${goodClouds}`
+        'Open-air NH3 + HCl white fume plume spawns gentle smoke_ribbon wisps with ZERO stopper_fly / shockwave / shards',
+        badTypes === 0 && goodRibbons > 0 && goodRibbons < 60,
+        `badTypes=${badTypes}, ribbons=${goodRibbons}`
       );
     }
 
@@ -3034,6 +3042,212 @@
         'Canvas Tooltip Pills auto-hide unless hovered/dragged and defer drawing until post-particle top layer',
         beforeFlushNone === 0 && afterFlushNone === 0 && midFrameDeferred === 0 && afterFlushHover === 1,
         `none=(${beforeFlushNone},${afterFlushNone}), hoverDeferred=${midFrameDeferred}, afterFlush=${afterFlushHover}`
+      );
+    }
+
+    // TEST 69: Separate Anode/Cathode Gas Collection (Dual Inverted Tubes & Syringe/Tube Collector Routing + Render)
+    {
+      const sim = new LabSimulation();
+      sim.setupPreset('electrolysis'); // Beaker with CuSO4/Na2SO4 or NaCl? Wait: electrolysis preset uses water + electrolyte!
+      const beaker = sim.items.find((i) => i.kind === 'vessel');
+      // Use concentrated Na2SO4 electrolyte so Cathode evolves pure H2(g) and Anode evolves pure O2(g) simultaneously
+      beaker.moles = { H2O_l: 8.0, Na_aq: 0.4, SO4_2_aq: 0.2 };
+      const dc = sim.items.find((i) => i.kind === 'dc_power');
+      const elNeg = sim.getItem(dc.negElectrodeId); // Cathode (-)
+      const elPos = sim.getItem(dc.posElectrodeId); // Anode (+)
+      sim.setElectrodeMaterial(elNeg.id, 'C');
+      sim.setElectrodeMaterial(elPos.id, 'C');
+
+      // Part A: Mount two inverted Test Tubes side-by-side over Cathode and Anode inside the bath
+      const tubeH2 = sim.mountCollectorTubeOverElectrode(elNeg.id);
+      const tubeO2 = sim.mountCollectorTubeOverElectrode(elPos.id);
+      sim.setDcPowerState(dc.id, { voltageV: 9.0, powerOn: true });
+      stepSeconds(sim, 12.0, 0.05);
+
+      const h2Captured = tubeH2.headspaceGasMoles?.H2_g || 0;
+      const o2CrosstalkInH2Tube = tubeH2.headspaceGasMoles?.O2_g || 0;
+      const o2Captured = tubeO2.headspaceGasMoles?.O2_g || 0;
+      const h2CrosstalkInO2Tube = tubeO2.headspaceGasMoles?.H2_g || 0;
+
+      // Part B: Route Anode gas to Gas Syringe directly & render tubing on offscreen Canvas
+      tubeO2.mountedOverElectrodeId = null;
+      const syr = sim.createApparatus('gas_syringe', beaker.x + 190, 380);
+      sim.connectElectrodeCollector(elPos.id, syr.id);
+      stepSeconds(sim, 6.0, 0.05);
+      const syrO2 = syr.gasMoles?.O2_g || 0;
+
+      const cvs = document.createElement('canvas');
+      cvs.width = 900;
+      cvs.height = 520;
+      const ctx = cvs.getContext('2d');
+      let renderErr = null;
+      try {
+        renderElectrodeCollectorTubes(ctx, sim.items, true);
+      } catch (err) {
+        renderErr = err?.message || String(err);
+      }
+
+      assert(
+        'Electrolysis collects pure H2(g) & O2(g) separately from Cathode & Anode via dual inverted tubes and direct Gas Syringe tubing',
+        tubeH2?.isInverted === true &&
+          tubeO2?.isInverted === true &&
+          Math.abs(elPos.x - elNeg.x) >= 44 &&
+          h2Captured > 1e-5 &&
+          o2CrosstalkInH2Tube === 0 &&
+          o2Captured > 4e-6 &&
+          h2CrosstalkInO2Tube === 0 &&
+          syrO2 > 1e-6 &&
+          renderErr === null,
+        `sep=${Math.abs(elPos.x - elNeg.x).toFixed(0)}px, H2tube=${(h2Captured * 1000).toFixed(3)}mmol(O2=${o2CrosstalkInH2Tube}), O2tube=${(o2Captured * 1000).toFixed(3)}mmol(H2=${h2CrosstalkInO2Tube}), syrO2=${(syrO2 * 1000).toFixed(4)}mmol, err=${renderErr}`
+      );
+    }
+
+    // TEST 70: Splint & Indicator Interactions in Active Electrode Gas Plumes (H2 pop, O2 relight, Cl2 extinguish + bleach)
+    {
+      // Part A: Na2SO4 electrolysis with Graphite electrodes -> H2 at Cathode, O2 at Anode
+      const simA = new LabSimulation();
+      const alertsA = [];
+      simA.visualHooks.onAlert = (t) => alertsA.push(t);
+      const beakerA = simA.createApparatus('beaker_250', 300, 427);
+      beakerA.moles = { H2O_l: 6.0, Na_aq: 0.4, SO4_2_aq: 0.2 };
+      const elCat = simA.createApparatus('electrode_rod', beakerA.x - 24, 340);
+      elCat.material = 'C';
+      elCat.dockedVesselId = beakerA.id;
+      const elAno = simA.createApparatus('electrode_rod', beakerA.x + 24, 340);
+      elAno.material = 'C';
+      elAno.dockedVesselId = beakerA.id;
+      simA.updateSupportAttachments();
+      const dcA = simA.createApparatus('dc_power', 520, 400);
+      dcA.posElectrodeId = elAno.id;
+      dcA.negElectrodeId = elCat.id;
+      simA.setDcPowerState(dcA.id, { voltageV: 9.0, powerOn: true });
+      stepSeconds(simA, 0.4, 0.05);
+
+      const spCat = simA.createApparatus('splint', elCat.x + 40, elCat.y - 35);
+      spCat.mode = 'burning';
+      const tipCat = getProbeTipPos(spCat);
+      spCat.x += elCat.x - tipCat.x;
+      spCat.y += (elCat.y - 52) - tipCat.y;
+      stepSeconds(simA, 0.2, 0.05);
+
+      const spAno = simA.createApparatus('splint', elAno.x + 40, elAno.y - 35);
+      spAno.mode = 'glowing';
+      const tipAno = getProbeTipPos(spAno);
+      spAno.x += elAno.x - tipAno.x;
+      spAno.y += (elAno.y - 52) - tipAno.y;
+      stepSeconds(simA, 0.2, 0.05);
+
+      // Part B: NaCl brine electrolysis -> Cl2(g) at Anode extinguishes burning splint & bleaches indicator strip
+      const simB = new LabSimulation();
+      const alertsB = [];
+      simB.visualHooks.onAlert = (t) => alertsB.push(t);
+      const beakerB = simB.createApparatus('beaker_250', 300, 427);
+      beakerB.moles = { H2O_l: 6.0, Na_aq: 0.6, Cl_aq: 0.6 };
+      const elNegB = simB.createApparatus('electrode_rod', beakerB.x - 24, 340);
+      elNegB.material = 'C';
+      elNegB.dockedVesselId = beakerB.id;
+      const elPosB = simB.createApparatus('electrode_rod', beakerB.x + 24, 340);
+      elPosB.material = 'C';
+      elPosB.dockedVesselId = beakerB.id;
+      simB.updateSupportAttachments();
+      const dcB = simB.createApparatus('dc_power', 520, 400);
+      dcB.posElectrodeId = elPosB.id;
+      dcB.negElectrodeId = elNegB.id;
+      simB.setDcPowerState(dcB.id, { voltageV: 9.0, powerOn: true });
+      stepSeconds(simB, 0.5, 0.05);
+
+      const spCl2 = simB.createApparatus('splint', elPosB.x + 40, elPosB.y - 35);
+      spCl2.mode = 'burning';
+      const tipCl2 = getProbeTipPos(spCl2);
+      spCl2.x += elPosB.x - tipCl2.x;
+      spCl2.y += (elPosB.y - 52) - tipCl2.y;
+      const stripCl2 = simB.createApparatus('litmus_paper', elPosB.x - 40, elPosB.y - 35);
+      simB.toggleItemFlipX(stripCl2.id);
+      const tipStrip = getProbeTipPos(stripCl2);
+      stripCl2.x += elPosB.x - tipStrip.x;
+      stripCl2.y += (elPosB.y - 52) - tipStrip.y;
+      stepSeconds(simB, 0.25, 0.05);
+
+      assert(
+        'Splint triggers h2_pop over Cathode & o2_relight over O2 Anode; Cl2 Anode extinguishes splint (cl2_extinguish) & bleaches moist indicator strip',
+        alertsA.includes('h2_pop') &&
+          alertsA.includes('o2_relight') &&
+          spAno.mode === 'burning' &&
+          alertsB.includes('cl2_extinguish') &&
+          spCl2.mode === 'unlit' &&
+          stripCl2.isBleached === true,
+        `alertsA=${alertsA.join(',')}, spAnoMode=${spAno.mode}, alertsB=${alertsB.join(',')}, spCl2Mode=${spCl2.mode}, bleached=${stripCl2.isBleached}`
+      );
+    }
+
+    // TEST 71: Wash Bottle Default Continuous Spray Mode
+    {
+      const sim = new LabSimulation();
+      const target = sim.createApparatus('beaker_250', 240, 427);
+      const wb = sim.createApparatus('wash_bottle', 355, 422);
+      const defaultOn = wb.isSpraying === true;
+      stepSeconds(sim, 0.6, 0.05);
+      const sprayedWater = target.moles.H2O_l || 0;
+      sim.toggleWashBottleSpray(wb.id, false);
+      const afterOff = wb.isSpraying === false;
+      const waterAtStop = target.moles.H2O_l || 0;
+      stepSeconds(sim, 0.4, 0.05);
+
+      assert(
+        'Wash Bottle defaults to continuous spray ON (isSpraying === true) immediately upon spawn until toggled OFF',
+        defaultOn && sprayedWater > 0.15 && afterOff && Math.abs((target.moles.H2O_l || 0) - waterAtStop) < 1e-3,
+        `defaultOn=${defaultOn}, sprayedH2O=${sprayedWater.toFixed(3)}, deltaAfterStop=${((target.moles.H2O_l || 0) - waterAtStop).toExponential(2)}, stopped=${afterOff}`
+      );
+    }
+
+    // TEST 72: Distinct Sinuous NH4Cl(s) Smoke Ribbons & DosingModal Direct Visual Target Picker
+    {
+      // Part A: ParticleSystem 'nh3_hcl_smoke' produces 'smoke_ribbon' wisps and renders cleanly on Dark & Light themes
+      const ps = new ParticleSystem();
+      ps.emitBurst('nh3_hcl_smoke', 200, 180, { count: 3, force: true });
+      const ribbonCount = ps.particles.filter((p) => p.kind === 'smoke_ribbon').length;
+      ps.update(0.12);
+      const cvs = document.createElement('canvas');
+      cvs.width = 400;
+      cvs.height = 300;
+      const ctx = cvs.getContext('2d');
+      let drawErr = null;
+      try {
+        ps.setTheme(true);
+        ps.render(ctx);
+        ps.setTheme(false);
+        ps.render(ctx);
+      } catch (err) {
+        drawErr = err?.message || String(err);
+      }
+
+      // Part B: DosingModal renders direct visual picker button instead of <select> target dropdown and supports hideForPick/showAfterPick
+      const sim = new LabSimulation();
+      const v1 = sim.createApparatus('beaker_250', 220, 427);
+      const v2 = sim.createApparatus('erlenmeyer_250', 420, 399);
+      const root = document.createElement('div');
+      root.className = 'hidden';
+      let pickedReq = null;
+      const dm = new DosingModal(root, sim, () => (k) => k, (opts) => { pickedReq = opts; });
+      dm.openReagent('hcl_37', v1.id);
+      const selectCount = root.querySelectorAll('select#dosing-target-select').length;
+      const pickBtn = root.querySelector('#dosing-pick-target');
+      pickBtn?.click();
+      const hiddenDuringPick = root.classList.contains('hidden');
+      pickedReq?.onPick?.(v2);
+      const visibleAfterPick = !root.classList.contains('hidden');
+      const selectedTarget = dm.state?.targetVesselId;
+
+      assert(
+        'NH4Cl emits curling smoke_ribbon threads cleanly in Dark/Light themes, and DosingModal replaces target <select> with interactive bench picker',
+        ribbonCount >= 3 &&
+          drawErr === null &&
+          selectCount === 0 &&
+          Boolean(pickBtn) &&
+          hiddenDuringPick &&
+          visibleAfterPick &&
+          selectedTarget === v2.id,
+        `ribbons=${ribbonCount}, err=${drawErr}, selects=${selectCount}, hasPickBtn=${Boolean(pickBtn)}, hid=${hiddenDuringPick}, show=${visibleAfterPick}, target=${selectedTarget}`
       );
     }
 

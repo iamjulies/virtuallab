@@ -93,23 +93,27 @@ export class ParticleSystem {
 
     if (item.kind === 'wash_bottle' && metrics.squirtArc) {
       const arc = metrics.squirtArc;
-      if (arc.hitX != null && Math.random() < 0.72) {
-        const sx = arc.hitX + (Math.random() - 0.5) * 6;
-        const sy = arc.hitY;
-        this.particles.push({
-          kind: 'drip',
-          x: sx,
-          y: sy - 2,
-          vx: (arc.dir || -1) * (12 + Math.random() * 24) + (Math.random() - 0.5) * 26,
-          vy: -(24 + Math.random() * 28),
-          g: 980,
-          r: 1.5 + Math.random() * 1.1,
-          stopY: arc.hitY + 3,
-          life: 0,
-          maxLife: 0.28,
-          color: 'rgba(186, 230, 253, 0.88)',
-          splashed: false,
-        });
+      const splashProb = metrics.activeSpray ? 0.92 : 0.72;
+      if (arc.hitX != null && Math.random() < splashProb) {
+        const dropN = metrics.activeSpray ? 2 : 1;
+        for (let i = 0; i < dropN; i++) {
+          const sx = arc.hitX + (Math.random() - 0.5) * 8;
+          const sy = arc.hitY;
+          this.particles.push({
+            kind: 'drip',
+            x: sx,
+            y: sy - 2,
+            vx: (arc.dir || -1) * (10 + Math.random() * 26) + (Math.random() - 0.5) * 42,
+            vy: -(28 + Math.random() * 38),
+            g: 980,
+            r: 1.5 + Math.random() * 1.3,
+            stopY: arc.hitY + 4,
+            life: 0,
+            maxLife: 0.34,
+            color: 'rgba(186, 230, 253, 0.9)',
+            splashed: false,
+          });
+        }
       }
       return;
     }
@@ -776,24 +780,54 @@ export class ParticleSystem {
     }
 
     if (type === 'nh3_hcl_smoke') {
-      // Gentle, realistic white NH4Cl(s) aerosol plume rising softly (throttled so 60fps never floods shockwaves/clutter)
-      if (Math.random() > 0.26) return;
-      const intensity = Math.max(0.35, Math.min(1.4, meta?.intensity ?? 0.8));
-      const puffCount = intensity > 0.9 ? 2 : 1;
-      for (let i = 0; i < puffCount; i++) {
+      // Crisp wispy curling white smoke ribbons (kitchen/incense smoke threads, distinct from round steam blobs)
+      if (!meta?.force && Math.random() > 0.45) return;
+      const intensity = Math.max(0.4, Math.min(1.5, meta?.intensity ?? 0.85));
+      const ribbonCount = meta?.count ?? (intensity > 0.85 ? 2 : 1);
+      for (let i = 0; i < ribbonCount; i++) {
+        const sx = x + (Math.random() - 0.5) * 24;
+        const sy = y + (Math.random() - 0.5) * 10;
         this.particles.push({
-          kind: 'gas_cloud',
-          x: x + (Math.random() - 0.5) * 28,
-          y: y + (Math.random() - 0.5) * 14,
-          vx: (Math.random() - 0.5) * 14,
-          vy: -(16 + Math.random() * 14),
+          kind: 'smoke_ribbon',
+          x: sx,
+          y: sy,
+          vx: (Math.random() - 0.5) * 10,
+          vy: -(22 + Math.random() * 18),
           phase: Math.random() * Math.PI * 2,
-          r: 5 + Math.random() * 4.5,
-          growR: 11,
-          alphaScale: 0.28 * Math.min(1.1, intensity),
+          freq1: 4.5 + Math.random() * 2.5,
+          freq2: 9.2 + Math.random() * 3.0,
+          amp1: 18 + Math.random() * 14,
+          amp2: 8 + Math.random() * 7,
+          trail: [{ x: sx, y: sy }],
+          w: 1.7 + Math.random() * 1.1,
           life: 0,
-          maxLife: 1.5 + Math.random() * 0.7,
-          color: this.isDark ? 'rgba(241, 245, 249, 0.75)' : 'rgba(148, 163, 184, 0.65)',
+          maxLife: 1.65 + Math.random() * 0.75,
+          color: this.isDark ? 'rgba(248, 250, 252, 0.86)' : 'rgba(100, 116, 139, 0.72)',
+          haloColor: this.isDark ? 'rgba(226, 232, 240, 0.26)' : 'rgba(148, 163, 184, 0.24)',
+        });
+      }
+      return;
+    }
+
+    if (type === 'cl2_extinguish') {
+      for (let i = 0; i < 6; i++) {
+        this.particles.push({
+          kind: 'smoke_ribbon',
+          x: x + (Math.random() - 0.5) * 6,
+          y: y - 2,
+          vx: (Math.random() - 0.5) * 14,
+          vy: -(24 + Math.random() * 16),
+          phase: Math.random() * Math.PI * 2,
+          freq1: 5.5,
+          freq2: 11.0,
+          amp1: 14,
+          amp2: 6,
+          trail: [{ x, y }],
+          w: 1.6,
+          life: 0,
+          maxLife: 0.9,
+          color: this.isDark ? 'rgba(217, 249, 157, 0.72)' : 'rgba(101, 163, 13, 0.58)',
+          haloColor: 'rgba(190, 242, 100, 0.2)',
         });
       }
       return;
@@ -1032,6 +1066,15 @@ export class ParticleSystem {
         p.vy = Math.max(-115, p.vy - 18 * dt);
         p.trail.push({ x: p.x, y: p.y });
         if (p.trail.length > 14) p.trail.shift();
+      } else if (p.kind === 'smoke_ribbon') {
+        const curlVx =
+          Math.sin(p.life * p.freq1 + p.phase) * p.amp1 +
+          Math.cos(p.life * p.freq2 + p.phase * 1.6) * p.amp2;
+        p.x += curlVx * dt;
+        p.vy = Math.max(-52, p.vy - 6 * dt);
+        p.vx *= 0.96;
+        p.trail.push({ x: p.x, y: p.y });
+        if (p.trail.length > 22) p.trail.shift();
       } else if (p.kind === 'gas_cloud') {
         p.r += (p.growR || 12) * dt;
         p.vx += (Math.sin(p.life * 4.5 + p.phase) * 32 - p.vx * 0.9) * dt;
@@ -1121,6 +1164,33 @@ export class ParticleSystem {
           ctx.lineWidth = Math.max(0.8, (p.w || 2.8) * (1 - t * 0.4));
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
+          ctx.stroke();
+        }
+      } else if (p.kind === 'smoke_ribbon') {
+        const pts = p.trail || [];
+        if (pts.length >= 2) {
+          const traceRibbon = () => {
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let k = 1; k < pts.length - 1; k++) {
+              const mx = (pts[k].x + pts[k + 1].x) * 0.5;
+              const my = (pts[k].y + pts[k + 1].y) * 0.5;
+              ctx.quadraticCurveTo(pts[k].x, pts[k].y, mx, my);
+            }
+            const last = pts[pts.length - 1];
+            ctx.lineTo(last.x, last.y);
+          };
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          // Delicate soft smoky outer sheath
+          traceRibbon();
+          ctx.strokeStyle = p.haloColor || p.color;
+          ctx.lineWidth = Math.max(2.0, (p.w || 2.0) * (1.8 + t * 1.1));
+          ctx.stroke();
+          // Crisp sinuous kitchen-smoke core strand
+          traceRibbon();
+          ctx.strokeStyle = p.color;
+          ctx.lineWidth = Math.max(0.7, (p.w || 2.0) * (0.95 - t * 0.35));
           ctx.stroke();
         }
       } else if (p.kind === 'gas_cloud') {

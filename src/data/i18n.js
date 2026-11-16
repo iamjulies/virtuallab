@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_v2+build.6',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_v2+build.7',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -333,10 +333,18 @@ export const I18N = {
     actionSprayContinuousStart: '💦 Xịt tia liên tục',
     actionSprayContinuousStop: '⏹️ Ngưng xịt nước',
     washBottleAimHint: 'Kéo hoặc lật trái–phải để hướng tia nước parabol vào cốc, phễu lọc, chén hoặc cối; double-click để bật/tắt tia liên tục.',
+    btnPickOnBench: '🎯 Chọn trên bàn',
+    pickBenchPrompt: '🎯 Nhấn trực tiếp vào bình / dụng cụ đích đang phát sáng trên bàn thí nghiệm (Esc để hủy)',
+    pickBenchCancel: 'Hủy chọn',
+    elCollectMountTube: '🧪 Úp ống thu khí trên cực',
+    elCollectPickTarget: '💉 Chọn bình / Syringe thu khí',
+    elCollectDetach: 'Tháo thu khí cực',
+    elCollectorLabel: 'Thu khí điện cực:',
+    alertCl2Extinguish: 'Khí Cl₂(g) không duy trì sự cháy, làm tắt ngọn lửa que đóm!',
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_v2+build.6',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_v2+build.7',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -654,5 +662,13 @@ export const I18N = {
     actionSprayContinuousStart: '💦 Continuous Jet',
     actionSprayContinuousStop: '⏹️ Stop Water Jet',
     washBottleAimHint: 'Drag or flip L–R to aim the parabolic distilled water jet into any beaker, funnel, dish, or mortar; double-click to toggle continuous spray.',
+    btnPickOnBench: '🎯 Pick on Bench',
+    pickBenchPrompt: '🎯 Click a highlighted target directly on the lab bench (Esc to cancel)',
+    pickBenchCancel: 'Cancel',
+    elCollectMountTube: '🧪 Invert Tube Over Electrode',
+    elCollectPickTarget: '💉 Pick Vessel / Syringe',
+    elCollectDetach: 'Disconnect Collector',
+    elCollectorLabel: 'Electrode Gas Collector:',
+    alertCl2Extinguish: 'Dense Cl₂(g) does not support combustion and extinguished the splint!',
   }
 };

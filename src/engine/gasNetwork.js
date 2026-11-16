@@ -471,6 +471,133 @@ export function stepSyringeThermodynamics(syringe, dt, env) {
 }
 
 /**
+ * Deliver generated gases directly to a connected target (Gas Syringe, Liebig Condenser, Inverted Trough Vessel, or Open Vessel).
+ * Shared cleanly by both flask tubing and direct electrolysis electrode gas collectors.
+ */
+export function routeGasPacketToTarget(
+  sourceVessel,
+  target,
+  produced,
+  totalSteam,
+  env,
+  getApparatusById,
+  preferInvertedDirect = false
+) {
+  const srcT = sourceVessel?.tempK ?? env.tempK;
+  let totalPerm = 0;
+  for (const g of NON_STEAM_GASES) totalPerm += produced[g] || 0;
+
+  if (target && target.kind === 'gas_syringe' && !target.isBroken) {
+    const syringeSpec = APPARATUS[target.typeId];
+    const currentVolMl = computeSyringeTotalVolumeMl(target, env);
+
+    if (currentVolMl < syringeSpec.maxVolumeMl * 0.995) {
+      if (target.tempK == null) target.tempK = env.tempK;
+
+      let incomingHeatCapJK = 0;
+      for (const g of NON_STEAM_GASES) {
+        if ((produced[g] || 0) > 0) {
+          target.gasMoles[g] = (target.gasMoles[g] || 0) + produced[g];
+          incomingHeatCapJK += produced[g] * (SPECIES[g]?.cp || 30);
+        }
+      }
+      if (totalSteam > 0) {
+        target.gasMoles.H2O_g = (target.gasMoles.H2O_g || 0) + totalSteam;
+        incomingHeatCapJK += totalSteam * (SPECIES.H2O_g?.cp || 33.58);
+      }
+
+      if (totalPerm + totalSteam > 1e-11) {
+        target.inflowTempK = srcT;
+        const cSyr = computeSyringeHeatCapacityJK(target);
+        const dT = (incomingHeatCapJK * (srcT - target.tempK)) / cSyr;
+        target.tempK = Math.max(200, Math.min(600, target.tempK + dT));
+      }
+
+      if (sourceVessel) sourceVessel.internalPressureBar = env.pressureBar;
+      target.internalPressureBar = env.pressureBar;
+      return { handled: true, maxedSyringe: null };
+    }
+    return { handled: false, maxedSyringe: target };
+  }
+
+  if (target && target.kind === 'vessel' && target.isInverted && !target.isShattered) {
+    target.headspaceGasMoles = target.headspaceGasMoles || createEmptyGasMap();
+    const trough = target.submergedInTroughId ? getApparatusById(target.submergedInTroughId) : sourceVessel || null;
+    const targetSpec = APPARATUS[target.typeId] || APPARATUS.test_tube_50;
+    const tgtT = target.tempK || env.tempK;
+    let newPermMol = 0;
+
+    for (const g of NON_STEAM_GASES) {
+      if ((produced[g] || 0) > 0) {
+        if (!preferInvertedDirect && (g === 'HCl_g' || g === 'NH3_g') && (target.moles.H2O_l || 0) > 0.02) {
+          const dSol = produced[g];
+          if (g === 'HCl_g') {
+            target.moles.H_aq = (target.moles.H_aq || 0) + dSol;
+            target.moles.Cl_aq = (target.moles.Cl_aq || 0) + dSol;
+          } else {
+            target.moles.NH3_aq = (target.moles.NH3_aq || 0) + dSol;
+          }
+        } else {
+          target.headspaceGasMoles[g] = (target.headspaceGasMoles[g] || 0) + produced[g];
+          newPermMol += produced[g];
+        }
+      }
+    }
+    if (totalSteam > 0 && target.tempK < waterBoilingPointK(env.pressureBar)) {
+      target.moles.H2O_l = (target.moles.H2O_l || 0) + totalSteam;
+    }
+
+    const curSolMl = computeSolidVolumeMl(target.moles);
+    if (newPermMol > 0) {
+      target.gasDisplacedRate = (target.gasDisplacedRate || 0) + newPermMol / 0.02;
+      if (trough && trough.id !== target.id) {
+        const dispL = (newPermMol * CONSTANTS.R_L_BAR_MOL_K * tgtT) / Math.max(0.1, env.pressureBar);
+        const dispMol = (dispL * 1000 * 0.997) / SPECIES.H2O_l.molarMass;
+        const actualOut = Math.min(Math.max(0, (target.moles.H2O_l || 0) - 0.015), dispMol);
+        if (actualOut > 0) {
+          target.moles.H2O_l -= actualOut;
+          if (target.moles.H2O_l < 1e-12) delete target.moles.H2O_l;
+          trough.moles.H2O_l = (trough.moles.H2O_l || 0) + actualOut;
+        }
+      }
+    }
+
+    const maxCapL = Math.max(
+      0.015,
+      (targetSpec.maxVolumeMl - Math.min(targetSpec.maxVolumeMl * 0.5, curSolMl + (trough ? 1.5 : 0))) / 1000
+    );
+    const maxHeadMol = (env.pressureBar * maxCapL) / (CONSTANTS.R_L_BAR_MOL_K * tgtT);
+    let headSum = 0;
+    for (const g of NON_STEAM_GASES) headSum += target.headspaceGasMoles[g] || 0;
+    if (headSum > maxHeadMol) {
+      const keepFrac = maxHeadMol / headSum;
+      let overflowed = 0;
+      for (const g of NON_STEAM_GASES) {
+        const curG = target.headspaceGasMoles[g] || 0;
+        if (curG <= 0) continue;
+        const ex = curG * (1 - keepFrac);
+        target.headspaceGasMoles[g] = curG * keepFrac;
+        overflowed += ex;
+        if (trough && trough.id !== target.id) {
+          trough.escapedGasMoles[g] = (trough.escapedGasMoles[g] || 0) + ex;
+          trough.lastGasRateMap = trough.lastGasRateMap || createEmptyGasMap();
+          trough.lastGasRateMap[g] = (trough.lastGasRateMap[g] || 0) + ex * 35;
+        } else {
+          target.escapedGasMoles[g] = (target.escapedGasMoles[g] || 0) + ex;
+        }
+      }
+      if (trough && trough.id !== target.id && overflowed > 1e-8) {
+        trough.troughOverfillRate = overflowed * 40;
+        trough.troughOverfillX = target.x;
+      }
+    }
+    if (sourceVessel) sourceVessel.internalPressureBar = env.pressureBar;
+    return { handled: true, maxedSyringe: null };
+  }
+  return { handled: false, maxedSyringe: null };
+}
+
+/**
  * Route generated gases from a vessel according to its boundary state:
  * - Open: escapes to room (mass lost)
  * - Connected to Gas syringe: permanent gases & steam flow into syringe (V = nRT/P)
@@ -526,38 +653,10 @@ export function stepVesselGasAndPressure(
   const targetId = vessel.connectedTargetId || vessel.connectedSyringeId;
   if (targetId) {
     const target = getApparatusById(targetId);
-    if (target && target.kind === 'gas_syringe' && !target.isBroken) {
-      const syringeSpec = APPARATUS[target.typeId];
-      const currentVolMl = computeSyringeTotalVolumeMl(target, env);
-
-      if (currentVolMl < syringeSpec.maxVolumeMl * 0.995) {
-        if (target.tempK == null) target.tempK = env.tempK;
-
-        let incomingHeatCapJK = 0;
-        for (const g of NON_STEAM_GASES) {
-          if (produced[g] > 0) {
-            target.gasMoles[g] = (target.gasMoles[g] || 0) + produced[g];
-            incomingHeatCapJK += produced[g] * (SPECIES[g]?.cp || 30);
-          }
-        }
-        if (totalSteam > 0) {
-          target.gasMoles.H2O_g = (target.gasMoles.H2O_g || 0) + totalSteam;
-          incomingHeatCapJK += totalSteam * (SPECIES.H2O_g?.cp || 33.58);
-        }
-
-        if (totalPerm + totalSteam > 1e-11) {
-          target.inflowTempK = vessel.tempK;
-          const cSyr = computeSyringeHeatCapacityJK(target);
-          const dT = (incomingHeatCapJK * (vessel.tempK - target.tempK)) / cSyr;
-          target.tempK = Math.max(200, Math.min(600, target.tempK + dT));
-        }
-
-        vessel.internalPressureBar = env.pressureBar;
-        target.internalPressureBar = env.pressureBar;
-        return events;
-      }
-      // Syringe maxed out (>= 250 mL) -> remaining gas equilibrates pressure across flask + syringe
-      maxedSyringe = target;
+    if (target && (target.kind === 'gas_syringe' || (target.kind === 'vessel' && target.isInverted))) {
+      const routed = routeGasPacketToTarget(vessel, target, produced, totalSteam, env, getApparatusById);
+      if (routed.handled) return events;
+      if (routed.maxedSyringe) maxedSyringe = routed.maxedSyringe;
     } else if (target && target.kind === 'condenser' && !target.isBroken) {
       target.vaporInMoles = target.vaporInMoles || createEmptyGasMap();
       for (const g of NON_STEAM_GASES) {
@@ -567,81 +666,6 @@ export function stepVesselGasAndPressure(
       }
       if (totalSteam > 0) {
         target.vaporInMoles.H2O_g = (target.vaporInMoles.H2O_g || 0) + totalSteam;
-      }
-      vessel.internalPressureBar = env.pressureBar;
-      return events;
-    } else if (target && target.kind === 'vessel' && target.isInverted && !target.isShattered) {
-      // Pneumatic water-trough displacement OR dry upward displacement of light gases (NH3, H2)
-      target.headspaceGasMoles = target.headspaceGasMoles || createEmptyGasMap();
-      const trough = target.submergedInTroughId ? getApparatusById(target.submergedInTroughId) : null;
-      const targetSpec = APPARATUS[target.typeId] || APPARATUS.test_tube_50;
-      const tgtT = target.tempK || env.tempK;
-      let newPermMol = 0;
-
-      for (const g of NON_STEAM_GASES) {
-        if (produced[g] > 0) {
-          if ((g === 'HCl_g' || g === 'NH3_g') && (target.moles.H2O_l || 0) > 0.02) {
-            // Highly soluble gases dissolve into inverted water column when trough water fills tube
-            const dSol = produced[g];
-            if (g === 'HCl_g') {
-              target.moles.H_aq = (target.moles.H_aq || 0) + dSol;
-              target.moles.Cl_aq = (target.moles.Cl_aq || 0) + dSol;
-            } else {
-              target.moles.NH3_aq = (target.moles.NH3_aq || 0) + dSol;
-            }
-          } else {
-            target.headspaceGasMoles[g] = (target.headspaceGasMoles[g] || 0) + produced[g];
-            newPermMol += produced[g];
-          }
-        }
-      }
-      if (totalSteam > 0 && target.tempK < waterBoilingPointK(env.pressureBar)) {
-        target.moles.H2O_l = (target.moles.H2O_l || 0) + totalSteam;
-      }
-
-      // Displace water down into trough and vent excess bubbles if inverted dome reaches capacity
-      const curLiqMl = computeLiquidVolumeL(target.moles, tgtT) * 1000;
-      const curSolMl = computeSolidVolumeMl(target.moles);
-      if (newPermMol > 0) {
-        target.gasDisplacedRate = newPermMol / 0.02;
-        if (trough) {
-          const dispL = (newPermMol * CONSTANTS.R_L_BAR_MOL_K * tgtT) / Math.max(0.1, env.pressureBar);
-          const dispMol = (dispL * 1000 * 0.997) / SPECIES.H2O_l.molarMass;
-          const actualOut = Math.min(Math.max(0, (target.moles.H2O_l || 0) - 0.02), dispMol);
-          if (actualOut > 0) {
-            target.moles.H2O_l -= actualOut;
-            if (target.moles.H2O_l < 1e-12) delete target.moles.H2O_l;
-            trough.moles.H2O_l = (trough.moles.H2O_l || 0) + actualOut;
-          }
-        }
-      }
-
-      // Enforce physical capacity ceiling of inverted vessel: excess gas bubbles out bottom rim!
-      const maxCapL = Math.max(0.015, (targetSpec.maxVolumeMl - Math.min(targetSpec.maxVolumeMl * 0.5, curSolMl + (trough ? 1.5 : 0))) / 1000);
-      const maxHeadMol = (env.pressureBar * maxCapL) / (CONSTANTS.R_L_BAR_MOL_K * tgtT);
-      let headSum = 0;
-      for (const g of NON_STEAM_GASES) headSum += target.headspaceGasMoles[g] || 0;
-      if (headSum > maxHeadMol) {
-        const keepFrac = maxHeadMol / headSum;
-        let overflowed = 0;
-        for (const g of NON_STEAM_GASES) {
-          const curG = target.headspaceGasMoles[g] || 0;
-          if (curG <= 0) continue;
-          const ex = curG * (1 - keepFrac);
-          target.headspaceGasMoles[g] = curG * keepFrac;
-          overflowed += ex;
-          if (trough) {
-            trough.escapedGasMoles[g] = (trough.escapedGasMoles[g] || 0) + ex;
-            trough.lastGasRateMap = trough.lastGasRateMap || createEmptyGasMap();
-            trough.lastGasRateMap[g] = (trough.lastGasRateMap[g] || 0) + ex * 35;
-          } else {
-            target.escapedGasMoles[g] = (target.escapedGasMoles[g] || 0) + ex;
-          }
-        }
-        if (trough && overflowed > 1e-8) {
-          trough.troughOverfillRate = overflowed * 40;
-          trough.troughOverfillX = target.x;
-        }
       }
       vessel.internalPressureBar = env.pressureBar;
       return events;

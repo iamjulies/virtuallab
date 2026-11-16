@@ -38,6 +38,7 @@ import {
   computeSyringeTotalVolumeMl,
   computeTubingGeometry,
   getSyringeNozzlePos,
+  routeGasPacketToTarget,
   stepOpenGasBuoyancy,
   stepSyringeThermodynamics,
   stepVesselGasAndPressure,
@@ -259,6 +260,7 @@ export class LabSimulation {
         escapedFrostH2OMol: 0,
         isInverted: false,
         submergedInTroughId: null,
+        mountedOverElectrodeId: null,
         hasStirBar: false,
         magStirRpm: 0,
         stirBarPhase: 0,
@@ -307,7 +309,7 @@ export class LabSimulation {
     } else if (spec.kind === 'wash_bottle') {
       Object.assign(base, {
         waterMl: 250,
-        isSpraying: false,
+        isSpraying: true,
         sprayTargetId: null,
         squirtTimer: 0,
         squirtArc: null,
@@ -407,6 +409,8 @@ export class LabSimulation {
         polarityLabel: '',
         gasBubbleType: null,
         gasBubbleRate: 0,
+        gasTargetId: null,
+        recentGasMol: 0,
       });
     } else if (spec.kind === 'salt_bridge') {
       Object.assign(base, {
@@ -472,6 +476,10 @@ export class LabSimulation {
     }
 
     this.items.push(base);
+    if (base.kind === 'wash_bottle') {
+      base.squirtArc = computeWashBottleStreamArc(base, this.items, SIM_BENCH_FLOOR_Y, CONSTANTS.GRAVITY_PX_S2 || 1800);
+      base.sprayTargetId = base.squirtArc.hitTarget ? base.squirtArc.hitTarget.id : null;
+    }
     this.selectedId = id;
     this.updateSupportAttachments();
     this.emitChange();
@@ -510,6 +518,12 @@ export class LabSimulation {
       }
       if (other.mountedOnVesselId === id) {
         other.mountedOnVesselId = null;
+      }
+      if (other.gasTargetId === id) {
+        other.gasTargetId = null;
+      }
+      if (other.mountedOverElectrodeId === id) {
+        other.mountedOverElectrodeId = null;
       }
       if (other.posElectrodeId === id) other.posElectrodeId = null;
       if (other.negElectrodeId === id) other.negElectrodeId = null;
@@ -640,11 +654,11 @@ export class LabSimulation {
       this.selectedId = dmm.id;
     } else if (presetName === 'electrolysis') {
       const beaker = this.createApparatus('beaker_250', 300, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      const elA = this.createApparatus('electrode_rod', beaker.x - 18, beaker.y - 16);
+      const elA = this.createApparatus('electrode_rod', beaker.x - 24, beaker.y - 16);
       elA.material = 'C';
       elA.dockedVesselId = beaker.id;
       elA.dockSide = 'left';
-      const elB = this.createApparatus('electrode_rod', beaker.x + 18, beaker.y - 16);
+      const elB = this.createApparatus('electrode_rod', beaker.x + 24, beaker.y - 16);
       elB.material = 'C';
       elB.dockedVesselId = beaker.id;
       elB.dockSide = 'right';
@@ -748,7 +762,7 @@ export class LabSimulation {
   updateSupportAttachments() {
     for (const it of this.items) {
       if (it.kind === 'scale' || it.kind === 'burner' || it.kind === 'stand') continue;
-      if (it.dockedVesselId || it.inVesselId) {
+      if (it.dockedVesselId || it.inVesselId || it.mountedOverElectrodeId) {
         syncDockedToolPositions(this);
         continue;
       }
@@ -2134,42 +2148,100 @@ export class LabSimulation {
     return true;
   }
 
-  emitElectrolysisGas(v, gasId, mol, electrodeX = null) {
+  connectElectrodeCollector(electrodeId, targetId = null) {
+    const el = this.getItem(electrodeId);
+    if (!el || el.kind !== 'electrode') return false;
+    el.gasTargetId = targetId || null;
+    this.emitChange();
+    return true;
+  }
+
+  mountCollectorTubeOverElectrode(electrodeId) {
+    const el = this.getItem(electrodeId);
+    if (!el || el.kind !== 'electrode' || !el.dockedVesselId) return null;
+    const parent = this.getItem(el.dockedVesselId);
+    if (!parent || parent.isShattered || parent.isStoppered) return null;
+    const pSpec = APPARATUS[parent.typeId];
+    const tSpec = APPARATUS.test_tube_50;
+    const existing = this.items.find((i) => i.kind === 'vessel' && i.mountedOverElectrodeId === el.id && !i.isShattered);
+    if (existing) {
+      el.gasTargetId = existing.id;
+      this.emitChange();
+      return existing;
+    }
+    const tube = this.createApparatus(
+      'test_tube_50',
+      el.x,
+      parent.y - pSpec.height / 2 - tSpec.height * 0.28
+    );
+    tube.isInverted = true;
+    tube.mountedOverElectrodeId = el.id;
+    tube.submergedInTroughId = parent.id;
+    tube.fallStartY = null;
+    // Fill inverted collecting tube with deionized water so evolving bubbles visibly displace water down
+    tube.moles.H2O_l = (35 * 0.997) / CONSTANTS.M_H2O;
+    el.gasTargetId = tube.id;
+    syncDockedToolPositions(this);
+    this.emitChange();
+    return tube;
+  }
+
+  emitElectrolysisGas(v, gasId, mol, electrodeX = null, electrodeItem = null) {
     if (!v || mol <= 0) return;
+    if (electrodeItem) {
+      electrodeItem.recentGasMol = Math.min(2e-4, (electrodeItem.recentGasMol || 0) + mol);
+    }
     const vSpec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
-    // Phenomenon #6: Collect rising bubbles directly into any open inverted test tube / cylinder held over the electrode(s)
+    const packet = { [gasId]: mol };
+
+    // 1. Direct attached collector on the electrode (Gas Syringe or mounted/targeted inverted tube)
+    if (electrodeItem?.gasTargetId) {
+      const col = this.getItem(electrodeItem.gasTargetId);
+      if (col && !col.isShattered && !col.isBroken && !col.isStoppered) {
+        const routed = routeGasPacketToTarget(
+          v,
+          col,
+          packet,
+          0,
+          this.environment,
+          (id) => this.getItem(id),
+          true
+        );
+        if (routed.handled) return;
+      } else {
+        electrodeItem.gasTargetId = null;
+      }
+    }
+
+    // 2. Overhead inverted test tube / graduated cylinder held directly above that electrode
     if (!v.isStoppered && !v.isInverted) {
       const targetX = electrodeX ?? v.x;
       const vTop = v.y - vSpec.height / 2;
       const vBot = v.y + vSpec.height / 2;
-      const overheadInv = this.items.find((inv) => {
-        if (inv.kind !== 'vessel' || !inv.isInverted || inv.isShattered || inv.isStoppered) return false;
-        const iSpec = APPARATUS[inv.typeId];
-        const iMouthY = inv.y + iSpec.height / 2;
-        return Math.abs(inv.x - targetX) <= Math.max(44, vSpec.width * 0.45) && iMouthY >= vTop - 22 && iMouthY <= vBot + 12;
-      });
-      if (overheadInv) {
-        const dummy = createEmptyGasMap();
-        dummy[gasId] = mol;
-        overheadInv.headspaceGasMoles = overheadInv.headspaceGasMoles || createEmptyGasMap();
-        overheadInv.headspaceGasMoles[gasId] = (overheadInv.headspaceGasMoles[gasId] || 0) + mol;
-        // Displace water down into parent vessel up to capacity
-        const dispL = (mol * CONSTANTS.R_L_BAR_MOL_K * (overheadInv.tempK || v.tempK)) / Math.max(0.1, this.environment.pressureBar);
-        const dispMol = (dispL * 1000 * 0.997) / CONSTANTS.M_H2O;
-        const outW = Math.min(Math.max(0, (overheadInv.moles.H2O_l || 0) - 0.01), dispMol);
-        if (outW > 0) {
-          overheadInv.moles.H2O_l -= outW;
-          if (overheadInv.moles.H2O_l < 1e-12) delete overheadInv.moles.H2O_l;
-          v.moles.H2O_l = (v.moles.H2O_l || 0) + outW;
-        }
-        overheadInv.gasDisplacedRate = (overheadInv.gasDisplacedRate || 0) + mol / 0.02;
-        return;
+      const candidates = this.items
+        .filter((inv) => {
+          if (inv.kind !== 'vessel' || !inv.isInverted || inv.isShattered || inv.isStoppered) return false;
+          const iSpec = APPARATUS[inv.typeId];
+          const iMouthY = inv.y + iSpec.height / 2;
+          return Math.abs(inv.x - targetX) <= 36 && iMouthY >= vTop - 44 && iMouthY <= vBot + 16;
+        })
+        .sort((a, b) => Math.abs(a.x - targetX) - Math.abs(b.x - targetX));
+      if (candidates.length > 0) {
+        const routed = routeGasPacketToTarget(
+          v,
+          candidates[0],
+          packet,
+          0,
+          this.environment,
+          (id) => this.getItem(id),
+          true
+        );
+        if (routed.handled) return;
       }
     }
+
     if (v.isStoppered && (v.connectedTargetId || v.connectedSyringeId)) {
-      const dummyGas = createEmptyGasMap();
-      dummyGas[gasId] = mol;
-      stepVesselGasAndPressure(v, dummyGas, 0, this.environment, (id) => this.getItem(id));
+      stepVesselGasAndPressure(v, packet, 0, this.environment, (id) => this.getItem(id));
     } else if (v.isStoppered) {
       v.headspaceGasMoles[gasId] = (v.headspaceGasMoles[gasId] || 0) + mol;
     } else {
@@ -3092,7 +3164,7 @@ export class LabSimulation {
         continue;
       }
 
-      if (item.dockedVesselId || item.inVesselId || item.mountedOnVesselId) {
+      if (item.dockedVesselId || item.inVesselId || item.mountedOnVesselId || item.mountedOverElectrodeId) {
         continue;
       }
 
@@ -3272,7 +3344,7 @@ export class LabSimulation {
   stepInvertedGravitySpill(v, dt) {
     v.gravitySpillRateMlS = 0;
     v.gravitySpillColor = null;
-    if (!v || v.kind !== 'vessel' || v.isShattered || !v.isInverted || v.isStoppered || v.submergedInTroughId) {
+    if (!v || v.kind !== 'vessel' || v.isShattered || !v.isInverted || v.isStoppered || v.submergedInTroughId || v.mountedOverElectrodeId) {
       return;
     }
     const spec = APPARATUS[v.typeId];

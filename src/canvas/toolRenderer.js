@@ -1,4 +1,4 @@
-import { APPARATUS, getCondenserPorts, getProbeTipPos } from '../data/apparatus.js';
+import { APPARATUS, getCondenserPorts, getProbeTipPos, getSyringeGeometry } from '../data/apparatus.js';
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, computeSolutionVisuals, computePH } from '../engine/equilibrium.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
@@ -877,6 +877,66 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
     height: 17,
   });
   ctx.restore();
+}
+
+export function renderElectrodeCollectorTubes(ctx, items, isDark, timeNow = 0) {
+  for (const el of items) {
+    if (el.kind !== 'electrode' || !el.gasTargetId) continue;
+    const target = items.find((i) => i.id === el.gasTargetId && !i.isShattered && !i.isBroken);
+    if (!target) continue;
+    // Skip cable if it's already an inverted tube sitting physically directly over the electrode
+    if (target.mountedOverElectrodeId === el.id) continue;
+
+    const eSpec = APPARATUS.electrode_rod;
+    const tSpec = APPARATUS[target.typeId] || APPARATUS.gas_syringe;
+    const p0 = { x: el.x, y: el.y - eSpec.height / 2 + 8 };
+    const p3 =
+      target.kind === 'gas_syringe'
+        ? (() => {
+            const g = getSyringeGeometry(target);
+            return { x: g.nozzleX, y: g.nozzleY };
+          })()
+        : target.isInverted
+        ? { x: target.x, y: target.y + tSpec.height / 2 - 4 }
+        : { x: target.x, y: target.y - tSpec.height / 2 + 10 };
+
+    const midY = Math.min(p0.y, p3.y) - 48;
+    const p1 = { x: p0.x, y: midY };
+    const p2 = { x: p3.x, y: midY };
+
+    ctx.save();
+    // Small bell hood cap over electrode + translucent silicone delivery tubing
+    ctx.fillStyle = isDark ? 'rgba(148, 163, 184, 0.38)' : 'rgba(100, 116, 139, 0.34)';
+    ctx.beginPath();
+    ctx.roundRect(el.x - 8, el.y - eSpec.height / 2 + 6, 16, 12, 3);
+    ctx.fill();
+
+    ctx.strokeStyle = isDark ? 'rgba(71, 85, 105, 0.78)' : 'rgba(51, 65, 85, 0.65)';
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+    ctx.stroke();
+
+    ctx.strokeStyle = isDark ? 'rgba(186, 230, 253, 0.45)' : 'rgba(226, 232, 240, 0.75)';
+    ctx.lineWidth = 2.4;
+    ctx.stroke();
+
+    if ((el.gasBubbleRate || 0) > 1.5e-7) {
+      ctx.fillStyle = el.gasBubbleType === 'Cl2_g' ? 'rgba(217, 249, 157, 0.92)' : 'rgba(186, 230, 253, 0.9)';
+      for (let k = 0; k < 3; k++) {
+        const u = (timeNow * 1.25 + k * 0.33) % 1;
+        const omt = 1 - u;
+        const bx = omt ** 3 * p0.x + 3 * omt ** 2 * u * p1.x + 3 * omt * u ** 2 * p2.x + u ** 3 * p3.x;
+        const by = omt ** 3 * p0.y + 3 * omt ** 2 * u * p1.y + 3 * omt * u ** 2 * p2.y + u ** 3 * p3.y;
+        ctx.beginPath();
+        ctx.arc(bx, by, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
 }
 
 export function renderDcPowerAndWires(ctx, items, selectedId, isDark) {

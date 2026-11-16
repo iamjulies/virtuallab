@@ -34,6 +34,7 @@ import {
   renderBurette,
   renderDcPowerAndWires,
   renderDiffusionTube,
+  renderElectrodeCollectorTubes,
   renderElectrodeRod,
   renderFilterFunnel,
   renderFlameLoop,
@@ -62,6 +63,7 @@ export class LabWorkbenchCanvas {
     this.langCode = 'vi';
     this.dragState = null; // { itemId, offsetX, offsetY, startX, startY, pourTargetId, pouredMl }
     this.portDragState = null;
+    this.pickState = null; // { candidateIds: Set<string>, promptText, onPick, onCancel }
     this.hoverItemId = null;
     this.dropTargetVesselId = null;
     this.scaleX = 1;
@@ -89,6 +91,30 @@ export class LabWorkbenchCanvas {
 
   setLang(langCode) {
     this.langCode = langCode || 'vi';
+  }
+
+  startItemPick({ candidateIds = [], promptText = '', onPick = null, onCancel = null } = {}) {
+    const idSet = candidateIds instanceof Set ? candidateIds : new Set(candidateIds);
+    this.dragState = null;
+    this.portDragState = null;
+    this.dropTargetVesselId = null;
+    this.pickState = {
+      candidateIds: idSet,
+      promptText,
+      onPick,
+      onCancel,
+    };
+    this.callbacks.onPickStateChange?.(this.pickState);
+  }
+
+  cancelItemPick() {
+    if (!this.pickState) return;
+    const cancelFn = this.pickState.onCancel;
+    this.pickState = null;
+    this.hoverItemId = null;
+    this.canvas.style.cursor = 'default';
+    this.callbacks.onPickStateChange?.(null);
+    cancelFn?.();
   }
 
   resize() {
@@ -143,7 +169,7 @@ export class LabWorkbenchCanvas {
     );
   }
 
-  hitTestItem(lx, ly, excludeId = null) {
+  hitTestItem(lx, ly, excludeId = null, filterFn = null) {
     // Check compact/docked foreground tools BEFORE enclosing vessels so electrodes & funnels remain directly clickable
     const isPriorityTool = (it) =>
       it.kind === 'electrode' ||
@@ -160,6 +186,7 @@ export class LabWorkbenchCanvas {
 
     const matchItem = (it) => {
       if (it.id === excludeId) return false;
+      if (filterFn && !filterFn(it)) return false;
       const spec = APPARATUS[it.typeId];
       if (it.isShattered || it.isBroken) {
         const hw = Math.max(spec.width / 2 + 20, 48);
@@ -396,6 +423,19 @@ export class LabWorkbenchCanvas {
     this.canvas.addEventListener('pointerdown', (e) => {
       const pt = this.clientToLogical(e.clientX, e.clientY);
 
+      if (this.pickState) {
+        const picked = this.hitTestItem(pt.x, pt.y, null, (it) => this.pickState.candidateIds.has(it.id));
+        if (picked) {
+          const onPick = this.pickState.onPick;
+          this.pickState = null;
+          this.hoverItemId = null;
+          this.canvas.style.cursor = 'default';
+          this.callbacks.onPickStateChange?.(null);
+          onPick?.(picked);
+        }
+        return;
+      }
+
       // 0. Check direct tubing port handles on Liebig Condenser (Inlet Left / Outlet Right)
       const portHit = this.findCondenserPortAt(pt.x, pt.y);
       if (portHit) {
@@ -494,6 +534,12 @@ export class LabWorkbenchCanvas {
 
     this.canvas.addEventListener('pointermove', (e) => {
       const pt = this.clientToLogical(e.clientX, e.clientY);
+      if (this.pickState) {
+        const candHover = this.hitTestItem(pt.x, pt.y, null, (it) => this.pickState.candidateIds.has(it.id));
+        this.hoverItemId = candHover ? candHover.id : null;
+        this.canvas.style.cursor = candHover ? 'pointer' : 'crosshair';
+        return;
+      }
       if (this.portDragState) {
         this.portDragState.x = pt.x;
         this.portDragState.y = pt.y;
@@ -547,6 +593,13 @@ export class LabWorkbenchCanvas {
       item.y = nextY;
       item.vy = 0;
       item.fallStartY = item.y;
+      if (
+        item.kind === 'vessel' &&
+        item.mountedOverElectrodeId &&
+        Math.hypot(nextX - this.dragState.startX, nextY - this.dragState.startY) > 12
+      ) {
+        item.mountedOverElectrodeId = null;
+      }
 
       // Move clamped items rigidly along with stand when dragging a Retort Stand
       if (item.kind === 'stand') {
@@ -790,6 +843,11 @@ export class LabWorkbenchCanvas {
     this.canvas.addEventListener('pointercancel', endDrag);
     this.canvas.addEventListener('lostpointercapture', endDrag);
     window.addEventListener('blur', endDrag);
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.pickState) {
+        this.cancelItemPick();
+      }
+    });
 
     // HTML5 Drag & Drop from Shelf onto Bench (always accept dropEffect copy; zero 'none' blocks)
     this.canvas.addEventListener('dragover', (e) => {
@@ -978,6 +1036,7 @@ export class LabWorkbenchCanvas {
     beginCanvasLabelFrame(activeTooltipIds);
 
     renderTubingConnections(ctx, this.sim.items, this.isDark, timeNow, this.langCode);
+    renderElectrodeCollectorTubes(ctx, this.sim.items, this.isDark, timeNow);
 
     const ordered = [
       ...this.sim.items.filter((i) => i.kind === 'stand' || i.kind === 'dc_power' || i.kind === 'volt_ammeter'),
@@ -993,7 +1052,8 @@ export class LabWorkbenchCanvas {
 
     for (const item of ordered) {
       const isSelected = item.id === this.sim.selectedId;
-      const isDropTgt = item.id === this.dropTargetVesselId;
+      const isPickCandidate = Boolean(this.pickState?.candidateIds?.has(item.id));
+      const isDropTgt = item.id === this.dropTargetVesselId || (isPickCandidate && item.id === this.hoverItemId);
       setCurrentLabelItemId(item.id);
       if (item.kind === 'stand') {
         renderRetortStand(ctx, item, isSelected, this.isDark);
@@ -1200,7 +1260,27 @@ export class LabWorkbenchCanvas {
     // 5. Render particles (bubbles, steam, Na yellow flame, sparks, glass shards)
     this.particles.render(ctx);
 
-    // 6. Render hovered/dragged Canvas tooltip pills on the very top layer above vapor/steam/smoke!
+    // 6. Render visual pick target rings when awaiting user direct click on bench
+    if (this.pickState && this.pickState.candidateIds.size > 0) {
+      const pulse = 0.55 + Math.sin(timeNow * 5.2) * 0.35;
+      ctx.save();
+      for (const it of this.sim.items) {
+        if (!this.pickState.candidateIds.has(it.id)) continue;
+        const sp = APPARATUS[it.typeId] || { width: 64, height: 80 };
+        const isHov = it.id === this.hoverItemId;
+        ctx.strokeStyle = isHov ? '#34d399' : `rgba(16, 185, 129, ${pulse.toFixed(2)})`;
+        ctx.fillStyle = isHov ? 'rgba(16, 185, 129, 0.16)' : 'rgba(16, 185, 129, 0.06)';
+        ctx.lineWidth = isHov ? 3 : 2;
+        ctx.setLineDash(isHov ? [] : [6, 4]);
+        ctx.beginPath();
+        ctx.roundRect(it.x - sp.width / 2 - 8, it.y - sp.height / 2 - 8, sp.width + 16, sp.height + 16, 10);
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // 7. Render hovered/dragged Canvas tooltip pills on the very top layer above vapor/steam/smoke!
     flushCanvasLabelFrame(ctx);
 
     ctx.restore();

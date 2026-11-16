@@ -27,12 +27,43 @@ function formatReagentMolPreview(reg, amount) {
 }
 
 export class DosingModal {
-  constructor(container, sim, getLang) {
+  constructor(container, sim, getLang, onStartBenchPick = null) {
     this.container = container;
     this.sim = sim;
     this.getLang = getLang;
+    this.onStartBenchPick = onStartBenchPick;
     this.state = null; // { mode: 'reagent'|'transfer', reagentId, sourceVesselId, targetVesselId, amount, rateMlS, fine, includePpt, pouredLive }
     this.pourInterval = null;
+  }
+
+  renderTargetPickRow(targetItem, candidateIds, t) {
+    const targetName = targetItem
+      ? `${t(APPARATUS[targetItem.typeId].i18nKey)} ${targetItem.label}`
+      : '—';
+    return `
+      <div class="flex items-center justify-between gap-2">
+        <label class="text-xs font-medium text-muted shrink-0">${t('targetVessel')}</label>
+        <div class="flex items-center gap-1.5 min-w-0">
+          <span id="dosing-target-badge" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-semibold truncate">${targetName}</span>
+          ${
+            candidateIds.length > 0 && this.onStartBenchPick
+              ? `<button type="button" id="dosing-pick-target" data-cids="${candidateIds.join(',')}" class="px-2.5 py-1.5 rounded-lg border border-accent bg-accent/15 text-accent text-xs font-semibold hover:opacity-90 shrink-0">${t('btnPickOnBench')}</button>`
+              : ''
+          }
+        </div>
+      </div>
+    `;
+  }
+
+  hideForPick() {
+    this.stopContinuousPour();
+    this.container.classList.add('hidden');
+  }
+
+  showAfterPick(pickedId = null) {
+    if (!this.state) return;
+    if (pickedId) this.state.targetVesselId = pickedId;
+    this.render();
   }
 
   openReagent(reagentId, targetVesselId) {
@@ -115,14 +146,8 @@ export class DosingModal {
   openSyringeTransfer(syringeId) {
     const syr = this.sim.getItem(syringeId);
     if (!syr || syr.kind !== 'gas_syringe' || syr.isBroken) return;
-    const regForTarget = st.mode === 'reagent' ? STARTER_REAGENTS.find((r) => r.id === st.reagentId) : null;
     const vessels = this.sim.items.filter(
-      (i) =>
-        !i.isShattered &&
-        !i.isBroken &&
-        (i.kind === 'vessel' ||
-          ((st.mode === 'reagent' || st.mode === 'transfer') &&
-            (i.kind === 'filter_funnel' || (i.kind === 'burette' && (!regForTarget || regForTarget.kind === 'liquid')))))
+      (i) => !i.isShattered && !i.isBroken && i.kind === 'vessel'
     );
     if (vessels.length === 0) return;
 
@@ -188,20 +213,12 @@ export class DosingModal {
               <button type="button" id="dosing-close-x" class="px-2 py-1 rounded text-xs text-muted hover:text-main border border-theme">✕</button>
             </div>
 
-            <!-- Target vessel selector -->
-            <div class="flex items-center justify-between gap-2">
-              <label class="text-xs font-medium text-muted">${t('targetVessel')}</label>
-              <select id="dosing-target-select" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium">
-                ${vessels
-                  .map(
-                    (v) =>
-                      `<option value="${v.id}" ${v.id === st.targetVesselId ? 'selected' : ''}>${t(
-                        APPARATUS[v.typeId].i18nKey
-                      )} ${v.label}</option>`
-                  )
-                  .join('')}
-              </select>
-            </div>
+            <!-- Visual on-bench Target vessel selector -->
+            ${this.renderTargetPickRow(
+              vessels.find((v) => v.id === st.targetVesselId) || vessels[0],
+              vessels.map((v) => v.id),
+              t
+            )}
 
             <!-- Exact Mass / Volume Input -->
             <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2">
@@ -305,19 +322,11 @@ export class DosingModal {
               <button type="button" id="dosing-close-x" class="px-2 py-1 rounded text-xs text-muted hover:text-main border border-theme">✕</button>
             </div>
 
-            <div class="flex items-center justify-between gap-2">
-              <label class="text-xs font-medium text-muted">${t('targetVessel')}</label>
-              <select id="dosing-target-select" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium">
-                ${others
-                  .map(
-                    (v) =>
-                      `<option value="${v.id}" ${v.id === st.targetVesselId ? 'selected' : ''}>${t(
-                        APPARATUS[v.typeId].i18nKey
-                      )} ${v.label}</option>`
-                  )
-                  .join('')}
-              </select>
-            </div>
+            ${this.renderTargetPickRow(
+              others.find((v) => v.id === st.targetVesselId) || others[0],
+              others.map((v) => v.id),
+              t
+            )}
 
             <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2">
               <div class="flex items-center justify-between">
@@ -378,19 +387,11 @@ export class DosingModal {
               <h3 class="text-sm font-bold">${t('actionTransferSolid')}</h3>
               <button type="button" id="dosing-close-x" class="px-2 py-1 rounded text-xs text-muted hover:text-main border border-theme">✕</button>
             </div>
-            <div class="flex items-center justify-between gap-2">
-              <label class="text-xs font-medium text-muted">${t('targetVessel')}</label>
-              <select id="dosing-target-select" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium">
-                ${validVessels
-                  .map(
-                    (v) =>
-                      `<option value="${v.id}" ${v.id === st.targetVesselId ? 'selected' : ''}>${t(
-                        APPARATUS[v.typeId].i18nKey
-                      )} ${v.label}</option>`
-                  )
-                  .join('')}
-              </select>
-            </div>
+            ${this.renderTargetPickRow(
+              validVessels.find((v) => v.id === st.targetVesselId) || validVessels[0],
+              validVessels.map((v) => v.id),
+              t
+            )}
             <div class="flex items-center justify-end gap-2 pt-2">
               <button type="button" id="dosing-cancel" class="px-3 py-2 rounded-lg border border-theme text-xs font-medium text-muted hover:text-main">${t('btnClose')}</button>
               <button type="button" id="dosing-confirm" class="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 transition">${t('btnAddExact')}</button>
@@ -445,19 +446,11 @@ export class DosingModal {
               </div>
               <button type="button" id="dosing-close-x" class="px-2 py-1 rounded text-xs text-muted hover:text-main border border-theme">✕</button>
             </div>
-            <div class="flex items-center justify-between gap-2">
-              <label class="text-xs font-medium text-muted">${t('targetVessel')}</label>
-              <select id="dosing-target-select" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium">
-                ${vessels
-                  .map(
-                    (v) =>
-                      `<option value="${v.id}" ${v.id === st.targetVesselId ? 'selected' : ''}>${t(
-                        APPARATUS[v.typeId].i18nKey
-                      )} ${v.label}</option>`
-                  )
-                  .join('')}
-              </select>
-            </div>
+            ${this.renderTargetPickRow(
+              vessels.find((v) => v.id === st.targetVesselId) || vessels[0],
+              vessels.filter((v) => v.kind === 'vessel').map((v) => v.id),
+              t
+            )}
             <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2">
               <div class="flex items-center justify-between">
                 <label class="text-xs font-semibold">${t('volumeLabel')}</label>
@@ -489,9 +482,21 @@ export class DosingModal {
       if (e.target.id === 'dosing-backdrop') closeFn();
     });
 
-    this.container.querySelector('#dosing-target-select')?.addEventListener('change', (e) => {
-      this.state.targetVesselId = e.target.value;
-    });
+    const t = this.getLang();
+    const pickBtn = this.container.querySelector('#dosing-pick-target');
+    if (pickBtn && this.onStartBenchPick) {
+      pickBtn.addEventListener('click', () => {
+        const cids = (pickBtn.dataset.cids || '').split(',').filter(Boolean);
+        if (cids.length === 0) return;
+        this.hideForPick();
+        this.onStartBenchPick({
+          candidateIds: cids,
+          promptText: t('pickBenchPrompt'),
+          onPick: (picked) => this.showAfterPick(picked.id),
+          onCancel: () => this.showAfterPick(null),
+        });
+      });
+    }
 
     const numInput = this.container.querySelector('#dosing-num');
     const slider = this.container.querySelector('#dosing-slider');

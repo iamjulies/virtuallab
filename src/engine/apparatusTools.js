@@ -393,10 +393,19 @@ function stepLiebigCondenser(sim, cond, dt) {
 }
 
 /**
- * Pneumatic Water Trough displacement: inverted tubes sitting in wet trough trap incoming tube gas & displace water down.
+ * Pneumatic Water Bath displacement: inverted tubes sitting in any open liquid bath (water trough OR electrolyte beaker)
+ * trap rising / tubed gas & seal mouth against air escape.
  */
 function stepPneumaticTrough(sim) {
-  const troughs = sim.items.filter((i) => i.typeId === 'water_trough' && !i.isShattered);
+  const baths = sim.items.filter(
+    (i) =>
+      i.kind === 'vessel' &&
+      !i.isShattered &&
+      !i.isInverted &&
+      !i.isStoppered &&
+      !APPARATUS[i.typeId]?.isMortar &&
+      (i.moles?.H2O_l || 0) > 0.25
+  );
   for (const v of sim.items) {
     if (v.kind !== 'vessel' || v.isShattered || !v.isInverted) {
       if (v.kind === 'vessel') v.submergedInTroughId = null;
@@ -404,23 +413,24 @@ function stepPneumaticTrough(sim) {
     }
     const spec = APPARATUS[v.typeId];
     const mouthY = v.y + spec.height / 2;
-    let matchedTrough = null;
-    for (const tr of troughs) {
-      const trSpec = APPARATUS.water_trough;
+    let matchedBath = null;
+    for (const tr of baths) {
+      if (tr.id === v.id) continue;
+      const trSpec = APPARATUS[tr.typeId];
       const trTop = tr.y - trSpec.height / 2;
       const trBot = tr.y + trSpec.height / 2;
-      const hasWater = (tr.moles.H2O_l || 0) > 1.0;
-      if (hasWater && Math.abs(v.x - tr.x) <= 78 && mouthY >= trTop - 6 && mouthY <= trBot + 10) {
-        matchedTrough = tr;
-        break;
+      const maxXSpan = Math.max(40, trSpec.width * 0.48);
+      if (Math.abs(v.x - tr.x) <= maxXSpan && mouthY >= trTop - 16 && mouthY <= trBot + 10) {
+        matchedBath = tr;
+        if (tr.typeId === 'water_trough') break;
       }
     }
-    v.submergedInTroughId = matchedTrough ? matchedTrough.id : null;
+    v.submergedInTroughId = matchedBath ? matchedBath.id : null;
   }
 }
 
 /**
- * Test open/inverted vessel gas or nearby burner with Wooden Splint (H2 pop / O2 relight / Na ignite).
+ * Test open/inverted vessel gas, active electrolysis electrode plume, or burner with Wooden Splint.
  */
 export function checkSplintInteractions(sim, splint) {
   if (!splint || splint.kind !== 'splint') return null;
@@ -440,6 +450,77 @@ export function checkSplintInteractions(sim, splint) {
   if (splint.mode === 'unlit') return null;
   if ((splint.cooldownTimer || 0) > 0) return null;
 
+  // 1b. Direct electrolysis gas plumes rising off immersed Cathode (-) / Anode (+) electrodes!
+  for (const el of sim.items) {
+    if (el.kind !== 'electrode' || !el.dockedVesselId || !el.gasBubbleType) continue;
+    const rate = el.gasBubbleRate || 0;
+    if (rate <= 1.2e-7 && (el.recentGasMol || 0) <= 3e-7) continue;
+    const parent = sim.getItem(el.dockedVesselId);
+    if (!parent || parent.isShattered || parent.isStoppered) continue;
+    const pSpec = APPARATUS[parent.typeId];
+    const pTop = parent.y - pSpec.height / 2;
+    if (Math.abs(tipX - el.x) > 38 || tipY < pTop - 52 || tipY > el.y + 34) continue;
+
+    if (el.gasBubbleType === 'H2_g' && splint.mode === 'burning') {
+      splint.cooldownTimer = 1.6;
+      splint.lastTestEvent = 'h2_pop';
+      splint.lastEventTimer = 1.6;
+      sim.addLog({
+        type: 'reaction',
+        equation: '2H₂(g) + O₂(g) —(tia lửa điện cực)→ 2H₂O(g) ("Póc!")',
+        nameVi: 'Thử khí Cathode H₂(g): Que đóm cháy nổ tiếng "Póc!"',
+        nameEn: 'Splint Test (Cathode H₂): Sharp hydrogen "Pop!" bark',
+        descVi: 'Luồng khí Hydrogen sinh ra tại cực âm (Cathode) bùng cháy nổ tiếng "póc" đặc trưng khi đưa que đóm đang cháy vào.',
+        descEn: 'Evolving cathodic H₂(g) ignites with air forming a crisp "Pop!" bark at the lit splint.',
+        vesselLabel: `${splint.label} → ${el.label} (${parent.label})`,
+      });
+      if (sim.visualHooks.onAlert) {
+        sim.visualHooks.onAlert('h2_pop', { x: tipX, y: tipY }, { vesselId: parent.id, electrodeId: el.id });
+      }
+      return 'h2_pop';
+    }
+    if (el.gasBubbleType === 'O2_g') {
+      const wasGlowing = splint.mode === 'glowing';
+      splint.mode = 'burning';
+      splint.cooldownTimer = 1.6;
+      splint.o2FlareTimer = wasGlowing ? 0.7 : 2.0;
+      splint.lastTestEvent = wasGlowing ? 'o2_relight' : 'o2_flare';
+      splint.lastEventTimer = 1.8;
+      sim.addLog({
+        type: 'reaction',
+        equation: wasGlowing ? 'C(tàn đóm) + O₂(g) → CO₂(g) (Bùng cháy)' : 'C(que đang cháy) + O₂(g) → CO₂(g) + hν (Cháy rực!)',
+        nameVi: wasGlowing ? 'Thử khí Anode O₂(g): Tàn đóm bùng cháy' : 'Que đóm cháy rực sáng hơn trong luồng O₂(g) Anode',
+        nameEn: wasGlowing ? 'Splint Test (Anode O₂): Glowing ember relights!' : 'Burning splint flares brightly in anodic O₂(g)!',
+        descVi: 'Luồng khí Oxygen tinh khiết thoát ra ở cực dương (Anode) làm tàn đóm đỏ bùng cháy lại / ngọn lửa cháy sáng chói.',
+        descEn: 'Anodic O₂(g) enriches combustion, relighting a glowing ember or flaring a lit splint.',
+        vesselLabel: `${splint.label} → ${el.label} (${parent.label})`,
+      });
+      if (sim.visualHooks.onAlert) {
+        sim.visualHooks.onAlert(splint.lastTestEvent, { x: tipX, y: tipY }, { vesselId: parent.id, electrodeId: el.id });
+      }
+      return splint.lastTestEvent;
+    }
+    if (el.gasBubbleType === 'Cl2_g') {
+      splint.mode = 'unlit';
+      splint.cooldownTimer = 1.6;
+      splint.o2FlareTimer = 0;
+      splint.lastTestEvent = null;
+      sim.addLog({
+        type: 'reaction',
+        equation: 'Cl₂(g) đậm đặc → Tắt ngọn lửa que đóm',
+        nameVi: 'Thử khí Anode Cl₂(g): Không duy trì sự cháy, tắt que đóm',
+        nameEn: 'Splint Test (Anode Cl₂): Dense Cl₂(g) extinguishes flame',
+        descVi: 'Khí Chlorine thoát ra tại Anode nặng hơn không khí và làm ngạt tắt ngọn lửa gỗ.',
+        descEn: 'Dense Cl₂(g) evolving from the anode displaces air and extinguishes the burning wood splint.',
+        vesselLabel: `${splint.label} → ${el.label} (${parent.label})`,
+      });
+      if (sim.visualHooks.onAlert) {
+        sim.visualHooks.onAlert('cl2_extinguish', { x: tipX, y: tipY }, { vesselId: parent.id, electrodeId: el.id });
+      }
+      return 'cl2_extinguish';
+    }
+  }
+
   for (const v of sim.items) {
     if (v.kind !== 'vessel' || v.isShattered || v.isStoppered) continue;
     const spec = APPARATUS[v.typeId];
@@ -447,14 +528,16 @@ export function checkSplintInteractions(sim, splint) {
     const dist = Math.hypot(tipX - v.x, tipY - testY);
     if (dist > 62) continue;
 
-    const h2Pocket = (v.headspaceGasMoles?.H2_g || 0) + (v.lastGasRateMap?.H2_g || 0) * 1.5;
-    const o2Pocket = (v.headspaceGasMoles?.O2_g || 0) + (v.lastGasRateMap?.O2_g || 0) * 1.5;
+    const headH2 = v.headspaceGasMoles?.H2_g || 0;
+    const headO2 = v.headspaceGasMoles?.O2_g || 0;
+    const rateH2 = v.lastGasRateMap?.H2_g || 0;
+    const rateO2 = v.lastGasRateMap?.O2_g || 0;
+    const hasH2 = headH2 > 4e-5 || rateH2 > 2e-6;
+    const hasO2 = headO2 > 4e-5 || rateO2 > 1.5e-6;
 
     // Phenomenon #6: Burning splint + mixed Oxyhydrogen (2H2 : 1O2) scaled detonation OR lean H2 "Pop!" test
-    if (splint.mode === 'burning' && h2Pocket > 6e-5) {
+    if (splint.mode === 'burning' && hasH2) {
       splint.cooldownTimer = 1.6;
-      const headH2 = v.headspaceGasMoles?.H2_g || 0;
-      const headO2 = v.headspaceGasMoles?.O2_g || 0;
       const nDetO2 = Math.min(headH2 / 2, headO2);
 
       if (nDetO2 >= 4e-5) {
@@ -516,7 +599,7 @@ export function checkSplintInteractions(sim, splint) {
     }
 
     // Glowing ember splint + O2 -> Relights softly into steady burning flame; Burning splint + O2 -> Intense blazing flare!
-    if (splint.mode === 'glowing' && o2Pocket > 6e-5) {
+    if (splint.mode === 'glowing' && hasO2) {
       splint.mode = 'burning';
       splint.cooldownTimer = 1.6;
       splint.o2FlareTimer = 0.6;
@@ -537,7 +620,7 @@ export function checkSplintInteractions(sim, splint) {
       return 'o2_relight';
     }
 
-    if (splint.mode === 'burning' && o2Pocket > 6e-5 && h2Pocket <= 6e-5) {
+    if (splint.mode === 'burning' && hasO2 && !hasH2) {
       splint.cooldownTimer = 1.6;
       splint.o2FlareTimer = 2.0;
       splint.lastTestEvent = 'o2_flare';
@@ -626,6 +709,20 @@ export function checkIndicatorStripInteractions(sim, strip) {
   if (!strip || strip.kind !== 'indicator_strip') return;
   const { x: tipX, y: tipY } = getProbeTipPos(strip);
 
+  for (const el of sim.items) {
+    if (el.kind !== 'electrode' || !el.dockedVesselId || el.gasBubbleType !== 'Cl2_g') continue;
+    const parent = sim.getItem(el.dockedVesselId);
+    if (!parent || parent.isShattered || parent.isStoppered) continue;
+    const pTop = parent.y - (APPARATUS[parent.typeId]?.height || 110) / 2;
+    if ((el.gasBubbleRate || 0) > 1.2e-7 && Math.abs(tipX - el.x) <= 38 && tipY >= pTop - 48 && tipY <= el.y + 30) {
+      strip.sampledPH = 2.0;
+      strip.isBleached = true;
+      strip.sampledFrom = `Cl₂ (${el.label})`;
+      strip.tipColor = '#f8fafc';
+      return;
+    }
+  }
+
   for (const v of sim.items) {
     if (v.kind !== 'vessel' || v.isShattered) continue;
     const spec = APPARATUS[v.typeId];
@@ -693,12 +790,26 @@ export function syncDockedToolPositions(sim) {
       }
       const vSpec = APPARATUS[v.typeId];
       const eSpec = APPARATUS[it.typeId];
-      const dxOff = it.dockSide === 'right' ? Math.min(22, vSpec.width * 0.28) : -Math.min(22, vSpec.width * 0.28);
+      const dxOff = it.dockSide === 'right' ? Math.min(26, vSpec.width * 0.31) : -Math.min(26, vSpec.width * 0.31);
       it.x = v.x + dxOff;
       it.y = v.y - vSpec.height * 0.14;
       it.vy = 0;
       it.fallStartY = null;
       if (eSpec) it.restingOnId = null;
+    } else if (it.kind === 'vessel' && it.isInverted && it.mountedOverElectrodeId && !it.isDragging) {
+      const el = sim.getItem(it.mountedOverElectrodeId);
+      const parentV = el?.dockedVesselId ? sim.getItem(el.dockedVesselId) : null;
+      if (!el || !parentV || parentV.isShattered) {
+        it.mountedOverElectrodeId = null;
+        continue;
+      }
+      const vSpec = APPARATUS[parentV.typeId];
+      const tSpec = APPARATUS[it.typeId];
+      it.x = el.x;
+      it.y = parentV.y - vSpec.height / 2 - tSpec.height * 0.28;
+      it.vy = 0;
+      it.fallStartY = null;
+      it.submergedInTroughId = parentV.id;
     } else if (it.kind === 'stir_bar' && it.inVesselId) {
       const v = sim.getItem(it.inVesselId);
       if (!v || v.isShattered) {
@@ -770,6 +881,11 @@ export function stepApparatusTools(sim, dt, realDeltaSec) {
           it.flameTestColor = null;
           it.flameTestIon = null;
         }
+      }
+    } else if (it.kind === 'electrode') {
+      if ((it.recentGasMol || 0) > 0) {
+        it.recentGasMol = Math.max(0, it.recentGasMol * Math.exp(-realDeltaSec * 1.4));
+        if (it.recentGasMol < 1e-10) it.recentGasMol = 0;
       }
     } else if (it.kind === 'wash_bottle') {
       if ((it.squirtTimer || 0) > 0) {

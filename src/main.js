@@ -36,6 +36,9 @@ const canvasEl = document.getElementById('workbench-canvas');
 const benchHintEl = document.getElementById('bench-hint-text');
 const resetBtnEl = document.getElementById('btn-reset-bench');
 const toastEl = document.getElementById('toast-banner');
+const benchPickBannerEl = document.getElementById('bench-pick-banner');
+const benchPickTextEl = document.getElementById('bench-pick-text');
+const benchPickCancelEl = document.getElementById('bench-pick-cancel');
 
 let toastTimer = null;
 function showToast(msg) {
@@ -48,14 +51,55 @@ function showToast(msg) {
   }, 3200);
 }
 
-const dosingModal = new DosingModal(modalEl, sim, getTranslator);
+let workbench = null;
+function startBenchPick(opts = {}) {
+  if (!workbench) return;
+  const prevMobileTab = isMobileViewActive() ? appState.mobileTab : null;
+  if (prevMobileTab && prevMobileTab !== 'bench') {
+    setMobileTab('bench');
+  }
+  workbench.startItemPick({
+    candidateIds: opts.candidateIds || [],
+    promptText: opts.promptText || getTranslator()('pickBenchPrompt'),
+    onPick: (picked) => {
+      if (prevMobileTab && prevMobileTab !== 'bench') {
+        setMobileTab(prevMobileTab);
+      }
+      opts.onPick?.(picked);
+      refreshChrome(true);
+    },
+    onCancel: () => {
+      if (prevMobileTab && prevMobileTab !== 'bench') {
+        setMobileTab(prevMobileTab);
+      }
+      opts.onCancel?.();
+    },
+  });
+}
 
-const workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
+benchPickCancelEl?.addEventListener('click', () => {
+  workbench?.cancelItemPick();
+});
+
+const dosingModal = new DosingModal(modalEl, sim, getTranslator, (opts) => startBenchPick(opts));
+
+workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
   onSelect: () => {
     refreshChrome();
   },
   onRequestDosing: (reagentId, vesselId) => {
     dosingModal.openReagent(reagentId, vesselId);
+  },
+  onPickStateChange: (pickSt) => {
+    if (!benchPickBannerEl) return;
+    if (pickSt) {
+      const t = getTranslator();
+      if (benchPickTextEl) benchPickTextEl.textContent = pickSt.promptText || t('pickBenchPrompt');
+      if (benchPickCancelEl) benchPickCancelEl.textContent = t('pickBenchCancel');
+      benchPickBannerEl.classList.remove('hidden');
+    } else {
+      benchPickBannerEl.classList.add('hidden');
+    }
   },
 });
 
@@ -142,6 +186,7 @@ const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
   onOpenSolidTransfer: (sourceId) => dosingModal.openSolidTransfer(sourceId),
   onOpenTubeTarget: (sourceId) => dosingModal.openTubeTarget(sourceId),
   onOpenSyringeTransfer: (syringeId) => dosingModal.openSyringeTransfer(syringeId),
+  onStartBenchPick: (opts) => startBenchPick(opts),
   onNotify: (msg) => showToast(msg),
 });
 
@@ -244,6 +289,8 @@ sim.visualHooks.onAlert = (type, vessel, meta) => {
     showToast(`🔥 ${t('alertO2Relight')}`);
   } else if (type === 'o2_flare') {
     showToast(`🔥 ${t('alertO2Flare')}`);
+  } else if (type === 'cl2_extinguish') {
+    showToast(`🌫️ ${t('alertCl2Extinguish')}`);
   }
 };
 
