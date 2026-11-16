@@ -15,8 +15,19 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
   const { left, right, bottom, top, width } = bounds;
   const moles = vessel.moles;
 
-  // 1. Precipitates (settled layer + swirling flocculent cloud)
-  const pptOrder = ['CuO_s', 'Ag2O_s', 'Cu_s', 'Ag_s', 'AgCl_s', 'CuCl_s', 'CuOH2_s', 'ZnOH2_s'];
+  // 1. Precipitates & Metallic Alloys (settled layer + swirling flocculent cloud)
+  const pptOrder = [
+    'CuO_s',
+    'Ag2O_s',
+    'Cu_s',
+    'Ag_s',
+    'Cu3Zn_gamma_s',
+    'Cu3Zn_alpha_s',
+    'AgCl_s',
+    'CuCl_s',
+    'CuOH2_s',
+    'ZnOH2_s',
+  ];
   let accumulatedSedimentH = 0;
 
   for (const spId of pptOrder) {
@@ -81,6 +92,9 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     { id: 'CuSO4_5H2O_s', kind: 'blue_crystal' },
     { id: 'CuNO3_2_s', kind: 'blue_crystal' },
     { id: 'CuSO4_s', kind: 'white_powder' },
+    { id: 'CuSO4_2HCl_s', kind: 'brown_powder' },
+    { id: 'Na2O_s', kind: 'gray_white_powder' },
+    { id: 'C2H5ONa_s', kind: 'white_powder' },
     { id: 'CuCl2_s', kind: 'brown_crystal' },
     { id: 'AgNO3_s', kind: 'white_crystal' },
     { id: 'NaCl_s', kind: 'white_crystal' },
@@ -100,16 +114,21 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     const sp = SPECIES[item.id];
     const massG = n * sp.molarMass;
 
-    if (item.kind === 'white_powder') {
+    if (item.kind === 'white_powder' || item.kind === 'brown_powder' || item.kind === 'gray_white_powder') {
       const heapH = Math.min(24, 3 + Math.sqrt(massG) * 5.5);
       ctx.save();
-      ctx.fillStyle = '#f1f5f9';
+      ctx.fillStyle =
+        item.kind === 'brown_powder'
+          ? '#78350f'
+          : item.kind === 'gray_white_powder'
+          ? '#cbd5e1'
+          : '#f1f5f9';
       ctx.beginPath();
       ctx.moveTo(left + 4, bottom);
       ctx.quadraticCurveTo(left + width * 0.5, bottom - heapH * 1.6, right - 4, bottom);
       ctx.closePath();
       ctx.fill();
-      ctx.strokeStyle = '#cbd5e1';
+      ctx.strokeStyle = item.kind === 'brown_powder' ? '#d97706' : item.kind === 'gray_white_powder' ? '#94a3b8' : '#cbd5e1';
       ctx.lineWidth = 0.8;
       ctx.stroke();
       ctx.restore();
@@ -160,7 +179,9 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         ctx.lineWidth = 0.8;
         ctx.stroke();
       } else if (item.kind === 'zinc') {
-        // Zn bluish-silver metallic granules (tinted if Cu or Ag plated!)
+        // Zn bluish-silver metallic granules (tinted Gold a-brass, Silver y-brass, Cu copper, or Ag!)
+        const hasAlphaBrass = (moles.Cu3Zn_alpha_s || 0) > 1e-6;
+        const hasGammaBrass = (moles.Cu3Zn_gamma_s || 0) > 1e-6;
         const hasCuPlate = (moles.Cu_s || 0) > 1e-6;
         const hasAgPlate = (moles.Ag_s || 0) > 1e-6;
         ctx.beginPath();
@@ -170,15 +191,71 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         ctx.lineTo(r, r * 0.4);
         ctx.lineTo(-r * 0.2, r * 0.8);
         ctx.closePath();
-        ctx.fillStyle = hasCuPlate ? '#b45309' : hasAgPlate ? '#e2e8f0' : '#94a3b8';
+        ctx.fillStyle = hasAlphaBrass
+          ? '#eab308'
+          : hasGammaBrass
+          ? '#f1f5f9'
+          : hasCuPlate
+          ? '#b45309'
+          : hasAgPlate
+          ? '#e2e8f0'
+          : '#94a3b8';
         ctx.fill();
-        ctx.strokeStyle = hasCuPlate ? '#f59e0b' : hasAgPlate ? '#ffffff' : '#475569';
+        ctx.strokeStyle = hasAlphaBrass
+          ? '#fef08a'
+          : hasGammaBrass
+          ? '#ffffff'
+          : hasCuPlate
+          ? '#f59e0b'
+          : hasAgPlate
+          ? '#ffffff'
+          : '#475569';
         ctx.lineWidth = 0.9;
         ctx.stroke();
       }
 
       ctx.restore();
     }
+  }
+
+  // 2b. Osmotic Chemical Garden: hollow vertical blue Cu(OH)2 coral spires growing upwards!
+  if (hasWater && vessel.gardenActive && (vessel.gardenGrowth || 0) > 0.02 && surfaceY < bottom - 12) {
+    const growth = Math.max(0.02, Math.min(1, vessel.gardenGrowth || 0));
+    const colH = Math.max(12, bottom - surfaceY - 4);
+    const spireCount = 6;
+    ctx.save();
+    for (let i = 0; i < spireCount; i++) {
+      const baseX = left + 12 + ((i + 0.5) / spireCount) * Math.max(12, width - 24);
+      const maxSpireH = colH * (0.48 + seeded(i, 71) * 0.44) * growth;
+      const tipX = baseX + (seeded(i, 83) - 0.5) * 14;
+      const tipY = bottom - maxSpireH;
+      const midX = (baseX + tipX) * 0.5 + (seeded(i, 91) - 0.5) * 8;
+      const midY = bottom - maxSpireH * 0.55;
+
+      // Hollow cerulean coral outer stalk
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = i % 2 === 0 ? '#0284c7' : '#0ea5e9';
+      ctx.lineWidth = 4.2 + seeded(i, 63) * 2.2;
+      ctx.beginPath();
+      ctx.moveTo(baseX, bottom - 2);
+      ctx.quadraticCurveTo(midX, midY, tipX, tipY);
+      ctx.stroke();
+
+      // Translucent brighter central hollow lumen channel
+      ctx.strokeStyle = '#7dd3fc';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(baseX, bottom - 4);
+      ctx.quadraticCurveTo(midX, midY, tipX, tipY + 1);
+      ctx.stroke();
+
+      // Glowing bulbous osmotic vesicle tip
+      ctx.fillStyle = '#bae6fd';
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   // 3. Sodium (Na) — floats & melts into glowing silvery sphere on water meniscus!

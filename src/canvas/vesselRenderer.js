@@ -354,31 +354,38 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
     const fH = 34 * scale;
     const fW = 10.5 * scale;
 
-    const outerGrad = ctx.createRadialGradient(x, fBaseY - fH * 0.35, 2, x, fBaseY - fH * 0.35, fH * 0.8);
-    outerGrad.addColorStop(0, 'rgba(253, 224, 71, 0.95)');
-    outerGrad.addColorStop(0.55, 'rgba(249, 115, 22, 0.78)');
-    outerGrad.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+    const isBeilstein = (item.beilsteinTimer || 0) > 0;
+    const outerGrad = ctx.createRadialGradient(x, fBaseY - fH * 0.35, 2, x, fBaseY - fH * 0.35, fH * (isBeilstein ? 1.05 : 0.8));
+    if (isBeilstein) {
+      outerGrad.addColorStop(0, 'rgba(110, 231, 183, 0.96)');
+      outerGrad.addColorStop(0.5, 'rgba(16, 185, 129, 0.88)');
+      outerGrad.addColorStop(1, 'rgba(5, 150, 105, 0.0)');
+    } else {
+      outerGrad.addColorStop(0, 'rgba(253, 224, 71, 0.95)');
+      outerGrad.addColorStop(0.55, 'rgba(249, 115, 22, 0.78)');
+      outerGrad.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+    }
 
     ctx.beginPath();
-    ctx.moveTo(x - fW, fBaseY);
-    ctx.quadraticCurveTo(x - fW * 1.1, fBaseY - fH * 0.5, x + wobble, fBaseY - fH);
-    ctx.quadraticCurveTo(x + fW * 1.1, fBaseY - fH * 0.5, x + fW, fBaseY);
+    ctx.moveTo(x - fW * (isBeilstein ? 1.18 : 1), fBaseY);
+    ctx.quadraticCurveTo(x - fW * 1.15, fBaseY - fH * 0.5, x + wobble, fBaseY - fH * (isBeilstein ? 1.18 : 1));
+    ctx.quadraticCurveTo(x + fW * 1.15, fBaseY - fH * 0.5, x + fW * (isBeilstein ? 1.18 : 1), fBaseY);
     ctx.closePath();
     ctx.fillStyle = outerGrad;
     ctx.fill();
 
-    // Inner blue cone
+    // Inner blue/emerald cone
     ctx.beginPath();
     ctx.moveTo(x - fW * 0.5, fBaseY);
     ctx.quadraticCurveTo(x, fBaseY - fH * 0.55, x + fW * 0.5, fBaseY);
     ctx.closePath();
-    ctx.fillStyle = 'rgba(56, 189, 248, 0.88)';
+    ctx.fillStyle = isBeilstein ? 'rgba(52, 211, 153, 0.92)' : 'rgba(56, 189, 248, 0.88)';
     ctx.fill();
 
-    // Compact live power badge on burner base
-    drawLabelPill(ctx, x, bottom + 6, `🔥 ${Math.round(powerW)} W`, {
+    // Compact live power badge (+ Beilstein badge when green) on burner base
+    drawLabelPill(ctx, x, bottom + 6, isBeilstein ? `🔥 ${Math.round(powerW)} W · CuCl₂*` : `🔥 ${Math.round(powerW)} W`, {
       pal,
-      borderColor: powerFrac > 0.6 ? '#f97316' : '#f59e0b',
+      borderColor: isBeilstein ? '#10b981' : powerFrac > 0.6 ? '#f97316' : '#f59e0b',
       font: '600 10.5px system-ui, sans-serif',
       height: 18,
     });
@@ -1343,7 +1350,8 @@ export function renderVessel(ctx, vessel, opts) {
       liqL,
       ph,
       spec.opticalPathCm,
-      vessel.phenBleachFrac
+      vessel.phenBleachFrac,
+      vessel.phenIrrevFrac || 0
     );
 
     ctx.fillStyle = vis.css;
@@ -1576,6 +1584,22 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+  } else if (vessel.hasPhenCotton && !vessel.isShattered) {
+    // Phenolphthalein-soaked cotton/indicator strip at mouth (turns bright rose-pink on NH3 gas!)
+    const cLvl = Math.max(0, Math.min(1, vessel.phenCottonLevel || 0));
+    const r = Math.round(244 * cLvl + 241 * (1 - cLvl));
+    const g = Math.round(114 * cLvl + 245 * (1 - cLvl));
+    const b = Math.round(182 * cLvl + 249 * (1 - cLvl));
+    const span = Math.max(10, (spec.neckRadius || 18) * 0.72);
+    ctx.save();
+    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+    ctx.strokeStyle = cLvl > 0.25 ? '#ec4899' : '#cbd5e1';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(x, top + 1, span, 6.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
   }
 
   // Gradual rim overflow waterfall stream when filled past vessel mouth (open vessels only)

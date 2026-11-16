@@ -68,14 +68,24 @@ export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
 
   const nH = moles.H_aq || 0;
   const nOH = moles.OH_aq || 0;
-  const cNet = (nH - nOH) / liquidVolL;
+  const nEthoxide = moles.C2H5O_aq || 0;
+  const cNH3 = (moles.NH3_aq || 0) / liquidVolL;
+  const cNet = (nH - nOH - nEthoxide) / liquidVolL;
   const kw = computeKw(tempK);
+  const kbNH3 = 1.77e-5;
 
   let hPlus;
   if (cNet >= 0) {
-    hPlus = 0.5 * (cNet + Math.sqrt(cNet * cNet + 4 * kw));
+    const netAcid = Math.max(0, cNet - cNH3 * 0.99);
+    const baseTail = cNet <= 1e-7 && cNH3 > 1e-10 ? 4 * kbNH3 * cNH3 : 0;
+    if (netAcid > 1e-7) {
+      hPlus = 0.5 * (netAcid + Math.sqrt(netAcid * netAcid + 4 * kw));
+    } else {
+      const ohMinus = 0.5 * (-netAcid + Math.sqrt(netAcid * netAcid + 4 * kw + baseTail));
+      hPlus = ohMinus > 0 ? kw / ohMinus : Math.sqrt(kw);
+    }
   } else {
-    const ohMinus = 0.5 * (-cNet + Math.sqrt(cNet * cNet + 4 * kw));
+    const ohMinus = 0.5 * (-cNet + Math.sqrt(cNet * cNet + 4 * kw + 4 * kbNH3 * cNH3));
     hPlus = ohMinus > 0 ? kw / ohMinus : Math.sqrt(kw);
   }
   if (hPlus <= 0) return 14;
@@ -84,10 +94,10 @@ export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
 }
 
 /**
- * Equilibrium carbinol (colorless In(OH)^3-) fraction for phenolphthalein at high [OH-].
+ * Equilibrium carbinol (colorless In(OH)^3-) fraction for phenolphthalein at high [OH-] / [C2H5O-].
  */
-export function computePhenolphthaleinBleachEq(cOH) {
-  const oh = Math.max(0, cOH || 0);
+export function computePhenolphthaleinBleachEq(cOH, cEthoxide = 0) {
+  const oh = Math.max(0, (cOH || 0) + 2.2 * (cEthoxide || 0));
   if (oh <= 1e-6) return 0;
   const term = Math.pow(oh / 0.32, 1.45);
   return term / (1 + term);
@@ -95,33 +105,44 @@ export function computePhenolphthaleinBleachEq(cOH) {
 
 /**
  * Phenolphthalein fraction in pink basic dianion form (In^2-, pH ~ 8.2..12).
- * Accepts optional dynamic carbinol bleachFrac (0..1) for real-time flash-then-fade kinetics.
+ * Accepts optional carbinol bleachFrac (0..1) and irreversible C-C cleavage irrevFrac (0..1).
  */
-export function computePhenolphthaleinAlpha(ph, cOH = null, bleachFrac = null) {
+export function computePhenolphthaleinAlpha(ph, cOH = null, bleachFrac = null, irrevFrac = 0) {
   if (ph === null || ph === undefined) return 0;
+  const intact = Math.max(0, 1 - Math.max(0, Math.min(1, irrevFrac || 0)));
+  if (intact <= 1e-4) return 0;
   const acidTerm = Math.pow(10, Math.max(-30, Math.min(30, CONSTANTS.PHENOLPHTHALEIN_PKA - ph)));
   const effectiveOH = cOH !== null && cOH !== undefined ? Math.max(0, cOH) : Math.pow(10, Math.min(2, ph - 14));
   const bleach =
     bleachFrac !== null && bleachFrac !== undefined
       ? Math.max(0, Math.min(1, bleachFrac))
       : computePhenolphthaleinBleachEq(effectiveOH);
-  return Math.max(0, 1 - bleach) / (1 + acidTerm);
+  return (intact * Math.max(0, 1 - bleach)) / (1 + acidTerm);
 }
 
 /**
  * Strongly acidic orange-red oxonium cation (H3In+) fraction of phenolphthalein (pH < 0).
  */
-export function computePhenolphthaleinOrangeAlpha(ph) {
+export function computePhenolphthaleinOrangeAlpha(ph, irrevFrac = 0) {
   if (ph === null || ph === undefined) return 0;
+  const intact = Math.max(0, 1 - Math.max(0, Math.min(1, irrevFrac || 0)));
+  if (intact <= 1e-4) return 0;
   const expo = Math.max(-20, Math.min(20, ph + 0.25));
-  return 1 / (1 + Math.pow(10, expo));
+  return intact / (1 + Math.pow(10, expo));
 }
 
 /**
  * Beer-Lambert RGB optical color calculation for aqueous solution.
  * Returns { css, r, g, b, alpha, hasIndicatorPink, hasIndicatorOrange }
  */
-export function computeSolutionVisuals(moles, liquidVolL, ph, opticalPathCm = 6.5, phenBleachFrac = null) {
+export function computeSolutionVisuals(
+  moles,
+  liquidVolL,
+  ph,
+  opticalPathCm = 6.5,
+  phenBleachFrac = null,
+  phenIrrevFrac = 0
+) {
   if (liquidVolL <= 1e-6) {
     return {
       css: 'rgba(200, 230, 250, 0.25)',
@@ -160,17 +181,25 @@ export function computeSolutionVisuals(moles, liquidVolL, ph, opticalPathCm = 6.
     tb *= Math.exp(-ext.b * cComp * opticalPathCm * 0.22);
     extraOpacity += Math.min(0.5, cComp * 0.48);
   }
+  const nCuOH4 = moles.CuOH4_2_aq || 0;
+  if (nCuOH4 > 1e-9) {
+    const cCuBase = nCuOH4 / liquidVolL;
+    const ext = SPECIES.CuOH4_2_aq.extinctionRGB;
+    tr *= Math.exp(-ext.r * cCuBase * opticalPathCm * 0.24);
+    tg *= Math.exp(-ext.g * cCuBase * opticalPathCm * 0.24);
+    tb *= Math.exp(-ext.b * cCuBase * opticalPathCm * 0.24);
+    extraOpacity += Math.min(0.52, cCuBase * 0.55 + 0.14);
+  }
 
-  // 2. Phenolphthalein indicator 4-state optics:
-  //    pH < 0: H3In+ (orange-red), 0..8.2: H2In (colorless), 8.2..12: In^2- (rose-pink), >13: In(OH)^3- (colorless)
+  // 2. Phenolphthalein indicator 4-state optics + irreversible C-C cleavage guard:
   const nPhen = moles.Phenolphthalein_aq || 0;
   let alphaPink = 0;
   let alphaOrange = 0;
   if (nPhen > 1e-9 && ph !== null) {
     const cPhen = nPhen / liquidVolL;
-    const cOH = (moles.OH_aq || 0) / liquidVolL;
-    alphaPink = computePhenolphthaleinAlpha(ph, cOH, phenBleachFrac);
-    alphaOrange = computePhenolphthaleinOrangeAlpha(ph);
+    const cOH = ((moles.OH_aq || 0) + 2.2 * (moles.C2H5O_aq || 0)) / liquidVolL;
+    alphaPink = computePhenolphthaleinAlpha(ph, cOH, phenBleachFrac, phenIrrevFrac);
+    alphaOrange = computePhenolphthaleinOrangeAlpha(ph, phenIrrevFrac);
 
     if (alphaPink > 0.005) {
       const effStrength = Math.min(1.65, (cPhen / 1.0e-5) * 0.42) * alphaPink;

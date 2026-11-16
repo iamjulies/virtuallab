@@ -138,18 +138,21 @@ export function stepVesselThermodynamics(
   let evapCoolingJ = 0;
   const nWater = vessel.moles.H2O_l || 0;
 
+  const hasOpenTube = !!(vessel.connectedTargetId || vessel.connectedSyringeId);
   const effectivePressureBar =
-    vessel.isStoppered && !vessel.connectedSyringeId
+    vessel.isStoppered && !hasOpenTube
       ? Math.max(env.pressureBar, vessel.internalPressureBar || env.pressureBar)
       : env.pressureBar;
 
   const boilingPointK = solutionBoilingPointK(vessel.moles, effectivePressureBar);
 
   // Regime 1: Universal sub-boiling evaporation (Clausius-Clapeyron + Stefan-Maxwell + Gilliland)
-  // Open vessels evaporate gently at any T; syringe-connected vessels vent expanding warm vapor once T >= 80 C.
-  const canSubBoilVent = !vessel.isStoppered || (vessel.connectedSyringeId && vessel.tempK >= 353.15);
+  // Open vessels evaporate gently at any T; tube-connected vessels vent expanding warm vapor once T >= 80 C,
+  // and fuming conc. HCl (>21.2%) continuously outgasses dry HCl(g) through an open delivery tube.
+  const canSubBoilVent = !vessel.isStoppered || (hasOpenTube && vessel.tempK >= 353.15);
+  const canVentFumingHCl = !vessel.isStoppered || hasOpenTube;
   const nEthanol = vessel.moles.C2H5OH_l || 0;
-  if ((nWater > 1e-7 || nEthanol > 1e-7) && canSubBoilVent && vessel.tempK < boilingPointK) {
+  if ((nWater > 1e-7 || nEthanol > 1e-7) && (canSubBoilVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
     const xH2O = waterMoleFraction(vessel.moles);
     const volMl =
       computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000 +
@@ -157,7 +160,7 @@ export function stepVesselThermodynamics(
     const areaCm2 = spec.geometry
       ? Math.max(0.2, spec.geometry.getLiquidState(volMl).surfaceAreaCm2)
       : spec.surfaceAreaCm2 || 20.0;
-    const tubingScale = vessel.isStoppered && vessel.connectedSyringeId ? 0.55 : 1.0;
+    const tubingScale = vessel.isStoppered && hasOpenTube ? 0.55 : 1.0;
     const effAreaCm2 = areaCm2 * tubingScale;
     const isStirred = (vessel.stirTimer || 0) > 0;
 
@@ -167,7 +170,7 @@ export function stepVesselThermodynamics(
       101325 *
       Math.exp((SPECIES.H2O_l.dHVapJ / CONSTANTS.R_J_MOL_K) * (1 / SPECIES.H2O_l.boilTempK - 1 / env.tempK));
     const evapH2OMolS =
-      nWater > 1e-7
+      nWater > 1e-7 && canSubBoilVent
         ? calcEvaporationRateMol(SPECIES.H2O_l, xH2O, vessel.tempK, effAreaCm2, pAmbH2OPa, isStirred)
         : 0;
     const subBoilEvap = Math.min(nWater, evapH2OMolS * dt);
@@ -176,7 +179,7 @@ export function stepVesselThermodynamics(
     const solTotal = Math.max(1e-9, nWater + nEthanol);
     const xEtOH = nEthanol / solTotal;
     const evapEtOHMolS =
-      nEthanol > 1e-7
+      nEthanol > 1e-7 && canSubBoilVent
         ? calcEvaporationRateMol(SPECIES.C2H5OH_l, xEtOH, vessel.tempK, effAreaCm2, 0, isStirred)
         : 0;
     const subBoilEtOH = Math.min(nEthanol, evapEtOHMolS * dt);

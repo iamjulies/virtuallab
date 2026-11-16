@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.16',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.17',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envPress: 'Áp suất',
@@ -171,6 +171,9 @@ export const I18N = {
     alertHydroOverflowPop: 'Nước dâng quá miệng đẩy bật tung nút cao su cứng và tràn ra ngoài!',
     alertOverpressureShatter: 'Quá áp nghiêm trọng! Bình thủy tinh đã vỡ tan và toàn bộ hóa chất tràn ra ngoài.',
     alertNaExplosion: 'Phản ứng Sodium quá lớn gây bùng cháy khí H₂ & sốc nhiệt làm vỡ bình, hóa chất văng tung tóe!',
+    alertNaHazardExplosion: 'CẢNH BÁO NGUY HIỂM: Cho Na tiếp xúc trực tiếp với HCl đặc / AgNO₃ đặc gây nổ tức thời & bắn tung tóe ăn mòn!',
+    actionAddPhenCotton: 'Đặt bông tẩm Phenolphthalein',
+    actionRemovePhenCotton: 'Gỡ bông tẩm Phenolphthalein',
     alertOverflow: 'Bình đã đầy! Dung dịch bị tràn ra ngoài.',
     alertTubeLiquidTransfer: 'Nước đã điền đầy ống dẫn Ø6mm và chảy sang bình chứa tiếp theo.',
     alertSyringeOverflow: 'Gas syringe đầy 250 mL! Nước dư đang tràn ra ngoài đuôi xilanh.',
@@ -202,7 +205,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.16',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.17',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envPress: 'Pressure',
@@ -360,6 +363,9 @@ export const I18N = {
     alertHydroOverflowPop: 'Liquid compressed past brim popped the solid rubber stopper off!',
     alertOverpressureShatter: 'Severe overpressure! Glass vessel shattered and spilled all contents.',
     alertNaExplosion: 'Runaway Sodium + H₂ ignition & thermal shock shattered the vessel and spilled all contents!',
+    alertNaHazardExplosion: 'HAZARD ALERT: Direct Na contact with conc. HCl / conc. AgNO₃ caused immediate ignition explosion & corrosive splatter!',
+    actionAddPhenCotton: 'Add Phenolphthalein cotton plug',
+    actionRemovePhenCotton: 'Remove Phenolphthalein cotton',
     alertOverflow: 'Vessel overflowed! Excess liquid spilled.',
     alertTubeLiquidTransfer: 'Tubing filled completely (Ø6mm bore) and liquid flowed into the connected vessel.',
     alertSyringeOverflow: 'Gas syringe reached 250 mL max! Excess liquid is overflowing from the syringe.',

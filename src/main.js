@@ -186,7 +186,8 @@ sim.visualHooks.onAlert = (type, vessel, meta) => {
   particles.emitBurst(type, vessel.x, vessel.y, meta);
   if (type === 'explosion') {
     workbench.triggerShake(13, 0.45);
-    showToast(`💥 ${t('alertNaExplosion')}`);
+    const latest = sim.logs[0];
+    showToast(`💥 ${t(latest?.key || 'alertNaExplosion')}`);
   } else if (type === 'shatter') {
     workbench.triggerShake(8, 0.34);
     const latest = sim.logs[0];

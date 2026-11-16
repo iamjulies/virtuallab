@@ -3,7 +3,7 @@ import { SPECIES } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
 
-export const NON_STEAM_GASES = ['H2_g', 'O2_g', 'HCl_g', 'Cl2_g', 'HNO3_g'];
+export const NON_STEAM_GASES = ['H2_g', 'O2_g', 'HCl_g', 'Cl2_g', 'HNO3_g', 'C2H5Cl_g', 'NH3_g', 'NO2_g', 'NO_g'];
 export const ALL_GASES = [...NON_STEAM_GASES, 'H2O_g'];
 
 export function getSyringeNozzlePos(syringe) {
@@ -367,11 +367,16 @@ export function stepVesselGasAndPressure(
       // Syringe maxed out (>= 250 mL) -> remaining gas equilibrates pressure across flask + syringe
       maxedSyringe = target;
     } else if (target && target.kind === 'vessel' && !target.isShattered && !target.isStoppered) {
-      // Condense steam & dissolve soluble acid gases into open receiving vessel; vent permanent gases
+      // Condense steam, scrub HCl(g) onto dry CuSO4(s) or water, dissolve NH3(g) into water, vent permanent gases
       let heatAddedJ = 0;
       let addedCapJK = 0;
       if (totalSteam > 0) {
-        if (target.tempK < waterBoilingPointK(env.pressureBar)) {
+        if ((target.moles.NaOH_s || 0) > 1e-4 && target.tempK < 395) {
+          // Strongly hygroscopic solid NaOH desiccates incoming water vapor exothermic (~41 kJ/mol)
+          target.moles.H2O_l = (target.moles.H2O_l || 0) + totalSteam;
+          heatAddedJ += totalSteam * CONSTANTS.DELTA_H_VAP_WATER_J;
+          addedCapJK += totalSteam * CONSTANTS.CP_H2O_J_MOL_K;
+        } else if (target.tempK < waterBoilingPointK(env.pressureBar)) {
           target.moles.H2O_l = (target.moles.H2O_l || 0) + totalSteam;
           heatAddedJ += totalSteam * CONSTANTS.DELTA_H_VAP_WATER_J;
           addedCapJK += totalSteam * CONSTANTS.CP_H2O_J_MOL_K;
@@ -379,16 +384,37 @@ export function stepVesselGasAndPressure(
           target.escapedGasMoles.H2O_g = (target.escapedGasMoles.H2O_g || 0) + totalSteam;
         }
       }
-      if ((produced.HCl_g || 0) > 0 && (target.moles.H2O_l || 0) > 1e-4) {
-        const dHCl = produced.HCl_g;
-        target.moles.H_aq = (target.moles.H_aq || 0) + dHCl;
-        target.moles.Cl_aq = (target.moles.Cl_aq || 0) + dHCl;
-        heatAddedJ += dHCl * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
-      } else if ((produced.HCl_g || 0) > 0) {
-        target.escapedGasMoles.HCl_g = (target.escapedGasMoles.HCl_g || 0) + produced.HCl_g;
+      let remHCl = produced.HCl_g || 0;
+      if (remHCl > 0 && (target.moles.CuSO4_s || 0) > 1e-8 && (target.moles.H2O_l || 0) < 0.025 && target.tempK < 410) {
+        // Chemisorption: CuSO4(s, white) + 2 HCl(g) -> CuSO4·2HCl(s, golden brown)
+        const dAdduct = Math.min(target.moles.CuSO4_s, remHCl / 2);
+        if (dAdduct > 1e-13) {
+          target.moles.CuSO4_s -= dAdduct;
+          if (target.moles.CuSO4_s < 1e-13) delete target.moles.CuSO4_s;
+          target.moles.CuSO4_2HCl_s = (target.moles.CuSO4_2HCl_s || 0) + dAdduct;
+          remHCl -= 2 * dAdduct;
+          heatAddedJ += dAdduct * 68000;
+        }
+      }
+      if (remHCl > 0 && (target.moles.H2O_l || 0) > 1e-4) {
+        target.moles.H_aq = (target.moles.H_aq || 0) + remHCl;
+        target.moles.Cl_aq = (target.moles.Cl_aq || 0) + remHCl;
+        heatAddedJ += remHCl * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
+      } else if (remHCl > 0) {
+        target.escapedGasMoles.HCl_g = (target.escapedGasMoles.HCl_g || 0) + remHCl;
+      }
+      if ((produced.NH3_g || 0) > 0 && (target.moles.H2O_l || 0) > 1e-4) {
+        const dNH3 = produced.NH3_g;
+        target.moles.NH3_aq = (target.moles.NH3_aq || 0) + dNH3;
+        heatAddedJ += dNH3 * 35400;
+      } else if ((produced.NH3_g || 0) > 0) {
+        target.escapedGasMoles.NH3_g = (target.escapedGasMoles.NH3_g || 0) + produced.NH3_g;
+      }
+      if ((produced.C2H5Cl_g || 0) > 0 && target.restingOnId) {
+        target.recentHalogenGasTimer = 1.6;
       }
       for (const g of NON_STEAM_GASES) {
-        if (g !== 'HCl_g' && produced[g] > 0) {
+        if (g !== 'HCl_g' && g !== 'NH3_g' && produced[g] > 0) {
           target.escapedGasMoles[g] = (target.escapedGasMoles[g] || 0) + produced[g];
         }
       }

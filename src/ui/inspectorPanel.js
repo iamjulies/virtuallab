@@ -29,6 +29,10 @@ const GAS_DISPLAY_META = [
   { id: 'O2_g', label: 'O₂', always: true },
   { id: 'HCl_g', label: 'HCl', always: false },
   { id: 'Cl2_g', label: 'Cl₂', always: false },
+  { id: 'C2H5Cl_g', label: 'C₂H₅Cl', always: false },
+  { id: 'NH3_g', label: 'NH₃', always: false },
+  { id: 'NO2_g', label: 'NO₂', always: false },
+  { id: 'NO_g', label: 'NO', always: false },
   { id: 'HNO3_g', label: 'HNO₃', always: false },
   { id: 'H2O_g', label: 'H₂O(g)', always: false },
 ];
@@ -418,6 +422,15 @@ export class InspectorPanel {
                 : ''
             }
             ${
+              !item.isStoppered
+                ? `<button type="button" id="ins-phen-cotton" class="px-2.5 py-1.5 rounded-lg border ${
+                    item.hasPhenCotton ? 'border-pink-500/70 bg-pink-500/15 text-pink-300' : 'border-theme bg-surface'
+                  } text-xs font-medium hover:border-accent">${
+                    item.hasPhenCotton ? t('actionRemovePhenCotton') : t('actionAddPhenCotton')
+                  }</button>`
+                : ''
+            }
+            ${
               stands.length > 0
                 ? `<button type="button" id="ins-toggle-clamp" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${
                     item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')
@@ -673,6 +686,7 @@ export class InspectorPanel {
       this.container.querySelector('#ins-stir')?.addEventListener('click', () => this.sim.stirVessel(item.id));
       this.container.querySelector('#ins-rinse')?.addEventListener('click', () => this.sim.rinseVessel(item.id));
       this.container.querySelector('#ins-stopper')?.addEventListener('click', () => this.sim.toggleStopper(item.id));
+      this.container.querySelector('#ins-phen-cotton')?.addEventListener('click', () => this.sim.togglePhenCotton(item.id));
       this.container.querySelector('#ins-toggle-clamp')?.addEventListener('click', () => {
         if (item.clampedToId) {
           this.sim.detachFromStand(item.id);

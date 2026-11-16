@@ -2,6 +2,7 @@ import { APPARATUS } from '../data/apparatus.js';
 import { CONSTANTS } from '../data/constants.js';
 import { computeLiquidVolumeL, computePH, computeSolutionVisuals } from '../engine/equilibrium.js';
 import { computeSyringeDischargeArc, computeSyringeLiquidVolumeMl } from '../engine/gasNetwork.js';
+import { renderActiveReagentTransfer } from './reagentRenderer.js';
 import {
   renderBurner,
   renderGasSyringe,
@@ -429,7 +430,10 @@ export class LabWorkbenchCanvas {
       const color = computeSolutionVisuals(
         src.moles,
         srcLiqL,
-        computePH(src.moles, srcLiqL, src.tempK)
+        computePH(src.moles, srcLiqL, src.tempK),
+        APPARATUS[src.typeId]?.opticalPathCm || 6.5,
+        src.phenBleachFrac,
+        src.phenIrrevFrac || 0
       ).css;
       const dstSpec = APPARATUS[dst.typeId];
       this.sim.activePourStream = {
@@ -581,7 +585,7 @@ export class LabWorkbenchCanvas {
       }
     }
 
-    // 4. Render active pouring stream
+    // 4. Render active pouring stream & animated reagent bottle / glass rod / glass spoon transfer
     if (this.sim.activePourStream) {
       const st = this.sim.activePourStream;
       ctx.save();
@@ -609,6 +613,22 @@ export class LabWorkbenchCanvas {
         ctx.fillText(`+${st.pouredMl.toFixed(1)} mL`, st.fromX, st.fromY - 18);
       }
       ctx.restore();
+    }
+
+    if (this.sim.activeReagentTransfer) {
+      const tgtV = this.sim.getItem(this.sim.activeReagentTransfer.vesselId);
+      const tSpec = tgtV ? APPARATUS[tgtV.typeId] : null;
+      if (tgtV && tSpec && !tgtV.isShattered) {
+        renderActiveReagentTransfer(
+          ctx,
+          this.sim.activeReagentTransfer,
+          tgtV,
+          tSpec,
+          tgtV.y + tSpec.height / 2 - 4,
+          this.isDark,
+          timeNow
+        );
+      }
     }
 
     // 5. Render particles (bubbles, steam, Na yellow flame, sparks, glass shards)

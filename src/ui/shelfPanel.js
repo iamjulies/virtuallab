@@ -1,5 +1,6 @@
 import { APPARATUS, APPARATUS_ORDER } from '../data/apparatus.js';
 import { STARTER_REAGENTS } from '../data/species.js';
+import { getReagentDragCanvas } from '../canvas/reagentRenderer.js';
 
 function apparatusSvg(typeId) {
   switch (typeId) {
@@ -31,64 +32,71 @@ function apparatusSvg(typeId) {
 function reagentIconSvg(reg) {
   if (reg.id === 'na') {
     return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="8" y="9" width="20" height="22" rx="3" fill="rgba(250, 204, 21, 0.2)" stroke="#ca8a04" stroke-width="1.5"/>
-      <rect x="11" y="5" width="14" height="4" rx="1" fill="#475569"/>
-      <rect x="10" y="13" width="16" height="16" rx="2" fill="rgba(253, 224, 71, 0.25)"/>
-      <polygon points="14,19 21,18 22,25 15,26" fill="#cbd5e1" stroke="#64748b" stroke-width="1"/>
+      <rect x="7" y="9" width="22" height="23" rx="3.5" fill="rgba(250, 204, 21, 0.22)" stroke="#ca8a04" stroke-width="1.5"/>
+      <rect x="10" y="4.5" width="16" height="4.5" rx="1.2" fill="#334155"/>
+      <rect x="9" y="14" width="18" height="16" rx="2" fill="rgba(234, 179, 8, 0.34)"/>
+      <rect x="12" y="19" width="8" height="8" rx="0.8" fill="#e2e8f0" stroke="#64748b" stroke-width="0.9"/>
+      <rect x="20" y="21" width="5" height="6" rx="0.6" fill="#cbd5e1" stroke="#64748b" stroke-width="0.8"/>
     </svg>`;
   }
   if (reg.id === 'cuso4_5h2o') {
     return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="8" y="9" width="20" height="22" rx="3" fill="rgba(14,165,233,0.12)" stroke="#64748b" stroke-width="1.5"/>
-      <rect x="11" y="5" width="14" height="4" rx="1" fill="#334155"/>
-      <polygon points="12,28 15,20 20,23 18,29" fill="#0284c7" stroke="#7dd3fc" stroke-width="0.8"/>
-      <polygon points="19,29 22,21 26,26 24,29" fill="#0369a1" stroke="#7dd3fc" stroke-width="0.8"/>
+      <rect x="7" y="9" width="22" height="23" rx="3.5" fill="rgba(14,165,233,0.14)" stroke="#64748b" stroke-width="1.5"/>
+      <rect x="10" y="4.5" width="16" height="4.5" rx="1.2" fill="#1d4ed8"/>
+      <polygon points="10,29 14,19 20,23 18,30" fill="#0284c7" stroke="#bae6fd" stroke-width="0.9"/>
+      <polygon points="18,30 22,20 27,26 24,30" fill="#0369a1" stroke="#bae6fd" stroke-width="0.9"/>
+      <polygon points="15,21 19,16 22,21" fill="#38bdf8" stroke="#e0f2fe" stroke-width="0.7"/>
     </svg>`;
   }
   if (reg.id === 'agno3') {
     return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="9" y="9" width="18" height="22" rx="3" fill="rgba(146, 64, 14, 0.45)" stroke="#92400e" stroke-width="1.5"/>
-      <rect x="12" y="5" width="12" height="4" rx="1" fill="#1e293b"/>
-      <rect x="13" y="23" width="4" height="4" fill="#f8fafc"/>
-      <rect x="18" y="24" width="4" height="3" fill="#e2e8f0"/>
+      <rect x="8" y="9" width="20" height="23" rx="3.5" fill="rgba(146, 64, 14, 0.72)" stroke="#b45309" stroke-width="1.5"/>
+      <rect x="11" y="4.5" width="14" height="4.5" rx="1.2" fill="#1e293b"/>
+      <rect x="11" y="14" width="14" height="6" rx="1" fill="rgba(248, 250, 252, 0.88)"/>
+      <rect x="12" y="23" width="5" height="5" fill="rgba(248, 250, 252, 0.72)" stroke="#f8fafc" stroke-width="0.5"/>
+      <rect x="19" y="24" width="5" height="4" fill="rgba(226, 232, 240, 0.72)" stroke="#f8fafc" stroke-width="0.5"/>
     </svg>`;
   }
   if (reg.id === 'naoh') {
     return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="8" y="9" width="20" height="22" rx="3" fill="rgba(226,232,240,0.14)" stroke="#64748b" stroke-width="1.5"/>
-      <rect x="11" y="5" width="14" height="4" rx="1" fill="#475569"/>
-      <circle cx="14" cy="26" r="2.5" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.7"/>
-      <circle cx="20" cy="26.5" r="2.5" fill="#f8fafc" stroke="#94a3b8" stroke-width="0.7"/>
-      <circle cx="17" cy="22" r="2.3" fill="#ffffff" stroke="#94a3b8" stroke-width="0.7"/>
+      <rect x="7" y="9" width="22" height="23" rx="3.5" fill="rgba(241, 245, 249, 0.75)" stroke="#94a3b8" stroke-width="1.5"/>
+      <rect x="10" y="4.5" width="16" height="4.5" rx="1.2" fill="#ea580c"/>
+      <circle cx="13" cy="27" r="2.6" fill="#ffffff" stroke="#94a3b8" stroke-width="0.7"/>
+      <circle cx="19" cy="27.5" r="2.6" fill="#ffffff" stroke="#94a3b8" stroke-width="0.7"/>
+      <circle cx="23" cy="24" r="2.3" fill="#ffffff" stroke="#94a3b8" stroke-width="0.7"/>
+      <circle cx="16" cy="22.5" r="2.4" fill="#ffffff" stroke="#94a3b8" stroke-width="0.7"/>
     </svg>`;
   }
   if (reg.id === 'zn') {
     return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="8" y="9" width="20" height="22" rx="3" fill="rgba(148,163,184,0.12)" stroke="#64748b" stroke-width="1.5"/>
-      <rect x="11" y="5" width="14" height="4" rx="1" fill="#334155"/>
-      <polygon points="12,28 14,22 18,24 17,28" fill="#94a3b8" stroke="#475569" stroke-width="0.8"/>
-      <polygon points="19,28 21,21 25,24 23,28" fill="#cbd5e1" stroke="#475569" stroke-width="0.8"/>
+      <rect x="7" y="9" width="22" height="23" rx="3.5" fill="rgba(148,163,184,0.16)" stroke="#64748b" stroke-width="1.5"/>
+      <rect x="10" y="4.5" width="16" height="4.5" rx="1.2" fill="#334155"/>
+      <polygon points="10,29 13,21 18,24 16,29" fill="#94a3b8" stroke="#e2e8f0" stroke-width="0.8"/>
+      <polygon points="17,29 21,20 26,24 23,29" fill="#cbd5e1" stroke="#475569" stroke-width="0.8"/>
     </svg>`;
   }
   if (reg.id === 'phen') {
     return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <rect x="11" y="13" width="14" height="17" rx="3" fill="rgba(244,114,182,0.18)" stroke="#64748b" stroke-width="1.5"/>
-      <path d="M15 13V9h6v4" stroke="#64748b" stroke-width="1.4" fill="none"/>
-      <path d="M16 9V5a2 2 0 014 0v4" fill="#ec4899"/>
-      <rect x="13" y="20" width="10" height="8" rx="1" fill="rgba(244,114,182,0.35)"/>
+      <rect x="10.5" y="13" width="15" height="18" rx="3" fill="rgba(244,114,182,0.18)" stroke="#64748b" stroke-width="1.5"/>
+      <path d="M14.5 13V9h7v4" stroke="#475569" stroke-width="1.4" fill="#334155"/>
+      <path d="M15.5 9V5a2.5 2.5 0 015 0v4" fill="#ec4899"/>
+      <rect x="12.5" y="20" width="11" height="9" rx="1" fill="rgba(244,114,182,0.38)"/>
+      <line x1="18" y1="13" x2="18" y2="27" stroke="#ffffff" stroke-width="1" opacity="0.6"/>
     </svg>`;
   }
   if (reg.id === 'hcl_37') {
     return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-      <path d="M13 5h10v5l4 5v14a2 2 0 01-2 2H11a2 2 0 01-2-2V15l4-5V5z" fill="rgba(226,232,240,0.15)" stroke="#ef4444" stroke-width="1.5"/>
-      <rect x="11" y="19" width="14" height="10" fill="rgba(226,232,240,0.35)"/>
-      <path d="M14 2c2 1 1 3 0 4M20 2c2 1 1 3 0 4" stroke="#94a3b8" stroke-width="1.2" fill="none"/>
+      <path d="M13 6h10v4l4 5v15a2 2 0 01-2 2H11a2 2 0 01-2-2V15l4-5V6z" fill="rgba(226,232,240,0.16)" stroke="#ef4444" stroke-width="1.5"/>
+      <rect x="12.5" y="3" width="11" height="4" rx="1" fill="#dc2626"/>
+      <rect x="11" y="19" width="14" height="11" fill="rgba(226,232,240,0.42)"/>
+      <path d="M14 2c2 1 1 3 0 4M20 2c2 1 1 3 0 4" stroke="#cbd5e1" stroke-width="1.2" fill="none"/>
     </svg>`;
   }
   // H2O
   return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0">
-    <path d="M13 5h10v5l4 5v14a2 2 0 01-2 2H11a2 2 0 01-2-2V15l4-5V5z" fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1.5"/>
-    <rect x="11" y="17" width="14" height="12" fill="rgba(56,189,248,0.45)"/>
+    <path d="M13 6h10v4l4 5v15a2 2 0 01-2 2H11a2 2 0 01-2-2V15l4-5V6z" fill="rgba(56,189,248,0.16)" stroke="#38bdf8" stroke-width="1.5"/>
+    <rect x="12.5" y="3" width="11" height="4" rx="1" fill="#0284c7"/>
+    <rect x="11" y="17" width="14" height="13" fill="rgba(56,189,248,0.48)"/>
   </svg>`;
 }
 
@@ -193,11 +201,15 @@ export class ShelfPanel {
       });
     });
 
-    // Bind reagent drag & click
+    // Bind reagent drag (full-size realistic bottle cursor) & click
     this.container.querySelectorAll('.reagent-card').forEach((el) => {
       const id = el.dataset.reagentId;
       el.addEventListener('dragstart', (e) => {
         e.dataTransfer.setData('text/reagent-id', id);
+        const dragImg = getReagentDragCanvas(id);
+        if (dragImg && e.dataTransfer.setDragImage) {
+          e.dataTransfer.setDragImage(dragImg, 48, 74);
+        }
       });
       el.addEventListener('click', () => {
         if (this.callbacks.onSelectReagent) this.callbacks.onSelectReagent(id);

@@ -22,6 +22,7 @@
     import { SPECIES } from '../src/data/species.js';
     import { computeVesselFluidGeometry } from '../src/canvas/vesselRenderer.js';
     import { ParticleSystem } from '../src/canvas/particles.js';
+    import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
     import { LabSimulation } from '../src/engine/simulation.js';
     import { calcEvaporationRateMol, computeSteamOpacity } from '../src/engine/thermodynamics.js';
     import {
@@ -1035,6 +1036,268 @@
           erlNeck.isShattered === true &&
           (peakTNaTiny >= 680 || ignitedTiny),
         `Wide200(maxTNa=${peakTNaWide.toFixed(0)}K,shat=${bkWide.isShattered}), Neck240(maxTNa=${peakTNaNeck.toFixed(0)}K,shat=${erlNeck.isShattered}), Tiny6mL(maxTNa=${peakTNaTiny.toFixed(0)}K,ignited=${ignitedTiny})`
+      );
+    }
+
+    // TEST 31: 0.05 g Na in 250 mL Erlenmeyer full of H2O stays intact + Borosilicate toughness & Reagent bottle drag sprites
+    {
+      const sim = new LabSimulation();
+      const erl = sim.createApparatus('erlenmeyer_250', 250, 401);
+      sim.addReagentToVessel(erl.id, 'h2o', 250);
+      sim.addReagentToVessel(erl.id, 'na', 0.05);
+      const txActive = sim.activeReagentTransfer && sim.activeReagentTransfer.isSolid === true;
+      stepSeconds(sim, 6.0, 0.02);
+
+      const h2oSprite = getReagentDragCanvas('h2o');
+      const agno3Sprite = getReagentDragCanvas('agno3');
+      const durOk =
+        APPARATUS.beaker_250.fragilityDropPx >= 250 &&
+        APPARATUS.erlenmeyer_250.fragilityDropPx >= 260 &&
+        h2oSprite && h2oSprite.width === 192 && agno3Sprite && agno3Sprite.height === 296;
+
+      assert(
+        '0.05g Na in 250mL Erlenmeyer water reacts without shattering Borosilicate flask; glassware drop toughness >=250px & full-size bottle sprites render',
+        !erl.isShattered && (erl.moles.Na_s || 0) < 1e-6 && (erl.moles.OH_aq || 0) > 0.002 && txActive && durOk,
+        `shat=${erl.isShattered}, Na_left=${(erl.moles.Na_s||0).toFixed(6)}, fragErl=${APPARATUS.erlenmeyer_250.fragilityDropPx}px, spriteW=${h2oSprite?.width}`
+      );
+    }
+
+    // TEST 32: Lucas Reagent (Zn + HCl 37%) converts Phen Ethanol -> C2H5Cl(g) & lights Beilstein green flame over Cu
+    {
+      const sim = new LabSimulation();
+      const burner = sim.createApparatus('burner', 300, 426);
+      const erl = sim.createApparatus('erlenmeyer_250', 300, 302);
+      sim.updateSupportAttachments();
+      sim.setBurnerFlame(burner.id, 2);
+      sim.addReagentToVessel(erl.id, 'hcl_37', 15);
+      sim.addReagentToVessel(erl.id, 'zn', 1.2, { fine: true });
+      sim.addReagentToVessel(erl.id, 'phen', 2.0);
+      erl.moles.Cu_s = 0.02; // Copper wire/deposit in flame path
+      stepSeconds(sim, 12.0, 0.04);
+
+      const c2h5clEsc = erl.escapedGasMoles.C2H5Cl_g || 0;
+      const beilsteinLit = (burner.beilsteinTimer || 0) > 0;
+      assert(
+        'Lucas reagent (ZnCl2/HCl) converts Ethanol into C2H5Cl(g) and excites Beilstein emerald-green flame on Cu',
+        c2h5clEsc > 1e-4 && beilsteinLit,
+        `C2H5Cl=${(c2h5clEsc*1000).toFixed(2)}mmol, beilsteinTimer=${(burner.beilsteinTimer||0).toFixed(2)}s`
+      );
+    }
+
+    // TEST 33: Amphoteric Cu(OH)2 -> royal-blue [Cu(OH)4]2- and Ag2O -> [Ag(OH)2]- in >8 M NaOH, reprecipitating on dilution
+    {
+      const sim = new LabSimulation();
+      const b = sim.createApparatus('beaker_250', 300, 429);
+      sim.addReagentToVessel(b.id, 'h2o', 15);
+      sim.addReagentToVessel(b.id, 'naoh', 8.0, { fine: true }); // ~12-13 M NaOH
+      stepSeconds(sim, 4.0, 0.02);
+      b.moles.CuOH2_s = 0.005;
+      b.moles.Ag2O_s = 0.002;
+      stepSeconds(sim, 4.0, 0.02);
+
+      const dissolvedCu = b.moles.CuOH4_2_aq || 0;
+      const dissolvedAg = b.moles.AgOH2_aq || 0;
+      const visRoyal = computeSolutionVisuals(b.moles, computeLiquidVolumeL(b.moles, b.tempK), 14.5, 6.5);
+
+      // Dilute with 180 mL H2O -> both precipitates reform cleanly!
+      sim.addReagentToVessel(b.id, 'h2o', 180);
+      stepSeconds(sim, 4.0, 0.02);
+      const reCuOH2 = b.moles.CuOH2_s || 0;
+      const reAg2O = b.moles.Ag2O_s || 0;
+      assert(
+        'Amphoteric Cu(OH)2 -> deep royal-blue [Cu(OH)4]2- & Ag2O -> [Ag(OH)2]- in >8 M NaOH, reprecipitating cleanly on water dilution',
+        dissolvedCu > 0.004 && visRoyal.b > visRoyal.g * 2 && dissolvedAg > 0.002 && reCuOH2 > 0.004 && reAg2O > 0.0015,
+        `[Cu(OH)4]2-=${dissolvedCu.toFixed(4)}, RoyalRGB(${visRoyal.r},${visRoyal.g},${visRoyal.b}), [Ag(OH)2]-=${dissolvedAg.toFixed(4)}, reCu=${reCuOH2.toFixed(4)}`
+      );
+    }
+
+    // TEST 34: Dry solid-state Na2O synthesis, dry CuSO4 + HCl(g) -> CuSO4·2HCl, & Osmotic Chemical Garden
+    {
+      // A) 2Na + 2NaOH -> 2Na2O + H2 -> Na2O + H2O (no O2)
+      const simA = new LabSimulation();
+      const bA = simA.createApparatus('beaker_250', 250, 429);
+      bA.moles.NaOH_s = 0.04;
+      simA.addReagentToVessel(bA.id, 'na', 0.92, { fine: true });
+      bA.stirTimer = 2.0;
+      stepSeconds(simA, 8.0, 0.04);
+      const na2oMol = bA.moles.Na2O_s || 0;
+      simA.addReagentToVessel(bA.id, 'h2o', 30);
+      stepSeconds(simA, 2.0, 0.02);
+      const o2Produced = bA.escapedGasMoles.O2_g || 0;
+
+      // B) Tube carrying HCl(g) onto dry CuSO4(s) -> CuSO4·2HCl(s)
+      const simB = new LabSimulation();
+      const src = simB.createApparatus('erlenmeyer_250', 200, 401);
+      const dst = simB.createApparatus('beaker_250', 450, 429);
+      simB.addReagentToVessel(src.id, 'hcl_37', 25);
+      dst.moles.CuSO4_s = 0.01;
+      simB.connectTube(src.id, dst.id);
+      stepSeconds(simB, 6.0, 0.04);
+      const adductMol = dst.moles.CuSO4_2HCl_s || 0;
+
+      // C) Osmotic Chemical Garden: coarse CuSO4·5H2O in conc. NaOH
+      const simC = new LabSimulation();
+      const gB = simC.createApparatus('beaker_250', 300, 429);
+      simC.addReagentToVessel(gB.id, 'h2o', 25);
+      simC.addReagentToVessel(gB.id, 'naoh', 6.0, { fine: true });
+      stepSeconds(simC, 3.0, 0.02);
+      simC.addReagentToVessel(gB.id, 'cuso4_5h2o', 2.5, { fine: false });
+      stepSeconds(simC, 4.0, 0.04);
+
+      assert(
+        'Solid-state 2Na+2NaOH -> Na2O (hydrolyzes with 0 O2); dry CuSO4 chemisorbs HCl(g); coarse CuSO4·5H2O grows Osmotic Chemical Garden',
+        na2oMol > 0.005 && o2Produced === 0 && (bA.moles.Na2O_s || 0) < 1e-6 && adductMol > 5e-5 && gB.gardenActive && gB.gardenGrowth > 0.4,
+        `Na2O=${na2oMol.toFixed(4)}, O2=${o2Produced}, CuSO4·2HCl=${(adductMol*1000).toFixed(3)}mmol, garden=${gB.gardenActive}(${gB.gardenGrowth.toFixed(2)})`
+      );
+    }
+
+    // TEST 35: Galvanic y-brass (silvery Cu3Zn) in hot alkaline zincate -> thermal annealing to golden alpha-brass
+    {
+      const sim = new LabSimulation();
+      const b = sim.createApparatus('beaker_250', 300, 429);
+      sim.addReagentToVessel(b.id, 'h2o', 30);
+      sim.addReagentToVessel(b.id, 'naoh', 4.0, { fine: true });
+      stepSeconds(sim, 3.0, 0.02);
+      b.moles.ZnOH4_2_aq = 0.01;
+      b.moles.Cu_s = 0.015;
+      sim.addReagentToVessel(b.id, 'zn', 1.0, { fine: true });
+      b.tempK = 355.0; // ~82 °C hot alkaline bath
+      stepSeconds(sim, 4.0, 0.04);
+      const gammaBrass = b.moles.Cu3Zn_gamma_s || 0;
+
+      // Heat to anneal (>= 102 °C / 375 K) -> diffuses into 18K golden alpha-brass
+      b.tempK = 395.0;
+      stepSeconds(sim, 6.0, 0.04);
+      const alphaBrass = b.moles.Cu3Zn_alpha_s || 0;
+
+      assert(
+        'Galvanic Zn cementation onto Cu plates silvery y-brass, and heating (>=102°C) anneals it into golden alpha-brass',
+        gammaBrass > 0.002 && alphaBrass > 0.003,
+        `gamma=${gammaBrass.toFixed(5)} mol -> alpha=${alphaBrass.toFixed(5)} mol`
+      );
+    }
+
+    // TEST 36: Irreversible Phenolphthalein C-C cleavage in hot super-concentrated NaOH (>4.5 M, >=65°C)
+    {
+      const sim = new LabSimulation();
+      const b = sim.createApparatus('beaker_250', 300, 429);
+      sim.addReagentToVessel(b.id, 'h2o', 20);
+      sim.addReagentToVessel(b.id, 'naoh', 8.0, { fine: true }); // ~10 M NaOH
+      sim.addReagentToVessel(b.id, 'phen', 0.25);
+      b.tempK = 368.15; // 95 °C hot super-alkali
+      stepSeconds(sim, 25.0, 0.05);
+
+      const irrevAfter = b.phenIrrevFrac || 0;
+      // Even after heavy dilution & neutralizing to pH ~10, pink stays permanently dead!
+      sim.addReagentToVessel(b.id, 'h2o', 200);
+      b.moles.OH_aq = 0.005;
+      b.moles.H_aq = 0;
+      const liq2 = computeLiquidVolumeL(b.moles, b.tempK);
+      const ph2 = computePH(b.moles, liq2, b.tempK);
+      const a2 = computePhenolphthaleinAlpha(ph2, 0.005 / liq2, b.phenBleachFrac, b.phenIrrevFrac);
+
+      assert(
+        'Hot super-concentrated NaOH (>4.5 M, >=65°C) irreversibly cleaves Phenolphthalein C-C bonds; pink never recovers after dilution',
+        irrevAfter > 0.7 && a2 < 0.08,
+        `irrevFrac=${irrevAfter.toFixed(3)}, recoveryAlpha=${a2.toFixed(3)}`
+      );
+    }
+
+    // TEST 37: Chloro complexes ([CuCl4]2- lemon-green -> blue, AgCl/[AgCl2]-, & Cu+Cu2+ -> CuCl white ppt on dilution)
+    {
+      const sim = new LabSimulation();
+      const bAg = sim.createApparatus('beaker_250', 250, 429);
+      sim.addReagentToVessel(bAg.id, 'hcl_37', 30);
+      sim.addReagentToVessel(bAg.id, 'agno3', 0.17, { fine: true }); // ~1 mmol Ag in 12 M HCl
+      stepSeconds(sim, 4.0, 0.02);
+      const agDissolved = bAg.moles.AgCl2_aq || 0;
+      const agPptInHCl = bAg.moles.AgCl_s || 0;
+
+      // Dilute strongly with H2O -> AgCl re-snows immediately!
+      sim.addReagentToVessel(bAg.id, 'h2o', 120);
+      stepSeconds(sim, 3.0, 0.02);
+      const agReppt = bAg.moles.AgCl_s || 0;
+
+      // Comproportionation: Cu + Cu2+ in hot conc. HCl -> [CuCl2]- -> pour/dilute into water -> white CuCl(s)
+      const bCu = sim.createApparatus('beaker_250', 450, 429);
+      sim.addReagentToVessel(bCu.id, 'hcl_37', 25);
+      sim.addReagentToVessel(bCu.id, 'cuso4_5h2o', 1.25, { fine: true });
+      bCu.moles.Cu_s = 0.01;
+      bCu.tempK = 335.0;
+      stepSeconds(sim, 8.0, 0.04);
+      const cuCl2Comp = bCu.moles.CuCl2_comp_aq || 0;
+      sim.addReagentToVessel(bCu.id, 'h2o', 160);
+      stepSeconds(sim, 3.0, 0.02);
+      const whiteCuCl = bCu.moles.CuCl_s || 0;
+
+      assert(
+        'Conc. HCl 37% solubilizes AgCl as [AgCl2]- (re-precipitating on dilution), and hot Cu+Cu2+->[CuCl2]- precipitates white CuCl(s) on dilution',
+        agDissolved > 0.0007 && agPptInHCl < 0.0003 && agReppt > 0.0009 && cuCl2Comp > 0.002 && whiteCuCl > 0.002,
+        `[AgCl2]-=${agDissolved.toFixed(4)}->AgCl=${agReppt.toFixed(4)}, [CuCl2]-=${cuCl2Comp.toFixed(4)}->CuCl=${whiteCuCl.toFixed(4)}`
+      );
+    }
+
+    // TEST 38: Ethanol chemistry from Phen 1% (calm Na -> C2H5O- auto-bleach -> pink on water drop; CuSO4 ethanol salting-out)
+    {
+      const sim = new LabSimulation();
+      const b1 = sim.createApparatus('beaker_250', 250, 429);
+      sim.addReagentToVessel(b1.id, 'phen', 2.0);
+      sim.addReagentToVessel(b1.id, 'na', 0.03);
+      stepSeconds(sim, 8.0, 0.02);
+      const ethoxideMol = b1.moles.C2H5O_aq || 0;
+      const liq1 = computeLiquidVolumeL(b1.moles, b1.tempK);
+      const aBleached = computePhenolphthaleinAlpha(computePH(b1.moles, liq1, b1.tempK), ((b1.moles.OH_aq||0)+2.2*ethoxideMol)/liq1, b1.phenBleachFrac);
+      sim.addReagentToVessel(b1.id, 'h2o', 8.0);
+      stepSeconds(sim, 3.0, 0.02);
+      const liq2 = computeLiquidVolumeL(b1.moles, b1.tempK);
+      const aPinkBack = computePhenolphthaleinAlpha(computePH(b1.moles, liq2, b1.tempK), ((b1.moles.OH_aq||0)+2.2*(b1.moles.C2H5O_aq||0))/liq2, b1.phenBleachFrac);
+
+      // Salting-out CuSO4·5H2O using Phen 1% ethanol solvent
+      const b2 = sim.createApparatus('beaker_250', 450, 429);
+      sim.addReagentToVessel(b2.id, 'h2o', 10);
+      sim.addReagentToVessel(b2.id, 'cuso4_5h2o', 3.4, { fine: true }); // near saturation
+      stepSeconds(sim, 3.0, 0.02);
+      const dissolvedBefore = b2.moles.CuSO4_5H2O_s || 0;
+      sim.addReagentToVessel(b2.id, 'phen', 20);
+      stepSeconds(sim, 4.0, 0.02);
+      const saltedOutCrystals = b2.moles.CuSO4_5H2O_s || 0;
+
+      assert(
+        'Na reacts gently in Phen 1% ethanol (no shatter, auto-bleaches via C2H5O-, pink rebounds on water); Phen 1% salts out blue CuSO4·5H2O crystals',
+        !b1.isShattered && ethoxideMol > 1e-4 && aBleached < 0.28 && aPinkBack > 0.65 && saltedOutCrystals > dissolvedBefore + 0.005,
+        `C2H5O-=${(ethoxideMol*1000).toFixed(2)}mmol, bleached=${aBleached.toFixed(2)}->water=${aPinkBack.toFixed(2)}, CuSO4_cryst=${(saltedOutCrystals*1000).toFixed(2)}mmol`
+      );
+    }
+
+    // TEST 39: Alkaline Zn + NO3- -> NH3(g) (pink Phen cotton strip) & Water-drop triggered solid Zn + AgNO3 redox
+    {
+      // A) NH3(g) turning Phenolphthalein cotton plug pink
+      const simA = new LabSimulation();
+      const bA = simA.createApparatus('beaker_250', 250, 429);
+      simA.togglePhenCotton(bA.id);
+      simA.addReagentToVessel(bA.id, 'h2o', 20);
+      simA.addReagentToVessel(bA.id, 'naoh', 4.0, { fine: true }); // exothermic -> heats above 50C
+      simA.addReagentToVessel(bA.id, 'agno3', 0.85, { fine: true }); // provides NO3-
+      simA.addReagentToVessel(bA.id, 'zn', 2.0, { fine: true });
+      bA.tempK = 355.0;
+      stepSeconds(simA, 6.0, 0.04);
+      const nh3Out = bA.escapedGasMoles.NH3_g || 0;
+
+      // B) Dry Zn + AgNO3 inert -> 1 drop H2O triggers fierce Ag(s) formation + heat + trace NO2
+      const simB = new LabSimulation();
+      const bB = simB.createApparatus('test_tube_50', 450, 396);
+      simB.addReagentToVessel(bB.id, 'agno3', 8.5, { fine: true });
+      simB.addReagentToVessel(bB.id, 'zn', 1.63, { fine: true });
+      stepSeconds(simB, 3.0, 0.04);
+      const dryAg = bB.moles.Ag_s || 0;
+      simB.addReagentToVessel(bB.id, 'h2o', 0.05); // Single 0.05 mL drop!
+      stepSeconds(simB, 4.0, 0.02);
+      const wetAg = bB.moles.Ag_s || 0;
+
+      assert(
+        'Hot alkaline Zn + NO3- generates NH3(g) turning Phen cotton plug pink; dry Zn + AgNO3 is inert until 1 drop of water triggers exothermic Ag(s)',
+        nh3Out > 1e-4 && bA.phenCottonLevel > 0.5 && dryAg === 0 && wetAg > 0.035 && bB.tempK > 450,
+        `NH3=${(nh3Out*1000).toFixed(2)}mmol(cotton=${bA.phenCottonLevel.toFixed(2)}), dryAg=${dryAg}, wetAg=${wetAg.toFixed(4)}mol(T=${(bB.tempK-273.15).toFixed(0)}°C)`
       );
     }
 

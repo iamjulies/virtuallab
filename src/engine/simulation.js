@@ -21,6 +21,7 @@ import {
   computeSyringeLiquidVolumeMl,
   computeSyringeTotalVolumeMl,
   computeTubingGeometry,
+  getSyringeNozzlePos,
   stepSyringeThermodynamics,
   stepVesselGasAndPressure,
 } from './gasNetwork.js';
@@ -114,11 +115,13 @@ export class LabSimulation {
       sourceLabel: '',
     };
     this.activePourStream = null; // { fromX, fromY, toX, toY, color, timer }
+    this.activeReagentTransfer = null; // { reagentId, vesselId, isSolid, startMs, durationMs, dose, color, speciesId, fine }
     this.listeners = new Set();
     this.sampleAccum = 0;
     this.visualHooks = {
       onParticlesNeeded: null,
       onAlert: null,
+      onReagentDispense: null,
     };
   }
 
@@ -192,6 +195,13 @@ export class LabSimulation {
         history: [], // [{ t, moles: {...}, tempK, ph }]
         precipitateSettle: {}, // speciesId -> 0..1 settled fraction
         phenBleachFrac: 0, // 0..1 fraction converted to colorless carbinol In(OH)^3-
+        phenIrrevFrac: 0,  // 0..1 fraction irreversibly C-C cleaved at >4.5 M OH- & high heat
+        gardenActive: false,
+        gardenGrowth: 0,
+        hasPhenCotton: false,
+        phenCottonLevel: 0,
+        recentHalogenGasTimer: 0,
+        naHazardFlag: false,
         overflowRateMlS: 0,
         overflowColor: null,
         wasOverflowing: false,
@@ -540,7 +550,8 @@ export class LabSimulation {
           liqL,
           computePH(vessel.moles, liqL, vessel.tempK),
           spec.opticalPathCm,
-          vessel.phenBleachFrac
+          vessel.phenBleachFrac,
+          vessel.phenIrrevFrac || 0
         )
       : null;
 
@@ -803,7 +814,15 @@ export class LabSimulation {
       const hclMol = (syr.gasMoles.HCl_g || 0) * remGasFrac;
       if (hclMol > 1e-10) {
         syr.gasMoles.HCl_g = Math.max(0, (syr.gasMoles.HCl_g || 0) - hclMol);
-        if ((dst.moles.H2O_l || 0) > 1e-4) {
+        if ((dst.moles.CuSO4_s || 0) > 1e-8 && (dst.moles.H2O_l || 0) < 1e-3 && dst.tempK < 405) {
+          const dAdd = Math.min(dst.moles.CuSO4_s, hclMol / 2);
+          dst.moles.CuSO4_s -= dAdd;
+          if (dst.moles.CuSO4_s < 1e-13) delete dst.moles.CuSO4_s;
+          dst.moles.CuSO4_2HCl_s = (dst.moles.CuSO4_2HCl_s || 0) + dAdd;
+          heatAddedJ += dAdd * 68000;
+          const rem = hclMol - 2 * dAdd;
+          if (rem > 1e-12) dst.escapedGasMoles.HCl_g = (dst.escapedGasMoles.HCl_g || 0) + rem;
+        } else if ((dst.moles.H2O_l || 0) > 1e-4) {
           dst.moles.H_aq = (dst.moles.H_aq || 0) + hclMol;
           dst.moles.Cl_aq = (dst.moles.Cl_aq || 0) + hclMol;
           heatAddedJ += hclMol * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
@@ -811,8 +830,22 @@ export class LabSimulation {
           dst.escapedGasMoles.HCl_g = (dst.escapedGasMoles.HCl_g || 0) + hclMol;
         }
       }
+      const nh3Mol = (syr.gasMoles.NH3_g || 0) * remGasFrac;
+      if (nh3Mol > 1e-10) {
+        syr.gasMoles.NH3_g = Math.max(0, (syr.gasMoles.NH3_g || 0) - nh3Mol);
+        if ((dst.moles.H2O_l || 0) > 1e-4) {
+          dst.moles.NH3_aq = (dst.moles.NH3_aq || 0) + nh3Mol;
+          heatAddedJ += nh3Mol * 35400;
+        } else {
+          dst.escapedGasMoles.NH3_g = (dst.escapedGasMoles.NH3_g || 0) + nh3Mol;
+        }
+        if (dst.hasPhenCotton) dst.phenCottonLevel = 1.0;
+      }
+      if ((syr.gasMoles.C2H5Cl_g || 0) * remGasFrac > 1e-9 && dst.restingOnId) {
+        dst.recentHalogenGasTimer = 1.8;
+      }
       for (const g of NON_STEAM_GASES) {
-        if (g === 'HCl_g') continue;
+        if (g === 'HCl_g' || g === 'NH3_g') continue;
         const m = (syr.gasMoles[g] || 0) * remGasFrac;
         if (m > 1e-10) {
           syr.gasMoles[g] = Math.max(0, (syr.gasMoles[g] || 0) - m);
@@ -973,6 +1006,13 @@ export class LabSimulation {
     v.history = [];
     v.precipitateSettle = {};
     v.phenBleachFrac = 0;
+    v.phenIrrevFrac = 0;
+    v.gardenActive = false;
+    v.gardenGrowth = 0;
+    v.hasPhenCotton = false;
+    v.phenCottonLevel = 0;
+    v.recentHalogenGasTimer = 0;
+    v.naHazardFlag = false;
     v.overflowRateMlS = 0;
     v.overflowColor = null;
     v.wasOverflowing = false;
@@ -1042,8 +1082,9 @@ export class LabSimulation {
       }
       if (reg.perMl.Phenolphthalein_aq) {
         const newPhen = v.moles.Phenolphthalein_aq || 0;
-        // Fresh indicator starts unbleached (In^2-) so dropping into conc. NaOH flashes pink first
+        // Fresh indicator starts intact & unbleached (In^2-)
         v.phenBleachFrac = newPhen > 1e-14 ? (oldPhen * oldBleach) / newPhen : 0;
+        v.phenIrrevFrac = newPhen > 1e-14 ? (oldPhen * (v.phenIrrevFrac || 0)) / newPhen : 0;
       }
     } else if (reg.kind === 'solid') {
       const sp = SPECIES[reg.speciesId];
@@ -1062,11 +1103,39 @@ export class LabSimulation {
       v.tempK = (cOld * tOld + addedHeatCap * tAdd + dilutionHeatJ) / (cOld + addedHeatCap);
     }
 
+    if (!options.silentAnim) {
+      const isSolid = reg.kind === 'solid';
+      const dur = isSolid ? 1050 : amt <= 0.25 ? 650 : 1100;
+      this.activeReagentTransfer = {
+        reagentId,
+        vesselId: v.id,
+        isSolid,
+        startMs: typeof performance !== 'undefined' ? performance.now() : Date.now(),
+        durationMs: dur,
+        dose: amt,
+        color: reg.swatch,
+        speciesId: reg.speciesId || null,
+        fine: !!options.fine,
+      };
+      if (this.visualHooks.onReagentDispense) {
+        this.visualHooks.onReagentDispense(v, reg, amt, options);
+      }
+    }
+
     this.checkOverflow(v);
     this.recomputeScaleReadings();
     this.recordHistorySnapshot(v, true);
     this.emitChange();
     return true;
+  }
+
+  togglePhenCotton(vesselId) {
+    const v = this.getItem(vesselId);
+    if (!v || v.kind !== 'vessel' || v.isShattered) return false;
+    v.hasPhenCotton = !v.hasPhenCotton;
+    v.phenCottonLevel = 0;
+    this.emitChange();
+    return v.hasPhenCotton;
   }
 
   /**
@@ -1119,6 +1188,10 @@ export class LabSimulation {
       const totalPhen = oldDstPhen + movedPhen;
       dst.phenBleachFrac =
         totalPhen > 1e-14 ? (oldDstPhen * oldDstBleach + movedPhen * (src.phenBleachFrac || 0)) / totalPhen : 0;
+      dst.phenIrrevFrac =
+        totalPhen > 1e-14
+          ? (oldDstPhen * (dst.phenIrrevFrac || 0) + movedPhen * (src.phenIrrevFrac || 0)) / totalPhen
+          : 0;
     }
 
     if (cDstBefore + cMoved > 0) {
@@ -1137,7 +1210,8 @@ export class LabSimulation {
         srcLiqL,
         computePH(src.moles, srcLiqL, src.tempK),
         APPARATUS[src.typeId].opticalPathCm,
-        src.phenBleachFrac
+        src.phenBleachFrac,
+        src.phenIrrevFrac || 0
       ).css,
       timer: 0.25,
     };
@@ -1169,7 +1243,8 @@ export class LabSimulation {
       srcLiqL,
       computePH(src.moles, srcLiqL, src.tempK),
       srcSpec.opticalPathCm,
-      src.phenBleachFrac
+      src.phenBleachFrac,
+      src.phenIrrevFrac || 0
     );
     const actual = Math.min(availRoom, srcLiqMl, drawMl);
     const frac = actual / srcLiqMl;
@@ -1191,6 +1266,7 @@ export class LabSimulation {
     if (movedPhen > 0) {
       const totP = oldPhen + movedPhen;
       pip.phenBleachFrac = totP > 1e-14 ? (oldPhen * oldBleach + movedPhen * (src.phenBleachFrac || 0)) / totP : 0;
+      pip.phenIrrevFrac = totP > 1e-14 ? (oldPhen * (pip.phenIrrevFrac || 0) + movedPhen * (src.phenIrrevFrac || 0)) / totP : 0;
     }
     pip.tempK = oldVol + actual > 0 ? (oldVol * (pip.tempK || src.tempK) + actual * src.tempK) / (oldVol + actual) : src.tempK;
     pip.volumeMl = oldVol + actual;
@@ -1330,6 +1406,10 @@ export class LabSimulation {
       const totalPhen = oldDstPhen + movedPhen;
       dst.phenBleachFrac =
         totalPhen > 1e-14 ? (oldDstPhen * oldDstBleach + movedPhen * (pip.phenBleachFrac || 0)) / totalPhen : 0;
+      dst.phenIrrevFrac =
+        totalPhen > 1e-14
+          ? (oldDstPhen * (dst.phenIrrevFrac || 0) + movedPhen * (pip.phenIrrevFrac || 0)) / totalPhen
+          : 0;
     }
 
     if (cOld + cAdd > 0) {
@@ -1341,6 +1421,7 @@ export class LabSimulation {
       pip.volumeMl = 0;
       pip.moles = {};
       pip.phenBleachFrac = 0;
+      pip.phenIrrevFrac = 0;
       pip.sourceLabel = '';
       pip.liquidColor = null;
     }
@@ -1715,7 +1796,8 @@ export class LabSimulation {
           liqL,
           computePH(vessel.moles, liqL, vessel.tempK),
           spec.opticalPathCm,
-          vessel.phenBleachFrac
+          vessel.phenBleachFrac,
+          vessel.phenIrrevFrac || 0
         )
       : null;
     const burstMeta = {
@@ -1739,6 +1821,12 @@ export class LabSimulation {
     vessel.headspaceGasMoles = {};
     vessel.precipitateSettle = {};
     vessel.phenBleachFrac = 0;
+    vessel.phenIrrevFrac = 0;
+    vessel.gardenActive = false;
+    vessel.gardenGrowth = 0;
+    vessel.hasPhenCotton = false;
+    vessel.phenCottonLevel = 0;
+    vessel.naHazardFlag = false;
     vessel.overflowRateMlS = 0;
     vessel.overflowColor = null;
     vessel.wasOverflowing = false;
@@ -2054,6 +2142,17 @@ export class LabSimulation {
       this.activePourStream.timer -= realDeltaSec;
       if (this.activePourStream.timer <= 0) this.activePourStream = null;
     }
+    if (this.activeReagentTransfer) {
+      const elapsedMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - this.activeReagentTransfer.startMs;
+      if (elapsedMs >= this.activeReagentTransfer.durationMs) {
+        this.activeReagentTransfer = null;
+      }
+    }
+    for (const b of this.items) {
+      if (b.kind === 'burner' && (b.beilsteinTimer || 0) > 0) {
+        b.beilsteinTimer = Math.max(0, b.beilsteinTimer - realDeltaSec);
+      }
+    }
 
     // Sub-step for numerical accuracy & smooth fast ionic kinetics
     const numSteps = Math.max(1, Math.ceil(scaledDt / CONSTANTS.SUBSTEP_MAX_DT));
@@ -2099,6 +2198,10 @@ export class LabSimulation {
       let frameGasO2 = 0;
       let frameGasHCl = 0;
       let frameGasCl2 = 0;
+      let frameGasC2H5Cl = 0;
+      let frameGasNH3 = 0;
+      let frameGasNO2 = 0;
+      let frameGasNO = 0;
       let frameSteam = 0;
       let frameBoiling = false;
       let frameSteamOpacity = 0;
@@ -2126,6 +2229,10 @@ export class LabSimulation {
             (dryRes.gasProduced.HCl_g || 0),
           Cl2_g: chemRes.gasProduced.Cl2_g || 0,
           HNO3_g: (chemRes.gasProduced.HNO3_g || 0) + (dryRes.gasProduced.HNO3_g || 0),
+          C2H5Cl_g: chemRes.gasProduced.C2H5Cl_g || 0,
+          NH3_g: (chemRes.gasProduced.NH3_g || 0) + (dryRes.gasProduced.NH3_g || 0),
+          NO2_g: chemRes.gasProduced.NO2_g || 0,
+          NO_g: chemRes.gasProduced.NO_g || 0,
           H2O_g: (chemRes.gasProduced.H2O_g || 0) + (dryRes.gasProduced.H2O_g || 0),
         };
 
@@ -2141,6 +2248,10 @@ export class LabSimulation {
         frameGasO2 += combinedGas.O2_g;
         frameGasHCl += combinedGas.HCl_g;
         frameGasCl2 += combinedGas.Cl2_g;
+        frameGasC2H5Cl += combinedGas.C2H5Cl_g;
+        frameGasNH3 += combinedGas.NH3_g;
+        frameGasNO2 += combinedGas.NO2_g;
+        frameGasNO += combinedGas.NO_g;
         frameSteam += combinedGas.H2O_g + (thermRes.steamProducedMol || 0);
         if (thermRes.isBoiling) frameBoiling = true;
         if ((thermRes.steamOpacity || 0) > frameSteamOpacity) {
@@ -2198,30 +2309,122 @@ export class LabSimulation {
 
       if (v.isShattered) continue;
 
-      // Advance reversible phenolphthalein carbinol fading / recovery kinetics
+      // Advance reversible phenolphthalein carbinol fading & high-temp irreversible C-C cleavage
       if ((v.moles.Phenolphthalein_aq || 0) > 1e-12) {
         const liqL = computeLiquidVolumeL(v.moles, v.tempK);
         if (liqL > 1e-7) {
           const cOH = (v.moles.OH_aq || 0) / liqL;
+          const cEthoxide = (v.moles.C2H5O_aq || 0) / liqL;
           const cH = (v.moles.H_aq || 0) / liqL;
-          const eqBleach = computePhenolphthaleinBleachEq(cOH);
+          const eqBleach = computePhenolphthaleinBleachEq(cOH, cEthoxide);
           const curBleach = v.phenBleachFrac || 0;
           const tempFactor = Math.exp(Math.max(-1.5, Math.min(1.5, 0.025 * (v.tempK - CONSTANTS.T_STD_K))));
           const rate =
             curBleach < eqBleach
-              ? 0.28 * Math.max(0.2, cOH) * tempFactor
+              ? 0.28 * Math.max(0.2, cOH + 2.2 * cEthoxide) * tempFactor
               : (0.55 + Math.min(3.0, cH * 1.5)) * tempFactor;
           v.phenBleachFrac = eqBleach + (curBleach - eqBleach) * Math.exp(-rate * scaledDt);
+
+          // Irreversible Friedel-Crafts-reverse C-C cleavage in hot super-concentrated alkali (>=4.5 M OH-, >=65 °C)
+          if (cOH >= 4.5 && v.tempK >= 338.15) {
+            const kCleav =
+              0.015 *
+              Math.min(4.0, (cOH - 4.0) * 0.5) *
+              Math.exp(Math.max(-2.0, Math.min(3.0, 0.045 * (v.tempK - 340.0))));
+            const prevIrrev = v.phenIrrevFrac || 0;
+            v.phenIrrevFrac = Math.min(1.0, prevIrrev + (1 - prevIrrev) * (1 - Math.exp(-kCleav * scaledDt)));
+            if (prevIrrev < 0.25 && v.phenIrrevFrac >= 0.25 && (this.timeSec - (v.seenReactions.phen_cc_cleavage ?? -99)) > 6.0) {
+              v.seenReactions.phen_cc_cleavage = this.timeSec;
+              this.addLog({
+                type: 'reaction',
+                equation: 'In(OH)³⁻ (đỏ/không màu) —(NaOH đặc, t°)→ Phenol + 2-(4-hydroxybenzoyl)benzoate',
+                nameVi: 'Cắt mạch C–C bất thuận nghịch Phenolphthalein',
+                nameEn: 'Irreversible C–C cleavage of Phenolphthalein',
+                descVi: 'Kiềm siêu đặc nóng phá vỡ khung triphenylmethane; pha loãng hay thêm acid màu hồng vĩnh viễn không quay lại.',
+                descEn: 'Hot super-concentrated OH⁻ destroys the triphenylmethane skeleton; pink never recovers.',
+                vesselLabel: v.label,
+              });
+            }
+          }
         }
       } else {
         v.phenBleachFrac = 0;
+        v.phenIrrevFrac = 0;
+      }
+
+      // Ambient closed-system desiccant transfer (CuSO4·5H2O connected via tube to dry NaOH(s))
+      if (v.isStoppered && v.connectedTargetId && (v.moles.CuSO4_5H2O_s || 0) > 1e-6 && (v.moles.H2O_l || 0) < 1e-4) {
+        const desTgt = this.getItem(v.connectedTargetId);
+        if (desTgt && desTgt.kind === 'vessel' && !desTgt.isShattered && desTgt.moles && (desTgt.moles.NaOH_s || 0) > 1e-4 && (desTgt.moles.H2O_l || 0) < 0.08) {
+          const dDry = Math.min(v.moles.CuSO4_5H2O_s, 0.008 * scaledDt);
+          if (dDry > 1e-11) {
+            v.moles.CuSO4_5H2O_s -= dDry;
+            if (v.moles.CuSO4_5H2O_s < 1e-13) delete v.moles.CuSO4_5H2O_s;
+            v.moles.CuSO4_s = (v.moles.CuSO4_s || 0) + dDry;
+            desTgt.moles.H2O_l = (desTgt.moles.H2O_l || 0) + 5 * dDry;
+            if ((this.timeSec - (v.seenReactions.desiccant_dehydrate ?? -99)) > 8.0) {
+              v.seenReactions.desiccant_dehydrate = this.timeSec;
+              this.addLog({
+                type: 'reaction',
+                equation: 'CuSO₄·5H₂O(s) —(NaOH khan hút ẩm)→ CuSO₄(s) + 5H₂O',
+                nameVi: 'Làm khan CuSO₄·5H₂O qua tác nhân hút ẩm NaOH rắn',
+                nameEn: 'Desiccation of CuSO₄·5H₂O over hygroscopic NaOH(s)',
+                descVi: 'NaOH rắn hút ẩm mạnh làm giảm áp suất hơi nước, tách dần nước kết tinh thành bột CuSO₄ trắng khan.',
+                descEn: 'Hygroscopic NaOH draws out crystallization water, leaving white anhydrous CuSO₄.',
+                vesselLabel: v.label,
+              });
+            }
+          }
+        }
+      }
+
+      // Phenolphthalein cotton plug response to escaping NH3(g) / HCl(g)
+      if ((v.recentHalogenGasTimer || 0) > 0) {
+        v.recentHalogenGasTimer = Math.max(0, v.recentHalogenGasTimer - realDeltaSec);
+      }
+      if (v.hasPhenCotton && !v.isStoppered) {
+        if (frameGasNH3 > 1e-6) {
+          v.phenCottonLevel = Math.min(1.0, (v.phenCottonLevel || 0) + realDeltaSec * 2.2);
+        } else if (frameGasHCl > 1e-6) {
+          v.phenCottonLevel = Math.max(0, (v.phenCottonLevel || 0) - realDeltaSec * 2.5);
+        } else {
+          v.phenCottonLevel = Math.max(0, (v.phenCottonLevel || 0) - realDeltaSec * 0.04);
+        }
+      } else if (!v.hasPhenCotton) {
+        v.phenCottonLevel = 0;
+      }
+
+      // Beilstein green copper flame test when vessel over lit burner holds Cu(s) + organohalide/halide gas
+      if (v.restingOnId && burnerPowerW > 0) {
+        const sup = this.getItem(v.restingOnId);
+        const hasCuMetal =
+          (v.moles.Cu_s || 0) > 1e-6 ||
+          (v.moles.Cu3Zn_alpha_s || 0) > 1e-6 ||
+          (v.moles.Cu3Zn_gamma_s || 0) > 1e-6;
+        const hasHalogenPlume = frameGasC2H5Cl > 1e-7 || frameGasHCl > 1e-6 || frameGasCl2 > 1e-7 || (v.recentHalogenGasTimer || 0) > 0;
+        if (sup && sup.kind === 'burner' && hasCuMetal && hasHalogenPlume) {
+          sup.beilsteinTimer = 2.0;
+          if ((this.timeSec - (v.seenReactions.beilstein_test ?? -99)) > 5.0) {
+            v.seenReactions.beilstein_test = this.timeSec;
+            this.addLog({
+              type: 'reaction',
+              equation: 'C₂H₅Cl(g) + Cu(s) —(lửa)→ hơi CuCl₂* (ngọn lửa xanh lục Beilstein)',
+              nameVi: 'Thử nghiệm Beilstein: Ngọn lửa nhuốm màu xanh lục',
+              nameEn: 'Beilstein flame test: Emerald green CuCl₂ emission',
+              descVi: 'Khí dẫn xuất halogen tiếp xúc đồng kim loại trên ngọn lửa tạo hơi CuCl₂ kích thích phát ánh sáng xanh lục đặc trưng.',
+              descEn: 'Halogenated vapor contacting hot Copper on the flame emits characteristic Beilstein emerald-green light.',
+              vesselLabel: v.label,
+            });
+          }
+        }
       }
 
       v.activeReactions = Array.from(frameActiveMap.values());
 
       // Two-temperature coupled Sodium Coulomb explosion / ignition shatter
       if (!v.isShattered && frameNaEvent === 'explosion') {
-        this.shatterVessel(v, 'alertNaExplosion', 'explosion');
+        const alertKey = v.naHazardFlag ? 'alertNaHazardExplosion' : 'alertNaExplosion';
+        this.shatterVessel(v, alertKey, 'explosion');
         continue;
       }
 
@@ -2248,7 +2451,7 @@ export class LabSimulation {
       }
 
       // Sodium motion on meniscus (wide surface skitters freely; narrow surface pins against glass wall)
-      const naActive = frameActiveMap.has('na_water') || frameActiveMap.has('na_acid');
+      const naActive = frameActiveMap.has('na_water') || frameActiveMap.has('na_acid') || frameActiveMap.has('na_ethanol');
       const isDehydrating = frameActiveMap.has('dehydrate_cuso4_5h2o');
       if (naActive && (v.moles.Na_s || 0) > 1e-7) {
         if (v.naPinned) {
@@ -2274,8 +2477,12 @@ export class LabSimulation {
       const rateO2 = frameGasO2 * invDt;
       const rateHCl = frameGasHCl * invDt;
       const rateCl2 = frameGasCl2 * invDt;
+      const rateC2H5Cl = frameGasC2H5Cl * invDt;
+      const rateNH3 = frameGasNH3 * invDt;
+      const rateNO2 = frameGasNO2 * invDt;
+      const rateNO = frameGasNO * invDt;
       const rateSteam = frameSteam * invDt;
-      const totalGasRate = rateH2 + rateO2 + rateHCl + rateCl2 + rateSteam;
+      const totalGasRate = rateH2 + rateO2 + rateHCl + rateCl2 + rateC2H5Cl + rateNH3 + rateNO2 + rateNO + rateSteam;
 
       const curSteamOpacity =
         frameBoiling
@@ -2286,6 +2493,10 @@ export class LabSimulation {
       const steamVisible = (rateSteam > 3e-5 && curSteamOpacity > 0.04) || frameBoiling || isDehydrating;
 
       const labels = [];
+      if (rateC2H5Cl > 2e-5) labels.push('C₂H₅Cl');
+      if (rateNH3 > 2e-5) labels.push('NH₃');
+      if (rateNO2 > 1.5e-5) labels.push('NO₂');
+      if (rateNO > 2e-5) labels.push('NO');
       if (rateH2 > 2e-5) labels.push('H₂');
       if (rateO2 > 2e-5) labels.push('O₂');
       if (rateCl2 > 2e-5) labels.push('Cl₂');
@@ -2300,7 +2511,8 @@ export class LabSimulation {
         v.wallCondenseLevel = Math.max(0, (v.wallCondenseLevel || 0) - realDeltaSec * 0.14);
       }
 
-      const visibleOutRate = rateH2 + rateO2 + rateHCl + rateCl2 + (steamVisible ? rateSteam : 0);
+      const visibleOutRate =
+        rateH2 + rateO2 + rateHCl + rateCl2 + rateC2H5Cl + rateNH3 + rateNO2 + rateNO + (steamVisible ? rateSteam : 0);
       if ((visibleOutRate > 3.5e-5 || frameBoiling || isDehydrating) && formulaSummary) {
         if (!v.isStoppered) {
           v.lastGasOutTempK = v.tempK;
@@ -2337,6 +2549,10 @@ export class LabSimulation {
           gasRateO2: rateO2,
           gasRateHCl: rateHCl,
           gasRateCl2: rateCl2,
+          gasRateC2H5Cl: rateC2H5Cl,
+          gasRateNH3: rateNH3,
+          gasRateNO2: rateNO2,
+          gasRateNO: rateNO,
           steamRate: rateSteam,
           steamOpacity: curSteamOpacity,
           overflowRateMlS: v.overflowRateMlS || 0,
@@ -2348,7 +2564,8 @@ export class LabSimulation {
           naTempK: v.naTempK,
           naRate:
             (frameActiveMap.get('na_water')?.rateMolS || 0) +
-            (frameActiveMap.get('na_acid')?.rateMolS || 0),
+            (frameActiveMap.get('na_acid')?.rateMolS || 0) +
+            (frameActiveMap.get('na_ethanol')?.rateMolS || 0),
         });
       }
 
@@ -2367,6 +2584,22 @@ export class LabSimulation {
       }
       this.stepSyringeDischarge(item, scaledDt);
       this.stepSyringeOverflow(item, scaledDt);
+      // Check Beilstein flame test when Gas Syringe directs C2H5Cl / HCl / Cl2 onto a lit burner
+      if ((item.isDischarging || (item.autoDischargeTimer || 0) > 0) &&
+          ((item.gasMoles?.C2H5Cl_g || 0) > 1e-7 || (item.gasMoles?.HCl_g || 0) > 1e-7 || (item.gasMoles?.Cl2_g || 0) > 1e-7)) {
+        const nozzle = getSyringeNozzlePos(item);
+        const hasAnyCuOnBench = this.items.some(
+          (v) => v.kind === 'vessel' && !v.isShattered &&
+            ((v.moles?.Cu_s || 0) > 1e-6 || (v.moles?.Cu3Zn_alpha_s || 0) > 1e-6 || (v.moles?.Cu3Zn_gamma_s || 0) > 1e-6)
+        );
+        if (hasAnyCuOnBench) {
+          for (const b of this.items) {
+            if (b.kind === 'burner' && (b.powerW || 0) > 0 && Math.abs(nozzle.x - b.x) <= 125 && nozzle.y <= b.y + 40) {
+              b.beilsteinTimer = 2.0;
+            }
+          }
+        }
+      }
       if (this.visualHooks.onParticlesNeeded && ((item.inflowLiquidTimer || 0) > 0 || (item.overflowOutRateMlS || 0) > 0.5)) {
         this.visualHooks.onParticlesNeeded(item, {
           inflowLiquidRateMlS: item.inflowLiquidRateMlS || 0,

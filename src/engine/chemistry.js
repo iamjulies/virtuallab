@@ -49,8 +49,23 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     const waterMassKg = (moles.H2O_l * SPECIES.H2O_l.molarMass) / 1000;
     const etohMassKg = ((moles.C2H5OH_l || 0) * SPECIES.C2H5OH_l.molarMass) / 1000;
     const effectiveSolventKg = waterMassKg + (rxn.etohRelSolubility || 0) * etohMassKg;
+    let saltingMult = 1.0;
+    let gardenSlow = 1.0;
+    if (rxn.solidId === 'CuSO4_5H2O_s' || rxn.solidId === 'CuSO4_s') {
+      const totalSolvKg = waterMassKg + etohMassKg;
+      const etohWtFrac = totalSolvKg > 1e-9 ? etohMassKg / totalSolvKg : 0;
+      if (etohWtFrac > 0.05) {
+        saltingMult = Math.exp(-4.8 * etohWtFrac);
+      }
+      if (vessel.gardenActive && !vessel.stirTimer) {
+        gardenSlow = 0.08;
+      }
+    } else if (rxn.solidId === 'NaOH_s' && vessel.gardenActive && !vessel.stirTimer) {
+      gardenSlow = 0.15;
+    }
     const sTemp =
       rxn.solubilityMolPerKg298 *
+      saltingMult *
       Math.exp(rxn.solubilityTempCoeff * (T - CONSTANTS.T_STD_K));
     const maxSoluble = sTemp * effectiveSolventKg;
     const currentIon = moles[rxn.ionCheckId] || 0;
@@ -60,11 +75,12 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     const pCount = vessel.particleCounts?.[rxn.solidId] ?? 12;
     const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, pCount);
     const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
-    return k * area * undersaturation * stirBoost * 80;
+    return k * area * undersaturation * stirBoost * gardenSlow * 80;
   }
 
   if (rxn.type === 'ionic_fast') {
     if (!hasWater) return 0;
+    if (rxn.id === 'dissolve_cuso4_2hcl' && liquidVolL < 0.0004) return 0;
     if (rxn.maxOhConc !== undefined) {
       const ohConc = (moles.OH_aq || 0) / liquidVolL;
       if (ohConc > rxn.maxOhConc) return 0;
@@ -116,10 +132,15 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
       const areaSurfCm2 = spec?.geometry
         ? Math.max(0.5, spec.geometry.getLiquidState(totMl).surfaceAreaCm2)
         : spec?.surfaceAreaCm2 || 25.0;
-      const isMolten = tNa >= (SPECIES.Na_s.meltTempK || 370.95);
+      const nW = moles.H2O_l || 0;
+      const nE = moles.C2H5OH_l || 0;
+      const xEtOH = nE / Math.max(1e-9, nW + nE);
+      // Ethanol strongly moderates Sodium reactivity compared to pure water
+      const etohTame = xEtOH > 0.12 ? Math.max(0.16, 1 - 1.15 * xEtOH) : 1.0;
+      const isMolten = tNa >= (SPECIES.Na_s.meltTempK || 370.95) && xEtOH < 0.35;
       const wallPinned = areaSurfCm2 < 15.0;
       const gammaCoulomb = isMolten ? (wallPinned ? 3.2 : 1.25) : 1.0;
-      const k = rxn.k298 * arrheniusFactor(rxn.eaJ, tNa) * gammaCoulomb;
+      const k = rxn.k298 * arrheniusFactor(rxn.eaJ, tNa) * gammaCoulomb * etohTame;
 
       if (rxn.useWaterContact) {
         const waterFrac = Math.min(1.0, (moles.H2O_l || 0) / 0.1);
@@ -150,6 +171,114 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     }
     const k = rxn.kAtThreshold * arrheniusFactor(rxn.eaJ, T - rxn.minTempK + CONSTANTS.T_STD_K);
     return minExtent * k;
+  }
+
+  if (rxn.type === 'solid_state') {
+    if ((moles.H2O_l || 0) >= 0.01 || (moles.C2H5OH_l || 0) >= 0.01) return 0;
+    const nNa = moles.Na_s || 0;
+    const area = computeSolidSurfaceAreaM2('Na_s', nNa, vessel.particleCounts?.Na_s ?? 1);
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
+    const naohMol = moles.NaOH_s || 0;
+    return k * Math.max(1e-5, area) * Math.min(3.5, 0.4 + naohMol * 18) * stirBoost * 4.5;
+  }
+
+  if (rxn.type === 'heterogeneous_rapid') {
+    if (!hasWater) return 0;
+    let minExtent = Infinity;
+    for (const [spId, stoich] of Object.entries(rxn.reactants)) {
+      minExtent = Math.min(minExtent, (moles[spId] || 0) / stoich);
+    }
+    return minExtent * rxn.kRelax298 * arrheniusFactor(rxn.eaJ, T);
+  }
+
+  if (rxn.type === 'lucas_sn2') {
+    if (!hasWater || T < rxn.minTempK) return 0;
+    const cZn = (moles.Zn2_aq || 0) / liquidVolL;
+    const cCl = (moles.Cl_aq || 0) / liquidVolL;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    if (cZn < rxn.minZnConc || cCl < rxn.minClConc || cH < rxn.minHConc) return 0;
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
+    const catBoost = Math.min(3.5, cZn / rxn.minZnConc) * Math.min(2.5, cCl / rxn.minClConc);
+    return (moles.C2H5OH_l || 0) * k * catBoost;
+  }
+
+  if (rxn.type === 'na_alcohol') {
+    if (liquidVolL <= 1e-6 || (moles.C2H5OH_l || 0) <= 1e-6) return 0;
+    const nNa = moles.Na_s || 0;
+    const pCount = vessel.particleCounts?.Na_s ?? 1;
+    const area = computeSolidSurfaceAreaM2('Na_s', nNa, pCount);
+    const nW = moles.H2O_l || 0;
+    const nE = moles.C2H5OH_l || 0;
+    const xEtOH = nE / Math.max(1e-9, nW + nE);
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, vessel.naTempK ?? T);
+    return k * area * (0.6 + 2.6 * xEtOH);
+  }
+
+  if (rxn.type === 'alkoxide_hydrolysis') {
+    if (!hasWater) return 0;
+    const nW = moles.H2O_l || 0;
+    const nE = moles.C2H5OH_l || 0;
+    const nEtho = moles.C2H5O_aq || 0;
+    const nTotBase = (moles.OH_aq || 0) + nEtho;
+    if (nEtho <= 1e-10 || nTotBase <= 1e-10) return 0;
+    const xEtOH = nE / Math.max(1e-9, nW + nE);
+    const maxEthoKeepFrac = Math.min(0.65, 1.35 * xEtOH);
+    const excessEtho = nEtho - nTotBase * maxEthoKeepFrac;
+    if (excessEtho <= 1e-11) return 0;
+    return Math.min(excessEtho, nW) * rxn.kRelax298 * arrheniusFactor(rxn.eaJ, T);
+  }
+
+  if (rxn.type === 'cu_comprop_complex' || rxn.type === 'cu_comprop_free') {
+    if (!hasWater || T < rxn.minTempK) return 0;
+    const cCl = (moles.Cl_aq || 0) / liquidVolL;
+    if (cCl < rxn.minClConc) return 0;
+    const area = computeSolidSurfaceAreaM2('Cu_s', moles.Cu_s || 0, vessel.particleCounts?.Cu_s ?? 8);
+    const cuSrc = rxn.type === 'cu_comprop_complex' ? moles.CuCl4_2_aq || 0 : moles.Cu2_aq || 0;
+    const cCuSrc = cuSrc / liquidVolL;
+    return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * area * Math.min(3.0, cCuSrc * 4.0) * stirBoost * 4.0;
+  }
+
+  if (rxn.type === 'brass_plating') {
+    if (!hasWater || T < rxn.minTempK) return 0;
+    if ((moles.ZnOH4_2_aq || 0) < 1e-5) return 0;
+    const cOH = (moles.OH_aq || 0) / liquidVolL;
+    if (cOH < rxn.minOhConc) return 0;
+    const areaCu = computeSolidSurfaceAreaM2('Cu_s', moles.Cu_s || 0, 8);
+    const cZincate = (moles.ZnOH4_2_aq || 0) / liquidVolL;
+    return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * Math.max(1e-5, areaCu) * Math.min(3.5, 0.8 + cZincate * 8) * 18.0;
+  }
+
+  if (rxn.type === 'alkali_nitrate_red') {
+    if (!hasWater || T < rxn.minTempK) return 0;
+    const cOH = (moles.OH_aq || 0) / liquidVolL;
+    const cNO3 = (moles.NO3_aq || 0) / liquidVolL;
+    if (cOH < rxn.minOhConc || cNO3 < 0.005) return 0;
+    const area = computeSolidSurfaceAreaM2('Zn_s', moles.Zn_s || 0, vessel.particleCounts?.Zn_s ?? 8);
+    return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * area * Math.min(4.0, cNO3 * 3.0) * Math.min(3.0, cOH / 2.5) * stirBoost * 8.0;
+  }
+
+  if (rxn.type === 'moist_solid_redox') {
+    const nW = moles.H2O_l || 0;
+    const initiated = nW >= 5e-4 || ((moles.ZnNO3_2_s || 0) > 1e-4 && T >= 325.0);
+    // Completely bone dry -> inert; tiny drop (>= 0.01 mL) initiates self-propagating molten-salt solid redox!
+    if (!initiated || nW > 0.18) return 0;
+    let minExtent = Infinity;
+    for (const [spId, stoich] of Object.entries(rxn.reactants)) {
+      minExtent = Math.min(minExtent, (moles[spId] || 0) / stoich);
+    }
+    return minExtent * rxn.k298 * arrheniusFactor(rxn.eaJ, T);
+  }
+
+  if (rxn.type === 'aqua_regia_metal') {
+    if (!hasWater) return 0;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    const cCl = (moles.Cl_aq || 0) / liquidVolL;
+    const cNO3 = (moles.NO3_aq || 0) / liquidVolL;
+    if (cH < 4.0 || cCl < 4.0 || cNO3 < 0.20) return 0;
+    const solidId = rxn.reactants.Cu_s ? 'Cu_s' : 'Ag_s';
+    const area = computeSolidSurfaceAreaM2(solidId, moles[solidId] || 0, 8);
+    const oxDrive = Math.min(4.0, (cH / 5.0) * (cCl / 5.0) * (cNO3 / 0.3));
+    return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * Math.max(1e-5, area) * oxDrive * stirBoost * 12.0;
   }
 
   return 0;
@@ -211,11 +340,15 @@ function applySupersaturationCrystallization(vessel, dt) {
   }
 
   // CuSO4 crystallization: forms pentahydrate if enough H2O, otherwise anhydrous white CuSO4
+  // Also strongly salted out by Ethanol cosolvent (e.g. pouring Phenolphthalein 1%)
   const nCuPair = Math.min(moles.Cu2_aq || 0, moles.SO4_2_aq || 0);
   if (nCuPair > 1e-11) {
+    const totalSolvKg = waterMassKg + etohMassKg;
+    const etohWtFrac = totalSolvKg > 1e-9 ? etohMassKg / totalSolvKg : 0;
+    const saltingFactor = etohWtFrac > 0.05 ? Math.exp(-4.8 * etohWtFrac) : 1.0;
     const maxSolCu =
       waterMassKg > 1e-8
-        ? 1.43 * Math.exp(0.016 * (T - CONSTANTS.T_STD_K)) * waterMassKg
+        ? 1.43 * saltingFactor * Math.exp(0.016 * (T - CONSTANTS.T_STD_K)) * waterMassKg
         : 0;
     if (nCuPair > maxSolCu) {
       const excess = nCuPair - maxSolCu;
@@ -235,6 +368,245 @@ function applySupersaturationCrystallization(vessel, dt) {
         }
       }
     }
+  }
+
+  return heatJ;
+}
+
+/**
+ * Amphoteric dissolution & dilution-reprecipitation of Cu(OH)2 and Ag2O in super-concentrated alkali (> 7 M OH-).
+ */
+function stepAmphotericHydroxideEquilibria(vessel, liquidVolL, dt, activeReactions) {
+  if (liquidVolL <= 1e-6) return 0;
+  const moles = vessel.moles;
+  const cOH = (moles.OH_aq || 0) / liquidVolL;
+  let heatJ = 0;
+
+  // 1. Cu(OH)2(s) + 2OH- <-> [Cu(OH)4]2- (deep royal blue-violet)
+  const nCuS = moles.CuOH2_s || 0;
+  const nCuC = moles.CuOH4_2_aq || 0;
+  const nCuTot = nCuS + nCuC;
+  if (nCuTot > 1e-11) {
+    const eqFrac = cOH > 1.0 ? Math.min(0.95, 1 / (1 + Math.pow(6.2 / cOH, 4.0))) : 0;
+    const targetComp = nCuTot * eqFrac;
+    let dXi = (targetComp - nCuC) * Math.min(1, 3.2 * dt);
+    if (dXi > 0) dXi = Math.min(dXi, nCuS, (moles.OH_aq || 0) / 2);
+    else dXi = Math.max(dXi, -nCuC);
+
+    if (Math.abs(dXi) > 1e-13) {
+      moles.CuOH2_s = nCuS - dXi;
+      moles.OH_aq = (moles.OH_aq || 0) - 2 * dXi;
+      moles.CuOH4_2_aq = nCuC + dXi;
+      if (moles.CuOH2_s < 1e-13) delete moles.CuOH2_s;
+      if (moles.OH_aq < 1e-13) delete moles.OH_aq;
+      if (moles.CuOH4_2_aq < 1e-13) delete moles.CuOH4_2_aq;
+      heatJ += -15000 * dXi;
+      if (Math.abs(dXi / Math.max(1e-4, dt)) > 1e-4) {
+        activeReactions.push({
+          id: 'amphoteric_cuoh2',
+          equation: 'Cu(OH)₂(s) + 2OH⁻(đặc) ⇌ [Cu(OH)₄]²⁻(aq)',
+          nameVi: 'Lưỡng tính Cu(OH)₂ tạo phức xanh thẫm [Cu(OH)₄]²⁻',
+          nameEn: 'Amphoteric dissolution of Cu(OH)₂ in super-concentrated alkali',
+          descVi: 'Trong kiềm siêu đặc (>8 M), Cu(OH)₂ tan thành phức [Cu(OH)₄]²⁻ xanh tím thẫm; pha loãng lại tách kết tủa.',
+          descEn: 'In >8 M NaOH, Cu(OH)₂ dissolves into deep royal-blue [Cu(OH)₄]²⁻ and reprecipitates on dilution.',
+          rateMolS: Math.abs(dXi) / Math.max(1e-4, dt),
+          vigorousGas: false,
+          dXi: Math.abs(dXi),
+        });
+      }
+    }
+  }
+
+  // 2. Ag2O(s) + 2OH- + H2O <-> 2[Ag(OH)2]- (colorless complex in >8 M NaOH)
+  const nAg2O = moles.Ag2O_s || 0;
+  const nAgC = moles.AgOH2_aq || 0;
+  const nAgTot = 2 * nAg2O + nAgC;
+  if (nAgTot > 1e-11) {
+    const eqFrac = cOH > 1.5 ? Math.min(0.86, 0.86 / (1 + Math.pow(6.6 / cOH, 4.0))) : 0;
+    const targetAgC = nAgTot * eqFrac;
+    let dAg = (targetAgC - nAgC) * Math.min(1, 2.8 * dt); // moles of [Ag(OH)2]-
+    if (dAg > 0) dAg = Math.min(dAg, 2 * nAg2O, moles.OH_aq || 0, 2 * (moles.H2O_l || 0));
+    else dAg = Math.max(dAg, -nAgC);
+
+    if (Math.abs(dAg) > 1e-13) {
+      moles.Ag2O_s = nAg2O - 0.5 * dAg;
+      moles.OH_aq = (moles.OH_aq || 0) - dAg;
+      moles.H2O_l = (moles.H2O_l || 0) - 0.5 * dAg;
+      moles.AgOH2_aq = nAgC + dAg;
+      if (moles.Ag2O_s < 1e-13) delete moles.Ag2O_s;
+      if (moles.OH_aq < 1e-13) delete moles.OH_aq;
+      if (moles.H2O_l < 1e-13) delete moles.H2O_l;
+      if (moles.AgOH2_aq < 1e-13) delete moles.AgOH2_aq;
+      heatJ += -12000 * dAg;
+      if (Math.abs(dAg / Math.max(1e-4, dt)) > 1e-4) {
+        activeReactions.push({
+          id: 'amphoteric_ag2o',
+          equation: 'Ag₂O(s) + 2OH⁻(đặc) + H₂O ⇌ 2[Ag(OH)₂]⁻(aq)',
+          nameVi: 'Lưỡng tính Ag₂O tan một phần trong kiềm siêu đặc',
+          nameEn: 'Amphoteric dissolution of Ag₂O in super-concentrated NaOH',
+          descVi: 'Ag₂O tan một phần trong NaOH siêu đặc tạo [Ag(OH)₂]⁻ không màu và tách ra khi pha loãng.',
+          descEn: 'Ag₂O partially dissolves as colorless [Ag(OH)₂]⁻ in >8 M OH⁻ and reprecipitates on dilution.',
+          rateMolS: Math.abs(dAg) / Math.max(1e-4, dt),
+          vigorousGas: false,
+          dXi: Math.abs(dAg),
+        });
+      }
+    }
+  }
+
+  return heatJ;
+}
+
+/**
+ * Reversible chloro complexes: AgCl + Cl- <-> [AgCl2]- (dissolves in conc. HCl, snows back on dilution)
+ * and CuCl + Cl- <-> [CuCl2]- (precipitates white CuCl on dilution below ~2.2 M Cl-).
+ */
+function stepChloroSilverAndCuprousEquilibria(vessel, liquidVolL, dt, activeReactions) {
+  if (liquidVolL <= 1e-6) return 0;
+  const moles = vessel.moles;
+  const cCl = (moles.Cl_aq || 0) / liquidVolL;
+  let heatJ = 0;
+
+  // 1. AgCl(s) + Cl- <-> [AgCl2]- (significant only when [Cl-] > 3.8 M!)
+  const nAgCl = moles.AgCl_s || 0;
+  const nAgComp = moles.AgCl2_aq || 0;
+  if (nAgCl + nAgComp > 1e-11) {
+    const maxSolConc = cCl > 3.8 ? 0.16 * Math.pow((cCl - 3.8) / 7.5, 2.2) : 0;
+    const targetComp = Math.min(nAgCl + nAgComp, maxSolConc * liquidVolL);
+    let dXi = (targetComp - nAgComp) * Math.min(1, 3.8 * dt);
+    if (dXi > 0) dXi = Math.min(dXi, nAgCl, moles.Cl_aq || 0);
+    else dXi = Math.max(dXi, -nAgComp);
+
+    if (Math.abs(dXi) > 1e-13) {
+      moles.AgCl_s = nAgCl - dXi;
+      moles.Cl_aq = (moles.Cl_aq || 0) - dXi;
+      moles.AgCl2_aq = nAgComp + dXi;
+      if (moles.AgCl_s < 1e-13) delete moles.AgCl_s;
+      if (moles.Cl_aq < 1e-13) delete moles.Cl_aq;
+      if (moles.AgCl2_aq < 1e-13) delete moles.AgCl2_aq;
+      heatJ += -18000 * dXi;
+      if (Math.abs(dXi / Math.max(1e-4, dt)) > 5e-5) {
+        activeReactions.push({
+          id: 'agcl_chloro_complex',
+          equation: 'AgCl(s) + Cl⁻(đặc) ⇌ [AgCl₂]⁻(aq)',
+          nameVi: dXi > 0 ? 'Hòa tan AgCl trong HCl đậm đặc' : 'Tái kết tủa AgCl khi pha loãng',
+          nameEn: dXi > 0 ? 'AgCl dissolution in concentrated HCl' : 'AgCl reprecipitation upon dilution',
+          descVi: 'Nồng độ Cl⁻ cực cao hòa tan AgCl thành [AgCl₂]⁻ trong suốt; thêm nước làm kết tủa trắng tái sinh.',
+          descEn: 'Concentrated Cl⁻ solubilizes AgCl as [AgCl₂]⁻; diluting with water immediately reprecipitates AgCl(s).',
+          rateMolS: Math.abs(dXi) / Math.max(1e-4, dt),
+          vigorousGas: false,
+          dXi: Math.abs(dXi),
+        });
+      }
+    }
+  }
+
+  // 2. CuCl(s) + Cl- <-> [CuCl2]- (precipitates white CuCl when [Cl-] drops < 2.5 M)
+  const nCuCl = moles.CuCl_s || 0;
+  const nCuComp = moles.CuCl2_comp_aq || 0;
+  if (nCuCl + nCuComp > 1e-11) {
+    const maxCuCl2Conc = cCl > 2.4 ? 1.1 * Math.pow((cCl - 2.4) / 6.0, 1.8) : 0;
+    const targetComp = Math.min(nCuCl + nCuComp, maxCuCl2Conc * liquidVolL);
+    let dXi = (targetComp - nCuComp) * Math.min(1, 4.2 * dt);
+    if (dXi > 0) dXi = Math.min(dXi, nCuCl, moles.Cl_aq || 0);
+    else dXi = Math.max(dXi, -nCuComp);
+
+    if (Math.abs(dXi) > 1e-13) {
+      moles.CuCl_s = nCuCl - dXi;
+      moles.Cl_aq = (moles.Cl_aq || 0) - dXi;
+      moles.CuCl2_comp_aq = nCuComp + dXi;
+      if (moles.CuCl_s < 1e-13) delete moles.CuCl_s;
+      if (moles.Cl_aq < 1e-13) delete moles.Cl_aq;
+      if (moles.CuCl2_comp_aq < 1e-13) delete moles.CuCl2_comp_aq;
+      heatJ += -16000 * dXi;
+      if (Math.abs(dXi / Math.max(1e-4, dt)) > 5e-5) {
+        activeReactions.push({
+          id: 'cucl_dilution_precipitate',
+          equation: '[CuCl₂]⁻(aq) ⇌ CuCl(s)↓ + Cl⁻(aq)',
+          nameVi: dXi < 0 ? 'Tách kết tủa trắng CuCl khi pha loãng' : 'Hòa tan CuCl trong HCl đặc',
+          nameEn: dXi < 0 ? 'Precipitation of white CuCl(s) upon dilution' : 'Dissolution of CuCl in conc. HCl',
+          descVi: 'Pha loãng dung dịch [CuCl₂]⁻ vào lượng nước lớn làm tách ra kết tủa trắng tinh khiết Đồng(I) chloride (CuCl).',
+          descEn: 'Diluting [CuCl₂]⁻ lowers [Cl⁻] and precipitates pure white Copper(I) chloride (CuCl).',
+          rateMolS: Math.abs(dXi) / Math.max(1e-4, dt),
+          vigorousGas: false,
+          dXi: Math.abs(dXi),
+        });
+      }
+    }
+  }
+
+  return heatJ;
+}
+
+/**
+ * Dry chemisorption of headspace HCl(g) onto anhydrous CuSO4(s) -> golden-brown CuSO4·2HCl(s),
+ * plus osmotic chemical garden nucleation state tracking.
+ */
+function stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions) {
+  const moles = vessel.moles;
+  let heatJ = 0;
+
+  // Chemisorption from vessel headspace when dry
+  const nHeadHCl = vessel.headspaceGasMoles?.HCl_g || 0;
+  if (nHeadHCl > 1e-9 && (moles.CuSO4_s || 0) > 1e-8 && (moles.H2O_l || 0) < 0.025 && vessel.tempK < 405) {
+    const dAdduct = Math.min(moles.CuSO4_s, nHeadHCl / 2, Math.max(1e-6, moles.CuSO4_s * 3.0 * dt));
+    if (dAdduct > 1e-13) {
+      moles.CuSO4_s -= dAdduct;
+      if (moles.CuSO4_s < 1e-13) delete moles.CuSO4_s;
+      vessel.headspaceGasMoles.HCl_g = Math.max(0, nHeadHCl - 2 * dAdduct);
+      moles.CuSO4_2HCl_s = (moles.CuSO4_2HCl_s || 0) + dAdduct;
+      heatJ += 68000 * dAdduct;
+      activeReactions.push({
+        id: 'cuso4_hcl_chemisorption',
+        equation: 'CuSO₄(s) + 2HCl(g) ⇌ CuSO₄·2HCl(s)',
+        nameVi: 'Hấp phụ hóa học HCl khô tạo CuSO₄·2HCl nâu vàng',
+        nameEn: 'Dry HCl chemisorption forming golden-brown CuSO₄·2HCl',
+        descVi: 'Bột CuSO₄ khan trắng hấp phụ khí HCl khô tạo phức CuSO₄·2HCl màu vàng nâu.',
+        descEn: 'White anhydrous CuSO₄ chemisorbs dry HCl(g) into a golden-brown adduct.',
+        rateMolS: dAdduct / Math.max(1e-4, dt),
+        vigorousGas: false,
+        dXi: dAdduct,
+      });
+    }
+  }
+
+  // Osmotic Chemical Garden detection: coarse CuSO4·5H2O crystal in conc. NaOH (>=2.5 M) OR coarse NaOH pellet in conc. Cu2+ (>=0.4 M)
+  if (liquidVolL > 1e-4) {
+    const cOH = (moles.OH_aq || 0) / liquidVolL;
+    const cCu = (moles.Cu2_aq || 0) / liquidVolL;
+    const hasCoarseCuCrystal = (moles.CuSO4_5H2O_s || 0) > 1e-3 && (vessel.particleCounts?.CuSO4_5H2O_s ?? 6) <= 10;
+    const hasCoarseNaOHPellet = (moles.NaOH_s || 0) > 2e-3 && (vessel.particleCounts?.NaOH_s ?? 6) <= 10;
+    if (!vessel.stirTimer && ((hasCoarseCuCrystal && cOH >= 2.5) || (hasCoarseNaOHPellet && cCu >= 0.35))) {
+      vessel.gardenActive = true;
+      vessel.gardenGrowth = Math.min(1.0, (vessel.gardenGrowth || 0.05) + dt * 0.22);
+      // Gradually convert small interface into hollow Cu(OH)2 tubular spire membrane
+      const membraneRate = Math.min(0.002, ((hasCoarseCuCrystal ? moles.CuSO4_5H2O_s : moles.NaOH_s) || 0) * 0.08 * dt);
+      if (hasCoarseCuCrystal && (moles.OH_aq || 0) >= 2 * membraneRate && membraneRate > 1e-9) {
+        moles.CuSO4_5H2O_s -= membraneRate;
+        moles.OH_aq -= 2 * membraneRate;
+        moles.CuOH2_s = (moles.CuOH2_s || 0) + membraneRate;
+        moles.SO4_2_aq = (moles.SO4_2_aq || 0) + membraneRate;
+        moles.H2O_l = (moles.H2O_l || 0) + 5 * membraneRate;
+        heatJ += 18000 * membraneRate;
+        activeReactions.push({
+          id: 'osmotic_chemical_garden',
+          equation: 'CuSO₄·5H₂O(s) + 2OH⁻(aq) → Cu(OH)₂(màng ống thẩm thấu) + SO₄²⁻ + 5H₂O',
+          nameVi: 'Vườn hóa học thẩm thấu Cu(OH)₂ (ống san hô rỗng)',
+          nameEn: 'Osmotic Chemical Garden: hollow Cu(OH)₂ coral tubules',
+          descVi: 'Áp suất thẩm thấu làm trương vỡ màng bán thấm Cu(OH)₂, đẩy dòng muối phun lên tạo các ống san hô xanh lam rỗng.',
+          descEn: 'Osmotic rupture of the Cu(OH)₂ semipermeable membrane grows hollow vertical blue coral tubules.',
+          rateMolS: membraneRate / Math.max(1e-4, dt),
+          vigorousGas: false,
+          dXi: membraneRate,
+        });
+      }
+    } else if (vessel.stirTimer > 0) {
+      vessel.gardenActive = false;
+      vessel.gardenGrowth = Math.max(0, (vessel.gardenGrowth || 0) - dt * 1.5);
+    }
+  } else {
+    vessel.gardenActive = false;
+    vessel.gardenGrowth = 0;
   }
 
   return heatJ;
@@ -320,6 +692,35 @@ export function enforceDryPhaseBoundary(vessel) {
     moles.Cl_aq = (moles.Cl_aq || 0) + 4 * n;
     delete moles.CuCl4_2_aq;
   }
+  if ((moles.CuOH4_2_aq || 0) > 0) {
+    const n = moles.CuOH4_2_aq;
+    moles.CuOH2_s = (moles.CuOH2_s || 0) + n;
+    moles.OH_aq = (moles.OH_aq || 0) + 2 * n;
+    delete moles.CuOH4_2_aq;
+  }
+  if ((moles.AgOH2_aq || 0) > 0) {
+    const n = moles.AgOH2_aq;
+    moles.Ag2O_s = (moles.Ag2O_s || 0) + 0.5 * n;
+    gasProduced.H2O_g += 0.5 * n;
+    moles.OH_aq = (moles.OH_aq || 0) + n;
+    delete moles.AgOH2_aq;
+  }
+  if ((moles.AgCl2_aq || 0) > 0) {
+    const n = moles.AgCl2_aq;
+    moles.AgCl_s = (moles.AgCl_s || 0) + n;
+    moles.Cl_aq = (moles.Cl_aq || 0) + n;
+    delete moles.AgCl2_aq;
+  }
+  if ((moles.CuCl2_comp_aq || 0) > 0) {
+    const n = moles.CuCl2_comp_aq;
+    moles.CuCl_s = (moles.CuCl_s || 0) + n;
+    moles.Cl_aq = (moles.Cl_aq || 0) + n;
+    delete moles.CuCl2_comp_aq;
+  }
+  if ((moles.NH3_aq || 0) > 0) {
+    gasProduced.NH3_g = (gasProduced.NH3_g || 0) + moles.NH3_aq;
+    delete moles.NH3_aq;
+  }
 
   const pairToProduct = (a, cA, b, cB, outId, cOut, isGas = false) => {
     const na = moles[a] || 0;
@@ -371,6 +772,7 @@ export function enforceDryPhaseBoundary(vessel) {
   pairToProduct('Na_aq', 1, 'Cl_aq', 1, 'NaCl_s', 1, false);
   pairToProduct('Na_aq', 2, 'SO4_2_aq', 1, 'Na2SO4_s', 1, false);
   pairToProduct('Na_aq', 1, 'NO3_aq', 1, 'NaNO3_s', 1, false);
+  pairToProduct('Na_aq', 1, 'C2H5O_aq', 1, 'C2H5ONa_s', 1, false);
   pairToProduct('Na_aq', 1, 'OH_aq', 1, 'NaOH_s', 1, false);
   pairToProduct('H_aq', 1, 'OH_aq', 1, 'H2O_g', 1, true);
   pairToProduct('H_aq', 1, 'Cl_aq', 1, 'HCl_g', 1, true);
@@ -426,7 +828,7 @@ export function stepVesselChemistry(vessel, dt) {
   let reactionHeatJ = 0;
   let naHeatGenJ = 0;
   let naH2ProducedMol = 0;
-  const gasProduced = { H2_g: 0, O2_g: 0, HCl_g: 0, Cl2_g: 0, H2O_g: 0, HNO3_g: 0 };
+  const gasProduced = { H2_g: 0, O2_g: 0, HCl_g: 0, Cl2_g: 0, H2O_g: 0, HNO3_g: 0, C2H5Cl_g: 0, NH3_g: 0, NO2_g: 0, NO_g: 0 };
   const activeReactions = [];
 
   for (const item of rawExtents) {
@@ -460,6 +862,10 @@ export function stepVesselChemistry(vessel, dt) {
     if (item.rxn.id === 'na_water' || item.rxn.id === 'na_acid') {
       naHeatGenJ += rxnHeat;
       naH2ProducedMol += (item.rxn.products.H2_g || 0) * dXi;
+    } else if (item.rxn.id === 'na_ethanol') {
+      naHeatGenJ += rxnHeat * 0.45;
+      reactionHeatJ += rxnHeat * 0.55;
+      naH2ProducedMol += (item.rxn.products.H2_g || 0) * dXi * 0.25;
     } else {
       reactionHeatJ += rxnHeat;
     }
@@ -491,6 +897,13 @@ export function stepVesselChemistry(vessel, dt) {
       : spec?.surfaceAreaCm2 || 25.0;
 
     const cNaOH = (vessel.moles.OH_aq || 0) / Math.max(1e-5, liquidVolL);
+    const cH = (vessel.moles.H_aq || 0) / Math.max(1e-5, liquidVolL);
+    const cAg = (vessel.moles.Ag_aq || 0) / Math.max(1e-5, liquidVolL);
+    const nW = vessel.moles.H2O_l || 0;
+    const nE = vessel.moles.C2H5OH_l || 0;
+    const xEtOH = nE / Math.max(1e-9, nW + nE);
+    const isDirectHazard = (cH >= 6.0 || cAg >= 1.5) && nNaLeft * SPECIES.Na_s.molarMass >= 0.08;
+
     const effNaFootprint = Math.min(Math.max(aNaCm2, 0.08), 6.0);
     const mobilityFactor = 0.28 + 0.72 * (1 - Math.exp(-0.14 * (areaSurfCm2 / effNaFootprint)));
     const pinHeatLoss = areaSurfCm2 < 15.0 ? 0.42 : 1.0;
@@ -503,7 +916,10 @@ export function stepVesselChemistry(vessel, dt) {
     const qGenW = naHeatGenJ / Math.max(1e-6, dt);
     const tEq = Math.min(1350, vessel.tempK + qGenW / condWK);
     const alpha = condWK / cNa;
-    const newTNa = Math.max(250, Math.min(1250, tEq + (tNaPrev - tEq) * Math.exp(-alpha * dt)));
+    let newTNa = Math.max(250, Math.min(1250, tEq + (tNaPrev - tEq) * Math.exp(-alpha * dt)));
+    if (xEtOH > 0.35) {
+      newTNa = Math.min(newTNa, 360.0);
+    }
 
     const transferJ = Math.max(0, naHeatGenJ - cNa * (newTNa - tNaPrev));
     reactionHeatJ += transferJ;
@@ -515,14 +931,21 @@ export function stepVesselChemistry(vessel, dt) {
     const newLocalH2 = Math.max(0, (vessel.localH2Mol || 0) * dec + localIn);
 
     vessel.naTempK = newTNa;
-    vessel.naPinned = areaSurfCm2 < 15.0;
-    vessel.naIgnited = newTNa >= 680.0;
+    vessel.naPinned = areaSurfCm2 < 15.0 && xEtOH <= 0.35;
+    vessel.naIgnited = newTNa >= 680.0 && xEtOH <= 0.35;
     vessel.localH2Mol = newLocalH2;
 
-    if (vessel.naIgnited) {
+    if (vessel.naIgnited || isDirectHazard) {
       const confinement = Math.max(1.0, 22.0 / Math.max(areaSurfCm2, 1.0));
       const blastEnergyJ = newLocalH2 * 241800 * Math.min(confinement, 5.0);
-      naEvent = blastEnergyJ > 150.0 ? 'explosion' : 'ignition_flame';
+      // Tiny Na droplets (e.g. 0.05 g) produce < ~765 J total combustion -> flame/sparks ONLY, never shatter Borosilicate!
+      const blastLimitJ = isDirectHazard ? 220.0 : 1150.0;
+      if (blastEnergyJ > blastLimitJ || (isDirectHazard && newTNa >= 450.0)) {
+        naEvent = 'explosion';
+        if (isDirectHazard) vessel.naHazardFlag = true;
+      } else {
+        naEvent = 'ignition_flame';
+      }
     } else if (naH2ProducedMol > 0) {
       naEvent = 'fizzing';
     }
@@ -534,10 +957,13 @@ export function stepVesselChemistry(vessel, dt) {
     vessel.localH2Mol = 0;
   }
 
-  // 4. Reversible [CuCl4]2- complexation equilibrium
+  // 4. Reversible [CuCl4]2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, & chemisorption/garden equilibria
   reactionHeatJ += stepChlorocuprateEquilibrium(vessel, liquidVolL, dt, activeReactions);
+  reactionHeatJ += stepAmphotericHydroxideEquilibria(vessel, liquidVolL, dt, activeReactions);
+  reactionHeatJ += stepChloroSilverAndCuprousEquilibria(vessel, liquidVolL, dt, activeReactions);
+  reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
 
-  // 5. Supersaturation crystallization
+  // 5. Supersaturation crystallization (including ethanol salting-out)
   reactionHeatJ += applySupersaturationCrystallization(vessel, dt);
 
   return {

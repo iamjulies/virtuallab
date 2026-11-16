@@ -213,6 +213,9 @@ export class ParticleSystem {
       ? Math.max(0.62, metrics.steamOpacity || 0)
       : (metrics.steamOpacity || 0);
     const hasCl2 = (metrics.gasRateCl2 || 0) > 1e-6;
+    const hasNO2 = (metrics.gasRateNO2 || 0) > 1e-6;
+    const hasOrganicOrNH3Gas =
+      (metrics.gasRateC2H5Cl || 0) > 2e-5 || (metrics.gasRateNH3 || 0) > 2e-5 || (metrics.gasRateNO || 0) > 2e-5;
     const hasHClFume = !vessel.isStoppered && (hConc > 6.5 || (metrics.gasRateHCl || 0) > 5e-5);
 
     const steamSignal =
@@ -220,10 +223,11 @@ export class ParticleSystem {
         ? Math.min(2.2, (0.28 + steamVis * 1.45) * (metrics.isBoiling ? 1.25 : 1.0))
         : 0;
     const cl2Signal = hasCl2 ? 0.68 : 0;
-    const fumeSignal = hasHClFume ? 0.42 : 0;
+    const no2Signal = hasNO2 ? 0.72 : 0;
+    const fumeSignal = hasHClFume ? 0.42 : hasOrganicOrNH3Gas ? 0.24 : 0;
     const naMistSignal = metrics.naIgnited ? 0.85 : (metrics.naTempK || 298) >= 540 ? 0.25 : 0;
-    const vaporIntensity = steamSignal + cl2Signal + fumeSignal + naMistSignal;
-    const mistAlphaScale = hasCl2 ? 0.92 : hasHClFume ? 0.65 : Math.min(1.0, Math.max(0.18, steamVis));
+    const vaporIntensity = steamSignal + cl2Signal + no2Signal + fumeSignal + naMistSignal;
+    const mistAlphaScale = hasCl2 || hasNO2 ? 0.92 : hasHClFume ? 0.65 : hasOrganicOrNH3Gas ? 0.42 : Math.min(1.0, Math.max(0.18, steamVis));
 
     const steamPalette = this.isDark
       ? 'rgba(226, 232, 240, 0.50)'
@@ -234,6 +238,9 @@ export class ParticleSystem {
     const cl2Palette = this.isDark
       ? 'rgba(217, 249, 157, 0.52)'
       : 'rgba(132, 204, 22, 0.52)';
+    const no2Palette = this.isDark
+      ? 'rgba(245, 158, 11, 0.52)'
+      : 'rgba(180, 83, 9, 0.48)';
 
     if (vaporIntensity > 0.08 && !vessel.isStoppered) {
       const mistRate = Math.min(58, vaporIntensity * 26);
@@ -248,7 +255,7 @@ export class ParticleSystem {
           ? surfaceY - 4
           : Math.min(surfaceY - clearGap, vessel.y - spec.height / 2 + 8);
         const spreadX = fromCrystal ? halfW * 1.15 : Math.max(8, (spec.neckRadius || 20) * 0.9);
-        const mistColor = hasCl2 ? cl2Palette : hasHClFume ? fumePalette : steamPalette;
+        const mistColor = hasNO2 ? no2Palette : hasCl2 ? cl2Palette : hasHClFume ? fumePalette : steamPalette;
 
         if (hasCl2 && Math.random() < 0.45) {
           this.particles.push({
@@ -266,7 +273,7 @@ export class ParticleSystem {
           });
         } else {
           this.particles.push({
-            kind: hasCl2 ? 'gas_cloud' : 'mist',
+            kind: hasCl2 || hasNO2 ? 'gas_cloud' : 'mist',
             x: vessel.x + (Math.random() - 0.5) * spreadX,
             y: startY,
             vx: (Math.random() - 0.5) * (fromCrystal ? 12 : 20),

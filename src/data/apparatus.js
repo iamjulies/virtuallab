@@ -30,7 +30,7 @@ export const APPARATUS = {
     shatterPressureBar: 1.85,
     shatterOverpressureBar: 0.85,      // Flat-bottomed Borosilicate 3.3 beaker (not pressure-rated: ~50-100 kPa failure)
     implosionUnderpressureBar: 0.75,   // Vacuum differential limit on flat base
-    fragilityDropPx: 190,
+    fragilityDropPx: 260,
     heatLossCoeffWK: 0.45,
     surfaceAreaCm2: 39.6,
     opticalPathCm: 6.78,
@@ -66,7 +66,7 @@ export const APPARATUS = {
     shatterPressureBar: 1.90,
     shatterOverpressureBar: 0.90,
     implosionUnderpressureBar: 0.78,
-    fragilityDropPx: 190,
+    fragilityDropPx: 255,
     heatLossCoeffWK: 0.43,
     surfaceAreaCm2: 26.8,
     opticalPathCm: 5.78,
@@ -102,7 +102,7 @@ export const APPARATUS = {
     shatterPressureBar: 1.90,          // Standard flat-bottom Erlenmeyer (ASTM E1404) burst ~70-100 kPa gauge (0.90 bar overpressure)
     shatterOverpressureBar: 0.90,
     implosionUnderpressureBar: 0.75,   // Non-heavy-wall conical flat base implodes under strong vacuum
-    fragilityDropPx: 195,
+    fragilityDropPx: 270,
     heatLossCoeffWK: 0.38,
     surfaceAreaCm2: 12.5,
     opticalPathCm: 7.2,
@@ -138,7 +138,7 @@ export const APPARATUS = {
     shatterPressureBar: 2.60,          // Cylindrical + rounded U-bottom + 1.5mm wall withstands ~1.6 bar overpressure (> Erlenmeyer)
     shatterOverpressureBar: 1.60,
     implosionUnderpressureBar: 0.95,
-    fragilityDropPx: 205,
+    fragilityDropPx: 280,
     heatLossCoeffWK: 0.22,
     surfaceAreaCm2: 4.0,
     opticalPathCm: 2.2,
@@ -175,7 +175,7 @@ export const APPARATUS = {
     shatterPressureBar: 1.95,
     shatterOverpressureBar: 0.95,
     implosionUnderpressureBar: 0.80,
-    fragilityDropPx: 175,              // Tall narrow center of mass breaks easier on tall drops
+    fragilityDropPx: 245,              // Tall narrow center of mass breaks easier on tall drops
     heatLossCoeffWK: 0.30,
     surfaceAreaCm2: 6.16,
     opticalPathCm: 2.9,
@@ -231,7 +231,7 @@ export const APPARATUS = {
     maxVolumeMl: 250,
     plungerPopOverpressureBar: 0.48,   // Unclamped ground-glass plunger ejects above ~+0.48 bar overpressure
     shatterOverpressureBar: 1.05,      // Large 250 mL glass barrel max rated ~2 atm (~30 psi / 207 kPa abs -> +1.05 bar gauge)
-    fragilityDropPx: 185,
+    fragilityDropPx: 250,
     width: 256,
     height: 84,
     barrelW: 192,
@@ -246,7 +246,7 @@ export const APPARATUS = {
     isoStandard: 'ISO 835 Class A · Mohr Dropper (10 mL)',
     materialSpec: 'Borosilicate 3.3 + Silicone',
     maxVolumeMl: 10,
-    fragilityDropPx: 225,
+    fragilityDropPx: 285,
     width: 30,
     height: 156,
   },
