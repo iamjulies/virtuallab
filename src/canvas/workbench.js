@@ -2,6 +2,7 @@ import {
   APPARATUS,
   clampItemToStandY,
   getCondenserPorts,
+  getProbeTipPos,
   getStandGeometry,
   getSyringeGeometry,
 } from '../data/apparatus.js';
@@ -32,6 +33,8 @@ import {
 } from './vesselRenderer.js';
 import {
   renderBurette,
+  renderClayTriangle,
+  renderCrucibleTongs,
   renderDcPowerAndWires,
   renderDiffusionTube,
   renderElectrodeCollectorTubes,
@@ -74,6 +77,14 @@ export class LabWorkbenchCanvas {
     this.shakeDuration = 0;
     this.shakeMagnitude = 0;
     this.lastRenderMs = performance.now();
+
+    // Magnifier / Camera Zoom & Loupe state
+    this.zoomMode = false;
+    this.zoomScale = 1.0;
+    this.zoomCenterX = BENCH_LOGICAL_W * 0.5;
+    this.zoomCenterY = BENCH_LOGICAL_H * 0.5;
+    this.pointerLogical = null;
+    this.panDragState = null;
 
     this.bindEvents();
     this.resize();
@@ -147,13 +158,66 @@ export class LabWorkbenchCanvas {
     this.dpr = dpr;
   }
 
+  getZoomState() {
+    return {
+      zoomMode: this.zoomMode,
+      zoomScale: this.zoomScale,
+      zoomCenterX: this.zoomCenterX,
+      zoomCenterY: this.zoomCenterY,
+    };
+  }
+
+  toggleZoomMode(forceState = null) {
+    const next = forceState === null ? !this.zoomMode : Boolean(forceState);
+    this.zoomMode = next;
+    if (!next) {
+      this.zoomScale = 1.0;
+      this.zoomCenterX = BENCH_LOGICAL_W * 0.5;
+      this.zoomCenterY = BENCH_LOGICAL_H * 0.5;
+      this.panDragState = null;
+      this.canvas.style.cursor = 'default';
+    } else {
+      this.canvas.style.cursor = this.zoomScale > 1.02 ? 'grab' : 'zoom-in';
+    }
+    this.callbacks.onZoomChange?.(this.getZoomState());
+    return this.zoomMode;
+  }
+
+  setZoomView(scale, centerX = this.zoomCenterX, centerY = this.zoomCenterY) {
+    const nextScale = Math.max(1.0, Math.min(4.2, Number(scale) || 1.0));
+    this.zoomScale = nextScale;
+    if (nextScale <= 1.01) {
+      this.zoomScale = 1.0;
+      this.zoomCenterX = BENCH_LOGICAL_W * 0.5;
+      this.zoomCenterY = BENCH_LOGICAL_H * 0.5;
+    } else {
+      const halfW = (BENCH_LOGICAL_W * 0.5) / nextScale;
+      const halfH = (BENCH_LOGICAL_H * 0.5) / nextScale;
+      this.zoomCenterX = Math.max(halfW * 0.72, Math.min(BENCH_LOGICAL_W - halfW * 0.72, centerX));
+      this.zoomCenterY = Math.max(halfH * 0.72, Math.min(BENCH_LOGICAL_H - halfH * 0.72, centerY));
+    }
+    this.callbacks.onZoomChange?.(this.getZoomState());
+  }
+
+  resetZoom() {
+    this.setZoomView(1.0, BENCH_LOGICAL_W * 0.5, BENCH_LOGICAL_H * 0.5);
+  }
+
   clientToLogical(clientX, clientY) {
     const rect = this.canvas.getBoundingClientRect();
     const cx = clientX - rect.left;
     const cy = clientY - rect.top;
+    const baseX = (cx - this.viewOffsetX) / this.viewScale;
+    const baseY = (cy - this.viewOffsetY) / this.viewScale;
+    if (this.zoomScale > 1.001) {
+      return {
+        x: this.zoomCenterX + (baseX - BENCH_LOGICAL_W * 0.5) / this.zoomScale,
+        y: this.zoomCenterY + (baseY - BENCH_LOGICAL_H * 0.5) / this.zoomScale,
+      };
+    }
     return {
-      x: (cx - this.viewOffsetX) / this.viewScale,
-      y: (cy - this.viewOffsetY) / this.viewScale,
+      x: baseX,
+      y: baseY,
     };
   }
 
@@ -191,6 +255,7 @@ export class LabWorkbenchCanvas {
       it.kind === 'splint' ||
       it.kind === 'flame_loop' ||
       it.kind === 'indicator_strip' ||
+      it.kind === 'tongs' ||
       it.kind === 'burette' ||
       it.kind === 'condenser' ||
       it.kind === 'wash_bottle';
@@ -468,6 +533,18 @@ export class LabWorkbenchCanvas {
 
       const hit = this.hitTestItem(pt.x, pt.y);
       this.hoverItemId = hit ? hit.id : null;
+
+      // In Magnifier Loupe mode at 1x, clicking zooms straight to 2.8x onto the inspected detail
+      if (this.zoomMode && this.zoomScale <= 1.02) {
+        if (hit) {
+          this.sim.selectedId = hit.id;
+          if (this.callbacks.onSelect) this.callbacks.onSelect(hit);
+          this.sim.emitChange();
+        }
+        this.setZoomView(2.8, pt.x, pt.y);
+        return;
+      }
+
       if (hit) {
         this.sim.selectedId = hit.id;
         hit.isDragging = true;
@@ -489,6 +566,7 @@ export class LabWorkbenchCanvas {
           hit.kind === 'splint' ||
           hit.kind === 'flame_loop' ||
           hit.kind === 'indicator_strip' ||
+          hit.kind === 'tongs' ||
           hit.kind === 'stir_bar' ||
           hit.kind === 'electrode'
         ) {
@@ -514,6 +592,15 @@ export class LabWorkbenchCanvas {
         this.canvas.setPointerCapture(e.pointerId);
         if (this.callbacks.onSelect) this.callbacks.onSelect(hit);
         this.sim.emitChange();
+      } else if (this.zoomScale > 1.02) {
+        this.panDragState = {
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          startCenterX: this.zoomCenterX,
+          startCenterY: this.zoomCenterY,
+        };
+        this.canvas.style.cursor = 'grabbing';
+        this.canvas.setPointerCapture(e.pointerId);
       } else {
         this.sim.selectedId = null;
         if (this.callbacks.onSelect) this.callbacks.onSelect(null);
@@ -528,23 +615,46 @@ export class LabWorkbenchCanvas {
         const order = ['C', 'Cu', 'Zn'];
         const nextMat = order[(order.indexOf(hit.material) + 1) % order.length];
         this.sim.setElectrodeMaterial(hit.id, nextMat);
+      } else if (hit && hit.kind === 'vessel' && APPARATUS[hit.typeId]?.hasLid) {
+        this.sim.cycleCrucibleLid(hit.id);
+      } else if (hit && hit.typeId === 'bunsen_burner') {
+        this.sim.toggleBurnerAirHole(hit.id);
+      } else if (hit && hit.kind === 'tongs') {
+        this.sim.tongsToggleGripVessel(hit.id);
       } else if (hit && hit.kind === 'vessel' && hit.hasStirBar) {
         this.sim.toggleMagneticStir(hit.id);
       } else if (hit && hit.kind === 'stir_bar' && hit.inVesselId) {
         this.sim.toggleMagneticStir(hit.inVesselId);
       } else if (hit && hit.kind === 'wash_bottle') {
         this.sim.toggleWashBottleSpray(hit.id);
+      } else if (!hit && this.zoomScale > 1.02) {
+        this.resetZoom();
       }
     });
 
     this.canvas.addEventListener('pointerleave', () => {
-      if (!this.dragState && !this.portDragState) {
+      this.pointerLogical = null;
+      if (!this.dragState && !this.portDragState && !this.panDragState) {
         this.hoverItemId = null;
       }
     });
 
     this.canvas.addEventListener('pointermove', (e) => {
       const pt = this.clientToLogical(e.clientX, e.clientY);
+      this.pointerLogical = { x: pt.x, y: pt.y };
+      if (this.panDragState) {
+        const dxPx = e.clientX - this.panDragState.startClientX;
+        const dyPx = e.clientY - this.panDragState.startClientY;
+        const dxWorld = dxPx / (this.viewScale * this.zoomScale);
+        const dyWorld = dyPx / (this.viewScale * this.zoomScale);
+        this.setZoomView(
+          this.zoomScale,
+          this.panDragState.startCenterX - dxWorld,
+          this.panDragState.startCenterY - dyWorld
+        );
+        this.canvas.style.cursor = 'grabbing';
+        return;
+      }
       if (this.pickState) {
         const candHover = this.hitTestItem(pt.x, pt.y, null, (it) => this.pickState.candidateIds.has(it.id));
         this.hoverItemId = candHover ? candHover.id : null;
@@ -567,12 +677,18 @@ export class LabWorkbenchCanvas {
         const portHover = this.findCondenserPortAt(pt.x, pt.y);
         if (portHover) {
           this.hoverItemId = portHover.cond.id;
-          this.canvas.style.cursor = 'crosshair';
+          this.canvas.style.cursor = this.zoomMode && this.zoomScale <= 1.02 ? 'zoom-in' : 'crosshair';
           return;
         }
         const hit = this.hitTestItem(pt.x, pt.y);
         this.hoverItemId = hit ? hit.id : null;
-        this.canvas.style.cursor = hit ? 'grab' : 'default';
+        if (this.zoomMode && this.zoomScale <= 1.02) {
+          this.canvas.style.cursor = 'zoom-in';
+        } else if (this.zoomScale > 1.02) {
+          this.canvas.style.cursor = hit ? 'grab' : 'grab';
+        } else {
+          this.canvas.style.cursor = hit ? 'grab' : 'default';
+        }
         return;
       }
 
@@ -664,6 +780,21 @@ export class LabWorkbenchCanvas {
       } else if (item.kind === 'stir_bar' || item.kind === 'electrode' || item.kind === 'filter_funnel') {
         const tgt = this.findVesselAt(item.x, item.y + 18, item.id, false);
         this.dropTargetVesselId = tgt && !tgt.isStoppered ? tgt.id : null;
+      } else if (item.kind === 'tongs') {
+        const tip = getProbeTipPos(item);
+        if (item.grippedVesselId) {
+          const gv = this.sim.getItem(item.grippedVesselId);
+          if (gv && !gv.isShattered) {
+            gv.x = tip.x;
+            gv.y = tip.y;
+            gv.vy = 0;
+            gv.restingOnId = null;
+          }
+          this.dropTargetVesselId = null;
+        } else {
+          const tgt = this.findVesselAt(tip.x, tip.y, null, false);
+          this.dropTargetVesselId = tgt && !tgt.isShattered ? tgt.id : null;
+        }
       }
 
       // If dragging a vessel/mortar/filter_funnel, check if hovering above another container rim to tilt & pour
@@ -744,6 +875,16 @@ export class LabWorkbenchCanvas {
 
     const endDrag = (e) => {
       this.callbacks.onExternalTabDragHover?.(0, 0, null);
+      if (this.panDragState) {
+        this.panDragState = null;
+        this.canvas.style.cursor = this.zoomScale > 1.02 ? 'grab' : this.zoomMode ? 'zoom-in' : 'default';
+        if (e?.pointerId != null && this.canvas.hasPointerCapture?.(e.pointerId)) {
+          try {
+            this.canvas.releasePointerCapture(e.pointerId);
+          } catch {}
+        }
+        return;
+      }
       if (this.portDragState) {
         const pd = this.portDragState;
         this.portDragState = null;
@@ -862,10 +1003,35 @@ export class LabWorkbenchCanvas {
     this.canvas.addEventListener('lostpointercapture', endDrag);
     window.addEventListener('blur', endDrag);
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.pickState) {
-        this.cancelItemPick();
+      if (e.key === 'Escape') {
+        if (this.pickState) {
+          this.cancelItemPick();
+        } else if (this.zoomMode || this.zoomScale > 1.02) {
+          this.toggleZoomMode(false);
+        }
       }
     });
+
+    this.canvas.addEventListener(
+      'wheel',
+      (e) => {
+        if (!this.zoomMode && this.zoomScale <= 1.01 && !e.ctrlKey && !e.metaKey) return;
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+        const nextScale = Math.max(1.0, Math.min(4.2, this.zoomScale * factor));
+        const rect = this.canvas.getBoundingClientRect();
+        const cx = e.clientX - rect.left;
+        const cy = e.clientY - rect.top;
+        const baseX = (cx - this.viewOffsetX) / this.viewScale;
+        const baseY = (cy - this.viewOffsetY) / this.viewScale;
+        const pt = this.clientToLogical(e.clientX, e.clientY);
+        const nextCx = pt.x - (baseX - BENCH_LOGICAL_W * 0.5) / nextScale;
+        const nextCy = pt.y - (baseY - BENCH_LOGICAL_H * 0.5) / nextScale;
+        if (nextScale > 1.01 && !this.zoomMode) this.zoomMode = true;
+        this.setZoomView(nextScale, nextCx, nextCy);
+      },
+      { passive: false }
+    );
 
     // HTML5 Drag & Drop from Shelf onto Bench (always accept dropEffect copy; zero 'none' blocks)
     this.canvas.addEventListener('dragover', (e) => {
@@ -1008,6 +1174,99 @@ export class LabWorkbenchCanvas {
     ctx.translate(this.viewOffsetX + shakeX * this.viewScale, this.viewOffsetY + shakeY * this.viewScale);
     ctx.scale(this.viewScale, this.viewScale);
 
+    ctx.save();
+    if (this.zoomScale > 1.001) {
+      ctx.translate(BENCH_LOGICAL_W * 0.5, BENCH_LOGICAL_H * 0.5);
+      ctx.scale(this.zoomScale, this.zoomScale);
+      ctx.translate(-this.zoomCenterX, -this.zoomCenterY);
+    }
+    this.renderWorldScene(ctx, timeNow, { includeLabels: true });
+    ctx.restore();
+
+    if (
+      this.zoomMode &&
+      this.zoomScale <= 1.02 &&
+      this.pointerLogical &&
+      !this.dragState &&
+      !this.portDragState &&
+      !this.panDragState
+    ) {
+      this.renderLoupeLens(ctx, timeNow, this.pointerLogical.x, this.pointerLogical.y);
+    }
+
+    ctx.restore();
+  }
+
+  renderLoupeLens(ctx, timeNow, lx, ly) {
+    const r = 84;
+    const zoomF = 2.6;
+    const clampX = Math.max(r + 12, Math.min(BENCH_LOGICAL_W - r - 12, lx));
+    const clampY = Math.max(r + 12, Math.min(BENCH_LOGICAL_H - r - 12, ly));
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.42)';
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 5;
+    ctx.beginPath();
+    ctx.arc(clampX, clampY, r, 0, Math.PI * 2);
+    ctx.fillStyle = this.isDark ? '#0f172a' : '#f8fafc';
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(clampX, clampY, r - 2, 0, Math.PI * 2);
+    ctx.clip();
+
+    ctx.fillStyle = this.isDark ? '#0f172a' : '#f1f5f9';
+    ctx.fillRect(clampX - r, clampY - r, r * 2, r * 2);
+
+    ctx.translate(clampX, clampY);
+    ctx.scale(zoomF, zoomF);
+    ctx.translate(-lx, -ly);
+    this.renderWorldScene(ctx, timeNow, { includeLabels: false });
+    ctx.restore();
+
+    // Specular optical lens bevel + crosshair + badge
+    ctx.save();
+    ctx.strokeStyle = this.isDark ? '#38bdf8' : '#0284c7';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(clampX, clampY, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.42)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(clampX, clampY, r - 6, -2.55, -1.65);
+    ctx.stroke();
+
+    ctx.strokeStyle = this.isDark ? 'rgba(56, 189, 248, 0.35)' : 'rgba(2, 132, 199, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(clampX - 9, clampY);
+    ctx.lineTo(clampX + 9, clampY);
+    ctx.moveTo(clampX, clampY - 9);
+    ctx.lineTo(clampX, clampY + 9);
+    ctx.stroke();
+
+    ctx.fillStyle = this.isDark ? 'rgba(15, 23, 42, 0.88)' : 'rgba(255, 255, 255, 0.92)';
+    ctx.strokeStyle = this.isDark ? '#38bdf8' : '#0284c7';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(clampX - 24, clampY + r - 12, 48, 18, 9);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = this.isDark ? '#e0f2fe' : '#0369a1';
+    ctx.font = 'bold 10.5px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`🔍 ${zoomF.toFixed(1)}×`, clampX, clampY + r - 3);
+    ctx.restore();
+  }
+
+  renderWorldScene(ctx, timeNow, { includeLabels = true } = {}) {
     // 1. Background subtle grid & lab bench surface (plus optional UV Lamp spotlight)
     if (this.sim.environment.uvLight) {
       const uvGrad = ctx.createRadialGradient(BENCH_LOGICAL_W * 0.5, 10, 20, BENCH_LOGICAL_W * 0.5, 250, 520);
@@ -1046,23 +1305,29 @@ export class LabWorkbenchCanvas {
     // 2. Render supports & stands behind, clamp jaws, then Syringes, Vessels, and Pipettes on top.
     // Floating Canvas label pills auto-hide by default: show only hovered/dragged apparatus, drawn on the top layer.
     const activeTooltipIds = new Set();
-    if (this.hoverItemId) activeTooltipIds.add(this.hoverItemId);
-    if (this.dragState?.itemId) activeTooltipIds.add(this.dragState.itemId);
-    if (this.dragState?.pourTargetId) activeTooltipIds.add(this.dragState.pourTargetId);
-    if (this.dragState?.pipetteTargetId) activeTooltipIds.add(this.dragState.pipetteTargetId);
-    if (this.portDragState?.condId) activeTooltipIds.add(this.portDragState.condId);
+    if (includeLabels) {
+      if (this.hoverItemId) activeTooltipIds.add(this.hoverItemId);
+      if (this.dragState?.itemId) activeTooltipIds.add(this.dragState.itemId);
+      if (this.dragState?.pourTargetId) activeTooltipIds.add(this.dragState.pourTargetId);
+      if (this.dragState?.pipetteTargetId) activeTooltipIds.add(this.dragState.pipetteTargetId);
+      if (this.portDragState?.condId) activeTooltipIds.add(this.portDragState.condId);
+    }
     beginCanvasLabelFrame(activeTooltipIds);
 
     renderTubingConnections(ctx, this.sim.items, this.isDark, timeNow, this.langCode);
     renderElectrodeCollectorTubes(ctx, this.sim.items, this.isDark, timeNow);
 
+    const compareIds = Array.isArray(this.sim.compareVesselIds) ? this.sim.compareVesselIds : [];
+    const compareTags = ['A', 'B', 'C'];
+    const compareColors = ['#38bdf8', '#f472b6', '#34d399'];
+
     const ordered = [
       ...this.sim.items.filter((i) => i.kind === 'stand' || i.kind === 'dc_power' || i.kind === 'volt_ammeter'),
-      ...this.sim.items.filter((i) => i.kind === 'scale' || i.kind === 'burner' || i.kind === 'diffusion_tube'),
+      ...this.sim.items.filter((i) => i.kind === 'scale' || i.kind === 'burner' || i.kind === 'clay_triangle' || i.kind === 'diffusion_tube'),
       ...this.sim.items.filter((i) => i.kind === 'gas_syringe' || i.kind === 'condenser' || i.kind === 'burette'),
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
       ...this.sim.items.filter((i) => i.kind === 'filter_funnel' || i.kind === 'electrode' || i.kind === 'salt_bridge' || i.kind === 'stir_bar'),
-      ...this.sim.items.filter((i) => i.kind === 'pipette' || i.kind === 'wash_bottle' || i.kind === 'splint' || i.kind === 'flame_loop' || i.kind === 'indicator_strip'),
+      ...this.sim.items.filter((i) => i.kind === 'pipette' || i.kind === 'wash_bottle' || i.kind === 'splint' || i.kind === 'flame_loop' || i.kind === 'indicator_strip' || i.kind === 'tongs'),
     ];
 
     renderDcPowerAndWires(ctx, this.sim.items, this.sim.selectedId, this.isDark);
@@ -1079,11 +1344,16 @@ export class LabWorkbenchCanvas {
         renderScale(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'burner') {
         renderBurner(ctx, item, isSelected, this.isDark, timeNow);
+      } else if (item.kind === 'clay_triangle') {
+        renderClayTriangle(ctx, item, isSelected, this.isDark);
       } else if (item.kind === 'diffusion_tube') {
         renderDiffusionTube(ctx, item, isSelected, isDropTgt, this.isDark, this.langCode);
       } else if (item.kind === 'gas_syringe') {
         renderGasSyringe(ctx, item, isSelected, this.isDark, this.sim.environment, this.langCode, timeNow);
       } else if (item.kind === 'vessel') {
+        const cIdx = compareIds.indexOf(item.id);
+        item.compareTag = cIdx >= 0 ? compareTags[cIdx] : null;
+        item.compareColor = cIdx >= 0 ? compareColors[cIdx] : null;
         renderVessel(ctx, item, {
           isSelected,
           isDropTarget: isDropTgt,
@@ -1107,6 +1377,8 @@ export class LabWorkbenchCanvas {
         renderFlameLoop(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'indicator_strip') {
         renderIndicatorStrip(ctx, item, isSelected, this.isDark, this.langCode);
+      } else if (item.kind === 'tongs') {
+        renderCrucibleTongs(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'stir_bar') {
         renderStirBar(ctx, item, isSelected, this.isDark);
       } else if (item.kind === 'electrode') {
@@ -1299,8 +1571,8 @@ export class LabWorkbenchCanvas {
     }
 
     // 7. Render hovered/dragged Canvas tooltip pills on the very top layer above vapor/steam/smoke!
-    flushCanvasLabelFrame(ctx);
-
-    ctx.restore();
+    if (includeLabels) {
+      flushCanvasLabelFrame(ctx);
+    }
   }
 }

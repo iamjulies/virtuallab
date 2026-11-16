@@ -640,6 +640,30 @@ export function checkSplintInteractions(sim, splint) {
       return 'o2_flare';
     }
 
+    // CO2(g) extinguishes both burning flame and glowing ember!
+    const headCO2 = v.headspaceGasMoles?.CO2_g || 0;
+    const rateCO2 = v.lastGasRateMap?.CO2_g || 0;
+    if ((headCO2 > 6e-5 || rateCO2 > 2e-5) && !hasO2 && !hasH2) {
+      splint.mode = 'unlit';
+      splint.cooldownTimer = 1.6;
+      splint.o2FlareTimer = 0;
+      splint.lastTestEvent = 'co2_extinguish';
+      splint.lastEventTimer = 1.6;
+      sim.addLog({
+        type: 'reaction',
+        equation: 'CO₂(g) → Không duy trì sự cháy, tắt ngọn lửa que đóm',
+        nameVi: 'Thử khí CO₂(g): Tắt ngọn lửa que đóm đang cháy',
+        nameEn: 'Splint Test: Dense CO₂(g) extinguishes burning splint',
+        descVi: 'Khí Carbon dioxide (M = 44 > 29) nặng hơn không khí và không duy trì sự cháy làm tắt que đóm ngay.',
+        descEn: 'Carbon dioxide (M = 44 > 29) displaces O₂ and does not support combustion, extinguishing the splint.',
+        vesselLabel: `${splint.label} → ${v.label}`,
+      });
+      if (sim.visualHooks.onAlert) {
+        sim.visualHooks.onAlert('co2_extinguish', { x: tipX, y: tipY }, { vesselId: v.id });
+      }
+      return 'co2_extinguish';
+    }
+
     // Ignition source over exposed Sodium
     if ((v.moles.Na_s || 0) > 1e-7 && dist <= 52) {
       v.naTempK = Math.max(v.naTempK ?? v.tempK, 720);
@@ -923,6 +947,8 @@ export function stepApparatusTools(sim, dt, realDeltaSec) {
       checkFlameLoopInteractions(sim, it);
     } else if (it.kind === 'indicator_strip') {
       checkIndicatorStripInteractions(sim, it);
+    } else if (it.kind === 'tongs') {
+      stepCrucibleTongs(sim, it, dt);
     } else if (it.kind === 'vessel') {
       if ((it.magStirRpm || 0) > 0 && it.hasStirBar && !it.isFrozenSolid) {
         it.stirTimer = Math.max(it.stirTimer || 0, 0.35);
@@ -1131,4 +1157,94 @@ export function grindMortarSolids(sim, mortarId) {
     sim.emitChange();
   }
   return groundAny;
+}
+
+/**
+ * Step metallic Crucible Tongs holding either a hot crucible/dish OR a gripped metal strip over flame.
+ */
+function stepCrucibleTongs(sim, tongs, dt) {
+  if (!tongs || tongs.kind !== 'tongs') return;
+  const { x: tipX, y: tipY } = getProbeTipPos(tongs);
+
+  if (tongs.grippedVesselId) {
+    const gv = sim.getItem(tongs.grippedVesselId);
+    if (!gv || gv.isShattered) {
+      tongs.grippedVesselId = null;
+    } else {
+      gv.x = tipX;
+      gv.y = tipY;
+      gv.restingOnId = null;
+      gv.vy = 0;
+    }
+  }
+
+  const sample = tongs.heldSample;
+  if (!sample || (sample.moles || 0) <= 1e-8) {
+    tongs.heldBurnTimer = Math.max(0, (tongs.heldBurnTimer || 0) - dt);
+    if (!sample) return;
+  }
+
+  // Thermal exchange with nearest active burner plume (alcohol OR roaring Bunsen)
+  let flameTargetK = sim.environment.tempK || CONSTANTS.T_STD_K;
+  let kHeat = 0.08;
+  for (const b of sim.items) {
+    if (b.kind !== 'burner' || (b.powerW || 0) <= 0) continue;
+    const bSpec = APPARATUS[b.typeId] || APPARATUS.burner;
+    const nozzleY = b.typeId === 'bunsen_burner' ? b.y + bSpec.height / 2 - 68 : b.y + bSpec.height / 2 - 46;
+    const dx = Math.abs(tipX - b.x);
+    if (dx <= 42 && tipY <= nozzleY + 12 && tipY >= nozzleY - 88) {
+      const fl = Math.round(b.flameLevel || 3);
+      const isBunsen = b.typeId === 'bunsen_burner';
+      const airOpen = b.airHoleOpen !== false;
+      const peakK = isBunsen
+        ? (airOpen ? bSpec.effectiveFlameK[fl] || 1520 : bSpec.yellowFlameK[fl] || 950)
+        : (bSpec.effectiveFlameK[fl] || 696);
+      flameTargetK = Math.max(flameTargetK, peakK);
+      kHeat = isBunsen && airOpen ? 1.45 : 0.72;
+    }
+  }
+
+  if (sample && sample.moles > 1e-8) {
+    sample.tempK = (sample.tempK ?? 298.15) + (flameTargetK - (sample.tempK ?? 298.15)) * Math.min(1, kHeat * dt);
+    const atmMode = sim.environment.atmosphereMode || 'air';
+    if (atmMode === 'air') {
+      if (sample.speciesId === 'Na_s' && sample.tempK >= 393.15) {
+        const dBurn = Math.min(sample.moles, Math.max(1e-5, sample.moles * 1.4 * dt));
+        sample.moles -= dBurn;
+        tongs.heldBurnTimer = 0.9;
+        tongs.heldFlameColor = 'yellow_na';
+        if (sample.moles < 1e-7) {
+          sample.speciesId = 'Na2O2_s';
+          sample.moles = dBurn * 0.48;
+          sim.addLog({
+            type: 'reaction',
+            equation: '2Na(s/l) + O₂(g) → Na₂O₂(s) (cháy ngọn lửa vàng 589 nm)',
+            nameVi: 'Đốt cháy Sodium trên kẹp kim loại (ngọn lửa vàng → Na₂O₂)',
+            nameEn: 'Sodium combustion held on crucible tongs (yellow flame → Na₂O₂)',
+            descVi: 'Sodium bốc cháy ở ~120 °C với ngọn lửa vàng rực tạo Sodium peroxide vàng nhạt.',
+            descEn: 'Tongs-held Sodium ignites around 120 °C with bright yellow 589 nm flame yielding Na₂O₂.',
+            vesselLabel: tongs.label,
+          });
+        }
+      } else if (sample.speciesId === 'Zn_s' && sample.tempK >= 1173.15) {
+        const dBurn = Math.min(sample.moles, Math.max(1e-5, sample.moles * 0.9 * dt));
+        sample.moles -= dBurn;
+        tongs.heldBurnTimer = 1.0;
+        tongs.heldFlameColor = 'cyan_zn';
+        if (sample.moles < 1e-7) {
+          sample.speciesId = 'ZnO_s';
+          sample.moles = dBurn;
+          sim.addLog({
+            type: 'reaction',
+            equation: '2Zn(hơi) + O₂(g) —(≥ 907 °C)→ 2ZnO(s) (lửa xanh lam & khói trắng)',
+            nameVi: 'Đốt cháy Zinc trên kẹp kim loại (ngọn lửa xanh lam & khói trắng ZnO)',
+            nameEn: 'Zinc combustion on crucible tongs (cyan-blue flame & white ZnO smoke)',
+            descVi: 'Hơi Zinc bốc cháy với ngọn lửa xanh lam nhạt đặc trưng sinh khói trắng dày đặc ZnO.',
+            descEn: 'Zinc vapor burns with a pale bluish-cyan flame producing dense white ZnO smoke.',
+            vesselLabel: tongs.label,
+          });
+        }
+      }
+    }
+  }
 }

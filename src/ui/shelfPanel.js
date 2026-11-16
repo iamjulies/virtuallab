@@ -58,6 +58,16 @@ function apparatusSvg(typeId) {
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="15" y="9" width="6" height="21" rx="1" fill="currentColor" opacity="0.3"/><rect x="13" y="6" width="10" height="4" rx="1" fill="#ef4444" stroke="none"/></svg>`;
     case 'salt_bridge':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M9 28V14a9 9 0 0118 0v14"/></svg>`;
+    case 'bunsen_burner':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 30h18M15 30v-5h6v5M16 25V14h4v11"/><circle cx="18" cy="22" r="1.4" fill="currentColor"/><path d="M18 4c-2.5 3.5-3 6.5 0 9 3-2.5 2.5-5.5 0-9z" fill="#38bdf8" stroke="none"/></svg>`;
+    case 'clay_triangle':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2"><polygon points="8,16 28,16 18,26"/><path d="M5 14l4 2M31 14l-4 2M18 31v-5" opacity="0.7"/></svg>`;
+    case 'crucible_porcelain':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14h16l-2.5 14h-11z"/><path d="M9 11h18"/><circle cx="18" cy="8.5" r="2"/></svg>`;
+    case 'quartz_tube':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="14" width="28" height="8" rx="2"/><rect x="13" y="15.5" width="10" height="5" fill="currentColor" opacity="0.25" stroke="none"/><path d="M4 18h2M30 18h2" stroke-width="2.2"/></svg>`;
+    case 'crucible_tongs':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 26l10-10 11-8M11 29l7-11 9-4"/><circle cx="17" cy="16" r="1.5" fill="currentColor"/></svg>`;
     default:
       return '';
   }

@@ -110,6 +110,10 @@ export class EnvironmentBar {
             <option value="">${t('quickPresets')}</option>
             <option value="starter">${t('presetStarter')}</option>
             <option value="clean">${t('presetClean')}</option>
+            <option value="compare_rate_factors">${t('presetCompareRateFactors')}</option>
+            <option value="compare_corrosion">${t('presetCompareCorrosion')}</option>
+            <option value="caco3_calcination_limewater">${t('presetCaco3Calcination')}</option>
+            <option value="cu_ammine_complex">${t('presetCuAmmineComplex')}</option>
             <option value="cuo_h2_reduction">${t('presetCuoH2Reduction')}</option>
             <option value="zn_burn_o2">${t('presetZnBurnO2')}</option>
             <option value="air_tarnish_deliquesce">${t('presetAirTarnish')}</option>

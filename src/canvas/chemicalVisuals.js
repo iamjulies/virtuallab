@@ -91,18 +91,23 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     const vType = sp.visualType || 'white_powder';
     if (vType === 'water_ice') continue; // Rendered as translucent crystalline ice matrix in vesselRenderer.js
 
+    const pCntSp = vessel.particleCounts?.[spId] || 0;
+    const isLimestoneChips = spId === 'CaCO3_s' && !vessel.groundPowderMap?.[spId] && pCntSp > 0 && pCntSp < 45;
     const isGroundPowder =
+      !isLimestoneChips &&
       !sp.isDenseMetal &&
       spId !== 'Na_s' &&
-      (Boolean(vessel.groundPowderMap?.[spId]) || (vessel.particleCounts?.[spId] || 0) >= 200);
+      (Boolean(vessel.groundPowderMap?.[spId]) || pCntSp >= 120 || (spId === 'CaCO3_s' && pCntSp === 0));
     const isFlattenedMetal = Boolean(vessel.flattenedMetalMap?.[spId]);
 
     if (
       isGroundPowder ||
       vType === 'white_powder' ||
+      vType === 'yellow_powder' ||
       vType === 'brown_powder' ||
       vType === 'gray_white_powder' ||
       vType === 'gray_white_solid' ||
+      vType === 'porous_lime' ||
       vType === 'powder'
     ) {
       const heapH = Math.min(24, 3 + Math.sqrt(massG) * 5.5);
@@ -128,17 +133,28 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       ctx.lineWidth = 0.8;
       ctx.stroke();
 
-      // Fine crystalline micro-powder specks overlay (0.7–1.35 px granules) when mechanically ground fine
-      if (isGroundPowder) {
-        const speckCount = Math.min(54, Math.max(20, Math.round(18 + massG * 10)));
+      // Fine crystalline micro-powder / porous quicklime pores overlay for zoomed detail!
+      if (isGroundPowder || vType === 'porous_lime' || vType === 'yellow_powder') {
+        const speckCount = Math.min(64, Math.max(22, Math.round(20 + massG * 10)));
         const spanW = Math.max(10, width - 14);
         for (let k = 0; k < speckCount; k++) {
           const ux = seeded(k, spId.length * 19 + 7);
-          const archMaxH = Math.max(2, heapH * 0.82 * (1 - Math.abs(ux - 0.5) * 1.55));
+          const archMaxH = Math.max(2, heapH * 0.85 * (1 - Math.abs(ux - 0.5) * 1.55));
           const sx = left + 7 + ux * spanW;
           const sy = bottom - 1.5 - seeded(k, 89) * archMaxH;
-          const sr = 0.65 + seeded(k, 43) * 0.7;
-          ctx.fillStyle = k % 3 === 0 ? strokeCol : 'rgba(255, 255, 255, 0.45)';
+          const sr = 0.65 + seeded(k, 43) * 0.78;
+          ctx.fillStyle =
+            vType === 'porous_lime'
+              ? k % 3 === 0
+                ? 'rgba(100, 116, 139, 0.42)'
+                : 'rgba(255, 255, 255, 0.72)'
+              : vType === 'yellow_powder'
+              ? k % 2 === 0
+                ? '#fde047'
+                : '#fef9c3'
+              : k % 3 === 0
+              ? strokeCol
+              : 'rgba(255, 255, 255, 0.52)';
           ctx.beginPath();
           ctx.arc(sx, sy, sr, 0, Math.PI * 2);
           ctx.fill();
@@ -176,24 +192,72 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         ctx.lineWidth = 0.7;
         ctx.stroke();
       } else if (vType === 'blue_crystal' || vType === 'brown_crystal') {
+        const cGrad = ctx.createLinearGradient(-r, -r, r, r);
+        cGrad.addColorStop(0, vType === 'brown_crystal' ? '#fbbf24' : '#38bdf8');
+        cGrad.addColorStop(0.55, vType === 'brown_crystal' ? '#d97706' : sp.color || '#0284c7');
+        cGrad.addColorStop(1, vType === 'brown_crystal' ? '#78350f' : '#0369a1');
         ctx.beginPath();
-        ctx.moveTo(-r, -r * 0.4);
-        ctx.lineTo(r * 0.4, -r * 0.85);
-        ctx.lineTo(r, r * 0.35);
-        ctx.lineTo(-r * 0.3, r * 0.75);
+        ctx.moveTo(-r, -r * 0.42);
+        ctx.lineTo(r * 0.38, -r * 0.88);
+        ctx.lineTo(r * 0.96, r * 0.28);
+        ctx.lineTo(r * 0.15, r * 0.82);
+        ctx.lineTo(-r * 0.75, r * 0.48);
         ctx.closePath();
-        ctx.fillStyle = vType === 'brown_crystal' ? '#b45309' : sp.color || '#0284c7';
+        ctx.fillStyle = cGrad;
         ctx.fill();
-        ctx.strokeStyle = vType === 'brown_crystal' ? '#f59e0b' : '#7dd3fc';
+        ctx.strokeStyle = vType === 'brown_crystal' ? '#fde68a' : '#bae6fd';
+        ctx.lineWidth = 0.75;
+        ctx.stroke();
+        // Crystalline internal cleavage rib highlight
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+        ctx.lineWidth = 0.65;
+        ctx.beginPath();
+        ctx.moveTo(-r * 0.65, -r * 0.18);
+        ctx.lineTo(r * 0.35, -r * 0.62);
+        ctx.lineTo(r * 0.15, r * 0.62);
+        ctx.stroke();
+      } else if (vType === 'limestone_solid') {
+        // Faceted angular marble/limestone mineral chips
+        const lGrad = ctx.createLinearGradient(-r, -r, r, r);
+        lGrad.addColorStop(0, '#ffffff');
+        lGrad.addColorStop(0.65, '#f1f5f9');
+        lGrad.addColorStop(1, '#cbd5e1');
+        ctx.beginPath();
+        ctx.moveTo(-r * 0.9, -r * 0.15);
+        ctx.lineTo(-r * 0.35, -r * 0.78);
+        ctx.lineTo(r * 0.65, -r * 0.62);
+        ctx.lineTo(r * 0.95, r * 0.25);
+        ctx.lineTo(r * 0.1, r * 0.75);
+        ctx.lineTo(-r * 0.72, r * 0.55);
+        ctx.closePath();
+        ctx.fillStyle = lGrad;
+        ctx.fill();
+        ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 0.8;
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.42)';
+        ctx.beginPath();
+        ctx.moveTo(-r * 0.25, -r * 0.62);
+        ctx.lineTo(r * 0.1, r * 0.48);
         ctx.stroke();
       } else if (vType === 'white_crystal') {
         ctx.beginPath();
-        ctx.rect(-r * 0.7, -r * 0.55, r * 1.4, r * 1.1);
-        ctx.fillStyle = 'rgba(248, 250, 252, 0.92)';
+        ctx.moveTo(-r * 0.78, -r * 0.45);
+        ctx.lineTo(r * 0.2, -r * 0.72);
+        ctx.lineTo(r * 0.82, 0);
+        ctx.lineTo(r * 0.25, r * 0.68);
+        ctx.lineTo(-r * 0.68, r * 0.48);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(248, 250, 252, 0.94)';
         ctx.fill();
         ctx.strokeStyle = '#cbd5e1';
         ctx.lineWidth = 0.8;
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+        ctx.lineWidth = 0.55;
+        ctx.beginPath();
+        ctx.moveTo(-r * 0.4, -r * 0.25);
+        ctx.lineTo(r * 0.35, 0);
         ctx.stroke();
       } else if (vType === 'zinc_granule' || vType === 'zinc') {
         const hasAlphaBrass = (moles.Cu3Zn_alpha_s || 0) > 1e-6;
@@ -234,14 +298,15 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         ctx.lineWidth = znPassiv > 0.25 ? 1.5 : 0.9;
         ctx.stroke();
         if (sp.id === 'Zn_s' && (vessel.znCombustionTimer || 0) > 0.02) {
-          const flareR = r * (2.6 + Math.min(1.8, vessel.znCombustionTimer * 1.4));
-          const flareGrad = ctx.createRadialGradient(0, -r * 0.3, r * 0.3, 0, -r * 0.3, flareR);
-          flareGrad.addColorStop(0, 'rgba(255, 255, 255, 0.96)');
-          flareGrad.addColorStop(0.45, 'rgba(186, 230, 253, 0.72)');
-          flareGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+          const flareR = r * (2.8 + Math.min(2.2, vessel.znCombustionTimer * 1.5));
+          const flareGrad = ctx.createRadialGradient(0, -r * 0.35, r * 0.25, 0, -r * 0.35, flareR);
+          flareGrad.addColorStop(0, 'rgba(255, 255, 255, 0.98)');
+          flareGrad.addColorStop(0.42, 'rgba(103, 232, 249, 0.85)');
+          flareGrad.addColorStop(0.75, 'rgba(34, 211, 238, 0.35)');
+          flareGrad.addColorStop(1, 'rgba(34, 211, 238, 0)');
           ctx.fillStyle = flareGrad;
           ctx.beginPath();
-          ctx.arc(0, -r * 0.3, flareR, 0, Math.PI * 2);
+          ctx.arc(0, -r * 0.35, flareR, 0, Math.PI * 2);
           ctx.fill();
         }
       } else {
@@ -380,15 +445,26 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       ctx.lineWidth = 0.8;
       ctx.stroke();
     } else {
-      // Dry cut Sodium block sitting on vessel bottom (tarnishes dull oxide matte grey in Standard Air; mirror-bright in Inert Glovebox)
+      // Dry cut Sodium block sitting on vessel bottom (burns vivid 589nm yellow on dry ignition!)
       const nx = left + width * 0.5;
       const flatNa = Boolean(vessel.flattenedMetalMap?.Na_s);
       const tarnish = vessel.naTarnishFrac || 0;
+      const isDryBurn = (vessel.naDryBurnTimer || 0) > 0.02;
       const rectW = flatNa ? radius * 2.75 : radius * 2;
       const rectH = flatNa ? radius * 0.72 : radius * 1.5;
       const ny = bottom - rectH * 0.5 - 1;
-      ctx.fillStyle = tarnish > 0.55 ? '#94a3b8' : tarnish > 0.2 ? '#b6c2cf' : '#e2e8f0';
-      ctx.strokeStyle = tarnish > 0.3 ? '#475569' : '#94a3b8';
+      if (isDryBurn) {
+        const yGlow = ctx.createRadialGradient(nx, ny, radius * 0.4, nx, ny, radius * 3.6);
+        yGlow.addColorStop(0, 'rgba(254, 249, 195, 0.98)');
+        yGlow.addColorStop(0.45, 'rgba(250, 204, 21, 0.85)');
+        yGlow.addColorStop(1, 'rgba(249, 115, 22, 0)');
+        ctx.fillStyle = yGlow;
+        ctx.beginPath();
+        ctx.arc(nx, ny, radius * 3.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = isDryBurn ? '#fde047' : tarnish > 0.55 ? '#94a3b8' : tarnish > 0.2 ? '#b6c2cf' : '#e2e8f0';
+      ctx.strokeStyle = isDryBurn ? '#ea580c' : tarnish > 0.3 ? '#475569' : '#94a3b8';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.roundRect(nx - rectW * 0.5, ny - rectH * 0.5, rectW, rectH, flatNa ? 3 : 1);

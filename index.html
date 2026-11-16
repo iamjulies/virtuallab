@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>ChemLab Studio — virlab_v2+build.10</title>
+  <title>ChemLab Studio — virlab_beta_v3+build.1</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./assets/icon.svg" />
   <meta name="theme-color" content="#2563eb" />
@@ -36,15 +36,28 @@
         <section id="panel-bench" class="panel-card workbench-panel active-mobile-tab gap-2">
           <div class="flex items-center justify-between gap-2 px-1">
             <span id="bench-hint-text" class="text-xs text-muted truncate"></span>
-            <button type="button" id="btn-reset-bench" class="px-2.5 py-1 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent shrink-0 transition"></button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button type="button" id="btn-compare-mode" class="px-2.5 py-1 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent shrink-0 transition"></button>
+              <button type="button" id="btn-reset-bench" class="px-2.5 py-1 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent shrink-0 transition"></button>
+            </div>
           </div>
           <div class="workbench-canvas-wrap">
             <canvas id="workbench-canvas" class="workbench-canvas"></canvas>
+            <div id="canvas-zoom-hud" class="canvas-zoom-hud">
+              <div id="canvas-zoom-controls" class="canvas-zoom-controls hidden">
+                <button type="button" id="btn-zoom-out" class="canvas-zoom-btn" title="Zoom Out">−</button>
+                <span id="zoom-level-badge" class="canvas-zoom-badge">1.0×</span>
+                <button type="button" id="btn-zoom-in" class="canvas-zoom-btn" title="Zoom In">+</button>
+                <button type="button" id="btn-zoom-reset" class="canvas-zoom-btn" title="Reset 1×">1×</button>
+              </div>
+              <button type="button" id="btn-zoom-loupe" class="canvas-zoom-btn" title="Magnifier Loupe">🔍</button>
+            </div>
             <div id="bench-pick-banner" class="bench-pick-banner hidden">
               <span id="bench-pick-text"></span>
               <button type="button" id="bench-pick-cancel" class="px-2.5 py-1 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent shrink-0 whitespace-nowrap"></button>
             </div>
           </div>
+          <div id="comparison-panel-root" class="comparison-panel hidden"></div>
         </section>
 
         <!-- Right Panel: Real-Time Telemetry, Species & Reaction Inspector -->

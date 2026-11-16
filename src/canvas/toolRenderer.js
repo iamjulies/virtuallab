@@ -1321,3 +1321,139 @@ export function renderDiffusionTube(ctx, item, isSelected, isDropTarget, isDark,
   });
   ctx.restore();
 }
+
+export function renderClayTriangle(ctx, item, isSelected, isDark) {
+  const spec = APPARATUS.clay_triangle;
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const w = spec.width;
+  const h = spec.height;
+  const top = y - h / 2;
+  const bottom = y + h / 2;
+  const ringY = top + 6;
+
+  ctx.save();
+  if (isSelected) {
+    ctx.shadowColor = '#3b82f6';
+    ctx.shadowBlur = 10;
+  }
+
+  // Heavy iron tripod ring + 3 splayed wrought legs reaching down around any Bunsen burner
+  ctx.strokeStyle = isSelected ? '#3b82f6' : (isDark ? '#64748b' : '#334155');
+  ctx.lineWidth = 4.2;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x - 40, ringY);
+  ctx.lineTo(x + 40, ringY);
+  ctx.moveTo(x - 36, ringY + 2);
+  ctx.lineTo(x - 54, bottom);
+  ctx.moveTo(x + 36, ringY + 2);
+  ctx.lineTo(x + 54, bottom);
+  ctx.moveTo(x, ringY + 2);
+  ctx.lineTo(x, bottom - 4);
+  ctx.stroke();
+
+  // Twisted nichrome core wire + 3 grooved refractory white ceramic pipe-stem sleeves
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 2.0;
+  ctx.beginPath();
+  ctx.moveTo(x - 34, ringY);
+  ctx.lineTo(x + 34, ringY);
+  ctx.stroke();
+
+  const sleeves = [
+    [x - 30, ringY - 2, 18, 6],
+    [x + 12, ringY - 2, 18, 6],
+    [x - 10, ringY - 3, 20, 7],
+  ];
+  for (const [sx, sy, sw, sh] of sleeves) {
+    ctx.fillStyle = isDark ? '#e2e8f0' : '#f8fafc';
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(sx, sy, sw, sh, 2.5);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  drawLabelPill(ctx, x, bottom + 6, `${item.label}`, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : pal.badgeBorder,
+    font: '600 10px system-ui, sans-serif',
+    height: 17,
+    itemId: item.id,
+  });
+  ctx.restore();
+}
+
+export function renderCrucibleTongs(ctx, item, isSelected, isDark, timeNow = 0) {
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const dir = item.flippedX ? 1 : -1;
+  const tipX = x + dir * 64;
+  const pivotX = x + dir * 6;
+  const ringX = x - dir * 56;
+
+  ctx.save();
+  drawSelectionGlow(ctx, isSelected, false);
+
+  // Scissor stainless steel handles + finger rings + articulated box joint + curved bow jaws
+  const drawBlade = (signY) => {
+    ctx.strokeStyle = isSelected ? '#3b82f6' : (isDark ? '#cbd5e1' : '#334155');
+    ctx.lineWidth = 3.4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ringX, y + signY * 12);
+    ctx.lineTo(pivotX, y);
+    ctx.quadraticCurveTo(x + dir * 38, y + signY * 10, tipX, y + signY * 2.5);
+    ctx.stroke();
+
+    ctx.strokeStyle = isDark ? '#94a3b8' : '#1e293b';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.arc(ringX - dir * 8, y + signY * 12, 8, 0, Math.PI * 2);
+    ctx.stroke();
+  };
+  drawBlade(-1);
+  drawBlade(1);
+
+  // Box joint rivet
+  ctx.fillStyle = '#f59e0b';
+  ctx.beginPath();
+  ctx.arc(pivotX, y, 4.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Held solid sample gripped in serrated bow tips + incandescent combustion flame if burning
+  const smp = item.heldSample;
+  if (smp && (smp.moles > 1e-8 || (item.heldBurnTimer || 0) > 0.05)) {
+    const burning = (item.heldBurnTimer || 0) > 0.05;
+    if (burning) {
+      const isCyanZn = item.heldFlameColor === 'cyan_zn';
+      const fGrad = ctx.createRadialGradient(tipX, y, 2, tipX, y - 4, 24);
+      fGrad.addColorStop(0, '#ffffff');
+      fGrad.addColorStop(0.45, isCyanZn ? 'rgba(103, 232, 249, 0.92)' : 'rgba(253, 224, 71, 0.95)');
+      fGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = fGrad;
+      ctx.beginPath();
+      ctx.arc(tipX, y - 4, 22 + Math.sin(timeNow * 24) * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const sp = SPECIES[smp.speciesId];
+    ctx.fillStyle = sp?.color || '#94a3b8';
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(tipX, y, 5.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  drawLabelPill(ctx, x, y - 26, smp ? `${item.label} · ${SPECIES[smp.speciesId]?.formula || ''}` : item.label, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : pal.badgeBorder,
+    font: '600 10px system-ui, sans-serif',
+    height: 17,
+    itemId: item.id,
+  });
+  ctx.restore();
+}

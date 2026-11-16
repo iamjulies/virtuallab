@@ -409,8 +409,175 @@ button:disabled {
 /* Utility class .hidden stays above breakpoints cleanly unless toggled via JS */
 .hidden.toast-banner,
 .hidden.bench-pick-banner,
+.hidden.canvas-zoom-controls,
+.hidden.comparison-panel,
 #dosing-modal-root.hidden {
   display: none;
+}
+
+/* Top-Right Canvas Magnifier & Zoom HUD */
+.canvas-zoom-hud {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 26;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.canvas-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.35rem;
+  border-radius: 0.65rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  box-shadow: var(--shadow);
+}
+
+.canvas-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.85rem;
+  height: 1.85rem;
+  padding: 0 0.45rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+  transition: all 0.14s ease;
+}
+
+.canvas-zoom-btn:hover {
+  border-color: var(--accent);
+}
+
+.canvas-zoom-btn.active {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.canvas-zoom-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-main);
+  padding: 0 0.25rem;
+}
+
+/* Multi-Vessel Side-by-Side Comparison Drawer */
+.comparison-panel {
+  border-radius: 0.75rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface-alt);
+  padding: 0.6rem 0.75rem;
+  flex-shrink: 0;
+  max-height: 235px;
+  overflow-y: auto;
+}
+
+.compare-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.18rem 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.compare-chip.active {
+  border-color: var(--slot-color, var(--accent));
+  color: var(--text-main);
+  box-shadow: 0 0 0 1px var(--slot-color, var(--accent));
+}
+
+.compare-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 9999px;
+  color: #0f172a;
+  font-size: 0.65rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.compare-metric-btn {
+  padding: 0.16rem 0.45rem;
+  border-radius: 0.45rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.compare-metric-btn.active {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.compare-body-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.35fr) minmax(200px, 1fr);
+  gap: 0.6rem;
+  align-items: stretch;
+}
+
+.compare-cards-col {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.45rem;
+}
+
+.compare-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 0.6rem;
+  padding: 0.45rem 0.55rem;
+}
+
+.compare-chart-wrap {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 0.6rem;
+  padding: 0.25rem;
+  min-height: 112px;
+  display: flex;
+}
+
+.compare-chart-canvas {
+  width: 100%;
+  height: 116px;
+  display: block;
+}
+
+@media (max-width: 780px) {
+  .compare-body-grid {
+    grid-template-columns: 1fr;
+  }
+  .comparison-panel {
+    max-height: 290px;
+  }
 }
 
 .bench-pick-banner {

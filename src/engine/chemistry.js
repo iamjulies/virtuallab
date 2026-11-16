@@ -1,4 +1,4 @@
-import { CONSTANTS } from '../data/constants.js';
+import { calcCaCO3EqPressureAtm, CONSTANTS } from '../data/constants.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { createZeroGasMap, SPECIES } from '../data/species.js';
 import { REACTIONS } from '../data/reactions.js';
@@ -14,9 +14,71 @@ import {
  * Arrhenius factor relative to 298.15 K: exp((-Ea / R) * (1/T - 1/298.15)).
  */
 function arrheniusFactor(eaJ, tempK) {
-  const T = Math.max(200, Math.min(1200, tempK));
+  const T = Math.max(200, Math.min(2200, tempK));
   const expo = (-eaJ / CONSTANTS.R_J_MOL_K) * (1 / T - 1 / CONSTANTS.T_STD_K);
   return Math.exp(Math.max(-40, Math.min(25, expo)));
+}
+
+/**
+ * Physical Sodium auto-ignition threshold (K) depending on particle dispersion & humidity:
+ * - Fine dispersed dust/vapor: ~20-25 C (296 K)
+ * - Small droplets/cut pieces in moist room air: ~115-125 C (393 K)
+ * - Quiescent large pooled mass with surface oxide crust / dry air: ~200-320 C (515 K)
+ */
+export function getNaIgnitionTempK(vessel, env = null) {
+  const pCnt = vessel?.particleCounts?.Na_s ?? 1;
+  if (vessel?.groundPowderMap?.Na_s || pCnt >= 120) return 296.15;
+  const massG = (vessel?.moles?.Na_s || 0) * SPECIES.Na_s.molarMass;
+  if (pCnt <= 1 && massG >= 1.5 && (vessel?.naTarnishFrac || 0) > 0.2) {
+    return 523.15; // 250 C quiescent pooled Na with oxide crust
+  }
+  return env?.atmosphereMode === 'inert' ? 560.0 : 393.15; // 120 C in humid bench air
+}
+
+/**
+ * Physical Zinc auto-ignition threshold (K) depending on particle dispersion & O2 environment:
+ * - Pure / enriched O2 gas chamber: ~342 C (615 K)
+ * - Fine Zinc powder in standard Air (1 atm): ~460-500 C (753 K)
+ * - Bulk solid Zinc protected by ZnO layer in standard Air: requires bp ~907 C (1180 K)
+ */
+export function getZnIgnitionTempK(vessel, env = null) {
+  const headO2 = vessel?.headspaceGasMoles?.O2_g || 0;
+  if (headO2 > 1.2e-4) return 615.0;
+  const pCnt = vessel?.particleCounts?.Zn_s ?? 6;
+  const isPowder = Boolean(vessel?.groundPowderMap?.Zn_s) || pCnt >= 60;
+  return isPowder ? 753.15 : 1180.15;
+}
+
+/**
+ * Evaluate 4-point optimization rubric & CaO conversion score for limestone calcination.
+ */
+export function computeCaOOptimizationScore(vessel) {
+  const stats = vessel?.calcinationStats;
+  if (!stats && (vessel?.moles?.CaCO3_s || 0) <= 1e-8 && (vessel?.moles?.CaO_s || 0) <= 1e-8) {
+    return null;
+  }
+  const nCaCO3 = vessel?.moles?.CaCO3_s || 0;
+  const nCaO = vessel?.moles?.CaO_s || 0;
+  const nTotCa = Math.max(1e-9, stats?.peakCaMol || nCaCO3 + nCaO);
+  const yieldPct = Math.min(100, (nCaO / nTotCa) * 100);
+  const groundFine = Boolean(
+    stats?.groundFine || vessel?.groundPowderMap?.CaCO3_s || (vessel?.particleCounts?.CaCO3_s || 0) >= 60
+  );
+  const ventedWhileHeating = Boolean(stats?.ventedWhileHeating ?? vessel?.lidState !== 'closed');
+  const roaringBlueZone = Boolean(stats?.roaringBlueZone);
+  const cooledProtected = Boolean(
+    stats?.cooledProtected ?? (vessel?.lidState === 'closed' || (vessel?.tempK || 298) >= 720)
+  );
+  const pts = [groundFine, ventedWhileHeating, roaringBlueZone, cooledProtected].filter(Boolean).length;
+  return {
+    yieldPct,
+    points: pts,
+    maxPoints: 4,
+    groundFine,
+    ventedWhileHeating,
+    roaringBlueZone,
+    cooledProtected,
+  };
 }
 
 /**
@@ -561,17 +623,154 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
   }
 
   if (rxn.type === 'metal_combustion_gas') {
-    if (T < (rxn.minTempK || 615)) return 0;
+    const solidId = rxn.solidId || 'Zn_s';
+    const minTK = solidId === 'Zn_s' ? getZnIgnitionTempK(vessel, options.environment) : (rxn.minTempK || 585);
+    if (T < minTK) return 0;
     const pO2 = getVesselEffectiveO2Bar(vessel, options.environment);
     if (pO2 <= 0.015) return 0;
-    const solidId = rxn.solidId || 'Zn_s';
     const nSolid = moles[solidId] || 0;
     if (nSolid <= 1e-10) return 0;
     const pCount = vessel.particleCounts?.[solidId] ?? 6;
     const area = computeSolidSurfaceAreaM2(solidId, nSolid, pCount);
     const o2Drive = Math.min(4.8, pO2 / CONSTANTS.AIR_O2_FRAC);
-    const k = (rxn.kAtThreshold || 0.65) * arrheniusFactor(rxn.eaJ || 48000, T - (rxn.minTempK || 615) + CONSTANTS.T_STD_K);
+    const k = (rxn.kAtThreshold || 0.65) * arrheniusFactor(rxn.eaJ || 48000, T - minTK + CONSTANTS.T_STD_K);
     return Math.min(nSolid * 0.9, k * Math.max(1e-4, area) * o2Drive * 24.0);
+  }
+
+  if (rxn.type === 'sodium_combustion_gas') {
+    // Auto-ignition dry or above water meniscus once Na reaches size- & humidity-dependent threshold
+    const nNa = moles.Na_s || 0;
+    if (nNa <= 1e-10) return 0;
+    const pO2 = getVesselEffectiveO2Bar(vessel, options.environment);
+    if (pO2 <= 0.02) return 0;
+    if ((moles.H2O_l || 0) > 0.01 && (vessel.tempK || 298) < 385) return 0;
+    const tEff = Math.max(vessel.naTempK || 0, T);
+    const ignK = getNaIgnitionTempK(vessel, options.environment);
+    if (tEff < ignK) return 0;
+    const pCount = vessel.particleCounts?.Na_s ?? 1;
+    const area = computeSolidSurfaceAreaM2('Na_s', nNa, pCount);
+    const o2Drive = Math.min(4.5, pO2 / CONSTANTS.AIR_O2_FRAC);
+    const k = 1.65 * arrheniusFactor(rxn.eaJ || 22000, tEff - ignK + CONSTANTS.T_STD_K);
+    return Math.min(nNa * 0.9, k * Math.max(1e-4, area) * o2Drive * 28.0);
+  }
+
+  if (rxn.type === 'calcination_eq') {
+    const nCaCO3 = moles.CaCO3_s || 0;
+    if (nCaCO3 <= 1e-10) return 0;
+    const pEq = calcCaCO3EqPressureAtm(T);
+    const spec = APPARATUS[vessel.typeId];
+    const headL = Math.max(0.015, ((spec?.maxVolumeMl || 60) - computeSolidVolumeMl(moles)) / 1000);
+    const nHeadCO2 = vessel.headspaceGasMoles?.CO2_g || 0;
+    const pLocalFromGas =
+      vessel.isStoppered && !vessel.connectedTargetId && !vessel.connectedSyringeId
+        ? (nHeadCO2 * CONSTANTS.R_ATM_L_MOL_K * T) / headL
+        : vessel.lidState === 'closed'
+        ? (nHeadCO2 * CONSTANTS.R_ATM_L_MOL_K * T) / headL + 0.35
+        : vessel.lidState === 'ajar'
+        ? 0.018
+        : 0.0004;
+    const pCO2 = Math.max(CONSTANTS.AIR_CO2_FRAC || 0.0004, pLocalFromGas);
+    if (pEq <= pCO2) {
+      vessel.calcinationEqPAtm = pEq;
+      vessel.calcinationLocalCO2Atm = pCO2;
+      vessel.calcinationLeChatelier = 0;
+      return 0;
+    }
+    const leChat = Math.max(0, 1.0 - pCO2 / pEq);
+    const pCount = vessel.particleCounts?.CaCO3_s ?? 6;
+    const isFine = Boolean(vessel.groundPowderMap?.CaCO3_s) || pCount >= 60;
+    const area = computeSolidSurfaceAreaM2('CaCO3_s', nCaCO3, isFine ? Math.max(pCount, 400) : pCount);
+    const nCaO = moles.CaO_s || 0;
+    const shellFrac = nCaO / Math.max(1e-9, nCaO + nCaCO3);
+    // Coarse unground limestone develops an insulating porous CaO shell slowing core CO2 escape
+    const coreDiffFactor = isFine ? 1.0 : Math.max(0.14, 1.0 - 0.84 * shellFrac);
+    const k0 = 4.2e6; // Calibrated to reach ~95-99% conversion cleanly within 8-14s at 1200-1450 C Bunsen zone
+    const kArr = k0 * Math.exp(-rxn.eaJ / (CONSTANTS.R_J_MOL_K * Math.max(250, T)));
+    vessel.calcinationEqPAtm = pEq;
+    vessel.calcinationLocalCO2Atm = pCO2;
+    vessel.calcinationLeChatelier = leChat;
+    return Math.min(nCaCO3 * 0.9, kArr * Math.max(1e-4, area) * leChat * coreDiffFactor);
+  }
+
+  if (rxn.type === 'slaking_hydration') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nCaO = moles.CaO_s || 0;
+    const nW = moles.H2O_l || 0;
+    if (nCaO <= 1e-10 || nW <= 1e-10) return 0;
+    const area = computeSolidSurfaceAreaM2('CaO_s', nCaO, vessel.particleCounts?.CaO_s ?? 120);
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T) * stirBoost * iceMob;
+    return Math.min(nCaO, nW, k * Math.max(1e-4, area) * 42.0);
+  }
+
+  if (rxn.type === 'heterogeneous_acid_salt') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nSolid = moles[rxn.solidId] || 0;
+    const cH = (moles[rxn.aqueousId] || 0) / liquidVolL;
+    if (nSolid <= 1e-10 || cH < 1e-4) return 0;
+    const pCount = vessel.particleCounts?.[rxn.solidId] ?? 6;
+    const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, pCount);
+    const k = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
+    return Math.min(nSolid, (moles[rxn.aqueousId] || 0) / 2, k * Math.max(1e-5, area) * Math.min(12.0, cH) * 6.5 * iceMob);
+  }
+
+  if (rxn.type === 'excess_co2_bicarb') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nCaCO3 = moles.CaCO3_s || 0;
+    const nH2CO3 = moles.H2CO3_aq || 0;
+    if (nCaCO3 <= 1e-10 || nH2CO3 <= 1e-7) return 0;
+    const cOH = (moles.OH_aq || 0) / liquidVolL;
+    if (cOH > 0.0025) return 0;
+    const cAcid = nH2CO3 / liquidVolL;
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T) * stirBoost * iceMob;
+    return Math.min(nCaCO3, nH2CO3) * k * Math.min(4.0, 0.35 + cAcid * 18.0);
+  }
+
+  if (rxn.type === 'bicarb_thermal_reprecip') {
+    if (!hasWater || iceMob <= 0 || T < (rxn.minTempK || 333.15)) return 0;
+    const nCa = moles.Ca2_aq || 0;
+    const nHCO3 = moles.HCO3_aq || 0;
+    if (nCa <= 1e-10 || nHCO3 < 2e-10) return 0;
+    const minExt = Math.min(nCa, nHCO3 / 2);
+    const k = rxn.kAtThreshold * arrheniusFactor(rxn.eaJ, T - (rxn.minTempK || 333.15) + CONSTANTS.T_STD_K);
+    return minExt * k;
+  }
+
+  if (rxn.type === 'sparing_salt_ppt') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const cCa = (moles.Ca2_aq || 0) / liquidVolL;
+    const cSO4 = (moles.SO4_2_aq || 0) / liquidVolL;
+    if (cCa * cSO4 <= (rxn.kspThreshold || 0.00025)) return 0;
+    const excessExt = Math.min(moles.Ca2_aq || 0, moles.SO4_2_aq || 0) * 0.85;
+    return excessExt * getEffectiveRateConstant(rxn, T, false) * iceMob;
+  }
+
+  if (rxn.type === 'metal_halogen_gas') {
+    if (T < (rxn.minTempK || 345)) return 0;
+    const solidId = rxn.solidId || 'Cu_s';
+    const gasId = rxn.gasId || 'Cl2_g';
+    const nSolid = moles[solidId] || 0;
+    const nGas = vessel.headspaceGasMoles?.[gasId] || 0;
+    if (nSolid <= 1e-10 || nGas <= 1e-10) return 0;
+    const area = computeSolidSurfaceAreaM2(solidId, nSolid, vessel.particleCounts?.[solidId] ?? 12);
+    const k = (rxn.kAtThreshold || 0.8) * arrheniusFactor(rxn.eaJ || 25000, T - (rxn.minTempK || 345) + CONSTANTS.T_STD_K);
+    return Math.min(nSolid, nGas * 2, k * Math.max(1e-4, area) * Math.min(3.5, nGas / 0.0005) * 16.0);
+  }
+
+  if (rxn.type === 'gas_solid_carbonate_o2') {
+    const nPerox = moles.Na2O2_s || 0;
+    const nCo2 = vessel.headspaceGasMoles?.CO2_g || 0;
+    if (nPerox <= 1e-10 || nCo2 <= 1e-10) return 0;
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ || 18000, T);
+    return Math.min(nPerox / 2, nCo2 / 2) * k * Math.min(4.0, nCo2 / 0.0005);
+  }
+
+  if (rxn.type === 'photochemical_h2_cl2') {
+    const nH2 = vessel.headspaceGasMoles?.H2_g || 0;
+    const nCl2 = vessel.headspaceGasMoles?.Cl2_g || 0;
+    if (nH2 <= 1e-10 || nCl2 <= 1e-10) return 0;
+    const active = Boolean(options.uvLight) || T >= 523.15;
+    if (!active) return 0;
+    return Math.min(nH2, nCl2) * (rxn.k298 || 3.8);
   }
 
   return 0;
@@ -663,12 +862,17 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
 
   // 2. Remaining soluble salts ordered from least soluble to most soluble
   const crystallizePairs = [
+    { cat: 'Ca2_aq', cCat: 1, an: 'OH_aq', cAn: 2, solid: 'CaOH2_s', formula: 'Ca(OH)₂', sol298: 0.0235, coeff: -0.0075, etohRel: 0.01, crystHeatJ: 16200 },
+    { cat: 'Na_aq', cCat: 1, an: 'HCO3_aq', cAn: 1, solid: 'NaHCO3_s', formula: 'NaHCO₃', sol298: 1.15, coeff: 0.016, etohRel: 0.01, crystHeatJ: -17500 },
     { cat: 'Na_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'Na2SO4_s', formula: 'Na₂SO₄', sol298: 1.98, coeff: 0.032, etohRel: 0.02, crystHeatJ: 8000 },
+    { cat: 'Na_aq', cCat: 2, an: 'CO3_2_aq', cAn: 1, solid: 'Na2CO3_s', formula: 'Na₂CO₃', sol298: 2.9, coeff: 0.015, etohRel: 0.01, crystHeatJ: 26700 },
     { cat: 'Zn2_aq', cCat: 1, an: 'SO4_2_aq', cAn: 1, solid: 'ZnSO4_s', formula: 'ZnSO₄', sol298: 3.57, coeff: 0.012, etohRel: 0.02, crystHeatJ: 8000 },
     { cat: 'Cu2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'CuCl2_s', formula: 'CuCl₂', sol298: 5.6, coeff: 0.010, etohRel: 0.35, crystHeatJ: 8000 },
     { cat: 'NH4_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'NH4_2_SO4_s', formula: '(NH₄)₂SO₄', sol298: 5.7, coeff: 0.008, etohRel: 0.01, crystHeatJ: 6600 },
     { cat: 'Na_aq', cCat: 1, an: 'Cl_aq', cAn: 1, solid: 'NaCl_s', formula: 'NaCl', sol298: 6.15, coeff: 0.0014, etohRel: 0.01, crystHeatJ: 3900 },
+    { cat: 'Ca2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'CaCl2_s', formula: 'CaCl₂', sol298: 7.3, coeff: 0.014, etohRel: 0.18, crystHeatJ: -81300 },
     { cat: 'NH4_aq', cCat: 1, an: 'Cl_aq', cAn: 1, solid: 'NH4Cl_s', formula: 'NH₄Cl', sol298: 7.4, coeff: 0.018, etohRel: 0.02, crystHeatJ: 14800 },
+    { cat: 'Ca2_aq', cCat: 1, an: 'NO3_aq', cAn: 2, solid: 'CaNO3_2_s', formula: 'Ca(NO₃)₂', sol298: 8.6, coeff: 0.016, etohRel: 0.05, crystHeatJ: 19200 },
     { cat: 'Zn2_aq', cCat: 1, an: 'NO3_aq', cAn: 2, solid: 'ZnNO3_2_s', formula: 'Zn(NO₃)₂', sol298: 9.8, coeff: 0.015, etohRel: 0.05, crystHeatJ: 8000 },
     { cat: 'Na_aq', cCat: 1, an: 'NO3_aq', cAn: 1, solid: 'NaNO3_s', formula: 'NaNO₃', sol298: 10.8, coeff: 0.014, etohRel: 0.03, crystHeatJ: 20500 },
     { cat: 'Ag_aq', cCat: 1, an: 'NO3_aq', cAn: 1, solid: 'AgNO3_s', formula: 'AgNO₃', sol298: 15.0, coeff: 0.022, etohRel: 0.05, crystHeatJ: 22600 },
@@ -1203,6 +1407,183 @@ function stepAmmineComplexEquilibria(vessel, liquidVolL, dt, activeReactions) {
     }
   }
 
+  // 4. Zinc hydroxide <-> Tetraamminezinc(II)
+  const nZnOH2 = moles.ZnOH2_s || 0;
+  const nZnAmm = moles.ZnNH3_4_2_aq || 0;
+  if (nZnOH2 + nZnAmm > 1e-11) {
+    const fracZn = cNH3 > 0.18 ? Math.min(1.0, (cNH3 - 0.18) / 0.35) : 0;
+    const targetZn = (nZnOH2 + nZnAmm) * fracZn;
+    let dXi = (targetZn - nZnAmm) * relax;
+    if (dXi > 1e-11 && cH < 1e-4) {
+      dXi = Math.min(dXi, nZnOH2, (moles.NH3_aq || 0) / 4);
+      heatJ += applyEquilibriumShift({
+        moles,
+        dXi,
+        deltas: { ZnOH2_s: -1, NH3_aq: -4, ZnNH3_4_2_aq: 1, OH_aq: 2 },
+        heatPerMolJ: -18000,
+        dt,
+        activeReactions,
+        buildMeta: () => ({
+          id: 'zn_ammine_complex',
+          equation: 'Zn(OH)₂(s) + 4NH₃(aq) ⇌ [Zn(NH₃)₄]²⁺(aq) + 2OH⁻(aq)',
+          nameVi: 'Tạo phức không màu [Zn(NH₃)₄]²⁺ trong NH₃ dư',
+          nameEn: 'Dissolution of Zn(OH)₂ precipitate in excess NH₃ forming [Zn(NH₃)₄]²⁺',
+          descVi: 'Kết tủa trắng Zn(OH)₂ tan trong dung dịch NH₃ dư tạo phức Tetraamminezinc(II) không màu.',
+          descEn: 'White Zn(OH)₂ dissolves cleanly in excess NH₃ yielding colorless [Zn(NH₃)₄]²⁺.',
+        }),
+      });
+    } else if (dXi < -1e-11 && cH < 1e-4 && (moles.OH_aq || 0) >= 2 * Math.abs(dXi)) {
+      dXi = Math.max(dXi, -nZnAmm, -(moles.OH_aq || 0) / 2);
+      heatJ += applyEquilibriumShift({
+        moles,
+        dXi,
+        deltas: { ZnOH2_s: -1, NH3_aq: -4, ZnNH3_4_2_aq: 1, OH_aq: 2 },
+        heatPerMolJ: -18000,
+        dt,
+        activeReactions,
+        buildMeta: () => ({
+          id: 'zn_ammine_complex',
+          equation: '[Zn(NH₃)₄]²⁺(aq) + 2OH⁻(aq) → Zn(OH)₂(s)↓ + 4NH₃(aq)',
+          nameVi: 'Tái kết tủa Zn(OH)₂ khi giảm NH₃',
+          nameEn: 'Reprecipitation of Zn(OH)₂ upon NH₃ loss',
+          descVi: 'Thiếu NH₃ làm tách trở lại kết tủa trắng Zn(OH)₂.',
+          descEn: 'Depleting NH₃ shifts [Zn(NH₃)₄]²⁺ back to white Zn(OH)₂.',
+        }),
+      });
+    }
+  }
+
+  return heatJ;
+}
+
+/**
+ * Carbonate–CO2 aqueous equilibria:
+ * - Dissolves headspace CO2(g) into H2CO3_aq (accelerated strongly by OH- trap)
+ * - Fast stepwise protolysis H2CO3 <-> HCO3- <-> CO3^2- with H+ & OH-
+ * - Releases CO2(g) bubbles when supersaturated (acidification of CO3^2- / HCO3- or thermal heating)
+ */
+function stepCarbonateAndCO2Equilibria(vessel, liquidVolL, dt, activeReactions, gasProduced) {
+  const moles = vessel.moles;
+  if ((moles.H2O_l || 0) <= 1e-7 || liquidVolL <= 1e-6) return 0;
+
+  let heatJ = 0;
+  const relax = Math.min(1, 24.0 * dt);
+
+  // 1. Dissolve CO2(g) from headspace/bubbling into liquid water -> H2CO3_aq
+  const headCo2 = vessel.headspaceGasMoles?.CO2_g || 0;
+  if (headCo2 > 1e-9) {
+    const cOH = (moles.OH_aq || 0) / liquidVolL;
+    const absorbRate = (cOH > 1e-4 ? 6.5 : 1.2) * (vessel.stirTimer > 0 ? 1.8 : 1.0);
+    const dAbs = Math.min(headCo2, headCo2 * Math.min(1, absorbRate * dt));
+    if (dAbs > 1e-12) {
+      vessel.headspaceGasMoles.CO2_g = Math.max(0, headCo2 - dAbs);
+      moles.H2CO3_aq = (moles.H2CO3_aq || 0) + dAbs;
+      heatJ += 19900 * dAbs;
+    }
+  }
+
+  // 2. Stepwise acid/base carbonate proton transfers
+  const nH = moles.H_aq || 0;
+  const nOH = moles.OH_aq || 0;
+  if (nOH > 1e-12 && (moles.H2CO3_aq || 0) > 1e-12) {
+    const d1 = Math.min(moles.H2CO3_aq, nOH) * relax;
+    heatJ += applyEquilibriumShift({
+      moles,
+      dXi: d1,
+      deltas: { H2CO3_aq: -1, OH_aq: -1, HCO3_aq: 1, H2O_l: 1 },
+      heatPerMolJ: -48000,
+      dt,
+      activeReactions,
+      buildMeta: () => ({
+        id: 'co2_oh_bicarb',
+        equation: 'CO₂(aq)/H₂CO₃ + OH⁻(aq) → HCO₃⁻(aq) + H₂O(l)',
+        nameVi: 'Hấp thụ CO₂ trong dung dịch kiềm tạo HCO₃⁻',
+        nameEn: 'Alkaline CO₂ absorption yielding Hydrogen carbonate',
+        descVi: 'Dung dịch kiềm hấp thụ CO₂ nhanh chóng chuyển sang HCO₃⁻ / CO₃²⁻.',
+        descEn: 'Hydroxide rapidly traps dissolved CO₂ as Hydrogen carbonate and Carbonate.',
+      }),
+    });
+  }
+  if ((moles.OH_aq || 0) > 1e-12 && (moles.HCO3_aq || 0) > 1e-12) {
+    const d2 = Math.min(moles.HCO3_aq, moles.OH_aq) * relax;
+    heatJ += applyEquilibriumShift({
+      moles,
+      dXi: d2,
+      deltas: { HCO3_aq: -1, OH_aq: -1, CO3_2_aq: 1, H2O_l: 1 },
+      heatPerMolJ: -41000,
+      dt,
+      activeReactions,
+      logThresholdRate: 1e-3,
+      buildMeta: () => ({
+        id: 'bicarb_oh_carb',
+        equation: 'HCO₃⁻(aq) + OH⁻(aq) → CO₃²⁻(aq) + H₂O(l)',
+        nameVi: 'Chuyển hóa HCO₃⁻ thành CO₃²⁻ trong môi trường kiềm',
+        nameEn: 'Deprotonation of HCO₃⁻ to Carbonate in alkali',
+        descVi: 'OH⁻ dư chuyển ion HCO₃⁻ thành CO₃²⁻ (gây kết tủa CaCO₃↓ ngay khi có Ca²⁺).',
+        descEn: 'Excess hydroxide converts HCO₃⁻ into CO₃²⁻ (immediately precipitating CaCO₃↓ with Ca²⁺).',
+      }),
+    });
+  }
+  if ((moles.H_aq || 0) > 1e-12 && (moles.CO3_2_aq || 0) > 1e-12) {
+    const d3 = Math.min(moles.CO3_2_aq, moles.H_aq) * relax;
+    heatJ += applyEquilibriumShift({
+      moles,
+      dXi: d3,
+      deltas: { CO3_2_aq: -1, H_aq: -1, HCO3_aq: 1 },
+      heatPerMolJ: -14000,
+      dt,
+      activeReactions,
+      logThresholdRate: 1e-3,
+      buildMeta: () => ({
+        id: 'carb_protonate',
+        equation: 'CO₃²⁻(aq) + H⁺(aq) → HCO₃⁻(aq)',
+        nameVi: 'Acid hóa ion Carbonate thành Hydrogen carbonate',
+        nameEn: 'Protonation of Carbonate to Hydrogen carbonate',
+        descVi: 'Ion CO₃²⁻ nhận H⁺ tạo ion HCO₃⁻.',
+        descEn: 'Carbonate accepts a proton forming HCO₃⁻.',
+      }),
+    });
+  }
+  if ((moles.H_aq || 0) > 1e-12 && (moles.HCO3_aq || 0) > 1e-12) {
+    const d4 = Math.min(moles.HCO3_aq, moles.H_aq) * relax;
+    heatJ += applyEquilibriumShift({
+      moles,
+      dXi: d4,
+      deltas: { HCO3_aq: -1, H_aq: -1, H2CO3_aq: 1 },
+      heatPerMolJ: -8000,
+      dt,
+      activeReactions,
+      buildMeta: () => ({
+        id: 'bicarb_acid_effervesce',
+        equation: 'HCO₃⁻(aq) + H⁺(aq) → H₂O(l) + CO₂(g)↑',
+        nameVi: 'Acid đẩy khí CO₂ khỏi muối Hydrogen carbonate',
+        nameEn: 'Acidification of HCO₃⁻ liberating CO₂ gas',
+        descVi: 'Ion H⁺ đẩy nhanh khí CO₂ sủi bọt mạnh từ dung dịch.',
+        descEn: 'H⁺ immediately releases vigorous CO₂ gas bubbles from HCO₃⁻.',
+      }),
+    });
+  }
+
+  // 3. Effervesce excess H2CO3_aq -> H2O_l + CO2(g) when not trapping into CaCO3 dissolution
+  const nAcidCO2 = moles.H2CO3_aq || 0;
+  if (nAcidCO2 > 1e-7) {
+    const tC = Math.max(0, vessel.tempK - CONSTANTS.KELVIN_OFFSET);
+    const solEq = Math.max(0.0005, 0.034 * Math.exp(-0.025 * tC)) * liquidVolL;
+    const isDissolvingCaCO3 = (moles.CaCO3_s || 0) > 1e-7 && (moles.OH_aq || 0) <= 1e-5;
+    const maxHold = isDissolvingCaCO3 ? Math.max(solEq, nAcidCO2 * 0.45) : solEq;
+    if (nAcidCO2 > maxHold && ((moles.H_aq || 0) > 1e-5 || tC >= 45 || (moles.OH_aq || 0) < 1e-6)) {
+      const ex = nAcidCO2 - maxHold;
+      const dOut = Math.min(nAcidCO2, ex * Math.min(1, 2.8 * dt));
+      if (dOut > 1e-11) {
+        moles.H2CO3_aq = Math.max(0, nAcidCO2 - dOut);
+        if (moles.H2CO3_aq < 1e-13) delete moles.H2CO3_aq;
+        moles.H2O_l = (moles.H2O_l || 0) + dOut;
+        gasProduced.CO2_g = (gasProduced.CO2_g || 0) + dOut;
+        heatJ -= 19900 * dOut;
+      }
+    }
+  }
+
   return heatJ;
 }
 
@@ -1218,21 +1599,33 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   CuCl2_comp_aq: { CuCl_s: 1, Cl_aq: 1 },
   CuNH3_4_2_aq: { Cu2_aq: 1, NH3_g: 4 },
   AgNH3_2_aq: { Ag_aq: 1, NH3_g: 2 },
+  ZnNH3_4_2_aq: { Zn2_aq: 1, NH3_g: 4 },
   H2O2_aq: { H2O_g: 1, O2_g: 0.5 },
+  H2CO3_aq: { H2O_g: 1, CO2_g: 1 },
   NH3_aq: { NH3_g: 1 },
 };
 
 export const DRY_SALT_PAIRINGS = [
   ['Ag_aq', 1, 'Cl_aq', 1, 'AgCl_s', 1, false],
+  ['Ag_aq', 2, 'CO3_2_aq', 1, 'Ag2CO3_s', 1, false],
   ['Ag_aq', 1, 'NO3_aq', 1, 'AgNO3_s', 1, false],
+  ['Ca2_aq', 1, 'CO3_2_aq', 1, 'CaCO3_s', 1, false],
+  ['Ca2_aq', 1, 'OH_aq', 2, 'CaOH2_s', 1, false],
+  ['Ca2_aq', 1, 'SO4_2_aq', 1, 'CaSO4_s', 1, false],
+  ['Ca2_aq', 1, 'Cl_aq', 2, 'CaCl2_s', 1, false],
+  ['Ca2_aq', 1, 'NO3_aq', 2, 'CaNO3_2_s', 1, false],
+  ['Cu2_aq', 1, 'CO3_2_aq', 1, 'CuCO3_s', 1, false],
   ['Cu2_aq', 1, 'SO4_2_aq', 1, 'CuSO4_s', 1, false],
   ['Cu2_aq', 1, 'OH_aq', 2, 'CuOH2_s', 1, false],
   ['Cu2_aq', 1, 'Cl_aq', 2, 'CuCl2_s', 1, false],
   ['Cu2_aq', 1, 'NO3_aq', 2, 'CuNO3_2_s', 1, false],
+  ['Zn2_aq', 1, 'CO3_2_aq', 1, 'ZnCO3_s', 1, false],
   ['Zn2_aq', 1, 'SO4_2_aq', 1, 'ZnSO4_s', 1, false],
   ['Zn2_aq', 1, 'Cl_aq', 2, 'ZnCl2_s', 1, false],
   ['Zn2_aq', 1, 'NO3_aq', 2, 'ZnNO3_2_s', 1, false],
   ['Zn2_aq', 1, 'OH_aq', 2, 'ZnOH2_s', 1, false],
+  ['Na_aq', 2, 'CO3_2_aq', 1, 'Na2CO3_s', 1, false],
+  ['Na_aq', 1, 'HCO3_aq', 1, 'NaHCO3_s', 1, false],
   ['Na_aq', 1, 'Cl_aq', 1, 'NaCl_s', 1, false],
   ['Na_aq', 2, 'SO4_2_aq', 1, 'Na2SO4_s', 1, false],
   ['Na_aq', 1, 'NO3_aq', 1, 'NaNO3_s', 1, false],
@@ -1327,6 +1720,20 @@ export function enforceDryPhaseBoundary(vessel) {
     if (moles.OH_aq < 1e-13) delete moles.OH_aq;
   }
 
+  // Ca(HCO3)2 decomposition cleanly at dry boundary -> CaCO3(s) + H2O(g) + CO2(g)
+  if ((moles.Ca2_aq || 0) > 0 && (moles.HCO3_aq || 0) >= 2e-13) {
+    const xBicarb = Math.min(moles.Ca2_aq, moles.HCO3_aq / 2);
+    if (xBicarb > 0) {
+      moles.Ca2_aq -= xBicarb;
+      moles.HCO3_aq -= 2 * xBicarb;
+      moles.CaCO3_s = (moles.CaCO3_s || 0) + xBicarb;
+      gasProduced.H2O_g += xBicarb;
+      gasProduced.CO2_g = (gasProduced.CO2_g || 0) + xBicarb;
+      if (moles.Ca2_aq < 1e-13) delete moles.Ca2_aq;
+      if (moles.HCO3_aq < 1e-13) delete moles.HCO3_aq;
+    }
+  }
+
   for (const [a, cA, b, cB, outId, cOut, isGas] of DRY_SALT_PAIRINGS) {
     pairToProduct(a, cA, b, cB, outId, cOut, isGas);
   }
@@ -1395,7 +1802,7 @@ export function validateVesselInvariants(vessel) {
   const errors = [];
   if (!vessel) return { valid: false, errors: ['vessel is null'] };
 
-  if (!Number.isFinite(vessel.tempK) || vessel.tempK < 150 || vessel.tempK > 1500) {
+  if (!Number.isFinite(vessel.tempK) || vessel.tempK < 150 || vessel.tempK > 2050) {
     errors.push(`Invalid tempK=${vessel.tempK}`);
   }
   if (
@@ -1569,7 +1976,30 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
       vessel.particleCounts.Cu_s = Math.max(vessel.particleCounts.Cu_s || 0, 260);
       vessel._cuoReductionCondenseTimer = 2.2;
     } else if (item.rxn.id === 'zn_o2_burn' && dXi > 1e-10) {
-      vessel.znCombustionTimer = 0.9;
+      vessel.znCombustionTimer = 1.0;
+      vessel.znFlameColor = 'cyan_blue';
+    } else if (item.rxn.id === 'na_o2_burn' && dXi > 1e-10) {
+      vessel.naDryBurnTimer = 1.0;
+    } else if (item.rxn.id === 'calcine_caco3' && dXi > 1e-10) {
+      if (!vessel.particleCounts) vessel.particleCounts = {};
+      vessel.particleCounts.CaO_s = Math.max(vessel.particleCounts.CaO_s || 0, 180);
+      const stats = (vessel.calcinationStats = vessel.calcinationStats || {
+        peakCaMol: (vessel.moles.CaCO3_s || 0) + (vessel.moles.CaO_s || 0) + dXi,
+        groundFine: Boolean(vessel.groundPowderMap?.CaCO3_s) || (vessel.particleCounts?.CaCO3_s || 0) >= 60,
+        ventedWhileHeating: false,
+        roaringBlueZone: false,
+        cooledProtected: true,
+      });
+      stats.peakCaMol = Math.max(stats.peakCaMol, (vessel.moles.CaCO3_s || 0) + (vessel.moles.CaO_s || 0));
+      if (vessel.groundPowderMap?.CaCO3_s || (vessel.particleCounts?.CaCO3_s || 0) >= 60) {
+        stats.groundFine = true;
+      }
+      if (vessel.lidState !== 'closed') {
+        stats.ventedWhileHeating = true;
+      }
+      if (options.heatSrc?.burner?.typeId === 'bunsen_burner' && options.heatSrc.burner.airHoleOpen !== false) {
+        stats.roaringBlueZone = true;
+      }
     }
 
     // Separate Sodium reaction enthalpy to drive independent metal droplet temperature T_Na
@@ -1735,8 +2165,9 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     }
   }
 
-  // 4. Reversible [CuCl4]2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, ammine complexes, Nernst extraction & chemisorption/garden equilibria
+  // 4. Reversible [CuCl4]2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, ammine complexes, carbonate CO2 equilibria, Nernst extraction & chemisorption/garden equilibria
   if (computeIceMobilityFactor(vessel) > 0) {
+    reactionHeatJ += stepCarbonateAndCO2Equilibria(vessel, liquidVolL, dt, activeReactions, gasProduced);
     reactionHeatJ += stepChlorocuprateEquilibrium(vessel, liquidVolL, dt, activeReactions);
     reactionHeatJ += stepAmphotericHydroxideEquilibria(vessel, liquidVolL, dt, activeReactions);
     reactionHeatJ += stepChloroSilverAndCuprousEquilibria(vessel, liquidVolL, dt, activeReactions);
@@ -1775,10 +2206,32 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   }
   vessel.pickeringFoamMl = foamMl < 0.05 ? 0 : foamMl;
 
-  // 7. Ambient atmosphere surface reactions: Na surface oxide tarnishing & humid-air NaOH deliquescence
+  // 7. Ambient atmosphere surface reactions: Na surface oxide tarnishing, Na dry burn glow, humid-air NaOH deliquescence & open CaO cooling carbonation
   const atmMode = options.environment?.atmosphereMode || 'air';
   if ((vessel.znCombustionTimer || 0) > 0) {
     vessel.znCombustionTimer = Math.max(0, vessel.znCombustionTimer - dt);
+  }
+  if ((vessel.naDryBurnTimer || 0) > 0) {
+    vessel.naDryBurnTimer = Math.max(0, vessel.naDryBurnTimer - dt);
+  }
+  const hasCoolingCaO =
+    (vessel.moles.CaO_s || 0) > 1e-6 &&
+    (vessel.moles.H2O_l || 0) < 1e-4 &&
+    vessel.tempK < 680;
+  if (atmMode === 'air' && !vessel.isStoppered && vessel.lidState !== 'closed' && hasCoolingCaO) {
+    // Freshly calcined quicklime left exposed in moist room air slowly re-absorbs H2O & CO2 when cooling!
+    if (vessel.calcinationStats) {
+      vessel.calcinationStats.cooledProtected = false;
+    }
+    const dReCarb = Math.min(vessel.moles.CaO_s, 0.00045 * dt);
+    if (dReCarb > 1e-10) {
+      vessel.moles.CaO_s -= dReCarb;
+      if (vessel.moles.CaO_s < 1e-13) delete vessel.moles.CaO_s;
+      vessel.moles.CaOH2_s = (vessel.moles.CaOH2_s || 0) + dReCarb * 0.55;
+      vessel.moles.CaCO3_s = (vessel.moles.CaCO3_s || 0) + dReCarb * 0.45;
+    }
+  } else if (vessel.calcinationStats && (vessel.lidState === 'closed' || atmMode === 'inert')) {
+    vessel.calcinationStats.cooledProtected = true;
   }
   const hasDryNa = (vessel.moles.Na_s || 0) > 1e-7 && (vessel.moles.H2O_l || 0) < 1e-4;
   const isOiled = strat.hasLightCover || (strat.lightOrganicMl || 0) > 0.05;

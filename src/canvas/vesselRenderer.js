@@ -235,25 +235,34 @@ function getDominantSyringeGasFormula(syringe, langCode) {
 /**
  * Trace the outer glass silhouette path directly from VesselGeometry profilePoints.
  */
-function traceVesselPath(ctx, spec, x, y) {
+function traceVesselPath(ctx, spec, x, y, sagFrac = 0) {
+  if (spec.isHorizontalTube) {
+    const hw = spec.width / 2;
+    const hh = spec.height / 2;
+    ctx.beginPath();
+    ctx.roundRect(x - hw, y - hh, spec.width, spec.height, 4);
+    return;
+  }
   const { pts, bottom, baseBottom } = mapProfileToCanvas(spec, x, y, 0);
   const lastIdx = pts.length - 1;
   const spoutLeftExtra = spec.shape === 'beaker' || spec.shape === 'cylinder' ? 3.5 : 0;
+  const sagPx = sagFrac > 0.01 ? sagFrac * 13.0 : 0;
 
   ctx.beginPath();
-  // Top-left rim -> descend left wall across bottom fillet -> cross base -> ascend right wall
+  // Top-left rim -> descend left wall across bottom fillet -> cross base (sags under high heat!) -> ascend right wall
   ctx.moveTo(x - pts[lastIdx].rx - spoutLeftExtra, pts[lastIdx].cy);
   for (let i = lastIdx - 1; i >= 0; i--) {
-    ctx.lineTo(x - pts[i].rx, pts[i].cy);
+    const droop = i <= 1 ? sagPx * (1 - i * 0.45) : 0;
+    ctx.lineTo(x - pts[i].rx, pts[i].cy + droop);
   }
-  if (spec.shape === 'test_tube') {
-    // Smooth curve through rounded pole at i = 0
-    ctx.lineTo(x + pts[0].rx, pts[0].cy);
+  if (sagPx > 0.2) {
+    ctx.quadraticCurveTo(x, pts[0].cy + sagPx * 1.45, x + pts[0].rx, pts[0].cy + sagPx);
   } else {
     ctx.lineTo(x + pts[0].rx, pts[0].cy);
   }
   for (let i = 1; i <= lastIdx; i++) {
-    ctx.lineTo(x + pts[i].rx, pts[i].cy);
+    const droop = i <= 1 ? sagPx * (1 - i * 0.45) : 0;
+    ctx.lineTo(x + pts[i].rx, pts[i].cy + droop);
   }
 
   // Graduated cylinder stable pedestal base foot
@@ -270,19 +279,33 @@ function traceVesselPath(ctx, spec, x, y) {
 /**
  * Trace closed interior liquid-clipping area directly from VesselGeometry profilePoints.
  */
-function traceVesselInteriorClip(ctx, spec, x, y) {
-  const pad = spec.shape === 'beaker' ? 2.6 : 2.1;
+function traceVesselInteriorClip(ctx, spec, x, y, sagFrac = 0) {
+  if (spec.isHorizontalTube) {
+    const hw = spec.width / 2 - 2.5;
+    const hh = spec.height / 2 - 2.5;
+    ctx.beginPath();
+    ctx.roundRect(x - hw, y - hh, hw * 2, hh * 2, 2.5);
+    return;
+  }
+  const pad = spec.shape === 'beaker' || spec.shape === 'crucible' ? 2.6 : 2.1;
   const { pts } = mapProfileToCanvas(spec, x, y, pad);
   const lastIdx = pts.length - 1;
+  const sagPx = sagFrac > 0.01 ? sagFrac * 12.0 : 0;
 
   ctx.beginPath();
   ctx.moveTo(x - pts[lastIdx].rx, pts[lastIdx].cy);
   for (let i = lastIdx - 1; i >= 0; i--) {
-    ctx.lineTo(x - pts[i].rx, pts[i].cy);
+    const droop = i <= 1 ? sagPx * (1 - i * 0.45) : 0;
+    ctx.lineTo(x - pts[i].rx, pts[i].cy + droop);
   }
-  ctx.lineTo(x + pts[0].rx, pts[0].cy);
+  if (sagPx > 0.2) {
+    ctx.quadraticCurveTo(x, pts[0].cy + sagPx * 1.4, x + pts[0].rx, pts[0].cy + sagPx);
+  } else {
+    ctx.lineTo(x + pts[0].rx, pts[0].cy);
+  }
   for (let i = 1; i <= lastIdx; i++) {
-    ctx.lineTo(x + pts[i].rx, pts[i].cy);
+    const droop = i <= 1 ? sagPx * (1 - i * 0.45) : 0;
+    ctx.lineTo(x + pts[i].rx, pts[i].cy + droop);
   }
   ctx.closePath();
 }
@@ -345,11 +368,15 @@ export function renderScale(ctx, item, isSelected, isDark, timeNow) {
 }
 
 export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
-  const spec = APPARATUS.burner;
+  const spec = APPARATUS[item.typeId] || APPARATUS.burner;
+  const isBunsen = item.typeId === 'bunsen_burner';
   const pal = getThemePalette(isDark);
   const { x, y } = item;
-  const powerW = item.powerW ?? (spec.powerLevelsW[item.flameLevel || 0] || 0);
-  const powerFrac = Math.max(0, Math.min(1, powerW / (spec.maxPowerW || 650)));
+  const airOpen = isBunsen ? item.airHoleOpen !== false : true;
+  const powerTbl = isBunsen && !airOpen ? spec.yellowPowerLevelsW : spec.powerLevelsW;
+  const powerW = item.powerW ?? (powerTbl[item.flameLevel || 0] || 0);
+  const maxRefW = isBunsen && !airOpen ? (spec.yellowPowerLevelsW[3] || 820) : (spec.maxPowerW || 650);
+  const powerFrac = Math.max(0, Math.min(1, powerW / maxRefW));
   const w = spec.width;
   const h = spec.height;
   const top = y - h / 2;
@@ -364,7 +391,114 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
     ctx.setLineDash([]);
   }
 
-  // Tripod stand + wire gauze
+  if (isBunsen) {
+    // Cast-iron heavy octagonal pedestal base + side brass gas hose barb
+    ctx.fillStyle = isDark ? '#334155' : '#475569';
+    ctx.strokeStyle = isDark ? '#64748b' : '#1e293b';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(x - 32, bottom - 12, 64, 12, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#d97706';
+    ctx.fillRect(x + 10, bottom - 22, 18, 5);
+
+    // Metallic burner barrel chimney up to nozzle (bottom - 68)
+    const barrelGrad = ctx.createLinearGradient(x - 7, 0, x + 7, 0);
+    barrelGrad.addColorStop(0, '#64748b');
+    barrelGrad.addColorStop(0.45, '#e2e8f0');
+    barrelGrad.addColorStop(1, '#475569');
+    ctx.fillStyle = barrelGrad;
+    ctx.fillRect(x - 6, bottom - 68, 12, 56);
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - 6, bottom - 68, 12, 56);
+
+    // Brass rotating Air Collar sleeve around lower barrel + visible circular air intake port when OPEN
+    ctx.fillStyle = '#d97706';
+    ctx.fillRect(x - 8, bottom - 30, 16, 12);
+    if (airOpen) {
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(x, bottom - 24, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    }
+
+    if (powerW > 0) {
+      const fBaseY = bottom - 68;
+      const scale = 0.65 + powerFrac * 1.15;
+      const wobble = Math.sin(timeNow * 24 + x) * (airOpen ? 0.9 : 2.6);
+      const fH = (airOpen ? 46 : 42) * scale;
+      const fW = (airOpen ? 9.5 : 12.5) * scale;
+
+      const isBeilstein = (item.beilsteinTimer || 0) > 0;
+      const isFlameTest = !isBeilstein && (item.flameTestTimer || 0) > 0 && item.flameTestColor;
+
+      const outerGrad = ctx.createLinearGradient(x, fBaseY, x, fBaseY - fH);
+      if (isBeilstein) {
+        outerGrad.addColorStop(0, 'rgba(16, 185, 129, 0.95)');
+        outerGrad.addColorStop(1, 'rgba(110, 231, 183, 0.08)');
+      } else if (isFlameTest) {
+        outerGrad.addColorStop(0, item.flameTestColor);
+        outerGrad.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
+      } else if (airOpen) {
+        outerGrad.addColorStop(0, 'rgba(37, 99, 235, 0.88)');
+        outerGrad.addColorStop(0.55, 'rgba(56, 189, 248, 0.56)');
+        outerGrad.addColorStop(1, 'rgba(139, 92, 246, 0.0)');
+      } else {
+        outerGrad.addColorStop(0, 'rgba(249, 115, 22, 0.88)');
+        outerGrad.addColorStop(0.45, 'rgba(250, 204, 21, 0.94)');
+        outerGrad.addColorStop(1, 'rgba(254, 240, 138, 0.0)');
+      }
+
+      // Outer mantle flame
+      ctx.beginPath();
+      ctx.moveTo(x - fW, fBaseY);
+      ctx.quadraticCurveTo(x - fW * 1.05, fBaseY - fH * 0.55, x + wobble, fBaseY - fH);
+      ctx.quadraticCurveTo(x + fW * 1.05, fBaseY - fH * 0.55, x + fW, fBaseY);
+      ctx.closePath();
+      ctx.fillStyle = outerGrad;
+      ctx.fill();
+
+      // Inner crisp reducing cone (sharp electric cyan cone at center of roaring Bunsen!)
+      if (airOpen && !isBeilstein && !isFlameTest) {
+        const coneH = fH * 0.54;
+        ctx.beginPath();
+        ctx.moveTo(x - fW * 0.52, fBaseY);
+        ctx.lineTo(x + wobble * 0.3, fBaseY - coneH);
+        ctx.lineTo(x + fW * 0.52, fBaseY);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(125, 211, 252, 0.95)';
+        ctx.fill();
+
+        // Highlight hottest oxidizing tip zone (~1500 °C) just above inner blue cone apex
+        ctx.fillStyle = 'rgba(224, 242, 254, 0.9)';
+        ctx.beginPath();
+        ctx.arc(x + wobble * 0.3, fBaseY - coneH - 2, 2.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      const flameBadge = isBeilstein
+        ? `🔥 ${Math.round(powerW)} W · CuCl₂*`
+        : isFlameTest
+        ? `🔥 ${Math.round(powerW)} W · ${item.flameTestIon}`
+        : `🔥 ${Math.round(powerW)} W · ${airOpen ? '~1400°C Blue' : '~800°C Yellow'}`;
+      drawLabelPill(ctx, x, bottom + 6, flameBadge, {
+        pal,
+        borderColor: airOpen ? '#38bdf8' : '#f59e0b',
+        font: '600 10.5px system-ui, sans-serif',
+        height: 18,
+      });
+    }
+    ctx.restore();
+    return;
+  }
+
+  // Tripod stand + wire gauze (Spirit Lamp burner)
   ctx.strokeStyle = pal.burnerMetal;
   ctx.lineWidth = 4;
   ctx.beginPath();
@@ -1504,7 +1638,8 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.restore();
   }
 
-  // Apply pour tilt + impact drop wobble + inverted orientation around vessel center
+  // Apply pour tilt + impact drop wobble + inverted orientation + molten sag deformation
+  const sagFrac = vessel.softenSagFrac || 0;
   const effTilt = (vessel.tiltAngle || 0) + (vessel.landingTilt || 0);
   if (effTilt || vessel.isInverted) {
     ctx.translate(x, y);
@@ -1513,26 +1648,39 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.translate(-x, -y);
   }
 
-  // Drop target glow ring
+  // Drop target glow ring or Borosilicate high-T softening crimson thermal glow
   if (isDropTarget) {
     ctx.shadowColor = '#10b981';
     ctx.shadowBlur = 18;
+  } else if ((vessel.softenGlowFrac || 0) > 0.08) {
+    ctx.shadowColor = `rgba(249, 115, 22, ${Math.min(0.95, 0.35 + vessel.softenGlowFrac * 0.6).toFixed(2)})`;
+    ctx.shadowBlur = 14 + vessel.softenGlowFrac * 12;
   } else if (isSelected) {
     ctx.shadowColor = '#3b82f6';
     ctx.shadowBlur = 12;
   }
 
-  // Draw porcelain opaque interior glaze for dishes/mortars, or subtle glass interior fill
+  // Draw porcelain opaque interior glaze for dishes/mortars/crucibles, or glass interior fill
   ctx.save();
-  traceVesselInteriorClip(ctx, spec, x, y);
-  const isPorcelain = spec.shape === 'dish' || spec.shape === 'mortar';
+  traceVesselInteriorClip(ctx, spec, x, y, sagFrac);
+  const isPorcelain = spec.shape === 'dish' || spec.shape === 'mortar' || spec.shape === 'crucible';
   ctx.fillStyle = isPorcelain
     ? isDark
-      ? 'rgba(241, 245, 249, 0.72)'
-      : 'rgba(255, 255, 255, 0.92)'
+      ? 'rgba(241, 245, 249, 0.78)'
+      : 'rgba(255, 255, 255, 0.94)'
     : pal.glassFill;
   ctx.fill();
   ctx.clip();
+
+  // Horizontal Fused Quartz Combustion Tube glowing hot center furnace zone when heated
+  if (spec.isHorizontalTube && vessel.tempK >= 650) {
+    const heatG = Math.min(1, (vessel.tempK - 650) / 850);
+    const qGrad = ctx.createRadialGradient(x, y, 6, x, y, 52);
+    qGrad.addColorStop(0, `rgba(251, 146, 60, ${(0.35 * heatG).toFixed(2)})`);
+    qGrad.addColorStop(1, 'rgba(251, 146, 60, 0)');
+    ctx.fillStyle = qGrad;
+    ctx.fillRect(x - w / 2, y - h / 2, w, h);
+  }
 
   // Compute liquid & solid levels calibrated to VesselGeometry slice profile
   const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
@@ -1890,18 +2038,70 @@ export function renderVessel(ctx, vessel, opts) {
 
   ctx.restore(); // Remove clip
 
-  // Draw glass outer silhouette + ISO reinforced wall feel
+  // Draw glass outer silhouette + ISO reinforced wall + red-orange thermal softening sag
   ctx.shadowBlur = 0;
-  traceVesselPath(ctx, spec, x, y);
+  traceVesselPath(ctx, spec, x, y, sagFrac);
+  const softenG = vessel.softenGlowFrac || 0;
   ctx.strokeStyle = vessel.isShattered
     ? '#ef4444'
+    : softenG > 0.25
+    ? `rgb(249, ${Math.max(60, Math.round(160 - softenG * 100))}, 22)`
     : isDropTarget
     ? '#10b981'
     : isSelected
     ? '#3b82f6'
     : pal.glassStroke;
-  ctx.lineWidth = isSelected || isDropTarget ? 2.5 : spec.wallThicknessMm >= 1.1 || spec.shape === 'dish' || spec.shape === 'mortar' ? 2.3 : 1.75;
+  ctx.lineWidth = isSelected || isDropTarget ? 2.5 : spec.wallThicknessMm >= 1.1 || spec.shape === 'dish' || spec.shape === 'mortar' || spec.shape === 'crucible' ? 2.3 : 1.75;
   ctx.stroke();
+
+  // Horizontal Fused Quartz Tube open left/right double-walled fused-silica refractive highlights + silicone bung
+  if (spec.isHorizontalTube) {
+    ctx.strokeStyle = pal.glassHighlight;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.44, y - h * 0.34);
+    ctx.lineTo(x + w * 0.44, y - h * 0.34);
+    ctx.stroke();
+    if (vessel.isStoppered && !vessel.isShattered) {
+      const dirQ = vessel.flippedX ? -1 : 1;
+      const sxQ = x + dirQ * (w / 2 - 1);
+      ctx.fillStyle = '#334155';
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(sxQ - 5, y - h * 0.42, 10, h * 0.84, 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  // Removable Stepped Porcelain Crucible Lid (`open` = off to side | `ajar` = crooked venting CO2 | `closed` = sealed)
+  if (spec.hasLid && !vessel.isShattered) {
+    const lState = vessel.lidState || 'open';
+    ctx.save();
+    if (lState === 'closed' || lState === 'ajar') {
+      const shiftX = lState === 'ajar' ? 8 : 0;
+      const shiftY = lState === 'ajar' ? -4 : 0;
+      const tilt = lState === 'ajar' ? 0.22 : 0;
+      ctx.translate(x + shiftX, top + shiftY);
+      if (tilt) ctx.rotate(tilt);
+      ctx.fillStyle = isDark ? '#e2e8f0' : '#ffffff';
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.50, 0);
+      ctx.quadraticCurveTo(0, -11, w * 0.50, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Knob ring handle at crown
+      ctx.beginPath();
+      ctx.arc(0, -8, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   // Porcelain Pestle resting inside Mortar & Pestle (animates grinding circle on crush)
   if (spec.isMortar) {
@@ -2054,8 +2254,24 @@ export function renderVessel(ctx, vessel, opts) {
     }
   }
 
-  // Rubber stopper on narrow-neck vessels sized proportionally to neck ID
-  if (vessel.isStoppered && !vessel.isShattered) {
+  // Comparison mode selection tag pill (⚖️ A / B / C)
+  if (vessel.compareTag && !vessel.isShattered) {
+    ctx.save();
+    const tagCol = vessel.compareColor || '#38bdf8';
+    ctx.fillStyle = tagCol;
+    ctx.beginPath();
+    ctx.roundRect(x - w / 2 - 4, top - 16, 26, 15, 5);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 9.5px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`⚖️${vessel.compareTag}`, x - w / 2 + 9, top - 8.5);
+    ctx.restore();
+  }
+
+  // Rubber stopper on narrow-neck vessels sized proportionally to neck ID (skip horizontal quartz tubes handled separately)
+  if (vessel.isStoppered && !vessel.isShattered && !spec.isHorizontalTube) {
     const stopTop = Math.max(12, (spec.neckRadius || 18) + 1.5);
     const stopBot = Math.max(9, (spec.neckRadius || 18) - 2.5);
     ctx.fillStyle = '#334155';

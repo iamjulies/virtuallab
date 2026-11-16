@@ -251,8 +251,8 @@ export class ParticleSystem {
     const surfaceY = geom.surfaceY;
     const halfW = Math.max(6, geom.surfaceHalfWPx || spec.width * 0.34);
 
-    // 1. Gas bubbles (H2 / O2) inside liquid
-    const gasIntensity = metrics.gasRateH2 + metrics.gasRateO2;
+    // 1. Gas bubbles (H2 / O2 / CO2) inside liquid
+    const gasIntensity = metrics.gasRateH2 + metrics.gasRateO2 + (metrics.gasRateCO2 || 0);
     if (gasIntensity > 1e-6 && liqMl > 0.2) {
       const spawnRate = Math.min(95, 10 + Math.log10(1 + gasIntensity * 5000) * 28);
       const count = Math.floor(spawnRate * dt) + (Math.random() < (spawnRate * dt) % 1 ? 1 : 0);
@@ -462,6 +462,70 @@ export class ParticleSystem {
           life: 0,
           maxLife: 0.35 + Math.random() * 0.25,
           color: '#fef08a',
+        });
+      }
+    }
+
+    // 4b. Dry Sodium auto-ignition in Air/O2: 589 nm vivid yellow flame & white peroxide mist
+    if (metrics.naDryBurning && !vessel.isStoppered) {
+      if (Math.random() < 0.85) {
+        this.particles.push({
+          kind: 'flame',
+          x: vessel.x + (Math.random() - 0.5) * 12,
+          y: bottomY - 5,
+          vx: (Math.random() - 0.5) * 18,
+          vy: -(28 + Math.random() * 34),
+          r: 5.0 + Math.random() * 5.0,
+          life: 0,
+          maxLife: 0.22 + Math.random() * 0.14,
+          color: Math.random() < 0.65 ? '#fde047' : '#fb923c',
+        });
+      }
+      if (Math.random() < 0.55) {
+        this.particles.push({
+          kind: 'gas_cloud',
+          x: vessel.x + (Math.random() - 0.5) * 14,
+          y: bottomY - 12,
+          vx: (Math.random() - 0.5) * 14,
+          vy: -(30 + Math.random() * 24),
+          phase: Math.random() * Math.PI * 2,
+          r: 5.5 + Math.random() * 4,
+          growR: 12,
+          life: 0,
+          maxLife: 1.2 + Math.random() * 0.5,
+          color: this.isDark ? 'rgba(254, 240, 138, 0.32)' : 'rgba(202, 138, 4, 0.25)',
+        });
+      }
+    }
+
+    // 4c. Zinc combustion flame (characteristic pale bluish-cyan vapor flame + dense billowing white ZnO smoke!)
+    if (metrics.znBurning && !vessel.isStoppered) {
+      if (Math.random() < 0.82) {
+        this.particles.push({
+          kind: 'flame',
+          x: vessel.x + (Math.random() - 0.5) * 14,
+          y: bottomY - 5,
+          vx: (Math.random() - 0.5) * 14,
+          vy: -(24 + Math.random() * 28),
+          r: 4.5 + Math.random() * 4.5,
+          life: 0,
+          maxLife: 0.20 + Math.random() * 0.14,
+          color: Math.random() < 0.65 ? '#67e8f9' : '#a7f3d0',
+        });
+      }
+      if (Math.random() < 0.72) {
+        this.particles.push({
+          kind: 'gas_cloud',
+          x: vessel.x + (Math.random() - 0.5) * 16,
+          y: bottomY - 14,
+          vx: (Math.random() - 0.5) * 16,
+          vy: -(34 + Math.random() * 28),
+          phase: Math.random() * Math.PI * 2,
+          r: 7 + Math.random() * 5,
+          growR: 16,
+          life: 0,
+          maxLife: 1.45 + Math.random() * 0.6,
+          color: this.isDark ? 'rgba(248, 250, 252, 0.42)' : 'rgba(148, 163, 184, 0.38)',
         });
       }
     }
@@ -1139,13 +1203,24 @@ export class ParticleSystem {
       ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
 
       if (p.kind === 'bubble') {
+        const grad = ctx.createRadialGradient(p.x - p.r * 0.35, p.y - p.r * 0.35, p.r * 0.1, p.x, p.y, p.r);
+        grad.addColorStop(0, 'rgba(255, 255, 255, 0.92)');
+        grad.addColorStop(0.55, p.color);
+        grad.addColorStop(1, 'rgba(186, 230, 253, 0.38)');
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
+        ctx.fillStyle = grad;
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-        ctx.lineWidth = 0.8;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.lineWidth = Math.max(0.55, p.r * 0.24);
         ctx.stroke();
+        // Crisp optical specular meniscus glint inside bubble
+        if (p.r >= 1.3) {
+          ctx.beginPath();
+          ctx.arc(p.x - p.r * 0.32, p.y - p.r * 0.32, Math.max(0.4, p.r * 0.25), 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+          ctx.fill();
+        }
       } else if (p.kind === 'mist') {
         ctx.globalAlpha = Math.max(0, Math.min(1, alpha * (p.alphaScale ?? 1)));
         ctx.beginPath();

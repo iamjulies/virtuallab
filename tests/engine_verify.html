@@ -17,7 +17,7 @@
   <pre id="details"></pre>
 
   <script type="module">
-    import { CONSTANTS, nonVolatileSoluteMoles, solutionBoilingPointK, waterBoilingPointK } from '../src/data/constants.js';
+    import { CONSTANTS, calcCaCO3EqPressureAtm, nonVolatileSoluteMoles, solutionBoilingPointK, waterBoilingPointK } from '../src/data/constants.js';
     import {
       APPARATUS,
       APPARATUS_ORDER,
@@ -51,10 +51,14 @@
     import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod } from '../src/canvas/toolRenderer.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
     import { DosingModal } from '../src/ui/dosingModal.js';
+    import { ComparisonPanel } from '../src/ui/comparisonPanel.js';
     import {
+      computeCaOOptimizationScore,
       enforceDryPhaseBoundary,
       getEffectiveRateConstant,
+      getNaIgnitionTempK,
       getVesselEffectiveO2Bar,
+      getZnIgnitionTempK,
       stepLiquidLiquidPartition,
       stepVesselChemistry,
       validateVesselInvariants,
@@ -1852,10 +1856,11 @@
       const aqLeft = Object.entries(dryCheck).filter(([id, n]) => SPECIES[id]?.phase === 'aq' && n > 1e-10);
 
       assert(
-        'v2 Registry & dry conservation: 10 starter reagents incl. nh3_25 & h2o2_30, dynamic nonVolatileSoluteMoles excludes NH3_aq, dry NH4Cl & H2O2 decomposition clean',
+        'v2/v3 Registry & dry conservation: 11 starter reagents incl. nh3_25, h2o2_30 & caco3, dynamic nonVolatileSoluteMoles excludes NH3_aq, dry NH4Cl & H2O2 decomposition clean',
         hasNh3 &&
           hasH2O2 &&
-          STARTER_REAGENTS.length === 10 &&
+          STARTER_REAGENTS.some(r => r.id === 'caco3') &&
+          STARTER_REAGENTS.length === 11 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2106,8 +2111,8 @@
           badgeCustomEn === 'Non-standard' &&
           badgeCryoEn === '❄️ Cryo' &&
           badgeCryoVi === '❄️ Cryo' &&
-          I18N.vi.appSubtitle.includes('virlab_v2+') &&
-          I18N.en.appSubtitle.includes('virlab_v2+') &&
+          I18N.vi.appSubtitle.includes('virlab_beta_v3+') &&
+          I18N.en.appSubtitle.includes('virlab_beta_v3+') &&
           I18N.vi.reg_cuso4_5h2o.includes('Copper(II)'),
         `min=${minAttr}, badges=${badgeSatp}|${badgeCustomEn}|${badgeCryoEn}|${badgeCryoVi}, subVi=${I18N.vi.appSubtitle}`
       );
@@ -2423,7 +2428,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_v2+build.10';
+      const expectedBuild = 'virlab_beta_v3+build.1';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2441,10 +2446,19 @@
         Boolean(I18N.vi.alertUnpurgedH2O2 && I18N.en.alertUnpurgedH2O2) &&
         Boolean(I18N.vi.alertZnCombustionO2 && I18N.en.alertZnCombustionO2) &&
         Boolean(I18N.vi.presetCuoH2Reduction && I18N.en.presetCuoH2Reduction) &&
-        Boolean(I18N.vi.presetZnBurnO2 && I18N.en.presetZnBurnO2);
+        Boolean(I18N.vi.presetZnBurnO2 && I18N.en.presetZnBurnO2) &&
+        Boolean(I18N.vi.reg_caco3 && I18N.en.reg_caco3) &&
+        Boolean(I18N.vi.eq_bunsen_burner && I18N.en.eq_bunsen_burner) &&
+        Boolean(I18N.vi.eq_crucible_porcelain && I18N.en.eq_crucible_porcelain) &&
+        Boolean(I18N.vi.eq_quartz_tube && I18N.en.eq_quartz_tube) &&
+        Boolean(I18N.vi.eq_crucible_tongs && I18N.en.eq_crucible_tongs) &&
+        Boolean(I18N.vi.alertGlassSoftenMelt && I18N.en.alertGlassSoftenMelt) &&
+        Boolean(I18N.vi.alertCo2Extinguish && I18N.en.alertCo2Extinguish) &&
+        Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
+        Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_v2+build.10 parity: All 27 apparatus translated in VI/EN, all Prompt 18/19/20 keys present, IUPAC spellings enforced',
-        APPARATUS_ORDER.length === 27 &&
+        'Build virlab_beta_v3+build.1 parity: All 32 apparatus translated in VI/EN, all beta_v3 keys present, IUPAC spellings enforced',
+        APPARATUS_ORDER.length === 32 &&
           allTranslated &&
           newKeysPresent &&
           I18N.vi.appSubtitle.includes(expectedBuild) &&
@@ -4170,6 +4184,297 @@
           badHits.length === 0 &&
           Boolean(SPECIES.ZnO_s && SPECIES.ZnO_s.hotColor),
         `presetsOK=${allPresetsOk}, badIUPAC=${badHits.length}${badHits[0] ? `(${badHits[0].slice(0, 40)})` : ''}, ZnO_hot=${SPECIES.ZnO_s?.hotColor}`
+      );
+    }
+
+    // TEST 91: Sprint 1 CaCO3(s) Reversible Calcination (P_eq Equilibrium, Lid Le Chatelier, Grind Surface Kinetics & 4-Point CaO Rubric)
+    {
+      const pEq700C = calcCaCO3EqPressureAtm(973.15);
+      const pEq1000C = calcCaCO3EqPressureAtm(1273.15);
+
+      // A: Ground CaCO3 in ajar porcelain crucible heated on roaring blue Bunsen converts rapidly to CaO
+      const simA = new LabSimulation();
+      const bn = simA.createApparatus('bunsen_burner', 220, 428);
+      bn.airHoleOpen = true;
+      simA.setBurnerFlame(bn.id, 3);
+      simA.createApparatus('clay_triangle', 220, 396);
+      const crucFine = simA.createApparatus('crucible_porcelain', 220, 366);
+      crucFine.lidState = 'ajar';
+      simA.addReagentToVessel(crucFine.id, 'caco3', 3.0, { fine: true, silentAnim: true, silentEmit: true });
+      crucFine.groundPowderMap.CaCO3_s = true;
+      crucFine.particleCounts.CaCO3_s = 900;
+      crucFine.tempK = 1480;
+      simA.updateSupportAttachments();
+      stepSeconds(simA, 6.0, 0.05);
+
+      const fineCaOMol = crucFine.moles.CaO_s || 0;
+      // Close lid and cool to 320 K -> protected score 4/4!
+      crucFine.lidState = 'closed';
+      crucFine.tempK = 320;
+      stepSeconds(simA, 0.5, 0.05);
+      const caoScoreFine = computeCaOOptimizationScore(crucFine);
+
+      // B: Coarse CaCO3 in tightly closed crucible builds high CO2 partial pressure -> inhibited conversion
+      const simB = new LabSimulation();
+      const bnB = simB.createApparatus('bunsen_burner', 220, 428);
+      bnB.airHoleOpen = true;
+      simB.setBurnerFlame(bnB.id, 3);
+      const crucClosed = simB.createApparatus('crucible_porcelain', 220, 366);
+      crucClosed.lidState = 'closed';
+      simB.addReagentToVessel(crucClosed.id, 'caco3', 3.0, { fine: false, silentAnim: true, silentEmit: true });
+      crucClosed.particleCounts.CaCO3_s = 3;
+      crucClosed.tempK = 1380;
+      simB.updateSupportAttachments();
+      stepSeconds(simB, 6.0, 0.05);
+      const closedCaOMol = crucClosed.moles.CaO_s || 0;
+
+      assert(
+        'Sprint 1 CaCO3 Calcination: P_eq(1000°C)>1 atm > P_eq(700°C), vented ground CaCO3 out-yields closed coarse, 4-point rubric achieves 4/4 on cooled sealed crucible',
+        pEq700C < 0.1 &&
+          pEq1000C > 1.2 &&
+          fineCaOMol > 0.012 &&
+          fineCaOMol > closedCaOMol * 1.4 &&
+          caoScoreFine?.points === 4 &&
+          validateVesselInvariants(crucFine).valid &&
+          validateVesselInvariants(crucClosed).valid,
+        `pEq700=${pEq700C.toFixed(3)}, pEq1000=${pEq1000C.toFixed(2)}, fineCaO=${(fineCaOMol*1000).toFixed(2)}mmol, closedCaO=${(closedCaOMol*1000).toFixed(2)}mmol, score=${caoScoreFine?.points}/4`
+      );
+    }
+
+    // TEST 92: CaO Slaking -> Limewater Turbidity (CaCO3↓) -> Excess CO2 Clear Ca(HCO3)2 -> Boil Re-Precipitate + Dense CO2 Extinguish
+    {
+      const simL = new LabSimulation();
+      // A: CaO slakes with H2O exothermically -> Ca(OH)2
+      const vSlake = simL.createApparatus('beaker_250', 180, 427);
+      vSlake.moles = { CaO_s: 0.05, H2O_l: 2.5 };
+      const tBeforeSlake = vSlake.tempK;
+      stepSeconds(simL, 1.5, 0.05);
+      const tAfterSlake = vSlake.tempK;
+      const caoh2Formed = (vSlake.moles.CaOH2_s || 0) + (vSlake.moles.Ca2_aq || 0);
+
+      // B: Limewater bubbling CO2 -> precipitate white CaCO3(s), then excess CO2 redissolves into clear Ca(HCO3)2, then heat re-precipitates!
+      const vLime = simL.createApparatus('beaker_250', 420, 427);
+      vLime.moles = { H2O_l: 3.0, Ca2_aq: 0.008, OH_aq: 0.016 };
+      vLime.headspaceGasMoles.CO2_g = 0.007;
+      stepSeconds(simL, 2.5, 0.05);
+      const pptStage1 = vLime.moles.CaCO3_s || 0;
+
+      // Pump excess CO2
+      vLime.headspaceGasMoles.CO2_g = 0.04;
+      stepSeconds(simL, 4.0, 0.05);
+      const pptAfterExcess = vLime.moles.CaCO3_s || 0;
+      const bicarbAq = vLime.moles.HCO3_aq || 0;
+
+      // Heat clear Ca(HCO3)2(aq) near boiling -> decomposes & re-precipitates CaCO3(s)↓
+      vLime.tempK = 368;
+      stepSeconds(simL, 3.5, 0.05);
+      const pptReheated = vLime.moles.CaCO3_s || 0;
+
+      // C: Dense CO2 jar extinguishes glowing/burning splint cleanly
+      let co2AlertSeen = false;
+      simL.visualHooks.onAlert = (type) => {
+        if (type === 'co2_extinguish') co2AlertSeen = true;
+      };
+      const vCo2Jar = simL.createApparatus('beaker_250', 650, 427);
+      vCo2Jar.headspaceGasMoles.CO2_g = 0.025;
+      const splint = simL.createApparatus('splint', 650, 388);
+      splint.mode = 'burning';
+      stepSeconds(simL, 0.4, 0.05);
+
+      assert(
+        'CaO exothermic slaking, Limewater CO2 cloudiness -> excess CO2 dissolution -> heat re-precipitation & dense CO2 extinguishes burning splint',
+        tAfterSlake > tBeforeSlake + 3 &&
+          caoh2Formed > 0.02 &&
+          pptStage1 > 0.002 &&
+          pptAfterExcess < pptStage1 * 0.45 &&
+          bicarbAq > 0.004 &&
+          pptReheated > pptAfterExcess + 0.001 &&
+          splint.mode === 'unlit' &&
+          co2AlertSeen,
+        `ΔT_slake=${(tAfterSlake - tBeforeSlake).toFixed(1)}K, CaCO3_1=${(pptStage1*1000).toFixed(2)}mmol, excess=${(pptAfterExcess*1000).toFixed(2)}, reheat=${(pptReheated*1000).toFixed(2)}, splint=${splint.mode}(alert=${co2AlertSeen})`
+      );
+    }
+
+    // TEST 93: Borosilicate Glass Bunsen Softening -> Sag -> Melt-Through Shatter vs Porcelain Crucible & Quartz Tube Survival
+    {
+      let meltLogged = false;
+      const simG = new LabSimulation();
+      // Borosilicate beaker directly on open-collar high Bunsen softens & melts
+      const bnGlass = simG.createApparatus('bunsen_burner', 220, 428);
+      bnGlass.airHoleOpen = true;
+      simG.setBurnerFlame(bnGlass.id, 3);
+      const beakerGlass = simG.createApparatus('beaker_250', 220, 329);
+      simG.updateSupportAttachments();
+      let sawSoftGlow = false;
+      let sawSag = false;
+      for (let i = 0; i < 520; i++) {
+        simG.step(0.05);
+        if ((beakerGlass.softenGlowFrac || 0) > 0.15) sawSoftGlow = true;
+        if ((beakerGlass.softenSagFrac || 0) > 0.08) sawSag = true;
+        if (beakerGlass.isShattered) break;
+      }
+      meltLogged = simG.logs.some(l => l.key === 'alertGlassSoftenMelt');
+
+      // Quartz Tube on identical roaring Bunsen reaches >= 1150 K with zero softening/melt failure
+      const bnQz = simG.createApparatus('bunsen_burner', 560, 428);
+      bnQz.airHoleOpen = true;
+      simG.setBurnerFlame(bnQz.id, 3);
+      const qTube = simG.createApparatus('quartz_tube', 560, 360);
+      simG.addReagentToVessel(qTube.id, 'caco3', 2.0, { fine: true, silentAnim: true, silentEmit: true });
+      simG.updateSupportAttachments();
+      stepSeconds(simG, 24.0, 0.05);
+
+      assert(
+        'Borosilicate on open Bunsen glows red -> sags -> melts & triggers alertGlassSoftenMelt; Quartz Tube safely surpasses 1150 K with CaCO3 decomposition intact',
+        sawSoftGlow &&
+          sawSag &&
+          beakerGlass.isShattered &&
+          beakerGlass.isMoltenMelted &&
+          meltLogged &&
+          !qTube.isShattered &&
+          qTube.tempK > 1150 &&
+          (qTube.moles.CaO_s || 0) > 0.002,
+        `glow=${sawSoftGlow}, sag=${sawSag}, melt=${meltLogged}, qShat=${qTube.isShattered}, glassFail=${beakerGlass.isShattered}/${beakerGlass.isMoltenMelted}, quartzT=${qTube.tempK.toFixed(0)}K, qCaO=${((qTube.moles.CaO_s||0)*1000).toFixed(2)}mmol, logs=${simG.logs.map(l=>l.key).join('|')}`
+      );
+    }
+
+    // TEST 94: Na & Zn Size/Humidity Ignition -> Na2O2 + Cyan Zn Flame & 2-Step [Cu(NH3)4]2+ / [Zn(NH3)4]2+ Complexes
+    {
+      const naFineIgnT = getNaIgnitionTempK({ moles: { Na_s: 0.01 }, particleCounts: { Na_s: 600 }, groundPowderMap: { Na_s: true } }, 0.21, true);
+      const naBulkIgnT = getNaIgnitionTempK({ moles: { Na_s: 0.12 }, particleCounts: { Na_s: 1 }, naTarnishFrac: 0.5 }, 0.21, false);
+      const znFineAirT = getZnIgnitionTempK({ moles: { Zn_s: 0.05 }, particleCounts: { Zn_s: 800 }, groundPowderMap: { Zn_s: true } }, 0.21);
+      const znBulkAirT = getZnIgnitionTempK({ moles: { Zn_s: 0.08 }, particleCounts: { Zn_s: 2 } }, 0.21);
+
+      const simM = new LabSimulation();
+      const vNa = simM.createApparatus('porcelain_dish', 180, 427);
+      vNa.moles = { Na_s: 0.04 };
+      vNa.tempK = 600;
+      vNa.particleCounts.Na_s = 12;
+      const vZn = simM.createApparatus('porcelain_dish', 400, 427);
+      vZn.moles = { Zn_s: 0.04 };
+      vZn.tempK = 850;
+      vZn.particleCounts.Zn_s = 800;
+      vZn.groundPowderMap.Zn_s = true;
+      stepSeconds(simM, 1.5, 0.05);
+
+      const na2o2Made = vNa.moles.Na2O2_s || 0;
+      const znOFromCyan = vZn.moles.ZnO_s || 0;
+      const znFlameOk = vZn.znFlameColor === 'cyan_blue';
+
+      // Two-step Cu2+ -> Cu(OH)2↓ -> excess NH3 -> [Cu(NH3)4]2+ (and Zn2+ -> Zn(OH)2 -> [Zn(NH3)4]2+)
+      const vCu = simM.createApparatus('beaker_250', 620, 427);
+      vCu.moles = { H2O_l: 2.0, Cu2_aq: 0.015, SO4_2_aq: 0.015, NH3_aq: 0.03 };
+      stepSeconds(simM, 0.6, 0.05);
+      const cuoh2Mid = vCu.moles.CuOH2_s || 0;
+      vCu.moles.NH3_aq = (vCu.moles.NH3_aq || 0) + 0.16;
+      stepSeconds(simM, 0.8, 0.05);
+      const cuAmmineEnd = vCu.moles.CuNH3_4_2_aq || 0;
+      const cuoh2End = vCu.moles.CuOH2_s || 0;
+
+      const vZnAm = simM.createApparatus('beaker_250', 800, 427);
+      vZnAm.moles = { H2O_l: 2.0, ZnOH2_s: 0.01, NH3_aq: 0.12 };
+      stepSeconds(simM, 0.8, 0.05);
+      const znAmmineEnd = vZnAm.moles.ZnNH3_4_2_aq || 0;
+
+      assert(
+        'Size-dependent Na/Zn auto-ignition (Na2O2 + cyan-blue Zn flame) and 2-step Cu(OH)2->[Cu(NH3)4]2+ & [Zn(NH3)4]2+ complexation verified',
+        naFineIgnT < naBulkIgnT - 120 &&
+          znFineAirT < znBulkAirT - 200 &&
+          na2o2Made > 0.002 &&
+          znOFromCyan > 0.005 &&
+          znFlameOk &&
+          cuoh2Mid > 0.005 &&
+          cuAmmineEnd > 0.008 &&
+          cuoh2End < 0.002 &&
+          znAmmineEnd > 0.003,
+        `NaIgn=${naFineIgnT.toFixed(0)}<${naBulkIgnT.toFixed(0)}, ZnIgn=${znFineAirT.toFixed(0)}<${znBulkAirT.toFixed(0)}, Na2O2=${(na2o2Made*1000).toFixed(2)}, cyanZn=${znFlameOk}(${(znOFromCyan*1000).toFixed(1)}), CuOH2=${(cuoh2Mid*1000).toFixed(1)}->${(cuoh2End*1000).toFixed(1)}->Amm=${(cuAmmineEnd*1000).toFixed(1)}, ZnAmm=${(znAmmineEnd*1000).toFixed(1)}`
+      );
+    }
+
+    // TEST 95: Multi-Vessel Compare Mode (Rate Factors + Corrosion) & Zoom Loupe Camera Transform
+    {
+      const simCmp = new LabSimulation();
+      simCmp.setupPreset('compare_rate_factors');
+      stepSeconds(simCmp, 0.8, 0.05);
+      const [vCoarse, vFine, vHot] = simCmp.compareVesselIds.map(id => simCmp.getItem(id));
+      const rateCoarse = vCoarse?.lastTotalRateMolS || 0;
+      const rateFine = vFine?.lastTotalRateMolS || 0;
+      const rateHot = vHot?.lastTotalRateMolS || 0;
+
+      const rootDiv = document.createElement('div');
+      document.body.appendChild(rootDiv);
+      const cmpPanel = new ComparisonPanel(rootDiv, simCmp);
+      cmpPanel.setOpen(true);
+      cmpPanel.render(true);
+      const cardCount = rootDiv.querySelectorAll('.compare-card').length;
+      const chartCanvasOk = Boolean(rootDiv.querySelector('#compare-chart-canvas'));
+      rootDiv.remove();
+
+      // Zoom Loupe camera & inverse pointer mapping test
+      const cWrap = document.createElement('div');
+      cWrap.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:448px;pointer-events:none;opacity:0.01;';
+      const cvs = document.createElement('canvas');
+      cvs.style.cssText = 'width:800px;height:448px;display:block;';
+      cWrap.appendChild(cvs);
+      document.body.appendChild(cWrap);
+      const ptcl = new ParticleSystem();
+      const wb = new LabWorkbenchCanvas(cvs, simCmp, ptcl);
+      wb.resize();
+      wb.toggleZoomMode(true);
+      wb.setZoomView(3.0, 260, 320);
+      const zState = wb.getZoomState();
+      const r = cvs.getBoundingClientRect();
+      const midPt = wb.clientToLogical(r.left + r.width / 2, r.top + r.height / 2);
+      wb.pointerLogical = { x: 400, y: 300 };
+      wb.setZoomView(1.0);
+      wb.render(1.0); // Renders including circular 2.6x optical loupe pass
+      cWrap.remove();
+
+      assert(
+        'Multi-vessel Compare Mode (rate factors, 3 cards + canvas chart) & Magnifier Loupe 3.0x camera centering work cleanly',
+        simCmp.compareVesselIds.length === 3 &&
+          rateFine > rateCoarse &&
+          rateHot > rateCoarse &&
+          cardCount === 3 &&
+          chartCanvasOk &&
+          Math.abs(zState.zoomScale - 3.0) < 0.01 &&
+          Math.abs(midPt.x - 260) < 3 &&
+          Math.abs(midPt.y - 320) < 3,
+        `rates=(${(rateCoarse*1000).toFixed(2)}, ${(rateFine*1000).toFixed(2)}, ${(rateHot*1000).toFixed(2)}), cards=${cardCount}, mid=(${midPt.x.toFixed(1)},${midPt.y.toFixed(1)})`
+      );
+    }
+
+    // TEST 96: Complete virlab_beta_v3+build.1 Presets & Corrosion Comparison Integrity + Full IUPAC Audit
+    {
+      const beta3Presets = [
+        'cu_ammine_complex',
+        'compare_rate_factors',
+        'compare_corrosion',
+        'caco3_calcination_limewater',
+      ];
+      let ok = true;
+      for (const pk of beta3Presets) {
+        const s = new LabSimulation();
+        s.setupPreset(pk);
+        if (s.items.length < 1) ok = false;
+        for (const it of s.items) {
+          if (it.kind === 'vessel' && !validateVesselInvariants(it).valid) ok = false;
+        }
+      }
+      const simCorr = new LabSimulation();
+      simCorr.setupPreset('compare_corrosion');
+      stepSeconds(simCorr, 2.0, 0.05);
+      const vm = simCorr.items.find(i => i.kind === 'volt_ammeter');
+      const galvanicActive = vm && (vm.measuredV || 0) > 0.05 && (vm.measuredCurrentA || 0) > 0.1;
+
+      const viTexts = [...Object.values(I18N.vi), ...REACTIONS.map(r => `${r.nameVi || ''} ${r.descVi || ''}`)];
+      const forbiddenChemRegex = /\b(kẽm|natri|canxi|hiđro|nitơ|agon|cacbonat|hiđroxit|clorua)\b|\bkhí oxi\b|\boxi\b(?!\s*hóa)|kim loại (đồng|bạc)|bạc (xốp|kim loại)/i;
+      const badHits = viTexts.filter(txt => forbiddenChemRegex.test(txt));
+
+      assert(
+        'All 4 virlab_beta_v3+build.1 presets (ammine, rate compare, galvanic corrosion compare, CaCO3 calcination) & strict IUPAC VI/EN audit pass 100%',
+        ok && galvanicActive && badHits.length === 0,
+        `presetsOK=${ok}, corrV=${vm?.measuredV?.toFixed(2)}, corrI=${vm?.measuredCurrentA?.toFixed(3)}, badIUPAC=${badHits.length}${badHits[0] ? `(${badHits[0].slice(0, 40)})` : ''}`
       );
     }
 

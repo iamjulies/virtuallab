@@ -64,9 +64,24 @@ export const CONSTANTS = {
   TUBING_INNER_DIAMETER_MM: 6.0,     // Fixed 6.0 mm inner bore silicone/rubber delivery tubing
   GRAVITY_PX_S2: 1800.0,             // Workbench gravitational acceleration (px/s^2)
 
+  // Physical combustion, glassware softening & equilibrium thresholds
+  R_ATM_L_MOL_K: 0.082057366,        // Ideal gas constant (L·atm/(mol·K))
+  BOROSILICATE_SOFTEN_K: 1093.15,    // ~820 °C borosilicate 3.3 softening threshold
+  BOROSILICATE_MELT_FAIL_K: 1153.15, // ~880 °C molten sag breach on sustained Bunsen flame
+  CACO3_DECOMP_DELTA_H_J: 178300,    // +178.3 kJ/mol standard enthalpy of calcination
+
   // Numerical integration limits
   SUBSTEP_MAX_DT: 0.01, // 10 ms max physics/chem substep
 };
+
+/**
+ * Equilibrium CO2 decomposition pressure P_eq(T) (atm) for CaCO3(s) <-> CaO(s) + CO2(g):
+ *   ln P_eq(T) ≈ 16.5 - 20474 / T(K)
+ */
+export function calcCaCO3EqPressureAtm(T_K) {
+  const T = Math.max(200, Math.min(2400, T_K));
+  return Math.exp(16.5 - 20474.0 / T);
+}
 
 export function kelvinToCelsius(k) {
   return k - CONSTANTS.KELVIN_OFFSET;

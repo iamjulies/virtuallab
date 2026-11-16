@@ -138,6 +138,7 @@ export class LabSimulation {
     };
     this.items = [];
     this.selectedId = null;
+    this.compareVesselIds = [];
     this.logs = [];
     this.pipette = {
       capacityMl: 10.0,
@@ -227,6 +228,15 @@ export class LabSimulation {
         naohAirExposeSec: 0,
         naohDeliquesceFrac: 0,
         znCombustionTimer: 0,
+        znFlameColor: null,
+        naDryBurnTimer: 0,
+        lidState: spec.hasLid ? 'open' : null,
+        softenGlowFrac: 0,
+        softenSagFrac: 0,
+        isMoltenMelted: false,
+        calcinationStats: null,
+        lastTotalRateMolS: 0,
+        cumulativeGasMol: 0,
         headspaceGasMoles: createEmptyGasMap(),
         escapedGasMoles: createEmptyGasMap(),
         isShattered: false,
@@ -298,11 +308,21 @@ export class LabSimulation {
     } else if (spec.kind === 'burner') {
       Object.assign(base, {
         flameLevel: 0, // 0=off, 1=low, 2=med, 3=high
-        powerW: 0,     // 0..650 W continuous burner power
+        powerW: 0,
+        airHoleOpen: spec.burnerType === 'bunsen' ? true : undefined,
         flameTestTimer: 0,
         flameTestColor: null,
         flameTestIon: null,
       });
+    } else if (spec.kind === 'tongs') {
+      Object.assign(base, {
+        grippedVesselId: null,
+        heldSample: null, // { speciesId, moles, tempK }
+        heldBurnTimer: 0,
+        heldFlameColor: null,
+      });
+    } else if (spec.kind === 'clay_triangle') {
+      Object.assign(base, {});
     } else if (spec.kind === 'filter_funnel') {
       Object.assign(base, {
         moles: {},
@@ -560,6 +580,7 @@ export class LabSimulation {
       if (other.negElectrodeId === id) other.negElectrodeId = null;
       if (other.vesselAId === id) other.vesselAId = null;
       if (other.vesselBId === id) other.vesselBId = null;
+      if (other.grippedVesselId === id) other.grippedVesselId = null;
       if (other.restingOnId === id) {
         other.restingOnId = null;
         if (!other.clampedToId) other.fallStartY = other.y;
@@ -568,6 +589,9 @@ export class LabSimulation {
         other.clampedToId = null;
         other.fallStartY = other.y;
       }
+    }
+    if (item.kind === 'tongs') {
+      item.grippedVesselId = null;
     }
     if (item.kind === 'vessel') {
       item.hasStirBar = false;
@@ -582,6 +606,9 @@ export class LabSimulation {
     if (!item) return;
     this.detachItemRelations(item);
     this.items = this.items.filter((it) => it.id !== id);
+    if (Array.isArray(this.compareVesselIds)) {
+      this.compareVesselIds = this.compareVesselIds.filter((cid) => cid !== id);
+    }
     if (this.selectedId === id) {
       this.selectedId = this.items[0]?.id || null;
     }
@@ -633,6 +660,7 @@ export class LabSimulation {
 
   setupPreset(presetName) {
     this.items = [];
+    this.compareVesselIds = [];
     this.logs = [];
     this.timedTransfers = [];
     this.activePourStream = null;
@@ -803,6 +831,108 @@ export class LabSimulation {
       bCu.moles = { H2O_l: 3.5, CuOH2_s: 0.03 };
       this.createApparatus('burner', 740, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
       this.selectedId = bZn.id;
+    } else if (presetName === 'cu_ammine_complex') {
+      const bCu = this.createApparatus('beaker_250', 340, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      this.addReagentToVessel(bCu.id, 'h2o', 45, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bCu.id, 'cuso4_5h2o', 2.5, { silentAnim: true, silentEmit: true });
+      bCu.moles.CuOH2_s = 0.008;
+      delete bCu.moles.Cu2_aq;
+      const beakerNh3 = this.createApparatus('beaker_250', 580, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      this.addReagentToVessel(beakerNh3.id, 'nh3_25', 25, { silentAnim: true, silentEmit: true });
+      this.addLog({ type: 'info', key: 'guideCuAmmine', vesselLabel: bCu.label });
+      this.selectedId = bCu.id;
+    } else if (presetName === 'compare_rate_factors') {
+      const bCoarse = this.createApparatus('erlenmeyer_250', 200, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      bCoarse.label = '#A (Đá vôi cục)';
+      this.addReagentToVessel(bCoarse.id, 'h2o', 45, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bCoarse.id, 'hcl_37', 12, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bCoarse.id, 'caco3', 5.0, { fine: false, silentAnim: true, silentEmit: true });
+      bCoarse.particleCounts.CaCO3_s = 3;
+
+      const bFine = this.createApparatus('erlenmeyer_250', 440, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      bFine.label = '#B (Bột mịn CaCO₃)';
+      this.addReagentToVessel(bFine.id, 'h2o', 45, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bFine.id, 'hcl_37', 12, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bFine.id, 'caco3', 5.0, { fine: true, silentAnim: true, silentEmit: true });
+      bFine.particleCounts.CaCO3_s = 800;
+      bFine.groundPowderMap.CaCO3_s = true;
+
+      const bHot = this.createApparatus('erlenmeyer_250', 680, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      bHot.label = '#C (Đặc + Nóng 55°C)';
+      this.addReagentToVessel(bHot.id, 'h2o', 25, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bHot.id, 'hcl_37', 30, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bHot.id, 'caco3', 5.0, { fine: false, silentAnim: true, silentEmit: true });
+      bHot.particleCounts.CaCO3_s = 3;
+      bHot.tempK = 328.15;
+
+      this.compareVesselIds = [bCoarse.id, bFine.id, bHot.id];
+      this.selectedId = bFine.id;
+    } else if (presetName === 'compare_corrosion') {
+      const bChem = this.createApparatus('beaker_250', 185, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      bChem.label = '#A (Ăn mòn hóa học Zn+HCl)';
+      this.addReagentToVessel(bChem.id, 'h2o', 55, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bChem.id, 'hcl_37', 18, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bChem.id, 'zn', 2.5, { fine: false, silentAnim: true, silentEmit: true });
+
+      const bElec = this.createApparatus('beaker_250', 415, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      bElec.label = '#B (Pin điện hóa Zn–Cu)';
+      this.addReagentToVessel(bElec.id, 'h2o', 55, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bElec.id, 'hcl_37', 18, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bElec.id, 'zn', 2.5, { fine: false, silentAnim: true, silentEmit: true });
+      bElec.moles.Cu_s = 0.008;
+
+      const elZn = this.createApparatus('electrode_rod', 395, 390);
+      elZn.material = 'Zn';
+      elZn.dockedVesselId = bElec.id;
+      elZn.dockSide = 'left';
+      const elCu = this.createApparatus('electrode_rod', 435, 390);
+      elCu.material = 'Cu';
+      elCu.dockedVesselId = bElec.id;
+      elCu.dockSide = 'right';
+      const vm = this.createApparatus('volt_ammeter', 585, SIM_BENCH_FLOOR_Y - APPARATUS.volt_ammeter.height / 2 + 2);
+      vm.mode = 'ammeter';
+      vm.posElectrodeId = elCu.id;
+      vm.negElectrodeId = elZn.id;
+      syncDockedToolPositions(this);
+
+      const bPass = this.createApparatus('beaker_250', 790, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      bPass.label = '#C (Cu nguyên chất trong HCl)';
+      this.addReagentToVessel(bPass.id, 'h2o', 55, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(bPass.id, 'hcl_37', 18, { silentAnim: true, silentEmit: true });
+      bPass.moles.Cu_s = 0.03;
+
+      this.compareVesselIds = [bChem.id, bElec.id, bPass.id];
+      this.selectedId = bElec.id;
+    } else if (presetName === 'caco3_calcination_limewater') {
+      const bnCruc = this.createApparatus('bunsen_burner', 200, SIM_BENCH_FLOOR_Y - APPARATUS.bunsen_burner.height / 2 + 2);
+      bnCruc.airHoleOpen = true;
+      this.setBurnerFlame(bnCruc.id, 3);
+      const tri = this.createApparatus('clay_triangle', 200, SIM_BENCH_FLOOR_Y - APPARATUS.clay_triangle.height / 2 + 2);
+      const cruc = this.createApparatus('crucible_porcelain', 200, tri.y - APPARATUS.clay_triangle.height / 2 + 6);
+      this.addReagentToVessel(cruc.id, 'caco3', 3.0, { fine: true, silentAnim: true, silentEmit: true });
+      cruc.particleCounts.CaCO3_s = 800;
+      cruc.groundPowderMap.CaCO3_s = true;
+      cruc.lidState = 'ajar';
+
+      const bnQuartz = this.createApparatus('bunsen_burner', 530, SIM_BENCH_FLOOR_Y - APPARATUS.bunsen_burner.height / 2 + 2);
+      bnQuartz.airHoleOpen = true;
+      this.setBurnerFlame(bnQuartz.id, 3);
+      const stand = this.createApparatus('retort_stand', 595, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
+      const qTube = this.createApparatus('quartz_tube', 530, 386);
+      this.addReagentToVessel(qTube.id, 'caco3', 3.0, { fine: true, silentAnim: true, silentEmit: true });
+      qTube.particleCounts.CaCO3_s = 800;
+      qTube.groundPowderMap.CaCO3_s = true;
+      this.attachToStand(qTube.id, stand.id);
+      qTube.y = 386;
+
+      const limeBeaker = this.createApparatus('beaker_250', 775, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      limeBeaker.label = '#Nước vôi trong';
+      this.addReagentToVessel(limeBeaker.id, 'h2o', 70, { silentAnim: true, silentEmit: true });
+      limeBeaker.moles.Ca2_aq = 0.0016;
+      limeBeaker.moles.OH_aq = 0.0032;
+      this.connectTube(qTube.id, limeBeaker.id);
+      this.addLog({ type: 'info', key: 'guideCaco3Calcination', vesselLabel: cruc.label });
+      this.selectedId = cruc.id;
     } else {
       // 'starter' default bench: Scale + Beaker 250 mL + Burner + Erlenmeyer 250 mL
       this.createApparatus('scale', 220, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height / 2 + 2);
@@ -824,10 +954,12 @@ export class LabSimulation {
     if (
       item.kind === 'scale' ||
       item.kind === 'burner' ||
+      item.kind === 'clay_triangle' ||
       item.kind === 'stand' ||
       item.kind === 'splint' ||
       item.kind === 'flame_loop' ||
       item.kind === 'indicator_strip' ||
+      item.kind === 'tongs' ||
       item.kind === 'salt_bridge'
     ) {
       return { centerY: floorCenterY, support: null };
@@ -845,6 +977,14 @@ export class LabSimulation {
         const candY = scTop - spec.height / 2;
         const panHalf = (supSpec.panWidth || 128) * 0.5 + 4;
         if (dx <= panHalf && (alreadyOnSup || itemBottom <= scTop + 16) && candY < bestCenterY) {
+          bestCenterY = candY;
+          bestSupport = sup;
+        }
+      } else if (sup.kind === 'clay_triangle' && spec.heatable && item.kind === 'vessel') {
+        const ringY = sup.y - supSpec.height / 2 + 6;
+        const nestSink = spec.shape === 'crucible' ? 14 : 2;
+        const candY = ringY - spec.height / 2 + nestSink;
+        if (dx <= 44 && (alreadyOnSup || itemBottom <= ringY + 24) && candY < bestCenterY) {
           bestCenterY = candY;
           bestSupport = sup;
         }
@@ -873,7 +1013,7 @@ export class LabSimulation {
    */
   updateSupportAttachments() {
     for (const it of this.items) {
-      if (it.kind === 'scale' || it.kind === 'burner' || it.kind === 'stand') continue;
+      if (it.kind === 'scale' || it.kind === 'burner' || it.kind === 'clay_triangle' || it.kind === 'stand' || it.kind === 'tongs') continue;
       if (it.dockedVesselId || it.inVesselId || it.mountedOverElectrodeId) {
         syncDockedToolPositions(this);
         continue;
@@ -961,30 +1101,128 @@ export class LabSimulation {
   setBurnerFlame(burnerId, level) {
     const b = this.getItem(burnerId);
     if (!b || b.kind !== 'burner') return;
+    const bSpec = APPARATUS[b.typeId] || APPARATUS.burner;
     const lvl = Math.max(0, Math.min(3, level));
     b.flameLevel = lvl;
-    b.powerW = APPARATUS.burner.powerLevelsW[lvl] ?? 0;
+    const tbl =
+      b.typeId === 'bunsen_burner' && b.airHoleOpen === false
+        ? bSpec.yellowPowerLevelsW
+        : bSpec.powerLevelsW;
+    b.powerW = tbl[lvl] ?? 0;
     this.emitChange();
+  }
+
+  toggleBurnerAirHole(burnerId) {
+    const b = this.getItem(burnerId);
+    if (!b || b.kind !== 'burner' || b.typeId !== 'bunsen_burner') return false;
+    b.airHoleOpen = b.airHoleOpen === false;
+    const lvl = Math.round(b.flameLevel || 0);
+    if (lvl > 0) {
+      const bSpec = APPARATUS.bunsen_burner;
+      const tbl = b.airHoleOpen ? bSpec.powerLevelsW : bSpec.yellowPowerLevelsW;
+      b.powerW = tbl[lvl] ?? b.powerW;
+    }
+    this.emitChange();
+    return true;
   }
 
   setBurnerPower(burnerId, watts) {
     const b = this.getItem(burnerId);
     if (!b || b.kind !== 'burner') return;
-    const maxW = APPARATUS.burner.maxPowerW || 650;
+    const bSpec = APPARATUS[b.typeId] || APPARATUS.burner;
+    const maxW =
+      b.typeId === 'bunsen_burner' && b.airHoleOpen === false
+        ? (bSpec.yellowPowerLevelsW[3] || 820)
+        : (bSpec.maxPowerW || 650);
     const w = Math.max(0, Math.min(maxW, Math.round(Number(watts) || 0)));
     b.powerW = w;
     if (w <= 0) {
       b.flameLevel = 0;
-    } else if (w === 160) {
-      b.flameLevel = 1;
-    } else if (w === 360) {
-      b.flameLevel = 2;
-    } else if (w === 650) {
-      b.flameLevel = 3;
     } else {
-      b.flameLevel = (w / maxW) * 3;
+      const tbl =
+        b.typeId === 'bunsen_burner' && b.airHoleOpen === false
+          ? bSpec.yellowPowerLevelsW
+          : bSpec.powerLevelsW;
+      if (w === tbl[1]) b.flameLevel = 1;
+      else if (w === tbl[2]) b.flameLevel = 2;
+      else if (w === tbl[3]) b.flameLevel = 3;
+      else b.flameLevel = (w / maxW) * 3;
     }
     this.emitChange();
+  }
+
+  cycleCrucibleLid(vesselId) {
+    const v = this.getItem(vesselId);
+    if (!v || !APPARATUS[v.typeId]?.hasLid) return false;
+    const order = ['open', 'ajar', 'closed'];
+    const idx = order.indexOf(v.lidState || 'open');
+    v.lidState = order[(idx + 1) % order.length];
+    this.emitChange();
+    return true;
+  }
+
+  toggleCompareVessel(vesselId) {
+    const v = this.getItem(vesselId);
+    if (!v || v.kind !== 'vessel') return false;
+    const idx = this.compareVesselIds.indexOf(vesselId);
+    if (idx >= 0) {
+      this.compareVesselIds.splice(idx, 1);
+    } else {
+      if (this.compareVesselIds.length >= 3) {
+        this.compareVesselIds.shift();
+      }
+      this.compareVesselIds.push(vesselId);
+    }
+    this.emitChange();
+    return true;
+  }
+
+  tongsPickSampleFromVessel(tongsId, vesselId) {
+    const tongs = this.getItem(tongsId);
+    const v = this.getItem(vesselId);
+    if (!tongs || tongs.kind !== 'tongs' || !v || v.kind !== 'vessel' || v.isShattered) return false;
+    for (const spId of ['Zn_s', 'Na_s', 'Cu_s']) {
+      const avail = v.moles?.[spId] || 0;
+      if (avail > 1e-6) {
+        const take = Math.min(avail, spId === 'Na_s' ? 0.015 : 0.02);
+        v.moles[spId] = avail - take;
+        if (v.moles[spId] < 1e-12) delete v.moles[spId];
+        tongs.heldSample = { speciesId: spId, moles: take, tempK: v.tempK || this.environment.tempK };
+        this.recomputeScaleReadings();
+        this.emitChange();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  tongsToggleGripVessel(tongsId, vesselId = null) {
+    const tongs = this.getItem(tongsId);
+    if (!tongs || tongs.kind !== 'tongs') return false;
+    if (tongs.grippedVesselId) {
+      tongs.grippedVesselId = null;
+      this.updateSupportAttachments();
+      this.emitChange();
+      return true;
+    }
+    if (!vesselId) return false;
+    const v = this.getItem(vesselId);
+    if (!v || v.kind !== 'vessel' || v.isShattered) return false;
+    tongs.grippedVesselId = v.id;
+    tongs.x = v.x;
+    tongs.y = v.y;
+    this.emitChange();
+    return true;
+  }
+
+  tongsReleaseAll(tongsId) {
+    const tongs = this.getItem(tongsId);
+    if (!tongs || tongs.kind !== 'tongs') return false;
+    tongs.grippedVesselId = null;
+    tongs.heldSample = null;
+    this.updateSupportAttachments();
+    this.emitChange();
+    return true;
   }
 
   getTubeTargetsForVessel(vesselId) {
@@ -1610,16 +1848,20 @@ export class LabSimulation {
       v.moles[reg.speciesId] = (v.moles[reg.speciesId] || 0) + addMol;
       addedHeatCap += addMol * (sp.cp || 30);
 
-      const particleCount = options.fine ? 30 : reg.id === 'na' ? 1 : 6;
+      const particleCount = options.fine ? (reg.id === 'caco3' ? 400 : 30) : reg.id === 'na' ? 1 : reg.id === 'caco3' ? Math.max(2, Math.round(amt * 2)) : 6;
       v.particleCounts[reg.speciesId] =
         (v.particleCounts[reg.speciesId] || 0) + particleCount;
+      if (options.fine && reg.id === 'caco3') {
+        v.groundPowderMap = v.groundPowderMap || {};
+        v.groundPowderMap.CaCO3_s = true;
+      }
     }
 
     // Mix thermal energy with reagent starting at ambient T_env
     const tAdd = this.environment.tempK;
     if (cOld + addedHeatCap > 0) {
       const nextT = (cOld * tOld + addedHeatCap * tAdd + dilutionHeatJ) / (cOld + addedHeatCap);
-      v.tempK = Number.isFinite(nextT) ? Math.max(155, Math.min(1350, nextT)) : tOld;
+      v.tempK = Number.isFinite(nextT) ? Math.max(155, Math.min(1950, nextT)) : tOld;
     }
     if (coldSplashShock && v.kind === 'vessel') {
       this.shatterVessel(v, 'alertThermalShock', 'thermal_shock');
@@ -2982,6 +3224,8 @@ export class LabSimulation {
     const syr = vessel.connectedSyringeId ? this.getItem(vessel.connectedSyringeId) : null;
     for (const [gId, snapKey] of [
       ['H2_g', 'H2_g_total'],
+      ['O2_g', 'O2_g_total'],
+      ['CO2_g', 'CO2_g_total'],
       ['HCl_g', 'HCl_g_total'],
       ['Cl2_g', 'Cl2_g_total'],
     ]) {
@@ -2992,11 +3236,21 @@ export class LabSimulation {
       if (tot > 1e-7) snap[snapKey] = tot;
     }
 
+    let solidMassG = 0;
+    for (const [spId, n] of Object.entries(vessel.moles)) {
+      if (n > 1e-9 && SPECIES[spId]?.phase === 's') {
+        solidMassG += n * (SPECIES[spId].molarMass || 0);
+      }
+    }
+
     vessel.history.push({
       t: this.timeSec,
       moles: snap,
       tempK: vessel.tempK,
       ph,
+      rateMolS: vessel.lastTotalRateMolS || 0,
+      cumGasMol: vessel.cumulativeGasMol || 0,
+      solidMassG,
     });
     if (vessel.history.length > 140) {
       vessel.history.shift();
@@ -3361,8 +3615,8 @@ export class LabSimulation {
 
     // 2. Step vertical gravitational fall (process support bases before items resting/clamped on them)
     const gravityOrder = [
-      ...this.items.filter((it) => it.kind === 'scale' || it.kind === 'burner' || it.kind === 'stand'),
-      ...this.items.filter((it) => it.kind !== 'scale' && it.kind !== 'burner' && it.kind !== 'stand'),
+      ...this.items.filter((it) => it.kind === 'scale' || it.kind === 'burner' || it.kind === 'clay_triangle' || it.kind === 'stand'),
+      ...this.items.filter((it) => it.kind !== 'scale' && it.kind !== 'burner' && it.kind !== 'clay_triangle' && it.kind !== 'stand'),
     ];
     for (const item of gravityOrder) {
       if (item.isDragging) {
@@ -3455,60 +3709,89 @@ export class LabSimulation {
   }
 
   /**
-   * Determine active Alcohol Burner heating source for a vessel:
-   * - Direct contact (`vessel.restingOnId`) delivers 100% wattage
-   * - Clamped or held vessels positioned over a lit burner's flame plume/tripod receive geometric convective coupling
+   * Determine active Alcohol Burner OR Bunsen Burner heating source for a vessel:
+   * - Direct contact (`vessel.restingOnId`) or seated on `clay_triangle` over burner delivers 100% wattage
+   * - Clamped or held vessels positioned over a lit burner's flame plume receive geometric convective coupling
    */
   getBurnerHeatingSource(vessel) {
     if (!vessel || vessel.kind !== 'vessel' || vessel.isShattered) return null;
     const vSpec = APPARATUS[vessel.typeId];
     if (!vSpec?.heatable) return null;
-    const bSpec = APPARATUS.burner;
+
+    const getBurnerSpecParams = (b) => {
+      const bSpec = APPARATUS[b.typeId] || APPARATUS.burner;
+      const isBunsen = b.typeId === 'bunsen_burner';
+      const fl = b.flameLevel || 0;
+      const roundFl = Math.round(fl);
+      const airOpen = b.airHoleOpen !== false;
+      const powerTbl = isBunsen && !airOpen ? bSpec.yellowPowerLevelsW : bSpec.powerLevelsW;
+      const flameTbl = isBunsen && !airOpen ? bSpec.yellowFlameK : bSpec.effectiveFlameK;
+      const rawW = b.powerW ?? powerTbl[roundFl] ?? 0;
+      const flameTempK = isBunsen ? (flameTbl[roundFl] || (airOpen ? 1623.15 : 1073.15)) : (flameTbl[roundFl] || null);
+      return { bSpec, isBunsen, airOpen, fl, rawW, flameTempK };
+    };
 
     if (vessel.restingOnId) {
       const sup = this.getItem(vessel.restingOnId);
       if (sup && sup.kind === 'burner') {
-        const fl = sup.flameLevel || 0;
-        const pw = sup.powerW ?? bSpec.powerLevelsW[Math.round(fl)] ?? 0;
-        return { burner: sup, flameLevel: fl, powerW: pw };
+        const p = getBurnerSpecParams(sup);
+        return { burner: sup, flameLevel: p.fl, powerW: p.rawW, flameTempK: p.flameTempK };
+      }
+      if (sup && sup.kind === 'clay_triangle') {
+        // Check if clay triangle straddles an active burner / Bunsen burner directly below it!
+        for (const b of this.items) {
+          if (b.kind !== 'burner') continue;
+          const p = getBurnerSpecParams(b);
+          if (p.rawW <= 0) continue;
+          if (Math.abs(sup.x - b.x) <= 44) {
+            const focusedTempK =
+              p.isBunsen && p.airOpen && p.flameTempK
+                ? Math.min(1773.15, p.flameTempK + 90) // Centered right at hottest oxidizing cone tip
+                : p.flameTempK;
+            return { burner: b, flameLevel: p.fl, powerW: p.rawW, flameTempK: focusedTempK };
+          }
+        }
       }
     }
 
-    // Check spatial proximity above any lit burner (supports Retort Stand clamped flasks/test tubes)
+    // Check spatial proximity above any lit burner (supports Retort Stand clamped Quartz Tube / flasks)
     let best = null;
     const vBot = vessel.y + vSpec.height / 2;
     const horizMax = Math.max(46, 36 + vSpec.width * 0.25);
     for (const b of this.items) {
       if (b.kind !== 'burner') continue;
-      const fl = b.flameLevel || 0;
-      const rawW = b.powerW ?? bSpec.powerLevelsW[Math.round(fl)] ?? 0;
-      if (rawW <= 0) continue;
+      const p = getBurnerSpecParams(b);
+      if (p.rawW <= 0) continue;
 
       const dx = Math.abs(vessel.x - b.x);
       if (dx > horizMax) continue;
 
-      const bnTop = b.y - bSpec.height / 2 + 10; // Gauze support level
-      const flameBaseY = b.y + bSpec.height / 2 - 46; // Wick collar top
-      if (vBot > flameBaseY + 14) continue; // Vessel sits below burner base reservoir
+      const bnTop = b.y - p.bSpec.height / 2 + 10;
+      const flameBaseY = b.y + p.bSpec.height / 2 - (p.isBunsen ? 66 : 46);
+      if (vBot > flameBaseY + 18) continue;
 
-      const horizFrac = dx <= 34 ? 1.0 : Math.max(0, 1 - (dx - 34) / Math.max(10, horizMax - 34));
-      const powerFrac = Math.min(1, rawW / (bSpec.maxPowerW || 650));
-      const maxPlumeAbove = 72 + 68 * powerFrac;
+      const horizFrac = dx <= 38 ? 1.0 : Math.max(0, 1 - (dx - 38) / Math.max(10, horizMax - 38));
+      const powerFrac = Math.min(1, p.rawW / (p.bSpec.maxPowerW || 650));
+      const maxPlumeAbove = (p.isBunsen ? 105 : 72) + 68 * powerFrac;
 
       let vertFrac = 0;
-      if (vBot >= bnTop - 16) {
-        // Vessel sits directly on or just inside tripod flame zone
+      if (vBot >= bnTop - 20) {
         vertFrac = 1.0;
       } else {
-        const gapAbove = (bnTop - 16) - vBot;
+        const gapAbove = (bnTop - 20) - vBot;
         if (gapAbove < maxPlumeAbove) {
           vertFrac = Math.pow(1 - gapAbove / maxPlumeAbove, 1.35);
         }
       }
 
-      const effW = rawW * horizFrac * vertFrac;
+      const effW = p.rawW * horizFrac * vertFrac;
       if (effW > 1 && (!best || effW > best.powerW)) {
-        best = { burner: b, flameLevel: fl * horizFrac * vertFrac, powerW: effW };
+        best = {
+          burner: b,
+          flameLevel: p.fl * horizFrac * vertFrac,
+          powerW: effW,
+          flameTempK: p.flameTempK,
+        };
       }
     }
     return best;
@@ -3782,10 +4065,12 @@ export class LabSimulation {
       // Continuous gravity spillover above physical brim
       this.stepVesselOverflow(v, scaledDt);
 
-      // Check burner power & flame level (resting directly on burner OR clamped/held over flame plume)
+      // Check burner power & flame level (resting directly on burner / clay triangle OR clamped/held over flame plume)
       const heatSrc = this.getBurnerHeatingSource(v);
       const burnerPowerW = heatSrc?.powerW || 0;
       const burnerFlameLevel = heatSrc?.flameLevel || 0;
+      const burnerFlameTempK = heatSrc?.flameTempK || null;
+      v._bunsenHeated = Boolean(heatSrc?.burner?.typeId === 'bunsen_burner' && burnerPowerW > 0);
 
       const frameGas = createZeroGasMap();
       let frameSteam = 0;
@@ -3852,6 +4137,7 @@ export class LabSimulation {
         const chemRes = stepVesselChemistry(v, dt, {
           uvLight: this.environment.uvLight,
           environment: this.environment,
+          heatSrc,
         });
         const thermRes = stepVesselThermodynamics(
           v,
@@ -3859,7 +4145,8 @@ export class LabSimulation {
           this.environment,
           chemRes.reactionHeatJ,
           burnerPowerW,
-          burnerFlameLevel
+          burnerFlameLevel,
+          burnerFlameTempK
         );
         frameFreezeMeltMol += (thermRes.freezeMeltRateMolS || 0) * dt;
         if (Number.isFinite(thermRes.freezePointK)) {
@@ -3944,7 +4231,7 @@ export class LabSimulation {
       if (v.isShattered) continue;
 
       // Post-step finite mathematical stabilizer across all conserved vessel state fields
-      v.tempK = Number.isFinite(v.tempK) ? Math.max(155, Math.min(1350, v.tempK)) : CONSTANTS.T_STD_K;
+      v.tempK = Number.isFinite(v.tempK) ? Math.max(155, Math.min(1950, v.tempK)) : CONSTANTS.T_STD_K;
       v.internalPressureBar = Number.isFinite(v.internalPressureBar)
         ? Math.max(0.02, Math.min(35.0, v.internalPressureBar))
         : this.environment.pressureBar;
@@ -3959,11 +4246,29 @@ export class LabSimulation {
         }
       }
 
-      // ISO glassware dry/extreme thermal stress limit shatter check
+      // Borosilicate 3.3 softening -> red-orange glow -> bottom sag -> melt-through under Bunsen (>= 820 °C) vs brittle thermal stress limit
       const specV = APPARATUS[v.typeId] || APPARATUS.beaker_250;
-      if (v.tempK >= (specV.maxThermalStressK || 783)) {
-        this.shatterVessel(v, 'alertThermalShock', 'thermal_shock');
-        continue;
+      const isBorosilicate = specV.materialSpec === 'Borosilicate 3.3';
+      if (isBorosilicate && (v._bunsenHeated || (v.softenSagFrac || 0) > 0.02)) {
+        v.softenGlowFrac = Math.max(0, Math.min(1, (v.tempK - 840) / 280));
+        const sagStartK = CONSTANTS.BOROSILICATE_SOFTEN_K - 40; // Begins subtle viscous softening at ~780 C
+        if (v.tempK >= sagStartK) {
+          const sagRate = 0.45 + Math.min(1.4, (v.tempK - sagStartK) / 95);
+          v.softenSagFrac = Math.min(1.0, (v.softenSagFrac || 0) + sagRate * scaledDt);
+        } else {
+          v.softenSagFrac = Math.max(0, (v.softenSagFrac || 0) - 0.15 * scaledDt);
+        }
+        if ((v.softenSagFrac || 0) >= 0.96 || (v.tempK >= CONSTANTS.BOROSILICATE_MELT_FAIL_K && (v.softenSagFrac || 0) >= 0.45)) {
+          v.isMoltenMelted = true;
+          this.shatterVessel(v, 'alertGlassSoftenMelt', 'shatter');
+          continue;
+        }
+      } else {
+        v.softenGlowFrac = Math.max(0, Math.min(0.45, (v.tempK - 760) / 420));
+        if (v.tempK >= (specV.maxThermalStressK || 783)) {
+          this.shatterVessel(v, 'alertThermalShock', 'thermal_shock');
+          continue;
+        }
       }
 
       // Advance reversible phenolphthalein carbinol fading & high-temp irreversible C-C cleavage (locked while frozen solid)
@@ -4332,6 +4637,12 @@ export class LabSimulation {
       }
 
       v.lastGasRateMap = rateMap;
+      v.lastTotalRateMolS = Array.from(frameActiveMap.values()).reduce((s, r) => s + (r.rateMolS || 0), 0);
+      for (const gId of ALL_GAS_IDS) {
+        if (gId !== 'H2O_g') v.cumulativeGasMol = (v.cumulativeGasMol || 0) + (frameGas[gId] || 0);
+      }
+      const tubeBubbleRate = (v._tubeBubbleGasMol || 0) * invDt;
+      v._tubeBubbleGasMol = 0;
 
       // Emit visual particle request
       if (this.visualHooks.onParticlesNeeded) {
@@ -4339,6 +4650,7 @@ export class LabSimulation {
           gasRates: rateMap,
           gasRateH2: rateMap.H2_g,
           gasRateO2: rateMap.O2_g,
+          gasRateCO2: (rateMap.CO2_g || 0) + tubeBubbleRate,
           gasRateHCl: rateMap.HCl_g,
           gasRateCl2: rateMap.Cl2_g,
           gasRateC2H5Cl: rateMap.C2H5Cl_g,
@@ -4352,13 +4664,15 @@ export class LabSimulation {
           isBoiling: frameBoiling,
           isDehydrating,
           naActive,
-          naIgnited: !!v.naIgnited,
+          naIgnited: !!v.naIgnited || (v.naDryBurnTimer || 0) > 0.05,
           naTempK: v.naTempK,
           naRate:
             (frameActiveMap.get('na_water')?.rateMolS || 0) +
             (frameActiveMap.get('na_acid')?.rateMolS || 0) +
             (frameActiveMap.get('na_ethanol')?.rateMolS || 0) +
             (frameActiveMap.get('na_ice')?.rateMolS || 0),
+          znBurning: (v.znCombustionTimer || 0) > 0.05,
+          naDryBurning: (v.naDryBurnTimer || 0) > 0.05,
         });
       }
 

@@ -6,6 +6,7 @@ import { EnvironmentBar } from './ui/environmentBar.js';
 import { ShelfPanel } from './ui/shelfPanel.js';
 import { InspectorPanel } from './ui/inspectorPanel.js';
 import { DosingModal } from './ui/dosingModal.js';
+import { ComparisonPanel } from './ui/comparisonPanel.js';
 
 const STORAGE_LANG_KEY = 'virlab_lang';
 const STORAGE_THEME_KEY = 'virlab_theme';
@@ -31,7 +32,15 @@ const inspectorEl = document.getElementById('inspector-panel');
 const modalEl = document.getElementById('dosing-modal-root');
 const canvasEl = document.getElementById('workbench-canvas');
 const benchHintEl = document.getElementById('bench-hint-text');
+const compareBtnEl = document.getElementById('btn-compare-mode');
+const compareRootEl = document.getElementById('comparison-panel-root');
 const resetBtnEl = document.getElementById('btn-reset-bench');
+const zoomLoupeBtnEl = document.getElementById('btn-zoom-loupe');
+const zoomControlsEl = document.getElementById('canvas-zoom-controls');
+const zoomOutBtnEl = document.getElementById('btn-zoom-out');
+const zoomInBtnEl = document.getElementById('btn-zoom-in');
+const zoomResetBtnEl = document.getElementById('btn-zoom-reset');
+const zoomBadgeEl = document.getElementById('zoom-level-badge');
 const toastEl = document.getElementById('toast-banner');
 const benchPickBannerEl = document.getElementById('bench-pick-banner');
 const benchPickTextEl = document.getElementById('bench-pick-text');
@@ -139,6 +148,8 @@ function handleVisualAlert(type, vessel, meta) {
     showToast(`🔥 ${t('alertO2Flare')}`);
   } else if (type === 'cl2_extinguish') {
     showToast(`🌫️ ${t('alertCl2Extinguish')}`);
+  } else if (type === 'co2_extinguish') {
+    showToast(t('alertCo2Extinguish'));
   }
 }
 function startBenchPick(opts = {}) {
@@ -229,6 +240,44 @@ workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
       benchPickBannerEl.classList.add('hidden');
     }
   },
+  onZoomChange: (zState) => {
+    syncZoomHud(zState);
+  },
+});
+
+let comparisonPanel = null;
+
+function syncCompareButton() {
+  if (!compareBtnEl || !comparisonPanel) return;
+  const t = getTranslator();
+  const count = Array.isArray(sim?.compareVesselIds) ? sim.compareVesselIds.length : 0;
+  compareBtnEl.textContent = count > 0 ? `${t('btnCompareMode')} (${count})` : t('btnCompareMode');
+  compareBtnEl.classList.toggle('bg-accent', comparisonPanel.isOpen);
+  compareBtnEl.classList.toggle('text-white', comparisonPanel.isOpen);
+  compareBtnEl.classList.toggle('border-accent', comparisonPanel.isOpen);
+}
+
+function syncZoomHud(zState) {
+  if (!zState) return;
+  const t = getTranslator();
+  const active = Boolean(zState.zoomMode || zState.zoomScale > 1.02);
+  if (zoomLoupeBtnEl) {
+    zoomLoupeBtnEl.classList.toggle('active', Boolean(zState.zoomMode));
+    zoomLoupeBtnEl.title = t('btnZoomLoupeTitle');
+  }
+  if (zoomControlsEl) {
+    zoomControlsEl.classList.toggle('hidden', !active);
+  }
+  if (zoomBadgeEl) {
+    zoomBadgeEl.textContent = `${zState.zoomScale.toFixed(1)}×`;
+  }
+}
+
+comparisonPanel = new ComparisonPanel(compareRootEl, sim, getTranslator, {
+  onClose: () => {
+    syncCompareButton();
+    setTimeout(() => workbench.resize(), 20);
+  },
 });
 
 const envBar = new EnvironmentBar(headerEl, sim, appState, {
@@ -252,7 +301,13 @@ const envBar = new EnvironmentBar(headerEl, sim, appState, {
   onPreset: (presetName) => {
     particles.clear();
     sim.setupPreset(presetName);
+    if (presetName === 'compare_rate_factors' || presetName === 'compare_corrosion') {
+      comparisonPanel?.setOpen(true);
+    } else if (presetName === 'clean') {
+      comparisonPanel?.setOpen(false);
+    }
     refreshChrome(true);
+    setTimeout(() => workbench.resize(), 25);
   },
 });
 
@@ -315,6 +370,12 @@ const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
   onOpenTubeTarget: (sourceId) => dosingModal.openTubeTarget(sourceId),
   onOpenSyringeTransfer: (syringeId) => dosingModal.openSyringeTransfer(syringeId),
   onStartBenchPick: (opts) => startBenchPick(opts),
+  onOpenCompare: () => {
+    comparisonPanel?.setOpen(true);
+    comparisonPanel?.render(true);
+    syncCompareButton();
+    setTimeout(() => workbench.resize(), 20);
+  },
   onNotify: (msg) => showToast(msg),
   getLabsMeta: () => ({ labs: labManager.labs, activeIndex: labManager.activeIndex }),
   onMoveToLab: (itemId, dstIdx) => {
@@ -338,6 +399,7 @@ function syncActiveLabRefs() {
   shelfPanel.setSim(sim);
   inspectorPanel.setSim(sim);
   dosingModal.setSim(sim);
+  comparisonPanel?.setSim(sim);
 }
 
 let lastLabTabSig = '';
@@ -435,6 +497,9 @@ function refreshChrome(forceInspector = false) {
   renderLabTabs(t);
   shelfPanel.render(t);
   inspectorPanel.update(appState.lang, forceInspector);
+  comparisonPanel?.render(forceInspector);
+  syncCompareButton();
+  syncZoomHud(workbench.getZoomState());
 
   if (benchHintEl) benchHintEl.textContent = t('pourBetweenHint');
   if (resetBtnEl) resetBtnEl.textContent = `↺ ${t('resetBench')}`;
@@ -446,20 +511,46 @@ function refreshChrome(forceInspector = false) {
   });
 }
 
-// Wire mobile tabs & bench reset
+// Wire mobile tabs & bench reset & compare & zoom loupe
 document.querySelectorAll('.mobile-tab-btn').forEach((btn) => {
   btn.addEventListener('click', () => setMobileTab(btn.dataset.tab));
 });
 
+compareBtnEl?.addEventListener('click', () => {
+  comparisonPanel?.toggleOpen();
+  syncCompareButton();
+  setTimeout(() => workbench.resize(), 20);
+});
+
+zoomLoupeBtnEl?.addEventListener('click', () => {
+  workbench.toggleZoomMode();
+});
+
+zoomInBtnEl?.addEventListener('click', () => {
+  const s = workbench.getZoomState();
+  workbench.setZoomView(s.zoomScale * 1.35, s.zoomCenterX, s.zoomCenterY);
+});
+
+zoomOutBtnEl?.addEventListener('click', () => {
+  const s = workbench.getZoomState();
+  workbench.setZoomView(s.zoomScale / 1.35, s.zoomCenterX, s.zoomCenterY);
+});
+
+zoomResetBtnEl?.addEventListener('click', () => {
+  workbench.resetZoom();
+});
+
 resetBtnEl?.addEventListener('click', () => {
   particles.clear();
+  comparisonPanel?.setOpen(false);
   sim.setupPreset('clean');
   refreshChrome(true);
 });
 
-// Expose LabManager hook for automation / diagnostics
+// Expose LabManager & Workbench hooks for automation / diagnostics
 if (typeof window !== 'undefined') {
   window.__LAB_MANAGER__ = labManager;
+  window.__WORKBENCH__ = workbench;
 }
 
 // Initial boot
@@ -485,6 +576,7 @@ function frame(nowMs) {
   if (uiSyncAccum >= 0.066) {
     uiSyncAccum = 0;
     inspectorPanel.update(appState.lang, false);
+    comparisonPanel?.updateLiveData();
   }
 
   requestAnimationFrame(frame);

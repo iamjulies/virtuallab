@@ -16,6 +16,7 @@ import {
   computeTubingGeometry,
 } from '../engine/gasNetwork.js';
 import { computeWashBottleStreamArc } from '../engine/apparatusTools.js';
+import { computeCaOOptimizationScore } from '../engine/chemistry.js';
 
 function renderFlipButtonHtml(item, t) {
   if (!APPARATUS[item.typeId]?.flippable) return '';
@@ -153,10 +154,16 @@ export class InspectorPanel {
         : 'N';
       const airFlags = `${(item.naTarnishFrac || 0) > 0.25 ? 1 : 0}${(item.naohDeliquesceFrac || 0) > 0.15 ? 1 : 0}${(item.znCombustionTimer || 0) > 0.05 ? 1 : 0}${purgedFlag}`;
       const phenFlags = `${item.isSupersaturated ? 1 : 0}${(item.znPassivationFrac || 0) > 0.35 ? 1 : 0}${(item.pickeringFoamMl || 0) > 0.5 ? 1 : 0}${(item.langmuirCoverage || 0) > 0.55 ? 1 : 0}`;
-      return `v|${atmMode}|${labSig}|${airFlags}|${item.id}|${item.isStoppered}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
+      const cmpFlag = Array.isArray(this.sim.compareVesselIds) && this.sim.compareVesselIds.includes(item.id) ? 1 : 0;
+      const softenFlag = (item.softenGlowFrac || 0) > 0.1 || (item.softenSagFrac || 0) > 0.05 ? 1 : 0;
+      const caoScore = computeCaOOptimizationScore(item);
+      const caoSig = caoScore
+        ? `${caoScore.points}:${caoScore.groundFine ? 1 : 0}${caoScore.ventedWhileHeating ? 1 : 0}${caoScore.roaringBlueZone ? 1 : 0}${caoScore.cooledProtected ? 1 : 0}`
+        : 'n';
+      return `v|${atmMode}|${labSig}|${airFlags}|${item.id}|${item.isStoppered}|${item.lidState || 'open'}|${cmpFlag}|${softenFlag}|${caoSig}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'burner') {
-      return `b|${item.id}|${langCode}|${logLen}`;
+      return `b|${item.id}|${item.typeId}|${item.airHoleOpen !== false ? 1 : 0}|${langCode}|${logLen}`;
     }
     if (item.kind === 'pipette') {
       return `p|${item.id}|${item.isBroken}|${Math.round((item.dropDoseMl || 1) * 100)}|${langCode}|${logLen}`;
@@ -216,6 +223,14 @@ export class InspectorPanel {
     if (item.kind === 'salt_bridge') {
       return `sbr|${item.id}|${item.isBroken ? 1 : 0}|${item.vesselAId || ''}|${item.vesselBId || ''}|${langCode}|${logLen}`;
     }
+    if (item.kind === 'tongs') {
+      const sampleFlag = item.heldSample ? `${item.heldSample.speciesId}:${item.heldSample.moles > 1e-8 ? 1 : 0}` : 'none';
+      const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered).length;
+      return `tg|${item.id}|${item.grippedVesselId || ''}|${sampleFlag}|${vCnt}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'clay_triangle') {
+      return `ct|${item.id}|${langCode}|${logLen}`;
+    }
     return `other|${item.id}|${langCode}|${logLen}`;
   }
 
@@ -259,28 +274,48 @@ export class InspectorPanel {
         </div>
       `;
     } else if (item.kind === 'burner') {
-      const powerW = item.powerW ?? (APPARATUS.burner.powerLevelsW[item.flameLevel || 0] || 0);
+      const bSpec = APPARATUS[item.typeId] || APPARATUS.burner;
+      const isBunsen = item.typeId === 'bunsen_burner';
+      const airOpen = isBunsen ? item.airHoleOpen !== false : true;
+      const powerTbl = isBunsen && !airOpen ? bSpec.yellowPowerLevelsW : bSpec.powerLevelsW;
+      const maxPowerW = isBunsen && !airOpen ? (bSpec.yellowPowerLevelsW[3] || 820) : (bSpec.maxPowerW || 650);
+      const powerW = item.powerW ?? (powerTbl[item.flameLevel || 0] || 0);
       const levels = [
-        { lvl: 0, label: t('burnerOff'), w: 0 },
-        { lvl: 1, label: t('burnerLow'), w: 160 },
-        { lvl: 2, label: t('burnerMed'), w: 360 },
-        { lvl: 3, label: t('burnerHigh'), w: 650 },
+        { lvl: 0, label: t('burnerOff'), w: powerTbl[0] ?? 0 },
+        { lvl: 1, label: t('burnerLow'), w: powerTbl[1] ?? 160 },
+        { lvl: 2, label: t('burnerMed'), w: powerTbl[2] ?? 360 },
+        { lvl: 3, label: t('burnerHigh'), w: powerTbl[3] ?? maxPowerW },
       ];
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between">
-            <span class="text-sm font-bold">🔥 ${t('eq_burner')} ${item.label}</span>
+            <div>
+              <div class="text-sm font-bold">🔥 ${t(bSpec.i18nKey || 'eq_burner')} ${item.label}</div>
+              ${bSpec.isoStandard ? `<div class="text-[11px] text-muted">${bSpec.isoStandard}</div>` : ''}
+            </div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
           </div>
+          ${
+            isBunsen
+              ? `<div class="flex items-center justify-between gap-2 p-2 rounded-lg border border-theme bg-surface">
+                   <span class="text-xs text-muted">${t('bunsenAirCollarLabel')}</span>
+                   <button type="button" id="ins-bunsen-air-toggle" class="px-2.5 py-1 rounded-lg border text-xs font-semibold ${
+                     airOpen
+                       ? 'border-sky-500/60 bg-sky-500/15 text-sky-400'
+                       : 'border-amber-500/60 bg-amber-500/15 text-amber-400'
+                   }">${airOpen ? t('bunsenAirOpenBtn') : t('bunsenAirClosedBtn')}</button>
+                 </div>`
+              : ''
+          }
           <div class="flex items-center justify-between text-xs text-muted">
             <span>${t('burnerPower')}</span>
-            <strong class="text-sm font-mono text-orange-400" id="live-burner-power">${Math.round(powerW)} W</strong>
+            <strong class="text-sm font-mono ${isBunsen && airOpen ? 'text-sky-400' : 'text-orange-400'}" id="live-burner-power">${Math.round(powerW)} W</strong>
           </div>
           <div class="flex flex-col gap-1">
             <label class="text-[11px] text-muted">${t('burnerSliderLabel')}</label>
-            <input type="range" id="burner-power-slider" min="0" max="650" step="5" value="${Math.round(powerW)}" class="w-full accent-orange-500 cursor-pointer" />
+            <input type="range" id="burner-power-slider" min="0" max="${maxPowerW}" step="5" value="${Math.round(powerW)}" class="w-full accent-orange-500 cursor-pointer" />
             <div class="flex justify-between text-[10px] font-mono text-muted">
-              <span>0 W</span><span>160 W</span><span>360 W</span><span>650 W</span>
+              <span>${levels[0].w} W</span><span>${levels[1].w} W</span><span>${levels[2].w} W</span><span>${levels[3].w} W</span>
             </div>
           </div>
           <div class="grid grid-cols-4 gap-1.5">
@@ -918,6 +953,54 @@ export class InspectorPanel {
           }
         </div>
       `;
+    } else if (item.kind === 'clay_triangle') {
+      const cSpec = APPARATUS.clay_triangle;
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm font-bold">🔺 ${t('eq_clay_triangle')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${cSpec.materialSpec} · ${cSpec.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <p class="text-xs text-muted leading-relaxed">${t('clayTriangleHint')}</p>
+        </div>
+      `;
+    } else if (item.kind === 'tongs') {
+      const tgSpec = APPARATUS.crucible_tongs;
+      const gv = item.grippedVesselId ? this.sim.getItem(item.grippedVesselId) : null;
+      const sample = item.heldSample && item.heldSample.moles > 1e-8 ? item.heldSample : null;
+      const heldSummary = gv
+        ? `${t(APPARATUS[gv.typeId]?.i18nKey || 'eq_crucible_porcelain')} ${gv.label}`
+        : sample
+        ? `${SPECIES[sample.speciesId]?.formula || sample.speciesId} (${(sample.moles * 1000).toFixed(2)} mmol · ${kelvinToCelsius(sample.tempK || 298.15).toFixed(0)}°C)`
+        : t('tongsEmpty');
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm font-bold">🥢 ${t('eq_crucible_tongs')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${tgSpec.materialSpec} · ${tgSpec.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex items-center justify-between gap-2">
+            <span class="text-muted">${t('tongsHoldingLabel')}</span>
+            <span class="font-mono font-semibold text-main">${heldSummary}</span>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <button type="button" id="ins-tongs-sample" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent text-left">${t('tongsGripSampleBtn')}</button>
+            <button type="button" id="ins-tongs-grip" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent text-left">${t('tongsGripCrucibleBtn')}</button>
+            ${
+              gv || sample
+                ? `<button type="button" id="ins-tongs-release" class="py-1.5 px-2.5 rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 text-xs font-semibold hover:bg-red-500/20 text-left">${t('tongsReleaseBtn')}</button>`
+                : ''
+            }
+          </div>
+          <p class="text-[11px] text-muted leading-relaxed">${t('tongsHint')}</p>
+        </div>
+      `;
     } else if (item.kind === 'vessel') {
       const spec = APPARATUS[item.typeId];
       const liqL = computeLiquidVolumeL(item.moles, item.tempK);
@@ -974,6 +1057,24 @@ export class InspectorPanel {
           ${(item.naTarnishFrac || 0) > 0.25 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-slate-500/40 bg-slate-500/10 text-muted text-xs font-medium">${t('badgeAirTarnished')}</div>` : ''}
           ${(item.naohDeliquesceFrac || 0) > 0.15 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs font-medium">${t('badgeNaohDeliquesced')}</div>` : ''}
           ${(item.znCombustionTimer || 0) > 0.05 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-amber-400/60 bg-amber-400/15 text-amber-300 text-xs font-semibold">${t('badgeZnBurnO2')}</div>` : ''}
+          ${(item.softenGlowFrac || 0) > 0.1 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-red-500/50 bg-red-500/15 text-red-300 text-xs font-semibold">${t('borosilicateSoftenWarn')}</div>` : ''}
+          ${(() => {
+            const cao = !item.isShattered ? computeCaOOptimizationScore(item) : null;
+            if (!cao) return '';
+            const row = (ok, key) =>
+              `<div class="flex items-start gap-1.5 text-[11px] ${ok ? 'text-emerald-400' : 'text-muted'}"><span>${ok ? '✅' : '⬜'}</span><span>${t(key)}</span></div>`;
+            return `
+              <div class="p-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 flex flex-col gap-1.5">
+                <div class="flex items-center justify-between gap-2 text-xs font-bold">
+                  <span>${t('caoRubricTitle')}</span>
+                  <span class="font-mono text-amber-300"><span id="live-cao-yield">${cao.yieldPct.toFixed(0)}</span>% · ${cao.points}/${cao.maxPoints}</span>
+                </div>
+                ${row(cao.groundFine, 'caoCriterionGround')}
+                ${row(cao.ventedWhileHeating, 'caoCriterionVented')}
+                ${row(cao.roaringBlueZone, 'caoCriterionBlueFlame')}
+                ${row(cao.cooledProtected, 'caoCriterionProtected')}
+              </div>`;
+          })()}
           ${
             ((item.headspaceGasMoles?.H2_g || 0) > 1e-5 || (item.moles.CuO_s || 0) > 1e-7) && !item.isShattered
               ? this.sim.environment?.atmosphereMode === 'inert' || (item.airO2PurgeFrac ?? 1) <= 0.14
@@ -997,6 +1098,28 @@ export class InspectorPanel {
                   }</button>`
                 : ''
             }
+            ${
+              spec.hasLid
+                ? `<button type="button" id="ins-crucible-lid" class="px-2.5 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-xs font-semibold hover:border-accent">${
+                    t('crucibleLidLabel')
+                  } ${
+                    item.lidState === 'closed'
+                      ? t('crucibleLidClosed')
+                      : item.lidState === 'ajar'
+                      ? t('crucibleLidAjar')
+                      : t('crucibleLidOpen')
+                  }</button>`
+                : ''
+            }
+            <button type="button" id="ins-toggle-compare" class="px-2.5 py-1.5 rounded-lg border ${
+              Array.isArray(this.sim.compareVesselIds) && this.sim.compareVesselIds.includes(item.id)
+                ? 'border-sky-500 bg-sky-500/20 text-sky-400 font-semibold'
+                : 'border-theme bg-surface'
+            } text-xs font-medium hover:border-accent">${
+              Array.isArray(this.sim.compareVesselIds) && this.sim.compareVesselIds.includes(item.id)
+                ? t('actionCompareVesselRemove')
+                : t('actionCompareVesselAdd')
+            }</button>
             ${
               spec.stopperable
                 ? `<button type="button" id="ins-tube" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${
@@ -1296,6 +1419,9 @@ export class InspectorPanel {
       this.container.querySelector('#ins-tare')?.addEventListener('click', () => this.sim.tareScale(item.id));
       this.container.querySelector('#ins-clear-tare')?.addEventListener('click', () => this.sim.clearTare(item.id));
     } else if (item.kind === 'burner') {
+      this.container.querySelector('#ins-bunsen-air-toggle')?.addEventListener('click', () => {
+        this.sim.toggleBurnerAirHole(item.id);
+      });
       this.container.querySelector('#burner-power-slider')?.addEventListener('input', (e) => {
         this.sim.setBurnerPower(item.id, Number(e.target.value));
       });
@@ -1356,6 +1482,11 @@ export class InspectorPanel {
       this.container.querySelector('#ins-stir')?.addEventListener('click', () => this.sim.stirVessel(item.id));
       this.container.querySelector('#ins-rinse')?.addEventListener('click', () => this.sim.rinseVessel(item.id));
       this.container.querySelector('#ins-stopper')?.addEventListener('click', () => this.sim.toggleStopper(item.id));
+      this.container.querySelector('#ins-crucible-lid')?.addEventListener('click', () => this.sim.cycleCrucibleLid(item.id));
+      this.container.querySelector('#ins-toggle-compare')?.addEventListener('click', () => {
+        this.sim.toggleCompareVessel(item.id);
+        this.callbacks.onOpenCompare?.();
+      });
       this.container.querySelector('#ins-phen-cotton')?.addEventListener('click', () => this.sim.togglePhenCotton(item.id));
       this.container.querySelector('#ins-invert')?.addEventListener('click', () => this.sim.toggleVesselInverted(item.id));
       this.container.querySelector('#ins-fountain-primer')?.addEventListener('click', () => this.sim.injectFountainPrimer(item.id));
@@ -1560,6 +1691,24 @@ export class InspectorPanel {
       this.container.querySelector('#ins-sb-remove')?.addEventListener('click', () => {
         this.sim.removeStirBarFromVessel(item.id);
       });
+    } else if (item.kind === 'tongs') {
+      this.container.querySelector('#ins-tongs-sample')?.addEventListener('click', () => {
+        const candidates = this.sim.items.filter(
+          (v) =>
+            v.kind === 'vessel' &&
+            !v.isShattered &&
+            ((v.moles?.Zn_s || 0) > 1e-6 || (v.moles?.Na_s || 0) > 1e-6 || (v.moles?.Cu_s || 0) > 1e-6)
+        );
+        if (candidates.length === 0) return;
+        const nearest = candidates.sort((a, b) => Math.hypot(a.x - item.x, a.y - item.y) - Math.hypot(b.x - item.x, b.y - item.y))[0];
+        this.sim.tongsPickSampleFromVessel(item.id, nearest.id);
+      });
+      this.container.querySelector('#ins-tongs-grip')?.addEventListener('click', () => {
+        this.sim.tongsToggleGripVessel(item.id);
+      });
+      this.container.querySelector('#ins-tongs-release')?.addEventListener('click', () => {
+        this.sim.tongsReleaseAll(item.id);
+      });
     }
   }
 
@@ -1619,7 +1768,11 @@ export class InspectorPanel {
     }
 
     if (item.kind === 'burner') {
-      const powerW = Math.round(item.powerW ?? (APPARATUS.burner.powerLevelsW[item.flameLevel || 0] || 0));
+      const bSpec = APPARATUS[item.typeId] || APPARATUS.burner;
+      const isBunsen = item.typeId === 'bunsen_burner';
+      const airOpen = isBunsen ? item.airHoleOpen !== false : true;
+      const tbl = isBunsen && !airOpen ? bSpec.yellowPowerLevelsW : bSpec.powerLevelsW;
+      const powerW = Math.round(item.powerW ?? (tbl[item.flameLevel || 0] || 0));
       const pEl = this.container.querySelector('#live-burner-power');
       const sEl = this.container.querySelector('#burner-power-slider');
       if (pEl) pEl.textContent = `${powerW} W`;
@@ -1700,6 +1853,11 @@ export class InspectorPanel {
     const grossG = spec.tareMassG + contentsG;
 
     const phEl = this.container.querySelector('#live-ph');
+    const caoYieldEl = this.container.querySelector('#live-cao-yield');
+    if (caoYieldEl) {
+      const cao = computeCaOOptimizationScore(item);
+      if (cao) caoYieldEl.textContent = cao.yieldPct.toFixed(0);
+    }
     const tempEl = this.container.querySelector('#live-temp');
     const volEl = this.container.querySelector('#live-vol');
     const massEl = this.container.querySelector('#live-mass');

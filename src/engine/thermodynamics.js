@@ -53,19 +53,25 @@ function computeHClVaporRatio(nHCl, nWater) {
  * Compute realistic Newton-convection burner heating rate (W) that tapers as vessel
  * temperature approaches the spirit-lamp plume limit (~170 / 228 / 280 C dry steady state).
  */
-function computeEffectiveBurnerPowerW(spec, vesselTempK, burnerPowerW, flameLevel) {
+function computeEffectiveBurnerPowerW(spec, vesselTempK, burnerPowerW, flameLevel, flameTempOverrideK = null) {
   if (burnerPowerW <= 0) return 0;
-  const maxW = APPARATUS.burner.maxPowerW || 650;
+  const isBunsenHeat = Boolean(flameTempOverrideK && flameTempOverrideK >= 850);
+  const maxW = isBunsenHeat ? (APPARATUS.bunsen_burner?.maxPowerW || 1550) : (APPARATUS.burner.maxPowerW || 650);
   const frac = Math.max(0.02, Math.min(1, burnerPowerW / maxW));
   const tFlame =
-    flameLevel > 0 && Number.isInteger(flameLevel) && APPARATUS.burner.effectiveFlameK?.[flameLevel]
+    flameTempOverrideK && Number.isFinite(flameTempOverrideK)
+      ? flameTempOverrideK
+      : flameLevel > 0 && Number.isInteger(flameLevel) && APPARATUS.burner.effectiveFlameK?.[flameLevel]
       ? APPARATUS.burner.effectiveFlameK[flameLevel]
       : 335.0 + 361.0 * Math.pow(frac, 0.54);
-  const captureScale = Math.min(1.0, (spec.heatLossCoeffWK || 0.45) / 0.42);
+  const captureScale = isBunsenHeat
+    ? Math.min(1.0, Math.max(0.88, (spec.heatLossCoeffWK || 0.45) / 0.35))
+    : Math.min(1.0, (spec.heatLossCoeffWK || 0.45) / 0.42);
   const tStart = 350.0;
   if (vesselTempK <= tStart) return burnerPowerW * captureScale;
   const drivingFrac = Math.max(0, (tFlame - vesselTempK) / Math.max(20, tFlame - tStart));
-  return burnerPowerW * captureScale * drivingFrac;
+  const taper = isBunsenHeat ? Math.pow(drivingFrac, 0.52) : drivingFrac;
+  return burnerPowerW * captureScale * taper;
 }
 
 /**
@@ -125,7 +131,7 @@ export function updateFreezeMeltPhase(vessel, dt, candidateTempK = null, heatCap
   const iceMol = moles.H2O_s || 0;
   let T = candidateTempK ?? vessel.tempK;
   if (!Number.isFinite(T)) T = CONSTANTS.T_STD_K;
-  T = Math.max(155, Math.min(1350, T));
+  T = Math.max(155, Math.min(1950, T));
 
   if (liquidWaterMol <= 1e-12 && iceMol <= 1e-12) {
     vessel.isFrozenSolid = (moles.C2H5OH_l || 0) > 1e-7 && T < 159.05;
@@ -213,7 +219,8 @@ export function stepVesselThermodynamics(
   env,
   reactionHeatJ,
   burnerPowerW,
-  flameLevel = 0
+  flameLevel = 0,
+  flameTempOverrideK = null
 ) {
   const spec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
   const cTotal = Math.max(15.0, computeHeatCapacityJK(vessel));
@@ -221,11 +228,14 @@ export function stepVesselThermodynamics(
 
   // Convective + Stefan-Boltzmann radiative heat loss to ambient room
   const baseHLoss = spec.heatLossCoeffWK || 0.35;
+  const lidLossScale =
+    vessel.lidState === 'closed' ? 0.52 : vessel.lidState === 'ajar' ? 0.74 : 1.0;
   const effectiveBurnerW = computeEffectiveBurnerPowerW(
     spec,
     vessel.tempK,
     burnerPowerW,
-    flameLevel
+    flameLevel,
+    flameTempOverrideK
   );
   const isCryoCool =
     effectiveBurnerW <= 0 && env.tempK < CONSTANTS.T_FREEZE_WATER_K && vessel.tempK > env.tempK;
@@ -234,10 +244,11 @@ export function stepVesselThermodynamics(
     vessel.tempK < CONSTANTS.T_FREEZE_WATER_K &&
     env.tempK >= CONSTANTS.T_FREEZE_WATER_K &&
     vessel.tempK < env.tempK;
-  const hLoss = isCryoCool ? baseHLoss * 75.0 : isCryoThaw ? baseHLoss * 40.0 : baseHLoss;
-  const radCoeff = baseHLoss * 4.0e-9;
+  const isBunsenRad = Boolean(flameTempOverrideK && flameTempOverrideK >= 850 && effectiveBurnerW > 600);
+  const hLoss = (isCryoCool ? baseHLoss * 75.0 : isCryoThaw ? baseHLoss * 40.0 : baseHLoss) * lidLossScale;
+  const radCoeff = baseHLoss * lidLossScale * (isBunsenRad ? 0.38e-9 : 4.0e-9);
   const tEnv = Math.max(150, env.tempK);
-  const tCurClamped = Math.max(150, Math.min(1350, vessel.tempK));
+  const tCurClamped = Math.max(150, Math.min(1950, vessel.tempK));
   const ambientExchangeJ =
     (-hLoss * (tCurClamped - env.tempK) -
       radCoeff * (Math.pow(tCurClamped, 4) - Math.pow(tEnv, 4))) *
@@ -391,12 +402,19 @@ export function stepVesselThermodynamics(
     }
   }
 
-  // Update temperature with strict finite clamping across deep-cryo (155 K) to burner peak (1350 K)
+  // Update temperature with strict finite clamping across deep-cryo (155 K) to Bunsen peak (1950 K)
+  // Localized flame-cone heating of dry/empty vessels concentrates energy into the lower heated wall zone
+  const isDryFocusedBunsen =
+    flameTempOverrideK &&
+    flameTempOverrideK >= 850 &&
+    effectiveBurnerW > 200 &&
+    (vessel.moles.H2O_l || 0) + (vessel.moles.C2H5OH_l || 0) < 0.004;
+  const effHeatCapJK = isDryFocusedBunsen ? Math.max(16.0, cTotal * 0.28) : cTotal;
   const rawHeatJ = reactionHeatJ + effectiveBurnerW * dt + ambientExchangeJ + evapCoolingJ;
   const netHeatJ = Number.isFinite(rawHeatJ) ? rawHeatJ : 0;
-  let newTempK = tCurClamped + netHeatJ / cTotal;
+  let newTempK = tCurClamped + netHeatJ / effHeatCapJK;
   if (!Number.isFinite(newTempK)) newTempK = tCurClamped;
-  newTempK = Math.max(155, Math.min(1350, newTempK));
+  newTempK = Math.max(155, Math.min(1950, newTempK));
 
   // Regime 2: Co-distillation boiling clamp for Water + Ethanol (including pure EtOH at 78.3 C!)
   let isBoiling = false;
