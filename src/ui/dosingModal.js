@@ -466,14 +466,17 @@ export class DosingModal {
 
     const addIncrement = (volMl) => {
       if (this.state.mode === 'reagent') {
-        this.sim.addReagentToVessel(this.state.targetVesselId, this.state.reagentId, volMl);
+        this.sim.addReagentToVessel(this.state.targetVesselId, this.state.reagentId, volMl, {
+          silentAnim: true,
+        });
         this.state.pouredLive += volMl;
       } else {
         const moved = this.sim.pourBetweenVessels(
           this.state.sourceVesselId,
           this.state.targetVesselId,
           volMl,
-          this.state.includePpt
+          this.state.includePpt,
+          { rateMlS: Math.max(4, volMl / 0.05), pouredMlTotal: this.state.pouredLive + volMl }
         );
         this.state.pouredLive += moved;
       }
@@ -513,7 +516,7 @@ export class DosingModal {
 
     this.container.querySelector('#dosing-confirm')?.addEventListener('click', () => {
       if (this.state.mode === 'reagent') {
-        this.sim.addReagentToVessel(this.state.targetVesselId, this.state.reagentId, this.state.amount, {
+        this.sim.startTimedReagentPour(this.state.targetVesselId, this.state.reagentId, this.state.amount, {
           fine: this.state.fine,
         });
       } else if (this.state.mode === 'syringe_transfer') {
@@ -523,7 +526,7 @@ export class DosingModal {
           this.state.amount
         );
       } else {
-        this.sim.pourBetweenVessels(
+        this.sim.startTimedVesselPour(
           this.state.sourceVesselId,
           this.state.targetVesselId,
           this.state.amount,

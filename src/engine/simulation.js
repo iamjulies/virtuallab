@@ -116,8 +116,9 @@ export class LabSimulation {
       tempK: CONSTANTS.T_STD_K,
       sourceLabel: '',
     };
-    this.activePourStream = null; // { fromX, fromY, toX, toY, color, timer }
+    this.activePourStream = null; // { fromX, fromY, toX, toY, color, timer, rateMlS, pouredMl }
     this.activeReagentTransfer = null; // { reagentId, vesselId, isSolid, startMs, durationMs, dose, color, speciesId, fine }
+    this.timedTransfers = []; // Timed progressive reagent / vessel pouring jobs
     this.listeners = new Set();
     this.sampleAccum = 0;
     this.visualHooks = {
@@ -357,6 +358,9 @@ export class LabSimulation {
   setupPreset(presetName) {
     this.items = [];
     this.logs = [];
+    this.timedTransfers = [];
+    this.activePourStream = null;
+    this.activeReagentTransfer = null;
     this.timeSec = 0;
     this.nextId = 1;
 
@@ -814,6 +818,17 @@ export class LabSimulation {
           dst.escapedGasMoles.H2O_g = (dst.escapedGasMoles.H2O_g || 0) + steamMol;
         }
       }
+      const etMol = (syr.gasMoles.C2H5OH_g || 0) * remGasFrac;
+      if (etMol > 1e-10) {
+        syr.gasMoles.C2H5OH_g = Math.max(0, (syr.gasMoles.C2H5OH_g || 0) - etMol);
+        if (dst.tempK < SPECIES.C2H5OH_l.boilTempK) {
+          dst.moles.C2H5OH_l = (dst.moles.C2H5OH_l || 0) + etMol;
+          heatAddedJ += etMol * SPECIES.C2H5OH_l.dHVapJ;
+          addedCapJK += etMol * SPECIES.C2H5OH_l.cp;
+        } else {
+          dst.escapedGasMoles.C2H5OH_g = (dst.escapedGasMoles.C2H5OH_g || 0) + etMol;
+        }
+      }
       const hclMol = (syr.gasMoles.HCl_g || 0) * remGasFrac;
       if (hclMol > 1e-10) {
         syr.gasMoles.HCl_g = Math.max(0, (syr.gasMoles.HCl_g || 0) - hclMol);
@@ -1130,7 +1145,7 @@ export class LabSimulation {
     this.checkOverflow(v);
     this.recomputeScaleReadings();
     this.recordHistorySnapshot(v, true);
-    this.emitChange();
+    if (!options.silentEmit) this.emitChange();
     return true;
   }
 
@@ -1144,10 +1159,148 @@ export class LabSimulation {
   }
 
   /**
+   * Queue a progressive continuous pour from a starter liquid reagent matching bottle/rod animation.
+   * Falls back to synchronous addition when paused, solid, or micro-drop <= 0.25 mL.
+   */
+  startTimedReagentPour(vesselId, reagentId, amount, options = {}) {
+    const reg = STARTER_REAGENTS.find((r) => r.id === reagentId);
+    const v = this.getItem(vesselId);
+    const amt = Math.max(0, Number(amount) || 0);
+    if (!v || !reg || amt <= 0) return false;
+    if (this.environment.paused || options.instant || reg.kind === 'solid' || amt <= 0.25) {
+      return this.addReagentToVessel(vesselId, reagentId, amt, options);
+    }
+
+    const startMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const durationMs = Math.max(780, Math.min(3400, Math.round(520 + amt * 24)));
+    this.activeReagentTransfer = {
+      reagentId,
+      vesselId: v.id,
+      isSolid: false,
+      startMs,
+      durationMs,
+      dose: amt,
+      color: reg.swatch,
+      speciesId: null,
+      fine: false,
+    };
+    this.timedTransfers.push({
+      kind: 'reagent',
+      vesselId: v.id,
+      reagentId,
+      totalAmt: amt,
+      addedAmt: 0,
+      startMs,
+      durationMs,
+    });
+    if (this.visualHooks.onReagentDispense) {
+      this.visualHooks.onReagentDispense(v, reg, amt, options);
+    }
+    this.emitChange();
+    return true;
+  }
+
+  /**
+   * Queue a smooth flow-rate-controlled pour from source vessel to target vessel via modal.
+   */
+  startTimedVesselPour(sourceId, targetId, amount, shakeBeforePour = false) {
+    const src = this.getItem(sourceId);
+    const dst = this.getItem(targetId);
+    const amt = Math.max(0, Number(amount) || 0);
+    if (!src || !dst || amt <= 0) return 0;
+    if (this.environment.paused || amt <= 0.25) {
+      return this.pourBetweenVessels(sourceId, targetId, amt, shakeBeforePour);
+    }
+
+    const durationMs = Math.max(680, Math.min(2800, Math.round(480 + amt * 22)));
+    const startMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.timedTransfers.push({
+      kind: 'vessel',
+      sourceId: src.id,
+      targetId: dst.id,
+      totalMl: amt,
+      movedMl: 0,
+      shakeBeforePour,
+      startMs,
+      durationMs,
+    });
+    this.emitChange();
+    return amt;
+  }
+
+  stepTimedTransfers(nowMsOverride = null) {
+    if (!this.timedTransfers || this.timedTransfers.length === 0) return;
+    const nowMs = nowMsOverride ?? (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const remaining = [];
+    let anyCompleted = false;
+
+    for (const job of this.timedTransfers) {
+      const p = Math.max(0, Math.min(1, (nowMs - job.startMs) / Math.max(1, job.durationMs)));
+      if (job.kind === 'reagent') {
+        const dst = this.getItem(job.vesselId);
+        if (!dst || dst.isShattered) continue;
+        // Pour flows smoothly inside [0.12 .. 0.90] matching glass-rod pouring animation window
+        const frac = p <= 0.12 ? 0 : p >= 0.90 ? 1 : (p - 0.12) / 0.78;
+        const targetAdded = job.totalAmt * frac;
+        const delta = targetAdded - job.addedAmt;
+        if (delta > 1e-5) {
+          this.addReagentToVessel(job.vesselId, job.reagentId, delta, {
+            silentAnim: true,
+            silentEmit: p < 0.999,
+          });
+          job.addedAmt += delta;
+        }
+        if (p < 0.999) remaining.push(job);
+        else anyCompleted = true;
+      } else if (job.kind === 'vessel') {
+        const src = this.getItem(job.sourceId);
+        const dst = this.getItem(job.targetId);
+        if (!src || !dst || src.isShattered || dst.isShattered) {
+          if (src) src.tiltAngle = 0;
+          continue;
+        }
+        const dir = src.x >= dst.x ? -1 : 1;
+        const tiltEnv = p < 0.12 ? p / 0.12 : p > 0.88 ? (1 - p) / 0.12 : 1;
+        src.tiltAngle = dir * 0.48 * Math.max(0, Math.min(1, tiltEnv));
+        const srcSpec = APPARATUS[src.typeId] || APPARATUS.beaker_250;
+        const dstSpec = APPARATUS[dst.typeId] || APPARATUS.beaker_250;
+        const lipSpan = Math.min(28, (srcSpec.neckRadius || srcSpec.width * 0.35) * 0.85);
+
+        const targetMoved = job.totalMl * p;
+        const delta = targetMoved - job.movedMl;
+        const rateMlS = (job.totalMl / job.durationMs) * 1000;
+        if (delta > 1e-4) {
+          const moved = this.pourBetweenVessels(src.id, dst.id, delta, job.shakeBeforePour, {
+            rateMlS,
+            pouredMlTotal: job.movedMl + delta,
+            fromX: src.x + dir * lipSpan,
+            fromY: src.y - srcSpec.height * 0.34,
+            toY: dst.y - dstSpec.height * 0.25,
+            silentEmit: p < 0.999,
+          });
+          job.movedMl += moved;
+          if (moved <= 1e-6) {
+            src.tiltAngle = 0;
+            continue;
+          }
+        }
+        if (p < 0.999) {
+          remaining.push(job);
+        } else {
+          src.tiltAngle = 0;
+          anyCompleted = true;
+        }
+      }
+    }
+    this.timedTransfers = remaining;
+    if (anyCompleted) this.emitChange();
+  }
+
+  /**
    * Pour solution from source vessel into target vessel using physical Decantation (default)
    * or Shake-Before-Pour mechanics driven by vessel shape, solid buoyancy, and suspension state.
    */
-  pourBetweenVessels(sourceId, targetId, volumeMl, shakeBeforePour = false) {
+  pourBetweenVessels(sourceId, targetId, volumeMl, shakeBeforePour = false, streamOpts = {}) {
     const src = this.getItem(sourceId);
     const dst = this.getItem(targetId);
     if (!src || !dst || src.id === dst.id || src.isShattered || dst.isShattered) return 0;
@@ -1238,25 +1391,29 @@ export class LabSimulation {
 
     // Trigger subtle pour stream visual
     const dstSpec = APPARATUS[dst.typeId];
-    this.activePourStream = {
-      fromX: src.x,
-      fromY: src.y - 40,
-      toX: dst.x,
-      toY: dst.y - dstSpec.height * 0.25,
-      color: computeSolutionVisuals(
-        src.moles,
-        srcLiqL,
-        computePH(src.moles, srcLiqL, src.tempK),
-        APPARATUS[src.typeId].opticalPathCm,
-        src.phenBleachFrac,
-        src.phenIrrevFrac || 0
-      ).css,
-      timer: 0.25,
-    };
+    if (!streamOpts.silentStream) {
+      this.activePourStream = {
+        fromX: streamOpts.fromX ?? src.x,
+        fromY: streamOpts.fromY ?? src.y - 40,
+        toX: dst.x,
+        toY: streamOpts.toY ?? dst.y - dstSpec.height * 0.25,
+        color: computeSolutionVisuals(
+          src.moles,
+          srcLiqL,
+          computePH(src.moles, srcLiqL, src.tempK),
+          APPARATUS[src.typeId].opticalPathCm,
+          src.phenBleachFrac,
+          src.phenIrrevFrac || 0
+        ).css,
+        rateMlS: streamOpts.rateMlS ?? Math.min(18, Math.max(4, actualMl * 2.5)),
+        pouredMl: streamOpts.pouredMlTotal ?? 0,
+        timer: 0.25,
+      };
+    }
 
     this.checkOverflow(dst);
     this.recomputeScaleReadings();
-    this.emitChange();
+    if (!streamOpts.silentEmit) this.emitChange();
     return actualMl;
   }
 
@@ -2188,6 +2345,66 @@ export class LabSimulation {
   }
 
   /**
+   * Determine active Alcohol Burner heating source for a vessel:
+   * - Direct contact (`vessel.restingOnId`) delivers 100% wattage
+   * - Clamped or held vessels positioned over a lit burner's flame plume/tripod receive geometric convective coupling
+   */
+  getBurnerHeatingSource(vessel) {
+    if (!vessel || vessel.kind !== 'vessel' || vessel.isShattered) return null;
+    const vSpec = APPARATUS[vessel.typeId];
+    if (!vSpec?.heatable) return null;
+    const bSpec = APPARATUS.burner;
+
+    if (vessel.restingOnId) {
+      const sup = this.getItem(vessel.restingOnId);
+      if (sup && sup.kind === 'burner') {
+        const fl = sup.flameLevel || 0;
+        const pw = sup.powerW ?? bSpec.powerLevelsW[Math.round(fl)] ?? 0;
+        return { burner: sup, flameLevel: fl, powerW: pw };
+      }
+    }
+
+    // Check spatial proximity above any lit burner (supports Retort Stand clamped flasks/test tubes)
+    let best = null;
+    const vBot = vessel.y + vSpec.height / 2;
+    const horizMax = Math.max(46, 36 + vSpec.width * 0.25);
+    for (const b of this.items) {
+      if (b.kind !== 'burner') continue;
+      const fl = b.flameLevel || 0;
+      const rawW = b.powerW ?? bSpec.powerLevelsW[Math.round(fl)] ?? 0;
+      if (rawW <= 0) continue;
+
+      const dx = Math.abs(vessel.x - b.x);
+      if (dx > horizMax) continue;
+
+      const bnTop = b.y - bSpec.height / 2 + 10; // Gauze support level
+      const flameBaseY = b.y + bSpec.height / 2 - 46; // Wick collar top
+      if (vBot > flameBaseY + 14) continue; // Vessel sits below burner base reservoir
+
+      const horizFrac = dx <= 34 ? 1.0 : Math.max(0, 1 - (dx - 34) / Math.max(10, horizMax - 34));
+      const powerFrac = Math.min(1, rawW / (bSpec.maxPowerW || 650));
+      const maxPlumeAbove = 72 + 68 * powerFrac;
+
+      let vertFrac = 0;
+      if (vBot >= bnTop - 16) {
+        // Vessel sits directly on or just inside tripod flame zone
+        vertFrac = 1.0;
+      } else {
+        const gapAbove = (bnTop - 16) - vBot;
+        if (gapAbove < maxPlumeAbove) {
+          vertFrac = Math.pow(1 - gapAbove / maxPlumeAbove, 1.35);
+        }
+      }
+
+      const effW = rawW * horizFrac * vertFrac;
+      if (effW > 1 && (!best || effW > best.powerW)) {
+        best = { burner: b, flameLevel: fl * horizFrac * vertFrac, powerW: effW };
+      }
+    }
+    return best;
+  }
+
+  /**
    * Main simulation tick called by animation loop (realDeltaSec).
    */
   step(realDeltaSec) {
@@ -2223,6 +2440,9 @@ export class LabSimulation {
       }
     }
 
+    // Advance progressive reagent/vessel pour jobs synchronized with animations
+    this.stepTimedTransfers();
+
     // Sub-step for numerical accuracy & smooth fast ionic kinetics
     const numSteps = Math.max(1, Math.ceil(scaledDt / CONSTANTS.SUBSTEP_MAX_DT));
     const dt = scaledDt / numSteps;
@@ -2251,17 +2471,10 @@ export class LabSimulation {
       // Continuous gravity spillover above physical brim
       this.stepVesselOverflow(v, scaledDt);
 
-      // Check burner power & flame level if resting on an active burner
-      let burnerPowerW = 0;
-      let burnerFlameLevel = 0;
-      if (v.restingOnId) {
-        const sup = this.getItem(v.restingOnId);
-        if (sup && sup.kind === 'burner') {
-          const bSpec = APPARATUS.burner;
-          burnerFlameLevel = sup.flameLevel || 0;
-          burnerPowerW = sup.powerW ?? bSpec.powerLevelsW[Math.round(burnerFlameLevel)] ?? 0;
-        }
-      }
+      // Check burner power & flame level (resting directly on burner OR clamped/held over flame plume)
+      const heatSrc = this.getBurnerHeatingSource(v);
+      const burnerPowerW = heatSrc?.powerW || 0;
+      const burnerFlameLevel = heatSrc?.flameLevel || 0;
 
       const frameGas = createZeroGasMap();
       let frameSteam = 0;
@@ -2287,6 +2500,7 @@ export class LabSimulation {
           combinedGas[gId] = (chemRes.gasProduced[gId] || 0) + (dryRes.gasProduced[gId] || 0);
         }
         combinedGas.HCl_g += thermRes.hclProducedMol || 0;
+        combinedGas.C2H5OH_g += thermRes.ethanolProducedMol || 0;
 
         const gasEvents = stepVesselGasAndPressure(
           v,
@@ -2442,15 +2656,15 @@ export class LabSimulation {
       }
 
       // Beilstein green copper flame test when vessel over lit burner holds any Cu metal/alloy + halogen vapor
-      if (v.restingOnId && burnerPowerW > 0) {
-        const sup = this.getItem(v.restingOnId);
+      if (heatSrc?.burner && burnerPowerW > 0) {
+        const sup = heatSrc.burner;
         const hasCuMetal = Object.entries(v.moles).some(([id, n]) => n > 1e-6 && SPECIES[id]?.isCopperMetal);
         const hasHalogenPlume =
           (v.recentHalogenGasTimer || 0) > 0 ||
           frameGas.C2H5Cl_g > 1e-7 ||
           frameGas.Cl2_g > 1e-7 ||
           frameGas.HCl_g > 1e-6;
-        if (sup && sup.kind === 'burner' && hasCuMetal && hasHalogenPlume) {
+        if (sup && hasCuMetal && hasHalogenPlume) {
           sup.beilsteinTimer = 2.0;
           if ((this.timeSec - (v.seenReactions.beilstein_test ?? -99)) > 5.0) {
             v.seenReactions.beilstein_test = this.timeSec;
@@ -2548,9 +2762,10 @@ export class LabSimulation {
           : isDehydrating
           ? Math.max(0.65, computeSteamOpacity(v.tempK, this.environment.tempK, CONSTANTS.RELATIVE_HUMIDITY))
           : Math.max(frameSteamOpacity, computeSteamOpacity(v.tempK, this.environment.tempK, CONSTANTS.RELATIVE_HUMIDITY));
-      const steamVisible = (rateSteam > 3e-5 && curSteamOpacity > 0.04) || frameBoiling || isDehydrating;
+      const steamVisible =
+        (rateSteam > 3e-5 && curSteamOpacity > 0.04) || (frameBoiling && rateSteam > 1e-6) || isDehydrating;
 
-      const labelOrder = ['C2H5Cl_g', 'NH3_g', 'NO2_g', 'NO_g', 'H2_g', 'O2_g', 'Cl2_g', 'HCl_g'];
+      const labelOrder = ['C2H5Cl_g', 'NH3_g', 'NO2_g', 'NO_g', 'H2_g', 'O2_g', 'Cl2_g', 'HCl_g', 'C2H5OH_g'];
       const extraLabelIds = ALL_GAS_IDS.filter(
         (id) => id !== 'H2O_g' && id !== 'HNO3_g' && !labelOrder.includes(id)
       );

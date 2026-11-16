@@ -17,7 +17,7 @@
   <pre id="details"></pre>
 
   <script type="module">
-    import { CONSTANTS, waterBoilingPointK } from '../src/data/constants.js';
+    import { CONSTANTS, solutionBoilingPointK, waterBoilingPointK } from '../src/data/constants.js';
     import { APPARATUS, clampItemToStandY, getClampNeckOffsetY } from '../src/data/apparatus.js';
     import {
       GAS_DISPLAY_META,
@@ -1523,6 +1523,110 @@
           clampOk &&
           dynVis.b > dynVis.r,
         `gases=${allGasesSynced}, solids=${allSolidsValid}, render=${solidsRenderOk}, aqCov=${allAqCovered}, dryAqLeft=${leftoverAq.length}, reagents=${allReagentsOk}, clamp=${clampOk}, blueB>R=${dynVis.b}>${dynVis.r}`
+      );
+    }
+
+    // TEST 44: Clamped vessels positioned over an active Alcohol Burner receive thermal heating & flame coupling
+    {
+      const sim = new LabSimulation();
+      const stand = sim.createApparatus('retort_stand', 440, 329);
+      const burner = sim.createApparatus('burner', 370, 428);
+      sim.setBurnerFlame(burner.id, 3); // 650 W
+      const beakerLow = sim.createApparatus('beaker_250', 370, 330);
+      sim.attachToStand(beakerLow.id, stand.id);
+      sim.addReagentToVessel(beakerLow.id, 'h2o', 40);
+
+      const tInitLow = beakerLow.tempK;
+      const srcLow = sim.getBurnerHeatingSource(beakerLow);
+      stepSeconds(sim, 12.0, 0.05);
+      const tFinalLowC = beakerLow.tempK - CONSTANTS.KELVIN_OFFSET;
+
+      // Suspended 50px higher above burner gauze also heats via convective flame plume (at reduced coupling)
+      const beakerHigh = sim.createApparatus('beaker_250', 370, 285);
+      sim.attachToStand(beakerHigh.id, stand.id);
+      const srcHigh = sim.getBurnerHeatingSource(beakerHigh);
+
+      assert(
+        'Retort-Stand clamped vessel directly above lit burner heats vigorously, with reduced convective power when raised higher',
+        srcLow &&
+          srcLow.powerW > 600 &&
+          beakerLow.tempK > tInitLow + 24 &&
+          srcHigh &&
+          srcHigh.powerW > 100 &&
+          srcHigh.powerW < srcLow.powerW,
+        `clampedGauzeW=${(srcLow?.powerW || 0).toFixed(0)}W, T_12s=${tFinalLowC.toFixed(1)}°C, raisedW=${(srcHigh?.powerW || 0).toFixed(0)}W`
+      );
+    }
+
+    // TEST 45: Timed Reagent & Vessel pouring streams smoothly over time instead of dumping 100% on frame 0
+    {
+      const sim = new LabSimulation();
+      const b1 = sim.createApparatus('beaker_250', 220, 429);
+      const b2 = sim.createApparatus('beaker_250', 420, 429);
+
+      sim.startTimedReagentPour(b1.id, 'h2o', 50);
+      const t0 = performance.now();
+      const immediateMl = computeLiquidVolumeL(b1.moles, b1.tempK) * 1000;
+      sim.stepTimedTransfers(t0 + 600);
+      const midMl = computeLiquidVolumeL(b1.moles, b1.tempK) * 1000;
+      sim.stepTimedTransfers(t0 + 2500);
+      const endMl = computeLiquidVolumeL(b1.moles, b1.tempK) * 1000;
+
+      // Timed vessel transfer between b1 -> b2
+      sim.startTimedVesselPour(b1.id, b2.id, 30, false);
+      const t1 = performance.now();
+      sim.stepTimedTransfers(t1 + 400);
+      const midTransMl = computeLiquidVolumeL(b2.moles, b2.tempK) * 1000;
+      sim.stepTimedTransfers(t1 + 2000);
+      const endTransMl = computeLiquidVolumeL(b2.moles, b2.tempK) * 1000;
+
+      assert(
+        'Timed pouring streams proportionally: 0 mL at start -> gradual partial rise mid-pour -> exact full volume at completion',
+        immediateMl === 0 &&
+          midMl > 5 &&
+          midMl < 45 &&
+          Math.abs(endMl - 50) < 0.5 &&
+          midTransMl > 3 &&
+          midTransMl < 27 &&
+          Math.abs(endTransMl - 30) < 0.5,
+        `reagent(0=${immediateMl.toFixed(1)} -> mid=${midMl.toFixed(1)} -> end=${endMl.toFixed(1)}), transfer(mid=${midTransMl.toFixed(1)} -> end=${endTransMl.toFixed(1)})`
+      );
+    }
+
+    // TEST 46: Ethanol-Water non-ideal Margules VLE, 78.15°C azeotrope, fast Ethanol volatility & closed tube distillation
+    {
+      // 1) Pure EtOH bp ~78.3 C, 95.6% azeotrope (x_E=0.894) bp ~78.15 C (lower than pure EtOH!)
+      const bpPureEtOH = solutionBoilingPointK({ C2H5OH_l: 1.0 }, 1.0) - CONSTANTS.KELVIN_OFFSET;
+      const bpAz = solutionBoilingPointK({ C2H5OH_l: 0.894, H2O_l: 0.106 }, 1.0) - CONSTANTS.KELVIN_OFFSET;
+      const bpPhen60 = solutionBoilingPointK({ C2H5OH_l: 0.375, H2O_l: 0.625 }, 1.0) - CONSTANTS.KELVIN_OFFSET;
+
+      // 2) Boiling Phen 1% co-distills Ethanol faster than Water (unlike old water-only boil!) & condenses Ethanol in cool flask
+      const sim = new LabSimulation();
+      const burner = sim.createApparatus('burner', 220, 428);
+      sim.setBurnerFlame(burner.id, 3);
+      const flaskSrc = sim.createApparatus('erlenmeyer_250', 220, 310);
+      const flaskDst = sim.createApparatus('beaker_250', 480, 429);
+      sim.addReagentToVessel(flaskSrc.id, 'phen', 25); // 25 mL 60% w/w EtOH + 39% w/w H2O
+      const etohStart = flaskSrc.moles.C2H5OH_l;
+      const h2oStart = flaskSrc.moles.H2O_l;
+      sim.connectTube(flaskSrc.id, flaskDst.id);
+      sim.updateSupportAttachments();
+      stepSeconds(sim, 30.0, 0.05);
+
+      const etohLeftFrac = (flaskSrc.moles.C2H5OH_l || 0) / etohStart;
+      const h2oLeftFrac = (flaskSrc.moles.H2O_l || 0) / h2oStart;
+      const condensedEtOH = flaskDst.moles.C2H5OH_l || 0;
+
+      assert(
+        'Ethanol-Water VLE: ~77.9°C azeotrope < 77.94°C EtOH (at 1.00 bar), Phen 1% boils ~80.4°C co-distilling EtOH faster than H2O into receiver',
+        Math.abs(bpPureEtOH - 77.94) < 0.25 &&
+          bpAz < bpPureEtOH &&
+          Math.abs(bpAz - 77.89) < 0.35 &&
+          bpPhen60 >= 79.5 &&
+          bpPhen60 <= 83.0 &&
+          etohLeftFrac < h2oLeftFrac &&
+          condensedEtOH > 0.02,
+        `bp(EtOH=${bpPureEtOH.toFixed(2)}°C, Az=${bpAz.toFixed(2)}°C, Phen=${bpPhen60.toFixed(1)}°C), leftFrac(EtOH=${(etohLeftFrac*100).toFixed(1)}% < H2O=${(h2oLeftFrac*100).toFixed(1)}%), distEtOH=${(condensedEtOH*1000).toFixed(1)}mmol`
       );
     }
 

@@ -174,17 +174,19 @@ export class LabWorkbenchCanvas {
           this.sim.items = this.sim.items.filter((i) => i.id !== hit.id);
           this.sim.items.push(hit);
         }
-        this.dragState = {
-          itemId: hit.id,
-          offsetX: pt.x - hit.x,
-          offsetY: pt.y - hit.y,
-          prevX: hit.x,
-          prevY: hit.y,
-          pourTargetId: null,
-          pipetteTargetId: null,
-          clampStandId: hit.clampedToId || null,
-          pouredMl: 0,
-        };
+          this.dragState = {
+            itemId: hit.id,
+            offsetX: pt.x - hit.x,
+            offsetY: pt.y - hit.y,
+            prevX: hit.x,
+            prevY: hit.y,
+            pourTargetId: null,
+            pipetteTargetId: null,
+            clampStandId: hit.clampedToId || null,
+            targetTilt: 0,
+            pourAlignFactor: 1.0,
+            pouredMl: 0,
+          };
         this.canvas.setPointerCapture(e.pointerId);
         if (this.callbacks.onSelect) this.callbacks.onSelect(hit);
         this.sim.emitChange();
@@ -253,11 +255,11 @@ export class LabWorkbenchCanvas {
         }
       }
 
-      // If dragging a vessel, check if hovering above another vessel's rim to auto-tilt & pour
+      // If dragging a vessel, check if hovering above another vessel's rim to smoothly tilt & pour
       if (item.kind === 'vessel' && !item.isStoppered && !item.isShattered) {
         const liqMl = computeLiquidVolumeL(item.moles, item.tempK) * 1000;
         let target = null;
-        if (liqMl > 0.1) {
+        if (liqMl > 0.05) {
           for (const other of this.sim.items) {
             if (other.kind !== 'vessel' || other.id === item.id || other.isShattered || other.isStoppered) continue;
             const oSpec = APPARATUS[other.typeId];
@@ -271,11 +273,12 @@ export class LabWorkbenchCanvas {
         if (target) {
           this.dragState.pourTargetId = target.id;
           this.dropTargetVesselId = target.id;
-          item.tiltAngle = item.x >= target.x ? -0.52 : 0.52;
+          this.dragState.targetTilt = item.x >= target.x ? -0.56 : 0.56;
+          this.dragState.pourAlignFactor = Math.max(0.45, 1.0 - Math.abs(item.x - target.x) / 110);
         } else {
           this.dragState.pourTargetId = null;
           this.dropTargetVesselId = null;
-          item.tiltAngle = 0;
+          this.dragState.targetTilt = 0;
         }
       } else if (item.kind === 'pipette' && !item.isBroken) {
         const tgt = this.findVesselAt(item.x, item.y + spec.height * 0.28);
@@ -436,17 +439,47 @@ export class LabWorkbenchCanvas {
   }
 
   /**
-   * Process continuous drag-pour transfer each frame if user holds tilted vessel above target.
+   * Process smooth wrist-tilt ramp & flow-rate-calibrated interactive drag-pour between vessels.
    */
   tickInteractivePour(realDeltaSec) {
-    if (!this.dragState || !this.dragState.pourTargetId) return;
+    if (!this.dragState) return;
     const src = this.sim.getItem(this.dragState.itemId);
-    const dst = this.sim.getItem(this.dragState.pourTargetId);
-    if (!src || !dst) return;
+    if (!src) return;
 
-    const transferRateMlS = 22.0;
+    // Smoothly tilt toward target angle (~2.1 rad/s) or relax upright when away from pour target
+    if (src.kind === 'vessel') {
+      const targetTilt = this.dragState.pourTargetId ? this.dragState.targetTilt || 0 : 0;
+      const curTilt = src.tiltAngle || 0;
+      const maxDelta = 2.1 * realDeltaSec;
+      if (Math.abs(targetTilt - curTilt) <= maxDelta) {
+        src.tiltAngle = targetTilt;
+      } else {
+        src.tiltAngle = curTilt + Math.sign(targetTilt - curTilt) * maxDelta;
+      }
+    }
+
+    if (!this.dragState.pourTargetId) return;
+    const dst = this.sim.getItem(this.dragState.pourTargetId);
+    if (!dst) return;
+
+    const absTilt = Math.abs(src.tiltAngle || 0);
+    if (absTilt <= 0.10) return;
+
+    const srcSpec = APPARATUS[src.typeId] || APPARATUS.beaker_250;
+    const srcLiqMl = computeLiquidVolumeL(src.moles, src.tempK) * 1000;
+    if (srcLiqMl <= 0.02) return;
+
+    // Steady realistic gravity flow calibrated to neck width, tilt progression & smooth low-volume tail
+    const isNarrowNeck =
+      srcSpec.shape === 'erlenmeyer' || srcSpec.shape === 'test_tube' || srcSpec.shape === 'cylinder';
+    const baseMaxRateMlS = isNarrowNeck ? 8.5 : 12.0;
+    const tiltFrac = Math.pow(Math.min(1, (absTilt - 0.10) / 0.46), 1.35);
+    const tailFactor = srcLiqMl < 5.0 ? Math.max(0.18, srcLiqMl / 5.0) : 1.0;
+    const alignFactor = this.dragState.pourAlignFactor ?? 1.0;
+    const flowRateMlS = baseMaxRateMlS * tiltFrac * tailFactor * alignFactor;
+
     // Physical hand-tilted decanting: settled dense solids remain behind unless previously stirred
-    const poured = this.sim.pourBetweenVessels(src.id, dst.id, transferRateMlS * realDeltaSec, false);
+    const poured = this.sim.pourBetweenVessels(src.id, dst.id, flowRateMlS * realDeltaSec, false);
     if (poured > 0) {
       this.dragState.pouredMl += poured;
       const srcLiqL = computeLiquidVolumeL(src.moles, src.tempK);
@@ -454,17 +487,20 @@ export class LabWorkbenchCanvas {
         src.moles,
         srcLiqL,
         computePH(src.moles, srcLiqL, src.tempK),
-        APPARATUS[src.typeId]?.opticalPathCm || 6.5,
+        srcSpec.opticalPathCm || 6.5,
         src.phenBleachFrac,
         src.phenIrrevFrac || 0
       ).css;
-      const dstSpec = APPARATUS[dst.typeId];
+      const dstSpec = APPARATUS[dst.typeId] || APPARATUS.beaker_250;
+      const tiltDir = (src.tiltAngle || 0) < 0 ? -1 : 1;
+      const lipSpan = Math.min(28, (srcSpec.neckRadius || srcSpec.width * 0.35) * 0.85);
       this.sim.activePourStream = {
-        fromX: src.x + (src.x >= dst.x ? -28 : 28),
-        fromY: src.y - 18,
+        fromX: src.x + tiltDir * lipSpan,
+        fromY: src.y - srcSpec.height * 0.34,
         toX: dst.x,
         toY: dst.y - dstSpec.height * 0.25,
         color,
+        rateMlS: flowRateMlS,
         timer: 0.12,
         pouredMl: this.dragState.pouredMl,
       };
@@ -611,14 +647,29 @@ export class LabWorkbenchCanvas {
     // 4. Render active pouring stream & animated reagent bottle / glass rod / glass spoon transfer
     if (this.sim.activePourStream) {
       const st = this.sim.activePourStream;
+      const rateNorm = Math.max(0, Math.min(1, (st.rateMlS || 10) / 14));
+      const ctrlX = (st.fromX + st.toX) * 0.5;
+      const ctrlY = st.fromY + 25;
       ctx.save();
       ctx.strokeStyle = st.color || 'rgba(186, 230, 253, 0.8)';
-      ctx.lineWidth = 4.5;
+      ctx.lineWidth = 2.2 + rateNorm * 2.4;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(st.fromX, st.fromY);
-      ctx.quadraticCurveTo((st.fromX + st.toX) * 0.5, st.fromY + 25, st.toX, st.toY);
+      ctx.quadraticCurveTo(ctrlX, ctrlY, st.toX, st.toY);
       ctx.stroke();
+
+      // Glint droplets flowing downward along stream proportional to live rate
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.82)';
+      for (let i = 0; i < 3; i++) {
+        const u = ((timeNow * (1.8 + rateNorm * 1.4) + i * 0.33) % 1);
+        const omt = 1 - u;
+        const bx = omt * omt * st.fromX + 2 * omt * u * ctrlX + u * u * st.toX;
+        const by = omt * omt * st.fromY + 2 * omt * u * ctrlY + u * u * st.toY;
+        ctx.beginPath();
+        ctx.arc(bx, by, 1.4 + rateNorm * 0.9, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       if (st.pouredMl > 0) {
         ctx.fillStyle = this.isDark ? '#0f172a' : '#ffffff';

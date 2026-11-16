@@ -1,7 +1,7 @@
 import {
   CONSTANTS,
+  computeEthanolWaterVLE,
   solutionBoilingPointK,
-  waterMoleFraction,
   waterVaporPressureMmHg,
 } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
@@ -71,7 +71,8 @@ export function calcEvaporationRateMol(
   tempK,
   areaCm2,
   pAmbientPa = 0,
-  isStirred = false
+  isStirred = false,
+  activityCoeffOverride = null
 ) {
   if (!species || !species.boilTempK || !species.dHVapJ || moleFraction <= 0 || areaCm2 <= 0) {
     return 0;
@@ -80,7 +81,8 @@ export function calcEvaporationRateMol(
   const P_atm = 101325;
   const T = Math.max(200, tempK);
   const P_sat = P_atm * Math.exp((species.dHVapJ / R) * (1 / species.boilTempK - 1 / T));
-  const P_surface = moleFraction * (species.activityCoeff || 1.0) * P_sat;
+  const gamma = activityCoeffOverride ?? species.activityCoeff ?? 1.0;
+  const P_surface = moleFraction * gamma * P_sat;
   if (P_surface <= pAmbientPa) return 0;
 
   // Gilliland diffusivity scaling in lab air (M_air = 28.97 g/mol)
@@ -134,9 +136,11 @@ export function stepVesselThermodynamics(
 
   // Sub-boiling surface evaporation & concentrated HCl(g) fuming
   let steamProducedMol = 0;
+  let ethanolProducedMol = 0;
   let hclProducedMol = 0;
   let evapCoolingJ = 0;
   const nWater = vessel.moles.H2O_l || 0;
+  const nEthanol = vessel.moles.C2H5OH_l || 0;
 
   const hasOpenTube = !!(vessel.connectedTargetId || vessel.connectedSyringeId);
   const effectivePressureBar =
@@ -146,14 +150,13 @@ export function stepVesselThermodynamics(
 
   const boilingPointK = solutionBoilingPointK(vessel.moles, effectivePressureBar);
 
-  // Regime 1: Universal sub-boiling evaporation (Clausius-Clapeyron + Stefan-Maxwell + Gilliland)
+  // Regime 1: Universal sub-boiling evaporation (Clausius-Clapeyron + Margules activity + Stefan-Maxwell + Gilliland)
   // Open vessels evaporate gently at any T; tube-connected vessels vent expanding warm vapor once T >= 80 C,
   // and fuming conc. HCl (>21.2%) continuously outgasses dry HCl(g) through an open delivery tube.
-  const canSubBoilVent = !vessel.isStoppered || (hasOpenTube && vessel.tempK >= 353.15);
+  const canSubBoilVent = !vessel.isStoppered || (hasOpenTube && vessel.tempK >= 351.0);
   const canVentFumingHCl = !vessel.isStoppered || hasOpenTube;
-  const nEthanol = vessel.moles.C2H5OH_l || 0;
   if ((nWater > 1e-7 || nEthanol > 1e-7) && (canSubBoilVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
-    const xH2O = waterMoleFraction(vessel.moles);
+    const vle = computeEthanolWaterVLE(vessel.moles, vessel.tempK, false);
     const volMl =
       computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000 +
       computeSolidVolumeMl(vessel.moles);
@@ -171,16 +174,14 @@ export function stepVesselThermodynamics(
       Math.exp((SPECIES.H2O_l.dHVapJ / CONSTANTS.R_J_MOL_K) * (1 / SPECIES.H2O_l.boilTempK - 1 / env.tempK));
     const evapH2OMolS =
       nWater > 1e-7 && canSubBoilVent
-        ? calcEvaporationRateMol(SPECIES.H2O_l, xH2O, vessel.tempK, effAreaCm2, pAmbH2OPa, isStirred)
+        ? calcEvaporationRateMol(SPECIES.H2O_l, vle.xW0 * vle.fIon, vessel.tempK, effAreaCm2, pAmbH2OPa, isStirred, vle.gammaW)
         : 0;
     const subBoilEvap = Math.min(nWater, evapH2OMolS * dt);
 
-    // 1b) Volatile ethanol co-evaporation (e.g. from 1% phenolphthalein solution)
-    const solTotal = Math.max(1e-9, nWater + nEthanol);
-    const xEtOH = nEthanol / solTotal;
+    // 1b) Volatile ethanol evaporation (Margules positive azeotrope gamma_E boosts trace & blend volatility)
     const evapEtOHMolS =
       nEthanol > 1e-7 && canSubBoilVent
-        ? calcEvaporationRateMol(SPECIES.C2H5OH_l, xEtOH, vessel.tempK, effAreaCm2, 0, isStirred)
+        ? calcEvaporationRateMol(SPECIES.C2H5OH_l, vle.xE0 * vle.fIon, vessel.tempK, effAreaCm2, 0, isStirred, vle.gammaE)
         : 0;
     const subBoilEtOH = Math.min(nEthanol, evapEtOHMolS * dt);
 
@@ -215,6 +216,7 @@ export function stepVesselThermodynamics(
     if (subBoilEtOH > 1e-12) {
       vessel.moles.C2H5OH_l -= subBoilEtOH;
       if (vessel.moles.C2H5OH_l < 1e-12) delete vessel.moles.C2H5OH_l;
+      ethanolProducedMol += subBoilEtOH;
       evapCoolingJ -= subBoilEtOH * SPECIES.C2H5OH_l.dHVapJ;
     }
     if (subBoilHCl > 1e-12) {
@@ -232,20 +234,42 @@ export function stepVesselThermodynamics(
   let newTempK = vessel.tempK + netHeatJ / cTotal;
   newTempK = Math.max(220, Math.min(1100, newTempK));
 
-  // Boiling clamp when aqueous solvent remains
+  // Regime 2: Co-distillation boiling clamp for Water + Ethanol (including pure EtOH at 78.3 C!)
   let isBoiling = false;
   const remainingWater = vessel.moles.H2O_l || 0;
-  if (remainingWater > 1e-7 && newTempK >= boilingPointK) {
+  const remainingEtOH = vessel.moles.C2H5OH_l || 0;
+  if ((remainingWater > 1e-7 || remainingEtOH > 1e-7) && newTempK >= boilingPointK) {
     isBoiling = true;
     const excessJ = (newTempK - boilingPointK) * cTotal;
     const nH = vessel.moles.H_aq || 0;
     const nCl = vessel.moles.Cl_aq || 0;
     const nHCl = Math.min(nH, nCl);
     const rVap = computeHClVaporRatio(nHCl, remainingWater);
-    const effDeltaH =
-      CONSTANTS.DELTA_H_VAP_WATER_J + rVap * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
+    const vleBoil = computeEthanolWaterVLE(vessel.moles, boilingPointK, true);
+    const yE = remainingEtOH > 1e-7 ? (remainingWater > 1e-7 ? vleBoil.yE : 1.0) : 0;
+    const yW = 1 - yE;
 
-    const boilMol = Math.min(remainingWater, excessJ / effDeltaH);
+    const effWaterHeat = CONSTANTS.DELTA_H_VAP_WATER_J + rVap * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
+    const effDeltaH = Math.max(1000, yE * SPECIES.C2H5OH_l.dHVapJ + yW * effWaterHeat);
+    const boilTot = excessJ / effDeltaH;
+
+    let boilEtOH = Math.min(remainingEtOH, boilTot * yE);
+    let boilMol = Math.min(remainingWater, boilTot * yW);
+    // If one solvent is exhausted inside the step, spend remaining energy cleanly on the other if applicable
+    let usedJ = boilEtOH * SPECIES.C2H5OH_l.dHVapJ + boilMol * effWaterHeat;
+    if (usedJ < excessJ - 1e-6) {
+      const remJ = excessJ - usedJ;
+      if (boilMol >= remainingWater - 1e-12 && boilEtOH < remainingEtOH) {
+        const extraE = Math.min(remainingEtOH - boilEtOH, remJ / SPECIES.C2H5OH_l.dHVapJ);
+        boilEtOH += extraE;
+        usedJ += extraE * SPECIES.C2H5OH_l.dHVapJ;
+      } else if (boilEtOH >= remainingEtOH - 1e-12 && boilMol < remainingWater) {
+        const extraW = Math.min(remainingWater - boilMol, remJ / effWaterHeat);
+        boilMol += extraW;
+        usedJ += extraW * effWaterHeat;
+      }
+    }
+
     const boilHCl =
       nHCl > 1e-12
         ? remainingWater - boilMol <= 1e-7
@@ -253,11 +277,17 @@ export function stepVesselThermodynamics(
           : Math.min(nHCl, boilMol * rVap)
         : 0;
 
-    if (boilMol > 1e-12 || boilHCl > 1e-12) {
-      vessel.moles.H2O_l = Math.max(0, remainingWater - boilMol);
-      if (vessel.moles.H2O_l < 1e-12) delete vessel.moles.H2O_l;
-      steamProducedMol += boilMol;
-
+    if (boilMol > 1e-12 || boilHCl > 1e-12 || boilEtOH > 1e-12) {
+      if (boilMol > 1e-12) {
+        vessel.moles.H2O_l = Math.max(0, remainingWater - boilMol);
+        if (vessel.moles.H2O_l < 1e-12) delete vessel.moles.H2O_l;
+        steamProducedMol += boilMol;
+      }
+      if (boilEtOH > 1e-12) {
+        vessel.moles.C2H5OH_l = Math.max(0, remainingEtOH - boilEtOH);
+        if (vessel.moles.C2H5OH_l < 1e-12) delete vessel.moles.C2H5OH_l;
+        ethanolProducedMol += boilEtOH;
+      }
       if (boilHCl > 1e-12) {
         vessel.moles.H_aq = Math.max(0, (vessel.moles.H_aq || 0) - boilHCl);
         vessel.moles.Cl_aq = Math.max(0, (vessel.moles.Cl_aq || 0) - boilHCl);
@@ -266,10 +296,11 @@ export function stepVesselThermodynamics(
         hclProducedMol += boilHCl;
       }
 
-      const usedJ =
+      const actualUsedJ =
         boilMol * CONSTANTS.DELTA_H_VAP_WATER_J +
+        boilEtOH * SPECIES.C2H5OH_l.dHVapJ +
         boilHCl * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
-      const leftoverJ = Math.max(0, excessJ - usedJ);
+      const leftoverJ = Math.max(0, excessJ - actualUsedJ);
       newTempK = boilingPointK + leftoverJ / cTotal;
     } else {
       newTempK = boilingPointK;
@@ -277,12 +308,14 @@ export function stepVesselThermodynamics(
   }
 
   vessel.tempK = newTempK;
-  const steamOpacity = (vessel.moles.H2O_l || 0) > 1e-7
+  const hasAnyLiquid = (vessel.moles.H2O_l || 0) > 1e-7 || (vessel.moles.C2H5OH_l || 0) > 1e-7;
+  const steamOpacity = hasAnyLiquid
     ? computeSteamOpacity(newTempK, env.tempK, CONSTANTS.RELATIVE_HUMIDITY)
     : 0;
 
   return {
     steamProducedMol,
+    ethanolProducedMol,
     hclProducedMol,
     isBoiling,
     boilingPointK,

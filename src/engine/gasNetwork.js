@@ -1,4 +1,4 @@
-import { CONSTANTS, waterBoilingPointK, waterVaporPressureBar } from '../data/constants.js';
+import { CONSTANTS, ethanolVaporPressureBar, waterBoilingPointK, waterVaporPressureBar } from '../data/constants.js';
 import { ALL_GAS_IDS, NON_STEAM_GAS_IDS, SPECIES } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
@@ -218,10 +218,13 @@ export function stepSyringeThermodynamics(syringe, dt, env) {
 
   let nPerm = 0;
   for (const g of NON_STEAM_GASES) {
-    nPerm += syringe.gasMoles[g] || 0;
+    if (!SPECIES[g]?.isCondensableVapor) {
+      nPerm += syringe.gasMoles[g] || 0;
+    }
   }
   const nVapor = syringe.gasMoles.H2O_g || 0;
   const nCond = syringe.condensedWaterMol || 0;
+  const nEtVapor = syringe.gasMoles.C2H5OH_g || 0;
 
   const pExtBar = Math.max(0.05, env.pressureBar);
   const tBoilK = waterBoilingPointK(pExtBar);
@@ -231,6 +234,26 @@ export function stepSyringeThermodynamics(syringe, dt, env) {
 
   let latentHeatJ = 0;
   let condenseRate = 0;
+
+  // Condense excess Ethanol vapor C2H5OH(g) into barrel liquid when barrel < EtOH boiling point
+  if (nEtVapor > 1e-9) {
+    const pSatEt = ethanolVaporPressureBar(syringe.tempK);
+    if (pSatEt < pExtBar * 0.995 && syringe.tempK < SPECIES.C2H5OH_l.boilTempK) {
+      const nEtEq = nPerm * (pSatEt / Math.max(1e-6, pExtBar - pSatEt));
+      if (nEtVapor > nEtEq) {
+        const ex = nEtVapor - nEtEq;
+        const dCondE = Math.min(ex, ex * Math.min(1, (0.65 + 2.5 * (1 - pSatEt / pExtBar)) * dt));
+        if (dCondE > 1e-13) {
+          syringe.gasMoles.C2H5OH_g = Math.max(0, nEtVapor - dCondE);
+          if (syringe.gasMoles.C2H5OH_g < 1e-13) syringe.gasMoles.C2H5OH_g = 0;
+          if (!syringe.overflowMoles) syringe.overflowMoles = {};
+          syringe.overflowMoles.C2H5OH_l = (syringe.overflowMoles.C2H5OH_l || 0) + dCondE;
+          latentHeatJ += dCondE * SPECIES.C2H5OH_l.dHVapJ;
+          condenseRate += dCondE / Math.max(1e-5, dt);
+        }
+      }
+    }
+  }
 
   if (nVapor > 1e-9 && nVapor > nVaporEq) {
     // Supersaturated water vapor condenses into H2O(l) droplets, releasing ΔH_vap to the syringe barrel
@@ -413,8 +436,18 @@ export function stepVesselGasAndPressure(
       if ((produced.C2H5Cl_g || 0) > 0 && target.restingOnId) {
         target.recentHalogenGasTimer = 1.6;
       }
+      if ((produced.C2H5OH_g || 0) > 0) {
+        const dEt = produced.C2H5OH_g;
+        if (target.tempK < SPECIES.C2H5OH_l.boilTempK) {
+          target.moles.C2H5OH_l = (target.moles.C2H5OH_l || 0) + dEt;
+          heatAddedJ += dEt * SPECIES.C2H5OH_l.dHVapJ;
+          addedCapJK += dEt * SPECIES.C2H5OH_l.cp;
+        } else {
+          target.escapedGasMoles.C2H5OH_g = (target.escapedGasMoles.C2H5OH_g || 0) + dEt;
+        }
+      }
       for (const g of NON_STEAM_GASES) {
-        if (g !== 'HCl_g' && g !== 'NH3_g' && produced[g] > 0) {
+        if (g !== 'HCl_g' && g !== 'NH3_g' && g !== 'C2H5OH_g' && produced[g] > 0) {
           target.escapedGasMoles[g] = (target.escapedGasMoles[g] || 0) + produced[g];
         }
       }

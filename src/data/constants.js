@@ -75,13 +75,10 @@ export function waterVaporPressureBar(T_K) {
 }
 
 /**
- * Solvent water mole fraction x_H2O for Raoult's Law vapor pressure lowering.
+ * Non-volatile dissolved solute moles (ions & indicator; excludes volatile co-solvent Ethanol).
  */
-export function waterMoleFraction(moles) {
-  const nH2O = moles.H2O_l || 0;
-  if (nH2O <= 1e-12) return 0;
-  const soluteMol =
-    (moles.C2H5OH_l || 0) +
+export function nonVolatileSoluteMoles(moles) {
+  return (
     (moles.Na_aq || 0) +
     (moles.OH_aq || 0) +
     (moles.H_aq || 0) +
@@ -92,8 +89,74 @@ export function waterMoleFraction(moles) {
     (moles.SO4_2_aq || 0) +
     (moles.NO3_aq || 0) +
     (moles.CuCl4_2_aq || 0) +
-    (moles.ZnOH4_2_aq || 0);
+    (moles.CuOH4_2_aq || 0) +
+    (moles.ZnOH4_2_aq || 0) +
+    (moles.AgOH2_aq || 0) +
+    (moles.AgCl2_aq || 0) +
+    (moles.CuCl2_comp_aq || 0) +
+    (moles.C2H5O_aq || 0)
+  );
+}
+
+/**
+ * Solvent water mole fraction x_H2O for Raoult's Law vapor pressure lowering.
+ */
+export function waterMoleFraction(moles) {
+  const nH2O = moles.H2O_l || 0;
+  if (nH2O <= 1e-12) return 0;
+  const soluteMol = nonVolatileSoluteMoles(moles);
   return nH2O / (nH2O + Math.max(0, soluteMol));
+}
+
+/**
+ * Pure Ethanol saturation vapor pressure (bar) via Clausius-Clapeyron around T_b = 351.44 K.
+ */
+export function ethanolVaporPressureBar(T_K) {
+  const T = Math.max(200, Math.min(450, T_K));
+  const dHVapEtOH = 38560;
+  const tbEtOH = 351.44;
+  return 1.01325 * Math.exp((dHVapEtOH / CONSTANTS.R_J_MOL_K) * (1 / tbEtOH - 1 / T));
+}
+
+/**
+ * Ethanol–Water non-ideal Vapor-Liquid Equilibrium (3-suffix Margules, A12=1.55, A21=0.88),
+ * reproducing the real 95.6% w/w minimum-boiling azeotrope at 78.15 C (1 bar).
+ * Returns { xE0, xW0, gammaE, gammaW, fIon, pEBar, pWBar, pTotBar, yE, yW }.
+ */
+export function computeEthanolWaterVLE(moles, tempK, clampIon = false) {
+  const nW = Math.max(0, moles.H2O_l || 0);
+  const nE = Math.max(0, moles.C2H5OH_l || 0);
+  const nSolv = nW + nE;
+  if (nSolv <= 1e-12) {
+    return { xE0: 0, xW0: 0, gammaE: 1, gammaW: 1, fIon: 1, pEBar: 0, pWBar: 0, pTotBar: 0, yE: 0, yW: 1 };
+  }
+  const nIon = Math.max(0, nonVolatileSoluteMoles(moles));
+  const fIonRaw = nSolv / (nSolv + nIon);
+  const fIon = clampIon ? Math.max(0.55, fIonRaw) : fIonRaw;
+
+  const xE0 = nE / nSolv;
+  const xW0 = nW / nSolv;
+
+  // 3-suffix Margules binary interaction constants for Ethanol (1) + Water (2)
+  const A_EW = 1.55;
+  const A_WE = 0.88;
+  const gammaE = nE > 1e-12 && nW > 1e-12
+    ? Math.exp(xW0 * xW0 * (A_EW + 2 * (A_WE - A_EW) * xE0))
+    : 1.0;
+  const gammaW = nE > 1e-12 && nW > 1e-12
+    ? Math.exp(xE0 * xE0 * (A_WE + 2 * (A_EW - A_WE) * xW0))
+    : 1.0;
+
+  const pSatE = nE > 1e-12 ? ethanolVaporPressureBar(tempK) : 0;
+  const pSatW = nW > 1e-12 ? waterVaporPressureBar(tempK) : 0;
+
+  const pEBar = xE0 * gammaE * fIon * pSatE;
+  const pWBar = xW0 * gammaW * fIon * pSatW;
+  const pTotBar = pEBar + pWBar;
+  const yE = pTotBar > 1e-12 ? pEBar / pTotBar : xE0;
+  const yW = 1 - yE;
+
+  return { xE0, xW0, gammaE, gammaW, fIon, pEBar, pWBar, pTotBar, yE, yW };
 }
 
 /**
@@ -107,19 +170,21 @@ export function waterBoilingPointK(P_bar) {
 }
 
 /**
- * Aqueous solution boiling temperature (K), using:
+ * Solution boiling temperature (K), using:
  * - Exact HCl-H2O azeotropic boiling curve (20.24% w/w azeotrope at 108.6 C, 37% fuming ~48 C)
- * - Raoult's Law P_surface = x_H2O * P_sat(T) = P_bar for non-volatile dissolved salts/bases
+ * - Real non-ideal Ethanol-Water azeotrope VLE (78.15 C azeotrope / 78.3 C pure EtOH -> 99.6 C pure H2O)
+ * - Raoult's Law BPE for non-volatile dissolved salts/bases
  */
 export function solutionBoilingPointK(moles, P_bar) {
   const baseK = waterBoilingPointK(P_bar);
   const nH2O = moles.H2O_l || 0;
-  if (nH2O <= 1e-10) return baseK;
+  const nEtOH = moles.C2H5OH_l || 0;
+  if (nH2O <= 1e-10 && nEtOH <= 1e-10) return baseK;
 
   const mH2O = nH2O * CONSTANTS.M_H2O;
   const nHCl = Math.min(moles.H_aq || 0, moles.Cl_aq || 0);
 
-  if (nHCl > 1e-9) {
+  if (nH2O > 1e-10 && nEtOH <= 1e-9 && nHCl > 1e-9) {
     const mHCl = nHCl * CONSTANTS.M_HCL;
     const wHCl = mHCl / (mHCl + mH2O);
     const wAz = CONSTANTS.HCL_AZEOTROPE_WT_FRAC;
@@ -133,7 +198,24 @@ export function solutionBoilingPointK(moles, P_bar) {
     return Math.max(295, baseK + deltaK);
   }
 
-  // Raoult's Law: boiling occurs where P_sat(T) = P_bar / x_H2O
+  // Binary Ethanol / Water / Salt mixture boiling point: solve P_tot(T) = P_bar via 18-step monotonic bisection
+  if (nEtOH > 1e-9) {
+    const targetP = Math.max(0.05, P_bar);
+    let lo = 285.0;
+    let hi = 435.0;
+    for (let i = 0; i < 18; i++) {
+      const mid = 0.5 * (lo + hi);
+      const { pTotBar } = computeEthanolWaterVLE(moles, mid, true);
+      if (pTotBar < targetP) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    return 0.5 * (lo + hi);
+  }
+
+  // Pure aqueous + non-volatile solute: Raoult's Law BPE
   const xEff = Math.max(0.55, waterMoleFraction(moles));
   return waterBoilingPointK(P_bar / xEff);
 }

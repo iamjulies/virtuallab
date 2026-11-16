@@ -1344,7 +1344,7 @@ export function renderVessel(ctx, vessel, opts) {
   const solMl = computeSolidVolumeMl(vessel.moles);
   const geom = computeVesselFluidGeometry(spec, y, liqMl + solMl);
   const { interiorBottom, scaleY, neckHalf, surfaceY, surfaceHalfWPx, volumeMlToY, volumeMlToState } = geom;
-  const hasWater = (vessel.moles.H2O_l || 0) > 1e-7 && liqMl > 0.15;
+  const hasWater = liqMl > 0.15 && ((vessel.moles.H2O_l || 0) > 1e-7 || (vessel.moles.C2H5OH_l || 0) > 1e-7);
 
   // Draw liquid body using Beer-Lambert + Phenolphthalein color
   if (hasWater) {
