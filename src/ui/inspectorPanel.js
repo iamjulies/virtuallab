@@ -44,6 +44,23 @@ function formatGasSummaryHtml(gasMap = {}) {
   return parts.join('<span class="text-muted px-1">·</span>');
 }
 
+function getSyringeCondenseInfo(syr, env, t) {
+  const syrTempK = syr.tempK ?? env.tempK;
+  const syrTempC = kelvinToCelsius(syrTempK);
+  const condensedMol = syr.condensedWaterMol || 0;
+  const condensedMl = (condensedMol * SPECIES.H2O_l.molarMass) / 0.997;
+  const hasSteam = (syr.gasMoles?.H2O_g || 0) > 1e-6;
+  const isCondensing = (syr.lastCondenseRateMolS || 0) > 1e-6;
+  const condenseState = isCondensing
+    ? `💧 ${t('syringeCondenseActive')}`
+    : condensedMol > 1e-5
+    ? `💧 ${t('syringeCondenseDone')}`
+    : hasSteam
+    ? `♨️ ${t('syringeHotSteam')}`
+    : t('syringeDryGas');
+  return { syrTempK, syrTempC, condensedMol, condensedMl, isCondensing, condenseState };
+}
+
 export class InspectorPanel {
   constructor(container, sim, getLang, callbacks) {
     this.container = container;
@@ -154,6 +171,7 @@ export class InspectorPanel {
     } else if (item.kind === 'gas_syringe') {
       const volMl = computeSyringeGasVolumeMl(item, this.sim.environment);
       const totalGasMol = sumAllGasMoles(item.gasMoles);
+      const condInfo = getSyringeCondenseInfo(item, this.sim.environment, t);
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between">
@@ -162,13 +180,24 @@ export class InspectorPanel {
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
-              <div class="text-xs text-muted">Volume (PV=nRT)</div>
+              <div class="text-xs text-muted">${t('syringeVolLabel')}</div>
               <div class="text-base font-bold font-mono" id="live-syr-vol">${volMl.toFixed(2)} mL</div>
             </div>
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
-              <div class="text-xs text-muted">Total Gas</div>
+              <div class="text-xs text-muted">${t('syringeTotalGasLabel')}</div>
               <div class="text-base font-bold font-mono" id="live-syr-mol">${(totalGasMol * 1000).toFixed(2)} mmol</div>
             </div>
+            <div class="p-2.5 rounded-lg border border-theme bg-surface">
+              <div class="text-xs text-muted">${t('syringeGasTempLabel')}</div>
+              <div class="text-sm font-bold font-mono" id="live-syr-temp">${condInfo.syrTempK.toFixed(1)} K (${condInfo.syrTempC.toFixed(1)}°C)</div>
+            </div>
+            <div class="p-2.5 rounded-lg border border-theme bg-surface">
+              <div class="text-xs text-muted">${t('syringeCondenseLabel')}</div>
+              <div class="text-sm font-bold font-mono text-sky-400" id="live-syr-cond">${condInfo.condensedMl.toFixed(2)} mL</div>
+            </div>
+          </div>
+          <div class="px-2.5 py-1.5 rounded-lg border border-sky-500/35 bg-sky-500/10 text-xs font-medium" id="live-syr-cond-state">
+            ${condInfo.condenseState}
           </div>
           <div class="text-xs text-muted flex flex-wrap gap-x-2 gap-y-0.5" id="live-syr-breakdown">
             ${formatGasSummaryHtml(item.gasMoles)}
@@ -196,6 +225,7 @@ export class InspectorPanel {
 
       const syr = item.connectedSyringeId ? this.sim.getItem(item.connectedSyringeId) : null;
       const syrVol = syr ? computeSyringeGasVolumeMl(syr, this.sim.environment) : 0;
+      const syrCondInfo = syr ? getSyringeCondenseInfo(syr, this.sim.environment, t) : null;
 
       topSection = `
         <!-- Vessel Header & Actions -->
@@ -260,12 +290,26 @@ export class InspectorPanel {
 
         ${
           syr
-            ? `<div class="px-3 py-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs flex justify-between">
-                <span>${t('gasCollectedNote')}</span>
-                <strong class="font-mono" id="live-collected-gas">${syrVol.toFixed(2)} mL</strong>
+            ? `<div class="px-3 py-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs flex flex-col gap-0.5">
+                <div class="flex justify-between gap-2">
+                  <span>${t('gasCollectedNote')}</span>
+                  <strong class="font-mono" id="live-collected-gas">${syrVol.toFixed(2)} mL · ${syrCondInfo.syrTempC.toFixed(1)}°C</strong>
+                </div>
+                <div class="text-[11px] text-sky-400 font-mono" id="live-collected-cond">${
+                  syrCondInfo.condensedMl > 0.0005 || syrCondInfo.isCondensing
+                    ? `💧 ${t('gasCondensedShort')}: ${syrCondInfo.condensedMl.toFixed(2)} mL H₂O(l)`
+                    : ''
+                }</div>
               </div>`
             : `<div class="px-3 py-2 rounded-lg border border-theme bg-surface-alt text-xs flex flex-col gap-1">
-                <span class="text-muted">${t('gasEscapedNote')}</span>
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-muted">${t('gasEscapedNote')}</span>
+                  <span class="font-mono text-[11px] text-amber-400" id="live-escaped-gas-temp">${
+                    item.lastGasOutTempK
+                      ? `${t('gasOutTempTag')} ${kelvinToCelsius(item.lastGasOutTempK).toFixed(1)}°C`
+                      : ''
+                  }</span>
+                </div>
                 <div class="font-mono text-main flex flex-wrap gap-x-2 gap-y-0.5" id="live-escaped-gas">${formatGasSummaryHtml(item.escapedGasMoles)}</div>
               </div>`
         }
@@ -433,11 +477,18 @@ export class InspectorPanel {
     if (item.kind === 'gas_syringe') {
       const volMl = computeSyringeGasVolumeMl(item, this.sim.environment);
       const totalGasMol = sumAllGasMoles(item.gasMoles);
+      const condInfo = getSyringeCondenseInfo(item, this.sim.environment, t);
       const vEl = this.container.querySelector('#live-syr-vol');
       const mEl = this.container.querySelector('#live-syr-mol');
+      const tEl = this.container.querySelector('#live-syr-temp');
+      const cEl = this.container.querySelector('#live-syr-cond');
+      const sEl = this.container.querySelector('#live-syr-cond-state');
       const bEl = this.container.querySelector('#live-syr-breakdown');
       if (vEl) vEl.textContent = `${volMl.toFixed(2)} mL`;
       if (mEl) mEl.textContent = `${(totalGasMol * 1000).toFixed(2)} mmol`;
+      if (tEl) tEl.textContent = `${condInfo.syrTempK.toFixed(1)} K (${condInfo.syrTempC.toFixed(1)}°C)`;
+      if (cEl) cEl.textContent = `${condInfo.condensedMl.toFixed(2)} mL`;
+      if (sEl) sEl.textContent = condInfo.condenseState;
       if (bEl) bEl.innerHTML = formatGasSummaryHtml(item.gasMoles);
       return;
     }
@@ -465,11 +516,27 @@ export class InspectorPanel {
     if (escEl) {
       escEl.innerHTML = formatGasSummaryHtml(item.escapedGasMoles);
     }
+    const escTempEl = this.container.querySelector('#live-escaped-gas-temp');
+    if (escTempEl) {
+      escTempEl.textContent = item.lastGasOutTempK
+        ? `${t('gasOutTempTag')} ${kelvinToCelsius(item.lastGasOutTempK).toFixed(1)}°C`
+        : '';
+    }
 
     const colEl = this.container.querySelector('#live-collected-gas');
+    const colCondEl = this.container.querySelector('#live-collected-cond');
     if (colEl && item.connectedSyringeId) {
       const syr = this.sim.getItem(item.connectedSyringeId);
-      if (syr) colEl.textContent = `${computeSyringeGasVolumeMl(syr, this.sim.environment).toFixed(2)} mL`;
+      if (syr) {
+        const syrCondInfo = getSyringeCondenseInfo(syr, this.sim.environment, t);
+        colEl.textContent = `${computeSyringeGasVolumeMl(syr, this.sim.environment).toFixed(2)} mL · ${syrCondInfo.syrTempC.toFixed(1)}°C`;
+        if (colCondEl) {
+          colCondEl.textContent =
+            syrCondInfo.condensedMl > 0.0005 || syrCondInfo.isCondensing
+              ? `💧 ${t('gasCondensedShort')}: ${syrCondInfo.condensedMl.toFixed(2)} mL H₂O(l)`
+              : '';
+        }
+      }
     }
 
     for (const [spId, n] of Object.entries(item.moles)) {

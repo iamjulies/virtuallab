@@ -15,6 +15,7 @@ import {
   ALL_GASES,
   NON_STEAM_GASES,
   computeSyringeGasVolumeMl,
+  stepSyringeThermodynamics,
   stepVesselGasAndPressure,
 } from './gasNetwork.js';
 
@@ -120,6 +121,16 @@ export class LabSimulation {
         naPosRatio: 0.5,
         naVel: 0.9,
         wasBoiling: false,
+        lastGasOutTempK: null,
+        lastGasOutFormula: '',
+        gasOutBannerTimer: 0,
+        gasOutBoiling: false,
+        gasOutSteam: false,
+        tubeFlowRateMolS: 0,
+        tubeFlowTempK: null,
+        tubeFlowFormula: '',
+        tubeFlowBannerTimer: 0,
+        wallCondenseLevel: 0,
       });
     } else if (spec.kind === 'scale') {
       Object.assign(base, {
@@ -133,6 +144,10 @@ export class LabSimulation {
     } else if (spec.kind === 'gas_syringe') {
       Object.assign(base, {
         gasMoles: createEmptyGasMap(),
+        condensedWaterMol: 0,
+        tempK: this.environment.tempK,
+        inflowTempK: this.environment.tempK,
+        lastCondenseRateMolS: 0,
         connectedFromId: null,
         isBroken: false,
       });
@@ -278,7 +293,7 @@ export class LabSimulation {
     if (v.isStoppered) {
       v.isStoppered = false;
       this.disconnectSyringe(v.id);
-      for (const g of ['H2_g', 'O2_g', 'H2O_g']) {
+      for (const g of ALL_GASES) {
         v.escapedGasMoles[g] = (v.escapedGasMoles[g] || 0) + (v.headspaceGasMoles[g] || 0);
         v.headspaceGasMoles[g] = 0;
       }
@@ -343,6 +358,8 @@ export class LabSimulation {
     const syr = this.getItem(syringeId);
     if (!syr || syr.kind !== 'gas_syringe') return;
     syr.gasMoles = createEmptyGasMap();
+    syr.condensedWaterMol = 0;
+    syr.lastCondenseRateMolS = 0;
     this.emitChange();
   }
 
@@ -380,6 +397,16 @@ export class LabSimulation {
     v.wasOverflowing = false;
     v.spilledPuddleColor = null;
     v.wasBoiling = false;
+    v.lastGasOutTempK = null;
+    v.lastGasOutFormula = '';
+    v.gasOutBannerTimer = 0;
+    v.gasOutBoiling = false;
+    v.gasOutSteam = false;
+    v.tubeFlowRateMolS = 0;
+    v.tubeFlowTempK = null;
+    v.tubeFlowFormula = '';
+    v.tubeFlowBannerTimer = 0;
+    v.wallCondenseLevel = 0;
     this.recomputeScaleReadings();
     this.emitChange();
   }
@@ -794,6 +821,9 @@ export class LabSimulation {
     vessel.spilledPuddleColor = vis ? vis.css : null;
     vessel.activeReactions = [];
     vessel.wasBoiling = false;
+    vessel.gasOutBannerTimer = 0;
+    vessel.tubeFlowBannerTimer = 0;
+    vessel.wallCondenseLevel = 0;
     vessel.internalPressureBar = this.environment.pressureBar;
 
     this.addLog({ type: 'alert', key: logKey, vesselLabel: vessel.label });
@@ -999,6 +1029,7 @@ export class LabSimulation {
 
       // Sodium motion on meniscus
       const naActive = frameActiveMap.has('na_water') || frameActiveMap.has('na_acid');
+      const isDehydrating = frameActiveMap.has('dehydrate_cuso4_5h2o');
       if (naActive && (v.moles.Na_s || 0) > 1e-7) {
         v.naVisualPhase += realDeltaSec * 8.5;
         v.naPosRatio += v.naVel * realDeltaSec * (0.8 + Math.sin(v.naVisualPhase) * 0.6);
@@ -1011,17 +1042,66 @@ export class LabSimulation {
         }
       }
 
+      // Compute evolving gas/steam telemetry & wall condensation state for canvas labels & inspector
+      const invDt = 1 / Math.max(1e-4, scaledDt);
+      const rateH2 = frameGasH2 * invDt;
+      const rateO2 = frameGasO2 * invDt;
+      const rateHCl = frameGasHCl * invDt;
+      const rateCl2 = frameGasCl2 * invDt;
+      const rateSteam = frameSteam * invDt;
+      const totalGasRate = rateH2 + rateO2 + rateHCl + rateCl2 + rateSteam;
+
+      const labels = [];
+      if (rateH2 > 2e-5) labels.push('H₂');
+      if (rateO2 > 2e-5) labels.push('O₂');
+      if (rateCl2 > 2e-5) labels.push('Cl₂');
+      if (rateHCl > 2e-5) labels.push('HCl(g)');
+      if (rateSteam > 3e-5 || frameBoiling || isDehydrating) labels.push('H₂O(g)');
+      const formulaSummary = labels.slice(0, 2).join(' + ');
+
+      if (rateSteam > 4e-5 || (v.headspaceGasMoles?.H2O_g || 0) > 1e-5) {
+        const targetCond = Math.min(1, 0.25 + Math.log10(1 + rateSteam * 2500) * 0.5);
+        v.wallCondenseLevel = Math.min(1, (v.wallCondenseLevel || 0) + (targetCond - (v.wallCondenseLevel || 0)) * Math.min(1, realDeltaSec * 2.5));
+      } else {
+        v.wallCondenseLevel = Math.max(0, (v.wallCondenseLevel || 0) - realDeltaSec * 0.12);
+      }
+
+      if ((totalGasRate > 3.5e-5 || frameBoiling || isDehydrating) && formulaSummary) {
+        if (!v.isStoppered) {
+          v.lastGasOutTempK = v.tempK;
+          v.lastGasOutFormula = formulaSummary;
+          v.gasOutBoiling = frameBoiling;
+          v.gasOutSteam = rateSteam > 3e-5 || frameBoiling || isDehydrating;
+          v.gasOutBannerTimer = 1.8;
+          v.tubeFlowBannerTimer = Math.max(0, (v.tubeFlowBannerTimer || 0) - realDeltaSec);
+        } else if (v.connectedSyringeId) {
+          v.tubeFlowRateMolS = totalGasRate;
+          v.tubeFlowTempK = v.tempK;
+          v.tubeFlowFormula = formulaSummary;
+          v.tubeFlowBannerTimer = 1.6;
+          v.gasOutBannerTimer = Math.max(0, (v.gasOutBannerTimer || 0) - realDeltaSec);
+        } else {
+          v.gasOutBannerTimer = Math.max(0, (v.gasOutBannerTimer || 0) - realDeltaSec);
+          v.tubeFlowBannerTimer = Math.max(0, (v.tubeFlowBannerTimer || 0) - realDeltaSec);
+        }
+      } else {
+        v.gasOutBannerTimer = Math.max(0, (v.gasOutBannerTimer || 0) - realDeltaSec);
+        v.tubeFlowBannerTimer = Math.max(0, (v.tubeFlowBannerTimer || 0) - realDeltaSec);
+        if (v.tubeFlowBannerTimer === 0) v.tubeFlowRateMolS = 0;
+      }
+
       // Emit visual particle request
       if (this.visualHooks.onParticlesNeeded) {
         this.visualHooks.onParticlesNeeded(v, {
-          gasRateH2: frameGasH2 / Math.max(1e-4, scaledDt),
-          gasRateO2: frameGasO2 / Math.max(1e-4, scaledDt),
-          gasRateHCl: frameGasHCl / Math.max(1e-4, scaledDt),
-          gasRateCl2: frameGasCl2 / Math.max(1e-4, scaledDt),
-          steamRate: frameSteam / Math.max(1e-4, scaledDt),
+          gasRateH2: rateH2,
+          gasRateO2: rateO2,
+          gasRateHCl: rateHCl,
+          gasRateCl2: rateCl2,
+          steamRate: rateSteam,
           overflowRateMlS: v.overflowRateMlS || 0,
           overflowColor: v.overflowColor || null,
           isBoiling: frameBoiling,
+          isDehydrating,
           naActive,
           naRate:
             (frameActiveMap.get('na_water')?.rateMolS || 0) +
@@ -1030,6 +1110,14 @@ export class LabSimulation {
       }
 
       this.recordHistorySnapshot(v, false);
+    }
+
+    // Advance thermal exchange & Antoine condensation inside all Gas Syringes
+    for (const item of this.items) {
+      if (item.kind !== 'gas_syringe') continue;
+      for (let s = 0; s < numSteps; s++) {
+        stepSyringeThermodynamics(item, dt, this.environment);
+      }
     }
 
     this.recomputeScaleReadings();

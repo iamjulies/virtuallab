@@ -141,11 +141,13 @@ function applyThemeAndDevice() {
   document.documentElement.setAttribute('data-theme', appState.theme);
   rootWrap.setAttribute('data-device', appState.deviceMode);
   workbench.setTheme(isDark);
+  particles.setTheme(isDark);
   inspectorPanel.setTheme(isDark);
 }
 
 function refreshChrome(forceInspector = false) {
   const t = getTranslator();
+  workbench.setLang(appState.lang);
   envBar.render(t);
   shelfPanel.render(t);
   inspectorPanel.update(appState.lang, forceInspector);

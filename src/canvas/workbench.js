@@ -21,6 +21,7 @@ export class LabWorkbenchCanvas {
     this.callbacks = callbacks; // { onSelect, onRequestDosing, onDropApparatus }
 
     this.isDark = true;
+    this.langCode = 'vi';
     this.dragState = null; // { itemId, offsetX, offsetY, startX, startY, pourTargetId, pouredMl }
     this.hoverItemId = null;
     this.dropTargetVesselId = null;
@@ -45,6 +46,10 @@ export class LabWorkbenchCanvas {
 
   setTheme(isDark) {
     this.isDark = isDark;
+  }
+
+  setLang(langCode) {
+    this.langCode = langCode || 'vi';
   }
 
   resize() {
@@ -329,7 +334,7 @@ export class LabWorkbenchCanvas {
     ctx.stroke();
 
     // 2. Render rubber tubing behind/between vessels
-    renderTubingConnections(ctx, this.sim.items, this.isDark);
+    renderTubingConnections(ctx, this.sim.items, this.isDark, timeNow, this.langCode);
 
     // 3. Render supports first (Scales & Burners), then Syringes, then Vessels on top
     const ordered = [
@@ -345,13 +350,14 @@ export class LabWorkbenchCanvas {
       } else if (item.kind === 'burner') {
         renderBurner(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'gas_syringe') {
-        renderGasSyringe(ctx, item, isSelected, this.isDark, this.sim.environment);
+        renderGasSyringe(ctx, item, isSelected, this.isDark, this.sim.environment, this.langCode, timeNow);
       } else if (item.kind === 'vessel') {
         renderVessel(ctx, item, {
           isSelected,
           isDropTarget: item.id === this.dropTargetVesselId,
           isDark: this.isDark,
           timeNow,
+          langCode: this.langCode,
         });
       }
     }

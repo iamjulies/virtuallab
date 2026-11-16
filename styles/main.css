@@ -89,6 +89,12 @@ button:disabled {
 .border-orange-500 { border-color: #f97316; }
 .bg-orange-500\/20 { background-color: rgba(249, 115, 22, 0.2); }
 .text-orange-400 { color: #fb923c; }
+.text-sky-400 { color: #38bdf8; }
+.text-amber-400 { color: #fbbf24; }
+.border-sky-500\/35 { border-color: rgba(14, 165, 233, 0.42); }
+.bg-sky-500\/10 { background-color: rgba(14, 165, 233, 0.12); }
+[data-theme="light"] .text-sky-400 { color: #0284c7; }
+[data-theme="light"] .text-amber-400 { color: #b45309; }
 .text-red-400 { color: #f87171; }
 .hover\:bg-red-500\/10:hover { background-color: rgba(239, 68, 68, 0.12); }
 

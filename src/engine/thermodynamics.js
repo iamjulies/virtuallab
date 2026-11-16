@@ -105,7 +105,9 @@ export function stepVesselThermodynamics(
 
   // Regime 1: Sub-boiling surface evaporation (Dalton + Raoult + Antoine)
   // dm_evap/dt = km * A_surface * max(0, x_H2O * P_sat(T) - RH * P_sat(T_room))
-  if (nWater > 1e-7 && !vessel.isStoppered && vessel.tempK < boilingPointK) {
+  // Open vessels evaporate at any T; syringe-connected vessels vent expanding warm vapor once T >= 80 C.
+  const canSubBoilVent = !vessel.isStoppered || (vessel.connectedSyringeId && vessel.tempK >= 353.15);
+  if (nWater > 1e-7 && canSubBoilVent && vessel.tempK < boilingPointK) {
     const xH2O = waterMoleFraction(vessel.moles);
     const pSurfMmHg = xH2O * waterVaporPressureMmHg(vessel.tempK);
     const pAmbMmHg = CONSTANTS.RELATIVE_HUMIDITY * waterVaporPressureMmHg(env.tempK);
@@ -116,7 +118,8 @@ export function stepVesselThermodynamics(
     const areaCm2 = spec.geometry
       ? Math.max(0.2, spec.geometry.getLiquidState(volMl).surfaceAreaCm2)
       : spec.surfaceAreaCm2 || 20.0;
-    const km = 2.4e-6 * (vessel.stirTimer > 0 ? 2.0 : 1.0); // g / (cm^2 * s * mmHg)
+    const tubingScale = vessel.isStoppered && vessel.connectedSyringeId ? 0.55 : 1.0;
+    const km = 2.4e-6 * (vessel.stirTimer > 0 ? 2.0 : 1.0) * tubingScale; // g / (cm^2 * s * mmHg)
     const evapMolS = (km * areaCm2 * deltaPMmHg) / CONSTANTS.M_H2O;
     const subBoilEvap = Math.min(nWater, evapMolS * dt);
 

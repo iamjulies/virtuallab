@@ -7,6 +7,11 @@ const BENCH_FLOOR_Y = 482;
 export class ParticleSystem {
   constructor() {
     this.particles = [];
+    this.isDark = true;
+  }
+
+  setTheme(isDark) {
+    this.isDark = isDark;
   }
 
   clear() {
@@ -76,39 +81,82 @@ export class ParticleSystem {
       }
     }
 
-    // 3. Steam / HCl acid fuming / Cl2 greenish-yellow gas mist
+    // 3. Real Steam (boiling, sub-boil evap, crystal dehydration), HCl fuming, & Cl2 gas mist
     const nH = vessel.moles.H_aq || 0;
     const nCl = vessel.moles.Cl_aq || 0;
     const hConc = liqMl > 1 ? Math.min(nH, nCl) / (liqMl / 1000) : 0;
+    const steamRate = metrics.steamRate || 0;
     const hasCl2 = (metrics.gasRateCl2 || 0) > 1e-6;
     const hasHClFume = !vessel.isStoppered && (hConc > 6.5 || (metrics.gasRateHCl || 0) > 5e-5);
-    const vaporIntensity =
-      (metrics.isBoiling ? 1.0 : 0) +
-      (metrics.naActive ? 0.9 : 0) +
-      Math.max(0, (vessel.tempK - 325) / 50) * 0.45 +
-      (hasHClFume ? 0.35 : 0) +
-      (hasCl2 ? 0.55 : 0);
+
+    const steamSignal =
+      steamRate > 2e-6 || metrics.isBoiling || metrics.isDehydrating
+        ? Math.min(
+            2.2,
+            0.42 +
+              Math.log10(1 + steamRate * 4800) * 0.92 +
+              (metrics.isBoiling ? 0.55 : 0) +
+              (metrics.isDehydrating ? 0.35 : 0)
+          )
+        : 0;
+    const cl2Signal = hasCl2 ? 0.65 : 0;
+    const fumeSignal = hasHClFume ? 0.4 : 0;
+    const naSignal = metrics.naActive ? 0.9 : 0;
+    const vaporIntensity = steamSignal + cl2Signal + fumeSignal + naSignal;
+
+    const steamPalette = this.isDark
+      ? 'rgba(226, 232, 240, 0.50)'
+      : 'rgba(100, 116, 139, 0.38)';
+    const fumePalette = this.isDark
+      ? 'rgba(241, 245, 249, 0.52)'
+      : 'rgba(71, 85, 105, 0.42)';
+    const cl2Palette = this.isDark
+      ? 'rgba(217, 249, 157, 0.52)'
+      : 'rgba(132, 204, 22, 0.52)';
 
     if (vaporIntensity > 0.08 && !vessel.isStoppered) {
-      const mistRate = Math.min(45, vaporIntensity * 24);
+      const mistRate = Math.min(58, vaporIntensity * 28);
       const count = Math.floor(mistRate * dt) + (Math.random() < (mistRate * dt) % 1 ? 1 : 0);
       for (let i = 0; i < count; i++) {
-        const startY = metrics.naActive ? surfaceY - 2 : vessel.y - spec.height / 2 + 8;
-        const mistColor = hasCl2
-          ? 'rgba(217, 249, 157, 0.45)'
-          : hasHClFume
-          ? 'rgba(226, 232, 240, 0.44)'
-          : 'rgba(226, 232, 240, 0.35)';
+        const fromCrystal = metrics.isDehydrating && Math.random() < 0.55;
+        const startY = fromCrystal
+          ? bottomY - 10 - Math.random() * 8
+          : metrics.naActive
+          ? surfaceY - 2
+          : vessel.y - spec.height / 2 + 8;
+        const spreadX = fromCrystal ? halfW * 1.15 : Math.max(8, (spec.neckRadius || 20) * 0.9);
+        const mistColor = hasCl2 ? cl2Palette : hasHClFume ? fumePalette : steamPalette;
+
         this.particles.push({
           kind: 'mist',
-          x: vessel.x + (Math.random() - 0.5) * spec.neckRadius * 0.85,
+          x: vessel.x + (Math.random() - 0.5) * spreadX,
           y: startY,
-          vx: (Math.random() - 0.5) * 18,
-          vy: -(22 + Math.random() * 26),
-          r: 5 + Math.random() * 7,
+          vx: (Math.random() - 0.5) * (fromCrystal ? 12 : 20),
+          vy: -(28 + Math.random() * 34 + (metrics.isBoiling ? 12 : 0)),
+          r: (fromCrystal ? 3.8 : 5.2) + Math.random() * 6.5,
           life: 0,
-          maxLife: 1.1 + Math.random() * 0.6,
+          maxLife: (fromCrystal ? 1.35 : 1.05) + Math.random() * 0.65,
           color: mistColor,
+        });
+      }
+    } else if (vaporIntensity > 0.18 && vessel.isStoppered) {
+      // Swirling hot steam / Cl2 trapped inside headspace or entering tubing toward gas syringe
+      const innerRate = Math.min(26, vaporIntensity * 14);
+      const count = Math.floor(innerRate * dt) + (Math.random() < (innerRate * dt) % 1 ? 1 : 0);
+      const neckW = Math.max(7, (spec.neckRadius || 16) * 0.85);
+      for (let i = 0; i < count; i++) {
+        const fromBottom = metrics.isDehydrating && Math.random() < 0.6;
+        const startY = fromBottom ? bottomY - 10 : Math.min(surfaceY - 4, vessel.y - spec.height / 2 + 34);
+        this.particles.push({
+          kind: 'mist',
+          x: vessel.x + (Math.random() - 0.5) * (fromBottom ? halfW * 1.05 : neckW),
+          y: startY,
+          vx: (Math.random() - 0.5) * 10,
+          vy: -(16 + Math.random() * 18),
+          r: 3.2 + Math.random() * 4.2,
+          life: 0,
+          maxLife: 0.48 + Math.random() * 0.3,
+          color: hasCl2 ? cl2Palette : steamPalette,
         });
       }
     }

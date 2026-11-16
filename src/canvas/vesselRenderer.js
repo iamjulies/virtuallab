@@ -1,12 +1,13 @@
 import { APPARATUS } from '../data/apparatus.js';
 import { kelvinToCelsius } from '../data/constants.js';
+import { SPECIES } from '../data/species.js';
 import {
   computeLiquidVolumeL,
   computePH,
   computeSolidVolumeMl,
   computeSolutionVisuals,
 } from '../engine/equilibrium.js';
-import { computeSyringeGasVolumeMl } from '../engine/gasNetwork.js';
+import { ALL_GASES, computeSyringeGasVolumeMl } from '../engine/gasNetwork.js';
 import { renderVesselSolids } from './chemicalVisuals.js';
 
 function getThemePalette(isDark) {
@@ -115,6 +116,53 @@ export function computeVesselFluidGeometry(spec, y, volMl = 0) {
 
 function xFallback() {
   return 0;
+}
+
+function drawLabelPill(ctx, cx, cy, text, opts = {}) {
+  const { pal, borderColor, font = '600 11px system-ui, sans-serif', alpha = 1.0, height = 20 } = opts;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = font;
+  const textW = Math.max(44, ctx.measureText(text).width + 14);
+  ctx.fillStyle = pal.badgeBg;
+  ctx.strokeStyle = borderColor || pal.badgeBorder;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(cx - textW / 2, cy, textW, height, 6);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = pal.textPrimary;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, cx, cy + height / 2 + 0.5);
+  ctx.restore();
+}
+
+function cubicBezierPoint(t, p0, p1, p2, p3) {
+  const u = 1 - t;
+  const tt = t * t;
+  const uu = u * u;
+  const uuu = uu * u;
+  const ttt = tt * t;
+  return {
+    x: uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
+    y: uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y,
+  };
+}
+
+function getDominantSyringeGasFormula(syringe, langCode) {
+  let bestKey = null;
+  let bestMol = 1e-8;
+  for (const g of ALL_GASES) {
+    const n = syringe.gasMoles[g] || 0;
+    if (n > bestMol) {
+      bestMol = n;
+      bestKey = g;
+    }
+  }
+  if (!bestKey) return langCode === 'vi' ? 'Khí' : 'Gas';
+  return SPECIES[bestKey]?.formula || bestKey;
 }
 
 /**
@@ -315,7 +363,7 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
   ctx.restore();
 }
 
-export function renderGasSyringe(ctx, item, isSelected, isDark, env) {
+export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 'vi', timeNow = 0) {
   const spec = APPARATUS.gas_syringe;
   const pal = getThemePalette(isDark);
   const { x, y } = item;
@@ -329,6 +377,10 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env) {
   const volMl = computeSyringeGasVolumeMl(item, env);
   const ratio = Math.max(0, Math.min(1, volMl / spec.maxVolumeMl));
   const plungerX = barrelLeft + 10 + ratio * (barrelW - 22);
+  const condensedMl = ((item.condensedWaterMol || 0) * SPECIES.H2O_l.molarMass) / 0.997;
+  const hasSteam = (item.gasMoles?.H2O_g || 0) > 1e-6;
+  const hasCl2 = (item.gasMoles?.Cl2_g || 0) > 1e-6;
+  const syrTempC = kelvinToCelsius(item.tempK ?? env.tempK);
 
   ctx.save();
   if (isSelected) {
@@ -342,7 +394,7 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env) {
 
   // Glass barrel
   ctx.fillStyle = pal.glassFill;
-  ctx.strokeStyle = isSelected ? '#3b82f6' : pal.glassStroke;
+  ctx.strokeStyle = isSelected ? '#3b82f6' : syrTempC >= 60 ? '#f59e0b' : pal.glassStroke;
   ctx.lineWidth = isSelected ? 2.2 : 1.6;
   ctx.beginPath();
   ctx.roundRect(barrelLeft, barrelTop, barrelW, barrelH, 4);
@@ -351,10 +403,44 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env) {
 
   ctx.shadowBlur = 0;
 
-  // Gas tint inside chamber
+  // Gas tint inside chamber (foggy vapor, greenish Cl2, or clean sky tint)
   if (ratio > 0.005) {
-    ctx.fillStyle = 'rgba(186, 230, 253, 0.16)';
+    ctx.fillStyle = hasCl2
+      ? 'rgba(217, 249, 157, 0.30)'
+      : hasSteam
+      ? isDark
+        ? 'rgba(226, 232, 240, 0.28)'
+        : 'rgba(148, 163, 184, 0.28)'
+      : 'rgba(186, 230, 253, 0.16)';
     ctx.fillRect(barrelLeft + 2, barrelTop + 2, plungerX - barrelLeft - 2, barrelH - 4);
+  }
+
+  // Condensed H2O(l) water pool + micro-droplets inside glass syringe barrel
+  if (condensedMl > 0.0002) {
+    const wettedEndX = Math.max(plungerX - 3, barrelLeft + Math.min(barrelW - 14, 38 + condensedMl * 14));
+    const poolH = Math.min(11, 2.0 + Math.cbrt(condensedMl) * 6.5);
+    const poolY = barrelTop + barrelH - 2 - poolH;
+
+    ctx.fillStyle = isDark ? 'rgba(56, 189, 248, 0.56)' : 'rgba(14, 165, 233, 0.50)';
+    ctx.fillRect(barrelLeft + 2, poolY, wettedEndX - barrelLeft - 2, poolH);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(barrelLeft + 3, poolY);
+    ctx.lineTo(wettedEndX, poolY);
+    ctx.stroke();
+
+    // Inner glass condensation beads along top & sides
+    ctx.fillStyle = 'rgba(186, 230, 253, 0.85)';
+    const dropSpan = Math.max(24, wettedEndX - barrelLeft - 8);
+    for (let i = 0; i < 8; i++) {
+      const dx = barrelLeft + 6 + ((i * 0.137 + 0.05) % 1) * dropSpan;
+      const dy = barrelTop + 5 + (i % 3) * 6.5;
+      const r = 1.2 + (i % 3) * 0.55;
+      ctx.beginPath();
+      ctx.arc(dx, dy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // Plunger rubber head + rod
@@ -376,25 +462,36 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env) {
     ctx.stroke();
   }
 
-  // Live mL label below syringe
-  ctx.fillStyle = pal.badgeBg;
-  ctx.strokeStyle = pal.badgeBorder;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.roundRect(x - 58, barrelTop + barrelH + 8, 116, 22, 6);
-  ctx.fill();
-  ctx.stroke();
+  // Live Gas Volume + Gas Temperature Badge below syringe
+  const gasTag = getDominantSyringeGasFormula(item, langCode);
+  const labelText = `${gasTag}: ${volMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
+  drawLabelPill(ctx, x, barrelTop + barrelH + 8, labelText, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : syrTempC >= 55 ? '#f59e0b' : pal.badgeBorder,
+    font: '600 11.5px system-ui, sans-serif',
+    height: 22,
+  });
 
-  ctx.fillStyle = pal.textPrimary;
-  ctx.font = '600 12px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(`Gas: ${volMl.toFixed(1)} mL`, x, barrelTop + barrelH + 19);
+  // Live Condensation Label directly below if steam condensed or is condensing
+  const isCondensing = (item.lastCondenseRateMolS || 0) > 1e-6;
+  if (condensedMl > 0.0005 || isCondensing) {
+    const condText =
+      langCode === 'vi'
+        ? `💧 Ngưng tụ: ${condensedMl.toFixed(2)} mL H₂O${isCondensing ? ' · Đang ngưng!' : ''}`
+        : `💧 Condensed: ${condensedMl.toFixed(2)} mL H₂O${isCondensing ? ' · Condensing!' : ''}`;
+    drawLabelPill(ctx, x, barrelTop + barrelH + 34, condText, {
+      pal,
+      borderColor: isCondensing ? '#0ea5e9' : '#38bdf8',
+      font: '600 10.5px system-ui, sans-serif',
+      height: 20,
+      alpha: isCondensing ? 0.96 + Math.sin(timeNow * 6) * 0.04 : 0.94,
+    });
+  }
 
   ctx.restore();
 }
 
-export function renderTubingConnections(ctx, items, isDark) {
+export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCode = 'vi') {
   const pal = getThemePalette(isDark);
   for (const v of items) {
     if (v.kind !== 'vessel' || !v.connectedSyringeId) continue;
@@ -403,28 +500,60 @@ export function renderTubingConnections(ctx, items, isDark) {
 
     const vSpec = APPARATUS[v.typeId];
     const syrSpec = APPARATUS.gas_syringe;
-    const startX = v.x;
-    const startY = v.y - vSpec.height / 2 - 8;
-    const endX = syr.x - syrSpec.width / 2 + 2;
-    const endY = syr.y;
-
-    const cp1X = startX;
-    const cp1Y = Math.min(startY, endY) - 70;
-    const cp2X = (startX + endX) * 0.5;
-    const cp2Y = Math.min(startY, endY) - 45;
+    const p0 = { x: v.x, y: v.y - vSpec.height / 2 - 8 };
+    const p3 = { x: syr.x - syrSpec.width / 2 + 2, y: syr.y };
+    const p1 = { x: p0.x, y: Math.min(p0.y, p3.y) - 70 };
+    const p2 = { x: (p0.x + p3.x) * 0.5, y: Math.min(p0.y, p3.y) - 45 };
 
     ctx.save();
     ctx.strokeStyle = pal.tubeColor;
     ctx.lineWidth = 6;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(startX, startY);
-    ctx.bezierCurveTo(cp1X, cp1Y, cp2X, cp2Y, endX, endY);
+    ctx.moveTo(p0.x, p0.y);
+    ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
     ctx.stroke();
 
     ctx.strokeStyle = 'rgba(255,255,255,0.18)';
     ctx.lineWidth = 1.8;
     ctx.stroke();
+
+    // Animated steam/gas flow pulses & tubing temperature label when flowing to syringe
+    const isFlowing = (v.tubeFlowBannerTimer || 0) > 0 && v.tubeFlowFormula;
+    if (isFlowing) {
+      const alpha = Math.min(1, v.tubeFlowBannerTimer / 0.45);
+      const isSteamTube = v.tubeFlowFormula.includes('H₂O');
+      const pulseCol = v.tubeFlowFormula.includes('Cl₂')
+        ? 'rgba(217, 249, 157, 0.92)'
+        : isSteamTube
+        ? 'rgba(224, 242, 254, 0.95)'
+        : 'rgba(125, 211, 252, 0.88)';
+      for (let i = 0; i < 4; i++) {
+        const tCurve = ((timeNow * 1.15) + i * 0.25) % 1;
+        const pt = cubicBezierPoint(tCurve, p0, p1, p2, p3);
+        ctx.globalAlpha = alpha * (0.55 + Math.sin(tCurve * Math.PI) * 0.4);
+        ctx.fillStyle = pulseCol;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, isSteamTube ? 3.1 : 2.3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      const tFlowC = kelvinToCelsius(v.tubeFlowTempK ?? v.tempK);
+      const midPt = cubicBezierPoint(0.46, p0, p1, p2, p3);
+      const tubeLabel =
+        langCode === 'vi'
+          ? `→ ${v.tubeFlowFormula} · ${tFlowC.toFixed(0)}°C`
+          : `→ ${v.tubeFlowFormula} · ${tFlowC.toFixed(0)}°C`;
+      drawLabelPill(ctx, midPt.x, midPt.y - 26, tubeLabel, {
+        pal,
+        borderColor: tFlowC >= 95 ? '#f59e0b' : '#38bdf8',
+        font: '600 10.5px system-ui, sans-serif',
+        height: 19,
+        alpha,
+      });
+    }
+
     ctx.restore();
   }
 }
@@ -499,7 +628,7 @@ function renderShatteredWreckage(ctx, vessel, spec, pal, isSelected) {
 }
 
 export function renderVessel(ctx, vessel, opts) {
-  const { isSelected, isDropTarget, isDark, timeNow } = opts;
+  const { isSelected, isDropTarget, isDark, timeNow, langCode = 'vi' } = opts;
   const spec = APPARATUS[vessel.typeId];
   const pal = getThemePalette(isDark);
   const { x, y } = vessel;
@@ -602,6 +731,34 @@ export function renderVessel(ctx, vessel, opts) {
     hasWater,
     surfaceY
   );
+
+  // Inner glass condensation mist & micro-droplets on upper cooler neck/walls
+  if ((vessel.wallCondenseLevel || 0) > 0.05) {
+    const condAlpha = Math.min(0.65, vessel.wallCondenseLevel * 0.68);
+    const upperLimitY = Math.min(surfaceY - 8, top + h * 0.44);
+    if (upperLimitY > top + 12) {
+      ctx.save();
+      ctx.globalAlpha = condAlpha * 0.35;
+      const fogGrad = ctx.createLinearGradient(x, top + 4, x, upperLimitY);
+      fogGrad.addColorStop(0, 'rgba(224, 242, 254, 0.45)');
+      fogGrad.addColorStop(1, 'rgba(224, 242, 254, 0)');
+      ctx.fillStyle = fogGrad;
+      ctx.fillRect(x - w / 2, top + 4, w, upperLimitY - (top + 4));
+
+      ctx.globalAlpha = condAlpha;
+      ctx.fillStyle = isDark ? 'rgba(224, 242, 254, 0.85)' : 'rgba(56, 189, 248, 0.65)';
+      const halfSpan = spec.shape === 'erlenmeyer' ? Math.max(8, (spec.neckRadius || 18) * 1.1) : w * 0.38;
+      for (let i = 0; i < 12; i++) {
+        const dx = x + (((i * 0.618 + 0.17) % 1) - 0.5) * 2 * halfSpan;
+        const dy = top + 12 + (((i * 0.37 + 0.09) % 1) * (upperLimitY - top - 14));
+        const r = 1.0 + (i % 3) * 0.55;
+        ctx.beginPath();
+        ctx.arc(dx, dy, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
 
   // Stirring rod animation inside vessel
   if (vessel.stirTimer > 0) {
@@ -830,4 +987,35 @@ export function renderVessel(ctx, vessel, opts) {
   ctx.textBaseline = 'middle';
   ctx.fillText(pillText, x, py + 10.5);
   ctx.restore();
+
+  // Escaping Hot Vapor / Gas Plume Temperature Label ("nhãn mác" on vapor stream)
+  if ((vessel.gasOutBannerTimer || 0) > 0 && !vessel.isStoppered && vessel.lastGasOutFormula) {
+    const tGasC = kelvinToCelsius(vessel.lastGasOutTempK ?? vessel.tempK);
+    const fadeAlpha = Math.min(1, vessel.gasOutBannerTimer / 0.45);
+    let gasBadgeText = '';
+    if (vessel.gasOutBoiling) {
+      gasBadgeText =
+        langCode === 'vi'
+          ? `💨 Hơi ${vessel.lastGasOutFormula} · ${tGasC.toFixed(0)}°C · Sôi`
+          : `💨 Steam ${vessel.lastGasOutFormula} · ${tGasC.toFixed(0)}°C · Boiling`;
+    } else if (vessel.gasOutSteam) {
+      gasBadgeText =
+        langCode === 'vi'
+          ? `💨 Hơi ${vessel.lastGasOutFormula} · ${tGasC.toFixed(0)}°C`
+          : `💨 Vapor ${vessel.lastGasOutFormula} · ${tGasC.toFixed(0)}°C`;
+    } else {
+      gasBadgeText =
+        langCode === 'vi'
+          ? `↑ Khí ${vessel.lastGasOutFormula} · ${tGasC.toFixed(0)}°C`
+          : `↑ Gas ${vessel.lastGasOutFormula} · ${tGasC.toFixed(0)}°C`;
+    }
+
+    drawLabelPill(ctx, x, py - 24, gasBadgeText, {
+      pal,
+      borderColor: tGasC >= 95 ? '#f59e0b' : '#38bdf8',
+      font: '600 10.5px system-ui, sans-serif',
+      height: 19,
+      alpha: fadeAlpha,
+    });
+  }
 }

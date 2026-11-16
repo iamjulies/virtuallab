@@ -535,6 +535,101 @@
       );
     }
 
+    // TEST 19: CuSO4.5H2O crystal dehydration emits visible hot steam & collects/condenses inside Gas Syringe with mass conservation
+    {
+      // Part A: Open beaker dehydration tracks H2O(g) + gasTempK + converts crystals to white CuSO4(s)
+      const simOpen = new LabSimulation();
+      const bnOpen = simOpen.createApparatus('burner', 300, 426);
+      const bkOpen = simOpen.createApparatus('beaker_250', 300, 302);
+      simOpen.updateSupportAttachments();
+      simOpen.setBurnerFlame(bnOpen.id, 3);
+      simOpen.addReagentToVessel(bkOpen.id, 'cuso4_5h2o', 2.4968, { fine: true }); // 0.01 mol -> 0.05 mol H2O
+      stepSeconds(simOpen, 35.0, 0.05);
+      const openSteamMol = bkOpen.escapedGasMoles.H2O_g || 0;
+      const openCuSO4Mol = bkOpen.moles.CuSO4_s || 0;
+
+      // Part B: Connected to Gas Syringe -> steam flows into syringe, warms barrel, condenses to H2O(l), & retracts on cooling
+      const sim = new LabSimulation();
+      const bn = sim.createApparatus('burner', 300, 426);
+      const flask = sim.createApparatus('erlenmeyer_250', 300, 302);
+      const syr = sim.createApparatus('gas_syringe', 620, 340);
+      sim.updateSupportAttachments();
+      sim.connectSyringe(flask.id, syr.id);
+      sim.addReagentToVessel(flask.id, 'cuso4_5h2o', 2.4968, { fine: true });
+      const initMassG = computeContentsMassG(flask.moles);
+
+      sim.setBurnerFlame(bn.id, 3);
+      let peakVolMl = 0;
+      let peakTempK = syr.tempK;
+      for (let i = 0; i < 45; i++) {
+        stepSeconds(sim, 1.0, 0.04);
+        const v = computeSyringeGasVolumeMl(syr, sim.environment);
+        if (v > peakVolMl) peakVolMl = v;
+        if (syr.tempK > peakTempK) peakTempK = syr.tempK;
+      }
+
+      // Cool down after burner off -> remaining steam condenses & plunger pulls back
+      sim.setBurnerFlame(bn.id, 0);
+      stepSeconds(sim, 12.0, 0.05);
+      const cooledVolMl = computeSyringeGasVolumeMl(syr, sim.environment);
+      const condensedMol = syr.condensedWaterMol || 0;
+
+      const totalWaterSteamCollected =
+        (syr.gasMoles.H2O_g || 0) +
+        condensedMol +
+        (flask.headspaceGasMoles.H2O_g || 0) +
+        (flask.escapedGasMoles.H2O_g || 0) +
+        (flask.moles.H2O_l || 0);
+      const totalMassAfterG =
+        computeContentsMassG(flask.moles) +
+        ((syr.gasMoles.H2O_g || 0) + condensedMol + (flask.headspaceGasMoles.H2O_g || 0) + (flask.escapedGasMoles.H2O_g || 0)) * SPECIES.H2O_g.molarMass;
+
+      assert(
+        'Heating dry CuSO4·5H2O drives off hot steam (≥100 °C), enters Gas Syringe, heats barrel, condenses H2O(l) & retracts on cooling with exact mass balance',
+        openSteamMol > 0.035 &&
+          openCuSO4Mol > 0.007 &&
+          (bkOpen.lastGasOutTempK || 0) >= 373 &&
+          peakVolMl > 12 &&
+          peakTempK > 303 &&
+          condensedMol > 0.015 &&
+          cooledVolMl < peakVolMl &&
+          totalWaterSteamCollected > 0.025 &&
+          Math.abs(initMassG - totalMassAfterG) < 1e-4,
+        `openH2O=${(openSteamMol*1000).toFixed(1)}mmol@${((bkOpen.lastGasOutTempK||298)-273.15).toFixed(0)}°C, syrPeak=${peakVolMl.toFixed(1)}mL->${cooledVolMl.toFixed(1)}mL, Tsyr=${(peakTempK-273.15).toFixed(1)}°C, cond=${(condensedMol*SPECIES.H2O_l.molarMass).toFixed(3)}g, Δm=${Math.abs(initMassG-totalMassAfterG).toExponential(2)}g`
+      );
+    }
+
+    // TEST 20: Boiling pure water collects steam in Gas Syringe, heats & condenses inside barrel without false failure
+    {
+      const sim = new LabSimulation();
+      const bn = sim.createApparatus('burner', 300, 426);
+      const tube = sim.createApparatus('test_tube_50', 300, 300);
+      const syr = sim.createApparatus('gas_syringe', 620, 340);
+      sim.updateSupportAttachments();
+      sim.connectSyringe(tube.id, syr.id);
+      sim.addReagentToVessel(tube.id, 'h2o', 15);
+      sim.setBurnerFlame(bn.id, 3);
+
+      let peakVolMl = 0;
+      for (let i = 0; i < 30; i++) {
+        stepSeconds(sim, 1.0, 0.04);
+        const v = computeSyringeGasVolumeMl(syr, sim.environment);
+        if (v > peakVolMl) peakVolMl = v;
+      }
+      const hotSyrTempK = syr.tempK;
+
+      sim.setBurnerFlame(bn.id, 0);
+      stepSeconds(sim, 10.0, 0.05);
+      const coolVolMl = computeSyringeGasVolumeMl(syr, sim.environment);
+      const condMl = ((syr.condensedWaterMol || 0) * SPECIES.H2O_l.molarMass) / 0.997;
+
+      assert(
+        'Boiling water streams hot steam into Gas Syringe (plunger expands, barrel heats up, water condenses inside & plunger retracts when cooled)',
+        peakVolMl > 40 && hotSyrTempK > 330 && condMl > 0.25 && coolVolMl < peakVolMl,
+        `peak=${peakVolMl.toFixed(1)}mL->cool=${coolVolMl.toFixed(1)}mL, Tsyr=${(hotSyrTempK-273.15).toFixed(1)}°C, condensed=${condMl.toFixed(2)}mL`
+      );
+    }
+
     // Render test report
     const passed = results.filter(r => r.pass).length;
     document.getElementById('summary').innerHTML = `<span class="${passed === results.length ? 'pass' : 'fail'}">${passed} / ${results.length} tests passed</span>`;
