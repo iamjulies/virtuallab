@@ -2,14 +2,17 @@ import { CONSTANTS, waterVaporPressureBar } from '../data/constants.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
 
+export const NON_STEAM_GASES = ['H2_g', 'O2_g', 'HCl_g', 'Cl2_g', 'HNO3_g'];
+export const ALL_GASES = [...NON_STEAM_GASES, 'H2O_g'];
+
 /**
  * Compute syringe collected gas volume (mL) using Ideal Gas Law: V = nRT / P.
  */
 export function computeSyringeGasVolumeMl(syringe, env) {
-  const totalMol =
-    (syringe.gasMoles.H2_g || 0) +
-    (syringe.gasMoles.O2_g || 0) +
-    (syringe.gasMoles.H2O_g || 0);
+  let totalMol = 0;
+  for (const g of ALL_GASES) {
+    totalMol += syringe.gasMoles[g] || 0;
+  }
   if (totalMol <= 1e-12) return 0;
 
   const volL = (totalMol * CONSTANTS.R_L_BAR_MOL_K * env.tempK) / Math.max(0.05, env.pressureBar);
@@ -19,23 +22,39 @@ export function computeSyringeGasVolumeMl(syringe, env) {
 /**
  * Route generated gases from a vessel according to its boundary state:
  * - Open: escapes to room (mass lost)
- * - Connected to Gas syringe: permanent gases flow into syringe (V = nRT/P)
+ * - Connected to Gas syringe: permanent/vapor gases flow into syringe (V = nRT/P)
  * - Stoppered closed: accumulates in headspace, building pressure P_in -> pop/shatter
  */
-export function stepVesselGasAndPressure(vessel, gasProduced, steamProducedMol, env, getApparatusById) {
+export function stepVesselGasAndPressure(
+  vessel,
+  gasProduced,
+  steamProducedMol,
+  env,
+  getApparatusById
+) {
   const spec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
   const events = [];
 
-  const totalH2 = gasProduced.H2_g || 0;
-  const totalO2 = gasProduced.O2_g || 0;
+  const produced = {};
+  for (const g of NON_STEAM_GASES) {
+    produced[g] = gasProduced[g] || 0;
+  }
   const totalSteam = (gasProduced.H2O_g || 0) + (steamProducedMol || 0);
 
-  if (vessel.isShattered) {
-    // Open to atmosphere after shattering
-    vessel.escapedGasMoles.H2_g = (vessel.escapedGasMoles.H2_g || 0) + totalH2;
-    vessel.escapedGasMoles.O2_g = (vessel.escapedGasMoles.O2_g || 0) + totalO2;
-    vessel.escapedGasMoles.H2O_g = (vessel.escapedGasMoles.H2O_g || 0) + totalSteam;
+  const ventToRoom = () => {
+    for (const g of NON_STEAM_GASES) {
+      if (produced[g] > 0) {
+        vessel.escapedGasMoles[g] = (vessel.escapedGasMoles[g] || 0) + produced[g];
+      }
+    }
+    if (totalSteam > 0) {
+      vessel.escapedGasMoles.H2O_g = (vessel.escapedGasMoles.H2O_g || 0) + totalSteam;
+    }
     vessel.internalPressureBar = env.pressureBar;
+  };
+
+  if (vessel.isShattered || !vessel.isStoppered) {
+    ventToRoom();
     return events;
   }
 
@@ -43,15 +62,6 @@ export function stepVesselGasAndPressure(vessel, gasProduced, steamProducedMol, 
   const liqMl = computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000;
   const solMl = computeSolidVolumeMl(vessel.moles);
   const headspaceL = Math.max(0.015, (spec.maxVolumeMl - Math.min(spec.maxVolumeMl * 0.94, liqMl + solMl)) / 1000);
-
-  if (!vessel.isStoppered) {
-    // Open system: all generated gases escape directly to the room
-    vessel.escapedGasMoles.H2_g = (vessel.escapedGasMoles.H2_g || 0) + totalH2;
-    vessel.escapedGasMoles.O2_g = (vessel.escapedGasMoles.O2_g || 0) + totalO2;
-    vessel.escapedGasMoles.H2O_g = (vessel.escapedGasMoles.H2O_g || 0) + totalSteam;
-    vessel.internalPressureBar = env.pressureBar;
-    return events;
-  }
 
   // Connected to a Gas Syringe via rubber tubing
   if (vessel.connectedSyringeId) {
@@ -61,8 +71,11 @@ export function stepVesselGasAndPressure(vessel, gasProduced, steamProducedMol, 
       const currentVolMl = computeSyringeGasVolumeMl(syringe, env);
 
       if (currentVolMl < syringeSpec.maxVolumeMl * 0.995) {
-        syringe.gasMoles.H2_g = (syringe.gasMoles.H2_g || 0) + totalH2;
-        syringe.gasMoles.O2_g = (syringe.gasMoles.O2_g || 0) + totalO2;
+        for (const g of NON_STEAM_GASES) {
+          if (produced[g] > 0) {
+            syringe.gasMoles[g] = (syringe.gasMoles[g] || 0) + produced[g];
+          }
+        }
         // Steam only stays gaseous in syringe if ambient >= boiling point
         if (env.tempK >= 372.5) {
           syringe.gasMoles.H2O_g = (syringe.gasMoles.H2O_g || 0) + totalSteam;
@@ -81,14 +94,13 @@ export function stepVesselGasAndPressure(vessel, gasProduced, steamProducedMol, 
     vessel.sealedAirMoles = (env.pressureBar * headspaceL) / (CONSTANTS.R_L_BAR_MOL_K * vessel.tempK);
   }
 
-  vessel.headspaceGasMoles.H2_g = (vessel.headspaceGasMoles.H2_g || 0) + totalH2;
-  vessel.headspaceGasMoles.O2_g = (vessel.headspaceGasMoles.O2_g || 0) + totalO2;
+  let extraGasMol = 0;
+  for (const g of NON_STEAM_GASES) {
+    vessel.headspaceGasMoles[g] = (vessel.headspaceGasMoles[g] || 0) + produced[g];
+    extraGasMol += vessel.headspaceGasMoles[g] || 0;
+  }
   vessel.headspaceGasMoles.H2O_g = (vessel.headspaceGasMoles.H2O_g || 0) + totalSteam;
-
-  const extraGasMol =
-    (vessel.headspaceGasMoles.H2_g || 0) +
-    (vessel.headspaceGasMoles.O2_g || 0) +
-    (vessel.headspaceGasMoles.H2O_g || 0);
+  extraGasMol += vessel.headspaceGasMoles.H2O_g || 0;
 
   const partialAirAndGas =
     ((vessel.sealedAirMoles + extraGasMol) * CONSTANTS.R_L_BAR_MOL_K * vessel.tempK) / headspaceL;
@@ -106,8 +118,7 @@ export function stepVesselGasAndPressure(vessel, gasProduced, steamProducedMol, 
   } else if (spec.popPressureBar && vessel.internalPressureBar >= spec.popPressureBar) {
     vessel.isStoppered = false;
     vessel.connectedSyringeId = null;
-    // Vent accumulated headspace gas
-    for (const g of ['H2_g', 'O2_g', 'H2O_g']) {
+    for (const g of ALL_GASES) {
       vessel.escapedGasMoles[g] = (vessel.escapedGasMoles[g] || 0) + (vessel.headspaceGasMoles[g] || 0);
       vessel.headspaceGasMoles[g] = 0;
     }

@@ -18,6 +18,32 @@ const CHART_PALETTE = [
   '#f97316',
 ];
 
+const GAS_DISPLAY_META = [
+  { id: 'H2_g', label: 'H₂', always: true },
+  { id: 'O2_g', label: 'O₂', always: true },
+  { id: 'HCl_g', label: 'HCl', always: false },
+  { id: 'Cl2_g', label: 'Cl₂', always: false },
+  { id: 'HNO3_g', label: 'HNO₃', always: false },
+  { id: 'H2O_g', label: 'H₂O(g)', always: false },
+];
+
+function sumAllGasMoles(gasMap = {}) {
+  let tot = 0;
+  for (const g of GAS_DISPLAY_META) tot += gasMap[g.id] || 0;
+  return tot;
+}
+
+function formatGasSummaryHtml(gasMap = {}) {
+  const parts = [];
+  for (const g of GAS_DISPLAY_META) {
+    const val = gasMap[g.id] || 0;
+    if (g.always || val > 1e-6) {
+      parts.push(`<span class="whitespace-nowrap">${g.label}: ${(val * 1000).toFixed(2)} mmol</span>`);
+    }
+  }
+  return parts.join('<span class="text-muted"> · </span>');
+}
+
 export class InspectorPanel {
   constructor(container, sim, getLang, callbacks) {
     this.container = container;
@@ -127,8 +153,7 @@ export class InspectorPanel {
       `;
     } else if (item.kind === 'gas_syringe') {
       const volMl = computeSyringeGasVolumeMl(item, this.sim.environment);
-      const nH2 = item.gasMoles.H2_g || 0;
-      const nO2 = item.gasMoles.O2_g || 0;
+      const totalGasMol = sumAllGasMoles(item.gasMoles);
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between">
@@ -142,12 +167,11 @@ export class InspectorPanel {
             </div>
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
               <div class="text-xs text-muted">Total Gas</div>
-              <div class="text-base font-bold font-mono" id="live-syr-mol">${((nH2 + nO2) * 1000).toFixed(2)} mmol</div>
+              <div class="text-base font-bold font-mono" id="live-syr-mol">${(totalGasMol * 1000).toFixed(2)} mmol</div>
             </div>
           </div>
-          <div class="text-xs text-muted flex justify-between" id="live-syr-breakdown">
-            <span>H₂: ${(nH2 * 1000).toFixed(2)} mmol</span>
-            <span>O₂: ${(nO2 * 1000).toFixed(2)} mmol</span>
+          <div class="text-xs text-muted flex flex-wrap gap-x-2 gap-y-0.5" id="live-syr-breakdown">
+            ${formatGasSummaryHtml(item.gasMoles)}
           </div>
           <button type="button" id="ins-vent-syringe" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('syringeReleaseGas')}</button>
         </div>
@@ -156,7 +180,8 @@ export class InspectorPanel {
       const spec = APPARATUS[item.typeId];
       const liqL = computeLiquidVolumeL(item.moles, item.tempK);
       const ph = computePH(item.moles, liqL, item.tempK);
-      const massG = spec.tareMassG + computeContentsMassG(item.moles);
+      const contentsG = computeContentsMassG(item.moles);
+      const grossG = spec.tareMassG + contentsG;
       const stateLabel = item.isShattered
         ? t('stateShattered')
         : item.connectedSyringeId
@@ -169,8 +194,6 @@ export class InspectorPanel {
         .filter(([, n]) => n > 1e-10)
         .sort((a, b) => b[1] - a[1]);
 
-      const escapedH2 = item.escapedGasMoles.H2_g || 0;
-      const escapedO2 = item.escapedGasMoles.O2_g || 0;
       const syr = item.connectedSyringeId ? this.sim.getItem(item.connectedSyringeId) : null;
       const syrVol = syr ? computeSyringeGasVolumeMl(syr, this.sim.environment) : 0;
 
@@ -222,7 +245,8 @@ export class InspectorPanel {
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
             <div class="text-xs text-muted">${t('metricMass')} / P</div>
-            <div class="text-sm font-bold font-mono" id="live-mass">${massG.toFixed(2)} g · ${item.internalPressureBar.toFixed(2)} bar</div>
+            <div class="text-sm font-bold font-mono" id="live-mass">${contentsG.toFixed(2)} g · ${item.internalPressureBar.toFixed(2)} bar</div>
+            <div class="text-[11px] text-muted font-mono" id="live-mass-gross">${t('grossMassNote')}: ${grossG.toFixed(2)} g (${t('tarePrefix')} ${spec.tareMassG.toFixed(0)}g)</div>
           </div>
         </div>
 
@@ -232,9 +256,9 @@ export class InspectorPanel {
                 <span>${t('gasCollectedNote')}</span>
                 <strong class="font-mono" id="live-collected-gas">${syrVol.toFixed(2)} mL</strong>
               </div>`
-            : `<div class="px-3 py-2 rounded-lg border border-theme bg-surface-alt text-xs flex justify-between text-muted">
-                <span>${t('gasEscapedNote')}</span>
-                <strong class="font-mono text-main" id="live-escaped-gas">H₂: ${(escapedH2 * 1000).toFixed(2)} · O₂: ${(escapedO2 * 1000).toFixed(2)} mmol</strong>
+            : `<div class="px-3 py-2 rounded-lg border border-theme bg-surface-alt text-xs flex flex-col gap-1">
+                <span class="text-muted">${t('gasEscapedNote')}</span>
+                <div class="font-mono text-main flex flex-wrap gap-x-2 gap-y-0.5" id="live-escaped-gas">${formatGasSummaryHtml(item.escapedGasMoles)}</div>
               </div>`
         }
 
@@ -400,14 +424,13 @@ export class InspectorPanel {
 
     if (item.kind === 'gas_syringe') {
       const volMl = computeSyringeGasVolumeMl(item, this.sim.environment);
-      const nH2 = item.gasMoles.H2_g || 0;
-      const nO2 = item.gasMoles.O2_g || 0;
+      const totalGasMol = sumAllGasMoles(item.gasMoles);
       const vEl = this.container.querySelector('#live-syr-vol');
       const mEl = this.container.querySelector('#live-syr-mol');
       const bEl = this.container.querySelector('#live-syr-breakdown');
       if (vEl) vEl.textContent = `${volMl.toFixed(2)} mL`;
-      if (mEl) mEl.textContent = `${((nH2 + nO2) * 1000).toFixed(2)} mmol`;
-      if (bEl) bEl.innerHTML = `<span>H₂: ${(nH2 * 1000).toFixed(2)} mmol</span><span>O₂: ${(nO2 * 1000).toFixed(2)} mmol</span>`;
+      if (mEl) mEl.textContent = `${(totalGasMol * 1000).toFixed(2)} mmol`;
+      if (bEl) bEl.innerHTML = formatGasSummaryHtml(item.gasMoles);
       return;
     }
 
@@ -416,22 +439,23 @@ export class InspectorPanel {
     const spec = APPARATUS[item.typeId];
     const liqL = computeLiquidVolumeL(item.moles, item.tempK);
     const ph = computePH(item.moles, liqL, item.tempK);
-    const massG = spec.tareMassG + computeContentsMassG(item.moles);
+    const contentsG = computeContentsMassG(item.moles);
+    const grossG = spec.tareMassG + contentsG;
 
     const phEl = this.container.querySelector('#live-ph');
     const tempEl = this.container.querySelector('#live-temp');
     const volEl = this.container.querySelector('#live-vol');
     const massEl = this.container.querySelector('#live-mass');
+    const massGrossEl = this.container.querySelector('#live-mass-gross');
     if (phEl) phEl.textContent = ph === null ? '—' : ph.toFixed(2);
     if (tempEl) tempEl.textContent = `${item.tempK.toFixed(1)} K (${kelvinToCelsius(item.tempK).toFixed(1)}°C)`;
     if (volEl) volEl.textContent = `${(liqL * 1000).toFixed(2)} / ${spec.maxVolumeMl} mL`;
-    if (massEl) massEl.textContent = `${massG.toFixed(2)} g · ${item.internalPressureBar.toFixed(2)} bar`;
+    if (massEl) massEl.textContent = `${contentsG.toFixed(2)} g · ${item.internalPressureBar.toFixed(2)} bar`;
+    if (massGrossEl) massGrossEl.textContent = `${t('grossMassNote')}: ${grossG.toFixed(2)} g (${t('tarePrefix')} ${spec.tareMassG.toFixed(0)}g)`;
 
     const escEl = this.container.querySelector('#live-escaped-gas');
     if (escEl) {
-      const eh2 = item.escapedGasMoles.H2_g || 0;
-      const eo2 = item.escapedGasMoles.O2_g || 0;
-      escEl.textContent = `H₂: ${(eh2 * 1000).toFixed(2)} · O₂: ${(eo2 * 1000).toFixed(2)} mmol`;
+      escEl.innerHTML = formatGasSummaryHtml(item.escapedGasMoles);
     }
 
     const colEl = this.container.querySelector('#live-collected-gas');
@@ -525,9 +549,14 @@ export class InspectorPanel {
     });
 
     if (legendEl) {
+      const gasLabels = {
+        H2_g_total: 'H₂↑',
+        HCl_g_total: 'HCl↑',
+        Cl2_g_total: 'Cl₂↑',
+      };
       legendEl.innerHTML = keys
         .map((k, idx) => {
-          const label = k === 'H2_g_total' ? 'H₂↑' : SPECIES[k]?.formula || k;
+          const label = gasLabels[k] || SPECIES[k]?.formula || k;
           const col = CHART_PALETTE[idx % CHART_PALETTE.length];
           return `<span class="inline-flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full inline-block" style="background:${col}"></span><span>${label}</span></span>`;
         })

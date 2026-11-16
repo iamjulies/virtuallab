@@ -16,7 +16,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
   const moles = vessel.moles;
 
   // 1. Precipitates (settled layer + swirling flocculent cloud)
-  const pptOrder = ['CuO_s', 'Ag2O_s', 'Cu_s', 'Ag_s', 'AgCl_s', 'CuOH2_s', 'ZnOH2_s'];
+  const pptOrder = ['CuO_s', 'Ag2O_s', 'Cu_s', 'Ag_s', 'AgCl_s', 'CuCl_s', 'CuOH2_s', 'ZnOH2_s'];
   let accumulatedSedimentH = 0;
 
   for (const spId of pptOrder) {
@@ -76,11 +76,20 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     accumulatedSedimentH += settledH * 0.75;
   }
 
-  // 2. Crystalline & Pelleted Starter Solids resting on bottom
+  // 2. Crystalline & Pelleted Starter / Evaporated Solids resting on bottom
   const bottomSolids = [
     { id: 'CuSO4_5H2O_s', kind: 'blue_crystal' },
+    { id: 'CuNO3_2_s', kind: 'blue_crystal' },
     { id: 'CuSO4_s', kind: 'white_powder' },
+    { id: 'CuCl2_s', kind: 'brown_crystal' },
     { id: 'AgNO3_s', kind: 'white_crystal' },
+    { id: 'NaCl_s', kind: 'white_crystal' },
+    { id: 'NaNO3_s', kind: 'white_crystal' },
+    { id: 'ZnCl2_s', kind: 'white_powder' },
+    { id: 'ZnSO4_s', kind: 'white_powder' },
+    { id: 'Na2SO4_s', kind: 'white_powder' },
+    { id: 'ZnNO3_2_s', kind: 'white_crystal' },
+    { id: 'Phenolphthalein_s', kind: 'white_powder' },
     { id: 'NaOH_s', kind: 'pellet' },
     { id: 'Zn_s', kind: 'zinc' },
   ];
@@ -128,17 +137,17 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 0.7;
         ctx.stroke();
-      } else if (item.kind === 'blue_crystal') {
-        // CuSO4·5H2O triclinic azure crystals
+      } else if (item.kind === 'blue_crystal' || item.kind === 'brown_crystal') {
+        // Triclinic/monoclinic crystals (CuSO4.5H2O azure blue vs CuCl2 anhydrous amber-brown)
         ctx.beginPath();
         ctx.moveTo(-r, -r * 0.4);
         ctx.lineTo(r * 0.4, -r * 0.85);
         ctx.lineTo(r, r * 0.35);
         ctx.lineTo(-r * 0.3, r * 0.75);
         ctx.closePath();
-        ctx.fillStyle = '#0284c7';
+        ctx.fillStyle = item.kind === 'brown_crystal' ? '#b45309' : '#0284c7';
         ctx.fill();
-        ctx.strokeStyle = '#7dd3fc';
+        ctx.strokeStyle = item.kind === 'brown_crystal' ? '#f59e0b' : '#7dd3fc';
         ctx.lineWidth = 0.8;
         ctx.stroke();
       } else if (item.kind === 'white_crystal') {

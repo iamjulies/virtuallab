@@ -9,9 +9,20 @@ import {
   computeSolidVolumeMl,
   computeSolutionVisuals,
 } from './equilibrium.js';
-import { stepVesselChemistry } from './chemistry.js';
+import { enforceDryPhaseBoundary, stepVesselChemistry } from './chemistry.js';
 import { computeHeatCapacityJK, stepVesselThermodynamics } from './thermodynamics.js';
-import { computeSyringeGasVolumeMl, stepVesselGasAndPressure } from './gasNetwork.js';
+import {
+  ALL_GASES,
+  NON_STEAM_GASES,
+  computeSyringeGasVolumeMl,
+  stepVesselGasAndPressure,
+} from './gasNetwork.js';
+
+function createEmptyGasMap() {
+  const obj = {};
+  for (const g of ALL_GASES) obj[g] = 0;
+  return obj;
+}
 
 export class LabSimulation {
   constructor() {
@@ -87,8 +98,8 @@ export class LabSimulation {
         isStoppered: false,
         connectedSyringeId: null,
         sealedAirMoles: null,
-        headspaceGasMoles: { H2_g: 0, O2_g: 0, H2O_g: 0 },
-        escapedGasMoles: { H2_g: 0, O2_g: 0, H2O_g: 0 },
+        headspaceGasMoles: createEmptyGasMap(),
+        escapedGasMoles: createEmptyGasMap(),
         isShattered: false,
         stirTimer: 0,
         tiltAngle: 0,
@@ -113,7 +124,7 @@ export class LabSimulation {
       });
     } else if (spec.kind === 'gas_syringe') {
       Object.assign(base, {
-        gasMoles: { H2_g: 0, O2_g: 0, H2O_g: 0 },
+        gasMoles: createEmptyGasMap(),
         connectedFromId: null,
         isBroken: false,
       });
@@ -296,7 +307,7 @@ export class LabSimulation {
     v.connectedSyringeId = syr.id;
     syr.connectedFromId = v.id;
     // Vent sealed headspace equilibrium when opened into syringe
-    for (const g of ['H2_g', 'O2_g']) {
+    for (const g of NON_STEAM_GASES) {
       if (v.headspaceGasMoles[g] > 0) {
         syr.gasMoles[g] = (syr.gasMoles[g] || 0) + v.headspaceGasMoles[g];
         v.headspaceGasMoles[g] = 0;
@@ -323,7 +334,7 @@ export class LabSimulation {
   ventSyringe(syringeId) {
     const syr = this.getItem(syringeId);
     if (!syr || syr.kind !== 'gas_syringe') return;
-    syr.gasMoles = { H2_g: 0, O2_g: 0, H2O_g: 0 };
+    syr.gasMoles = createEmptyGasMap();
     this.emitChange();
   }
 
@@ -348,8 +359,8 @@ export class LabSimulation {
     v.isStoppered = false;
     this.disconnectSyringe(v.id);
     v.sealedAirMoles = null;
-    v.headspaceGasMoles = { H2_g: 0, O2_g: 0, H2O_g: 0 };
-    v.escapedGasMoles = { H2_g: 0, O2_g: 0, H2O_g: 0 };
+    v.headspaceGasMoles = createEmptyGasMap();
+    v.escapedGasMoles = createEmptyGasMap();
     v.isShattered = false;
     v.activeReactions = [];
     v.seenReactions = {};
@@ -648,12 +659,19 @@ export class LabSimulation {
     for (const [spId, n] of Object.entries(vessel.moles)) {
       if (n > 1e-7) snap[spId] = n;
     }
-    // Also track total H2 & O2 generated (escaped + syringe + headspace)
-    const totH2 =
-      (vessel.escapedGasMoles.H2_g || 0) +
-      (vessel.headspaceGasMoles.H2_g || 0) +
-      (vessel.connectedSyringeId ? this.getItem(vessel.connectedSyringeId)?.gasMoles.H2_g || 0 : 0);
-    if (totH2 > 1e-7) snap.H2_g_total = totH2;
+    // Track total permanent/acidic gases generated (escaped + syringe + headspace)
+    const syr = vessel.connectedSyringeId ? this.getItem(vessel.connectedSyringeId) : null;
+    for (const [gId, snapKey] of [
+      ['H2_g', 'H2_g_total'],
+      ['HCl_g', 'HCl_g_total'],
+      ['Cl2_g', 'Cl2_g_total'],
+    ]) {
+      const tot =
+        (vessel.escapedGasMoles[gId] || 0) +
+        (vessel.headspaceGasMoles[gId] || 0) +
+        (syr?.gasMoles[gId] || 0);
+      if (tot > 1e-7) snap[snapKey] = tot;
+    }
 
     vessel.history.push({
       t: this.timeSec,
@@ -740,18 +758,22 @@ export class LabSimulation {
         continue;
       }
 
-      // Check burner power if resting on an active burner
+      // Check burner power & flame level if resting on an active burner
       let burnerPowerW = 0;
+      let burnerFlameLevel = 0;
       if (v.restingOnId) {
         const sup = this.getItem(v.restingOnId);
         if (sup && sup.kind === 'burner') {
           const bSpec = APPARATUS.burner;
-          burnerPowerW = bSpec.powerLevelsW[sup.flameLevel] || 0;
+          burnerFlameLevel = sup.flameLevel || 0;
+          burnerPowerW = bSpec.powerLevelsW[burnerFlameLevel] || 0;
         }
       }
 
       let frameGasH2 = 0;
       let frameGasO2 = 0;
+      let frameGasHCl = 0;
+      let frameGasCl2 = 0;
       let frameSteam = 0;
       let frameBoiling = false;
       const frameActiveMap = new Map();
@@ -763,19 +785,36 @@ export class LabSimulation {
           dt,
           this.environment,
           chemRes.reactionHeatJ,
-          burnerPowerW
+          burnerPowerW,
+          burnerFlameLevel
         );
+        const dryRes = enforceDryPhaseBoundary(v);
+
+        const combinedGas = {
+          H2_g: chemRes.gasProduced.H2_g || 0,
+          O2_g: chemRes.gasProduced.O2_g || 0,
+          HCl_g:
+            (chemRes.gasProduced.HCl_g || 0) +
+            (thermRes.hclProducedMol || 0) +
+            (dryRes.gasProduced.HCl_g || 0),
+          Cl2_g: chemRes.gasProduced.Cl2_g || 0,
+          HNO3_g: (chemRes.gasProduced.HNO3_g || 0) + (dryRes.gasProduced.HNO3_g || 0),
+          H2O_g: (chemRes.gasProduced.H2O_g || 0) + (dryRes.gasProduced.H2O_g || 0),
+        };
+
         const gasEvents = stepVesselGasAndPressure(
           v,
-          chemRes.gasProduced,
+          combinedGas,
           thermRes.steamProducedMol,
           this.environment,
           getApp
         );
 
-        frameGasH2 += chemRes.gasProduced.H2_g || 0;
-        frameGasO2 += chemRes.gasProduced.O2_g || 0;
-        frameSteam += (chemRes.gasProduced.H2O_g || 0) + (thermRes.steamProducedMol || 0);
+        frameGasH2 += combinedGas.H2_g;
+        frameGasO2 += combinedGas.O2_g;
+        frameGasHCl += combinedGas.HCl_g;
+        frameGasCl2 += combinedGas.Cl2_g;
+        frameSteam += combinedGas.H2O_g + (thermRes.steamProducedMol || 0);
         if (thermRes.isBoiling) frameBoiling = true;
 
         for (const rxn of chemRes.activeReactions) {
@@ -893,6 +932,8 @@ export class LabSimulation {
         this.visualHooks.onParticlesNeeded(v, {
           gasRateH2: frameGasH2 / Math.max(1e-4, scaledDt),
           gasRateO2: frameGasO2 / Math.max(1e-4, scaledDt),
+          gasRateHCl: frameGasHCl / Math.max(1e-4, scaledDt),
+          gasRateCl2: frameGasCl2 / Math.max(1e-4, scaledDt),
           steamRate: frameSteam / Math.max(1e-4, scaledDt),
           isBoiling: frameBoiling,
           naActive,

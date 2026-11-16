@@ -77,21 +77,29 @@ export class ParticleSystem {
       }
     }
 
-    // 3. Steam / Vapor mist (hot water, vigorous Na, or open conc HCl)
+    // 3. Steam / HCl acid fuming / Cl2 greenish-yellow gas mist
     const nH = vessel.moles.H_aq || 0;
-    const hConc = liqMl > 1 ? nH / (liqMl / 1000) : 0;
-    const isAcidFuming = !vessel.isStoppered && hConc > 7.0;
+    const nCl = vessel.moles.Cl_aq || 0;
+    const hConc = liqMl > 1 ? Math.min(nH, nCl) / (liqMl / 1000) : 0;
+    const hasCl2 = (metrics.gasRateCl2 || 0) > 1e-6;
+    const hasHClFume = !vessel.isStoppered && (hConc > 6.5 || (metrics.gasRateHCl || 0) > 5e-5);
     const vaporIntensity =
       (metrics.isBoiling ? 1.0 : 0) +
       (metrics.naActive ? 0.9 : 0) +
       Math.max(0, (vessel.tempK - 325) / 50) * 0.45 +
-      (isAcidFuming ? 0.22 : 0);
+      (hasHClFume ? 0.35 : 0) +
+      (hasCl2 ? 0.55 : 0);
 
     if (vaporIntensity > 0.08 && !vessel.isStoppered) {
       const mistRate = Math.min(45, vaporIntensity * 24);
       const count = Math.floor(mistRate * dt) + (Math.random() < (mistRate * dt) % 1 ? 1 : 0);
       for (let i = 0; i < count; i++) {
         const startY = metrics.naActive ? surfaceY - 2 : vessel.y - spec.height / 2 + 8;
+        const mistColor = hasCl2
+          ? 'rgba(217, 249, 157, 0.45)'
+          : hasHClFume
+          ? 'rgba(226, 232, 240, 0.44)'
+          : 'rgba(226, 232, 240, 0.35)';
         this.particles.push({
           kind: 'mist',
           x: vessel.x + (Math.random() - 0.5) * spec.neckRadius * 0.85,
@@ -101,7 +109,7 @@ export class ParticleSystem {
           r: 5 + Math.random() * 7,
           life: 0,
           maxLife: 1.1 + Math.random() * 0.6,
-          color: 'rgba(226, 232, 240, 0.35)',
+          color: mistColor,
         });
       }
     }

@@ -96,6 +96,13 @@ export const APPARATUS = {
       2: 360,  // Medium flame
       3: 650,  // High flame
     },
+    // Effective convective flame plume driving temperatures (K) -> dry glass stabilizes ~170 / 228 / 280 C
+    effectiveFlameK: {
+      0: 298.15,
+      1: 505.0,
+      2: 595.0,
+      3: 696.0,
+    },
   },
   gas_syringe: {
     id: 'gas_syringe',

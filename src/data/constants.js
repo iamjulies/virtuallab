@@ -15,7 +15,10 @@ export const CONSTANTS = {
   KW_298: 1.0e-14,
   DELTA_H_WATER_IONIZATION_J: 55800, // J/mol
   DELTA_H_VAP_WATER_J: 40660,        // J/mol at ~373K
+  DELTA_H_VAP_HCL_AQ_J: 74800,       // J/mol enthalpy of HCl(aq) -> HCl(g) outgassing
+  HCL_AZEOTROPE_WT_FRAC: 0.2024,     // 20.24% w/w HCl-H2O azeotrope (~108.6 C at 1 bar)
   M_H2O: 18.01528,                   // g/mol
+  M_HCL: 36.46094,                   // g/mol
   CP_H2O_J_MOL_K: 75.38,             // J/(mol·K)
 
   // Antoine coefficients for water vapor pressure (log10(P_mmHg) = A - B / (C + T_C))
@@ -67,6 +70,51 @@ export function waterBoilingPointK(P_bar) {
   const pMmHg = Math.max(10, P_bar * MMHG_PER_BAR);
   const T_C = B / (A - Math.log10(pMmHg)) - C;
   return T_C + CONSTANTS.KELVIN_OFFSET;
+}
+
+/**
+ * Aqueous solution boiling temperature (K), accounting for the HCl-H2O azeotrope
+ * (20.24% w/w boiling at 108.6 C, while 37% fuming HCl starts around ~48 C)
+ * and mild colligative boiling-point elevation from dissolved salts.
+ */
+export function solutionBoilingPointK(moles, P_bar) {
+  const baseK = waterBoilingPointK(P_bar);
+  const nH2O = moles.H2O_l || 0;
+  if (nH2O <= 1e-10) return baseK;
+
+  const mH2O = nH2O * CONSTANTS.M_H2O;
+  const nHCl = Math.min(moles.H_aq || 0, moles.Cl_aq || 0);
+  let deltaK = 0;
+
+  if (nHCl > 1e-9) {
+    const mHCl = nHCl * CONSTANTS.M_HCL;
+    const wHCl = mHCl / (mHCl + mH2O);
+    const wAz = CONSTANTS.HCL_AZEOTROPE_WT_FRAC;
+    if (wHCl <= wAz) {
+      deltaK += 8.97 * Math.pow(wHCl / wAz, 1.35);
+    } else {
+      const over = Math.min(1.15, (wHCl - wAz) / (0.37 - wAz));
+      deltaK += 8.97 - 60.6 * Math.pow(over, 1.15);
+    }
+  } else {
+    // Mild non-volatile electrolyte colligative elevation (Kb ≈ 0.512 K·kg/mol, capped at +8 K)
+    const waterKg = mH2O / 1000;
+    const ionMoles =
+      (moles.Na_aq || 0) +
+      (moles.OH_aq || 0) +
+      (moles.Cu2_aq || 0) +
+      (moles.Zn2_aq || 0) +
+      (moles.Ag_aq || 0) +
+      (moles.SO4_2_aq || 0) +
+      (moles.NO3_aq || 0) +
+      (moles.Cl_aq || 0) +
+      (moles.CuCl4_2_aq || 0);
+    if (waterKg > 1e-8 && ionMoles > 0) {
+      deltaK += Math.min(8.0, 0.512 * (ionMoles / waterKg));
+    }
+  }
+
+  return Math.max(295, baseK + deltaK);
 }
 
 /**

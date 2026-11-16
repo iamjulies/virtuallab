@@ -141,7 +141,7 @@ export function computeSolutionVisuals(moles, liquidVolL, ph, opticalPathCm = 6.
   let extraOpacity = 0;
   let indicatorBoost = 0;
 
-  // 1. Copper(II) sky-blue absorption
+  // 1. Copper(II) sky-blue & Tetrachlorocuprate(II) yellow-green absorption
   const nCu = moles.Cu2_aq || 0;
   if (nCu > 1e-9) {
     const cCu = nCu / liquidVolL;
@@ -150,6 +150,15 @@ export function computeSolutionVisuals(moles, liquidVolL, ph, opticalPathCm = 6.
     tg *= Math.exp(-ext.g * cCu * opticalPathCm * 0.22);
     tb *= Math.exp(-ext.b * cCu * opticalPathCm * 0.22);
     extraOpacity += Math.min(0.45, cCu * 0.45);
+  }
+  const nCuCl4 = moles.CuCl4_2_aq || 0;
+  if (nCuCl4 > 1e-9) {
+    const cComp = nCuCl4 / liquidVolL;
+    const ext = SPECIES.CuCl4_2_aq.extinctionRGB;
+    tr *= Math.exp(-ext.r * cComp * opticalPathCm * 0.22);
+    tg *= Math.exp(-ext.g * cComp * opticalPathCm * 0.22);
+    tb *= Math.exp(-ext.b * cComp * opticalPathCm * 0.22);
+    extraOpacity += Math.min(0.5, cComp * 0.48);
   }
 
   // 2. Phenolphthalein indicator 4-state optics:

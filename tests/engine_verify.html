@@ -102,9 +102,11 @@
       stepSeconds(sim, 25.0);
       const massEnd = scale.measuredG;
       const escapedH2Mass = (beaker.escapedGasMoles.H2_g || 0) * SPECIES.H2_g.molarMass;
-      const escapedSteamMass = (beaker.escapedGasMoles.H2O_g || 0) * SPECIES.H2O_g.molarMass;
-      const totalEscaped = escapedH2Mass + escapedSteamMass;
-      assert('Open Zn + HCl loses scale weight equal to escaped H2 + vapor', escapedH2Mass > 0.015 && Math.abs((massStart - massEnd) - totalEscaped) < 1e-4, `Scale drop=${(massStart - massEnd).toFixed(4)} g, Escaped=${totalEscaped.toFixed(4)} g (H2=${escapedH2Mass.toFixed(4)} g)`);
+      let totalEscaped = 0;
+      for (const [gId, mol] of Object.entries(beaker.escapedGasMoles)) {
+        if (mol > 0 && SPECIES[gId]) totalEscaped += mol * SPECIES[gId].molarMass;
+      }
+      assert('Open Zn + HCl loses scale weight equal to escaped gases + vapor', escapedH2Mass > 0.015 && Math.abs((massStart - massEnd) - totalEscaped) < 1e-4, `Scale drop=${(massStart - massEnd).toFixed(4)} g, Escaped=${totalEscaped.toFixed(4)} g (H2=${escapedH2Mass.toFixed(4)} g)`);
     }
 
     // TEST 3: Amphoteric Zn(OH)2 -> [Zn(OH)4]2- -> Zn(OH)2
@@ -273,6 +275,79 @@
         'Phenolphthalein flashes pink then fades in ~2 M NaOH, and recovers pink upon water dilution',
         alphaFlash > 0.85 && alphaFaded < 0.18 && alphaRecovered > 0.35 && alphaRecovered > alphaFaded * 2,
         `flash=${alphaFlash.toFixed(2)} -> faded=${alphaFaded.toFixed(2)} -> diluted=${alphaRecovered.toFixed(2)}`
+      );
+    }
+
+    // TEST 12: Boiling CuSO4 + HCl(aq) dry -> [CuCl4]2- green complex -> dry anhydrous CuSO4(s), 0 (aq) ions, tracked HCl(g) & H2O(g), capped ~250-300C
+    {
+      const sim = new LabSimulation();
+      const b = sim.createApparatus('beaker_250', 300, 350);
+      const burner = sim.createApparatus('burner', 300, 380);
+      sim.setBurnerFlame(burner.id, 3);
+      b.restingOnId = burner.id;
+
+      sim.addReagentToVessel(b.id, 'cuso4_5h2o', 2.4968, { fine: true }); // ~0.0100 mol CuSO4.5H2O
+      sim.addReagentToVessel(b.id, 'hcl_37', 8.0); // ~0.0965 mol HCl
+      const initTotalMassG = computeContentsMassG(b.moles);
+
+      stepSeconds(sim, 2.5, 0.02);
+      const midCompMol = b.moles.CuCl4_2_aq || 0;
+      const hasComplex = midCompMol > 0.002;
+      const liqMid = computeLiquidVolumeL(b.moles, b.tempK);
+      const visMid = computeSolutionVisuals(b.moles, liqMid, computePH(b.moles, liqMid, b.tempK));
+
+      // Heat until completely dry and thermal equilibrium is reached (~160s)
+      stepSeconds(sim, 160.0, 0.05);
+
+      const finalLiqMl = computeLiquidVolumeL(b.moles, b.tempK) * 1000;
+      const anyAqLeft = Object.entries(b.moles).some(([id, n]) => SPECIES[id]?.phase === 'aq' && n > 1e-10);
+      const dryCuSO4Mol = b.moles.CuSO4_s || 0;
+      const escHCl = b.escapedGasMoles.HCl_g || 0;
+      const escH2O = b.escapedGasMoles.H2O_g || 0;
+      const finalMassTotalG =
+        computeContentsMassG(b.moles) +
+        escHCl * SPECIES.HCl_g.molarMass +
+        escH2O * SPECIES.H2O_g.molarMass;
+      const dryTempC = b.tempK - CONSTANTS.KELVIN_OFFSET;
+
+      assert(
+        'CuSO4 + HCl(aq) forms green [CuCl4]2- in solution and turns greenish',
+        hasComplex && visMid.g > visMid.b,
+        `[CuCl4]2-=${midCompMol.toFixed(4)} mol, RGB(${visMid.r},${visMid.g},${visMid.b})`
+      );
+      assert(
+        'Boiling CuSO4 + HCl dry leaves 0 mL liquid, ZERO (aq) ions, anhydrous CuSO4(s), tracked HCl(g)+H2O(g) & exact mass',
+        finalLiqMl === 0 && !anyAqLeft && Math.abs(dryCuSO4Mol - 0.01) < 0.0005 && escHCl > 0.09 && escH2O > 0.3 && Math.abs(finalMassTotalG - initTotalMassG) < 1e-4,
+        `liq=${finalLiqMl.toFixed(2)}mL, anyAq=${anyAqLeft}, CuSO4(s)=${dryCuSO4Mol.toFixed(4)}, HCl(g)=${(escHCl*1000).toFixed(1)}mmol, Δm=${Math.abs(finalMassTotalG - initTotalMassG).toExponential(2)}g`
+      );
+      assert(
+        'Dry beaker on High alcohol burner stabilizes realistically around 250-300 °C (no runaway)',
+        dryTempC >= 250 && dryTempC <= 300,
+        `T_dry=${dryTempC.toFixed(1)}°C`
+      );
+    }
+
+    // TEST 13: Cu(OH)2 + excess HCl boiled dry -> CuCl2(s) -> CuCl(s) + Cl2(g) above 255 C
+    {
+      const sim = new LabSimulation();
+      const b = sim.createApparatus('beaker_250', 300, 350);
+      const burner = sim.createApparatus('burner', 300, 380);
+      sim.setBurnerFlame(burner.id, 3);
+      b.restingOnId = burner.id;
+
+      // Directly prepare Cu(OH)2(s) suspension + excess HCl -> pure CuCl2(aq)
+      b.moles.CuOH2_s = 0.02;
+      sim.addReagentToVessel(b.id, 'hcl_37', 5.0);
+      stepSeconds(sim, 140.0, 0.05);
+
+      const finalLiqMl = computeLiquidVolumeL(b.moles, b.tempK) * 1000;
+      const cuclMol = b.moles.CuCl_s || 0;
+      const cl2Mol = b.escapedGasMoles.Cl2_g || 0;
+      const anyAqLeft = Object.entries(b.moles).some(([id, n]) => SPECIES[id]?.phase === 'aq' && n > 1e-10);
+      assert(
+        'Cu(OH)2 + excess HCl boils dry to CuCl2(s) and thermally decomposes into CuCl(s) + Cl2(g) at burner plateau',
+        finalLiqMl === 0 && !anyAqLeft && cuclMol > 0.005 && cl2Mol > 0.0025,
+        `CuCl(s)=${cuclMol.toFixed(4)} mol, CuCl2(s)=${(b.moles.CuCl2_s || 0).toFixed(4)} mol, Cl2(g)=${(cl2Mol*1000).toFixed(2)}mmol`
       );
     }
 
