@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_v2+build.8',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_v2+build.9',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -349,10 +349,13 @@ export const I18N = {
     badgePickeringFoam: '🫧 Cột bọt keo Pickering',
     badgeLangmuirSat: '⏱️ Bão hòa tâm xúc tác Ag₂O (động học bậc 0)',
     badgeFlameMasking: '⚡ Na⁺ (589 nm) đang che lấp màu Cu²⁺',
+    alertThermalShock: '💥 SỐC NHIỆT THỦY TINH! Dụng cụ vượt giới hạn chịu nhiệt / chênh lệch ΔT quá lớn!',
+    alertSolventIgnition: '🔥 BỐC CHÁY DUNG MÔI! Hơi hữu cơ đạt ngưỡng tự bốc cháy trong không khí!',
+    phaseInterfaceLabel: 'Mặt phân cách lỏng–lỏng:',
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_v2+build.8',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_v2+build.9',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -686,5 +689,8 @@ export const I18N = {
     badgePickeringFoam: '🫧 Pickering Colloidal Foam',
     badgeLangmuirSat: '⏱️ Ag₂O Catalyst Surface Saturated (0th-order)',
     badgeFlameMasking: '⚡ Na⁺ (589 nm) Masking Emerald Cu²⁺',
+    alertThermalShock: '💥 THERMAL SHOCK SHATTER! Glassware exceeded safe thermal stress limit!',
+    alertSolventIgnition: '🔥 SOLVENT IGNITION! Flammable organic vapor reached combustion threshold in air!',
+    phaseInterfaceLabel: 'Liquid–Liquid Interface:',
   }
 };

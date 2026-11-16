@@ -10,6 +10,7 @@ import { SPECIES } from '../data/species.js';
 import {
   computeLiquidVolumeL,
   computePH,
+  computePhaseStratification,
   computeSolidVolumeMl,
   computeSolutionVisuals,
 } from '../engine/equilibrium.js';
@@ -1542,9 +1543,12 @@ export function renderVessel(ctx, vessel, opts) {
   const hasIce = iceMl > 0.15;
   const geom = computeVesselFluidGeometry(spec, y, liqMl + solMl);
   const { interiorBottom, scaleY, neckHalf, surfaceY, surfaceHalfWPx, volumeMlToY, volumeMlToState } = geom;
-  const hasWater = liqMl > 0.15 && ((vessel.moles.H2O_l || 0) > 1e-7 || (vessel.moles.C2H5OH_l || 0) > 1e-7);
+  const strat = vessel.liquidStratification || computePhaseStratification(vessel.moles, vessel.tempK, spec, solMl);
+  const hasWater =
+    liqMl > 0.15 &&
+    ((vessel.moles.H2O_l || 0) > 1e-7 || (vessel.moles.C2H5OH_l || 0) > 1e-7 || strat.totalLiqMl > 0.15);
 
-  // Draw liquid body using Beer-Lambert + Phenolphthalein color
+  // Draw liquid body using Beer-Lambert + Phenolphthalein color (supports multi-phase liquid-liquid strata)
   if (hasWater) {
     const ph = computePH(vessel.moles, liqL, vessel.tempK);
     const vis = computeSolutionVisuals(
@@ -1553,11 +1557,12 @@ export function renderVessel(ctx, vessel, opts) {
       ph,
       spec.opticalPathCm,
       vessel.phenBleachFrac,
-      vessel.phenIrrevFrac || 0
+      vessel.phenIrrevFrac || 0,
+      { phaseFilter: 'all', suspensionLevel: vessel.suspensionLevel || 0 }
     );
 
-    ctx.fillStyle = vis.css;
     if (vessel.isInverted) {
+      ctx.fillStyle = vis.css;
       // Inverted pneumatic vessel: water occupies mouth section upward cleanly, leaving top dome for collected gas
       const liqFillFrac = Math.max(0.05, Math.min(0.98, liqMl / Math.max(1, spec.maxVolumeMl)));
       const divY = top + (interiorBottom - top) * liqFillFrac;
@@ -1577,7 +1582,38 @@ export function renderVessel(ctx, vessel, opts) {
         ctx.fillRect(x - w / 2, divY, w, interiorBottom - divY + 4);
       }
     } else {
-      ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
+      if (strat.isMultiPhase && strat.layers.length >= 2) {
+        for (let li = 0; li < strat.layers.length; li++) {
+          const layer = strat.layers[li];
+          const layTopY = li === strat.layers.length - 1 ? surfaceY : volumeMlToY(layer.topMl);
+          const layBotY = li === 0 ? interiorBottom + 4 : volumeMlToY(layer.botMl);
+          const layVis = computeSolutionVisuals(
+            vessel.moles,
+            Math.max(1e-6, layer.volMl / 1000),
+            ph,
+            spec.opticalPathCm,
+            vessel.phenBleachFrac,
+            vessel.phenIrrevFrac || 0,
+            {
+              phaseFilter: layer.phaseKey,
+              suspensionLevel: layer.phaseKey === 'aqueous' ? (vessel.suspensionLevel || 0) : 0,
+            }
+          );
+          ctx.fillStyle = layVis.css;
+          ctx.fillRect(x - w / 2, layTopY, w, Math.max(1, layBotY - layTopY));
+          if (li < strat.layers.length - 1) {
+            ctx.beginPath();
+            ctx.moveTo(x - w / 2, layTopY);
+            ctx.lineTo(x + w / 2, layTopY);
+            ctx.strokeStyle = isDark ? 'rgba(226, 232, 240, 0.74)' : 'rgba(148, 163, 184, 0.85)';
+            ctx.lineWidth = 1.6;
+            ctx.stroke();
+          }
+        }
+      } else {
+        ctx.fillStyle = vis.css;
+        ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
+      }
 
       if (!hasIce) {
         // Concave meniscus (or deeper vortex funnel when magnetic stir bar spins rapidly)
@@ -1768,6 +1804,7 @@ export function renderVessel(ctx, vessel, opts) {
 
   // Draw solids, crystals, precipitates, and floating Na inside clipped region
   const currentWidthAtBottom = w - 6;
+  const naInterfaceY = vessel.naInterfaceMl != null && strat.hasLightCover ? volumeMlToY(vessel.naInterfaceMl) : null;
   renderVesselSolids(
     ctx,
     vessel,
@@ -1777,6 +1814,7 @@ export function renderVessel(ctx, vessel, opts) {
       bottom: interiorBottom,
       top,
       width: currentWidthAtBottom,
+      naInterfaceY,
     },
     hasWater,
     surfaceY

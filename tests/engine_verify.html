@@ -54,6 +54,9 @@
     import {
       enforceDryPhaseBoundary,
       getEffectiveRateConstant,
+      stepLiquidLiquidPartition,
+      stepVesselChemistry,
+      validateVesselInvariants,
       DRY_COMPLEX_DISSOCIATIONS,
       DRY_SALT_PAIRINGS,
     } from '../src/engine/chemistry.js';
@@ -61,9 +64,12 @@
     import { computeWashBottleStreamArc } from '../src/engine/apparatusTools.js';
     import { calcEvaporationRateMol, computeSteamOpacity } from '../src/engine/thermodynamics.js';
     import {
+      computeAqueousVolumeL,
       computeContentsMassG,
+      computeEthanolWaterExcessEnthalpyJ,
       computeLiquidVolumeL,
       computePH,
+      computePhaseStratification,
       computePhenolphthaleinAlpha,
       computeSolidVolumeMl,
       computeSolutionVisuals,
@@ -2409,13 +2415,13 @@
       );
     }
 
-    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.8 Sync
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.9 Sync
     {
       const allTranslated = APPARATUS_ORDER.every((id) => {
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_v2+build.8';
+      const expectedBuild = 'virlab_v2+build.9';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2423,9 +2429,12 @@
         Boolean(I18N.vi.badgeSupersaturated && I18N.en.badgeSupersaturated) &&
         Boolean(I18N.vi.badgeZnPassivated && I18N.en.badgeZnPassivated) &&
         Boolean(I18N.vi.badgePickeringFoam && I18N.en.badgePickeringFoam) &&
-        Boolean(I18N.vi.badgeLangmuirSat && I18N.en.badgeLangmuirSat);
+        Boolean(I18N.vi.badgeLangmuirSat && I18N.en.badgeLangmuirSat) &&
+        Boolean(I18N.vi.alertThermalShock && I18N.en.alertThermalShock) &&
+        Boolean(I18N.vi.alertSolventIgnition && I18N.en.alertSolventIgnition) &&
+        Boolean(I18N.vi.phaseInterfaceLabel && I18N.en.phaseInterfaceLabel);
       assert(
-        'Build virlab_v2+build.8 parity: All 27 apparatus translated in VI/EN, all Prompt 18 keys present, IUPAC spellings enforced',
+        'Build virlab_v2+build.9 parity: All 27 apparatus translated in VI/EN, all Prompt 18/19 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 27 &&
           allTranslated &&
           newKeysPresent &&
@@ -3548,6 +3557,343 @@
           foamMl > 8.0 &&
           err === null,
         `Ag_B:${(agOnB_before*1000).toFixed(2)}->${(agOnB_after*1000).toFixed(2)}mmol, Ag_A:${(agOnA_before*1000).toFixed(2)}->${(agOnA_after*1000).toFixed(2)}mmol, foam=${foamMl.toFixed(1)}mL, err=${err}`
+      );
+    }
+
+    // TEST 80: Core Thermodynamics (155K-1350K), Complete ISO VesselGeometry A(h), Ethanol-Water Excess Mixing Exotherm
+    {
+      const requiredGlassware = Object.values(APPARATUS).filter(
+        (a) => a.kind === 'vessel' || a.kind === 'burette' || a.kind === 'filter_funnel'
+      );
+      const allHaveISO = requiredGlassware.every((g) => Boolean(
+        g &&
+        g.diameterMm > 0 &&
+        g.heightMm > 0 &&
+        g.wallThicknessMm > 0 &&
+        g.maxThermalStressK > 300 &&
+        g.geometry &&
+        typeof g.geometry.getLiquidState === 'function' &&
+        g.geometry.getLiquidState(25).surfaceAreaCm2 > 0
+      ));
+
+      const erlNeckArea = APPARATUS.erlenmeyer_250.geometry.getLiquidState(210).surfaceAreaCm2;
+      const erlBaseArea = APPARATUS.erlenmeyer_250.geometry.getLiquidState(60).surfaceAreaCm2;
+      const bkrArea = APPARATUS.beaker_250.geometry.getLiquidState(210).surfaceAreaCm2;
+      const evapErl = calcEvaporationRateMol(SPECIES.H2O_l, 1.0, 330, erlNeckArea, 0, false, 1.0);
+      const evapBkr = calcEvaporationRateMol(SPECIES.H2O_l, 1.0, 330, bkrArea, 0, false, 1.0);
+
+      // Mixing exotherm: equal moles water + ethanol releases ~900 J/mol total mixture
+      const hEx = computeEthanolWaterExcessEnthalpyJ(2.0, 2.0, 298.15);
+      const simMix = new LabSimulation();
+      const mixV = simMix.createApparatus('beaker_250', 220, 427);
+      simMix.addReagentToVessel(mixV.id, 'h2o', 40, { silentAnim: true, silentEmit: true });
+      const tBeforeMix = mixV.tempK;
+      const mixE = simMix.createApparatus('beaker_250', 320, 427);
+      mixE.moles = { C2H5OH_l: (40 * SPECIES.C2H5OH_l.density) / SPECIES.C2H5OH_l.molarMass };
+      simMix.pourBetweenVessels(mixE.id, mixV.id, 40, false, { silentStream: true, silentEmit: true });
+      const tAfterMix = mixV.tempK;
+
+      // Wide-T stability: pure Ethanol cryo solidify -> re-warm -> vaporize
+      const cryoV = simMix.createApparatus('test_tube_50', 360, 390);
+      cryoV.moles = { C2H5OH_l: 0.35 };
+      cryoV.tempK = 156;
+      simMix.environment.tempK = 156;
+      stepSeconds(simMix, 1.5, 0.05);
+      const tfPureEtOH = solutionFreezingPointK({ C2H5OH_l: 0.35 }, false);
+
+      assert(
+        'All liquid vessels expose ISO dims + VesselGeometry A(h); tapered Erlenmeyer slows evaporation; Ethanol+Water exothermic mixing (~1-4K); Cryo 156K stable',
+        allHaveISO &&
+          erlNeckArea < erlBaseArea &&
+          evapErl < evapBkr &&
+          hEx < -3000 &&
+          tAfterMix > tBeforeMix + 1.0 &&
+          Math.abs(tfPureEtOH - 159.05) < 0.2 &&
+          validateVesselInvariants(cryoV).valid,
+        `ISO=${allHaveISO}, A_erlNeck=${erlNeckArea.toFixed(1)}<${erlBaseArea.toFixed(1)}, evap=${evapErl.toExponential(2)}<${evapBkr.toExponential(2)}, hEx=${hEx.toFixed(0)}J, dT=+${(tAfterMix - tBeforeMix).toFixed(2)}K`
+      );
+    }
+
+    // TEST 81: Multi-Phase Liquid-Liquid Stratification, Nernst Extraction, Oil Cover, Archimedes Na & Multi-Layer Canvas
+    {
+      SPECIES.__test_oil_l = {
+        id: '__test_oil_l', formula: 'C₆H₁₄(l)', nameVi: 'Hexane (test)', nameEn: 'Hexane (test)',
+        phase: 'l', liquidGroup: 'organic_light', density: 0.66, molarMass: 86.18, cp: 195.0,
+        boilTempK: 342.0, dHVapJ: 28850, antoineA: 4.00266, antoineB: 1171.53, antoineC: -48.784,
+      };
+      SPECIES.__test_heavy_l = {
+        id: '__test_heavy_l', formula: 'CHCl₃(l)', nameVi: 'Chloroform (test)', nameEn: 'Chloroform (test)',
+        phase: 'l', liquidGroup: 'organic_heavy', density: 1.49, molarMass: 119.38, cp: 114.2,
+      };
+      SPECIES.__test_dye_aq = {
+        id: '__test_dye_aq', formula: 'I₂(aq)', nameVi: 'Iodine(aq)', nameEn: 'Iodine(aq)',
+        phase: 'aq', molarMass: 253.8, cp: 50, organicSpeciesId: '__test_dye_org', partitionKow: 8.5,
+        extinctionRGB: { r: 0.05, g: 0.4, b: 0.9 }, extinctionCoeff: 600,
+      };
+      SPECIES.__test_dye_org = {
+        id: '__test_dye_org', formula: 'I₂(org)', nameVi: 'Iodine(org)', nameEn: 'Iodine(org)',
+        phase: 'aq', phaseGroup: 'organic_light', molarMass: 253.8, cp: 50,
+        extinctionRGB: { r: 0.15, g: 0.9, b: 0.15 }, extinctionCoeff: 1400,
+      };
+
+      try {
+        const sim = new LabSimulation();
+        const v3 = sim.createApparatus('beaker_250', 220, 427);
+        v3.moles = { __test_heavy_l: 0.35, H2O_l: 3.0, H_aq: 0.05, Cl_aq: 0.05, __test_oil_l: 0.45 };
+        const strat = computePhaseStratification(v3.moles, 298.15, APPARATUS.beaker_250, 0);
+        const aqVolL = computeAqueousVolumeL(v3.moles, 298.15);
+        const totVolL = computeLiquidVolumeL(v3.moles, 298.15);
+        const phAqOnly = computePH({ H2O_l: 3.0, H_aq: 0.05, Cl_aq: 0.05 }, aqVolL, 298.15);
+        const phWithOil = computePH(v3.moles, aqVolL, 298.15);
+
+        // Nernst distribution test
+        const vExt = sim.createApparatus('beaker_250', 420, 427);
+        vExt.moles = { H2O_l: 2.78, __test_oil_l: 0.383, __test_dye_aq: 0.01 };
+        const initTotDye = 0.01;
+        stepSeconds(sim, 3.5, 0.05);
+        const nOrgAfter = vExt.moles.__test_dye_org || 0;
+        const nAqAfter = vExt.moles.__test_dye_aq || 0;
+        const totDyeAfter = nOrgAfter + nAqAfter;
+
+        // Archimedes Na at oil-water interface vs sunken under pure dry oil
+        const vBiNa = sim.createApparatus('beaker_250', 620, 427);
+        vBiNa.moles = { H2O_l: 3.5, __test_oil_l: 0.35, Na_s: 0.04, Phenolphthalein_aq: 0.0005 };
+        stepVesselChemistry(vBiNa, 0.05, { uvLight: false });
+        const fracInterface = vBiNa.naLayerHeightFrac;
+
+        const vDryOilNa = sim.createApparatus('beaker_250', 820, 427);
+        vDryOilNa.moles = { __test_oil_l: 0.5, Na_s: 0.04 };
+        stepVesselChemistry(vDryOilNa, 0.1, { uvLight: false });
+        const fracSunken = vDryOilNa.naLayerHeightFrac;
+        const dryNaPreserved = Math.abs((vDryOilNa.moles.Na_s || 0) - 0.04) < 1e-10;
+
+        // Water evaporation shield under light oil cap vs open water
+        const vCovered = sim.createApparatus('beaker_250', 180, 427);
+        vCovered.moles = { H2O_l: 4.0, __test_oil_l: 0.35 };
+        vCovered.tempK = 325;
+        const vUncovered = sim.createApparatus('beaker_250', 280, 427);
+        vUncovered.moles = { H2O_l: 4.0 };
+        vUncovered.tempK = 325;
+        stepSeconds(sim, 1.5, 0.05);
+        const waterLossCovered = 4.0 - (vCovered.moles.H2O_l || 0);
+        const waterLossUncovered = 4.0 - (vUncovered.moles.H2O_l || 0);
+
+        // Multi-layer Canvas rendering check
+        const cvs = document.createElement('canvas');
+        cvs.width = 400; cvs.height = 300;
+        const ctx = cvs.getContext('2d');
+        let err = null;
+        try {
+          renderVessel(ctx, v3, { isDark: false, langCode: 'en', timeNow: 1.0 });
+          renderVessel(ctx, vBiNa, { isDark: true, langCode: 'vi', timeNow: 1.0 });
+        } catch (e) {
+          err = e?.message || String(e);
+        }
+
+        assert(
+          '3-phase stratification density sorting; organic cap invariance on pH; Nernst K_ow extraction conserves mass; Na floats at interface & sinks in dry oil; oil reduces water evap',
+          strat.isMultiPhase &&
+            strat.layers.length === 3 &&
+            strat.layers[0].phaseKey === 'organic_heavy' &&
+            strat.layers[1].phaseKey === 'aqueous' &&
+            strat.layers[2].phaseKey === 'organic_light' &&
+            totVolL > aqVolL * 1.4 &&
+            Math.abs(phAqOnly - phWithOil) < 0.01 &&
+            nOrgAfter > nAqAfter &&
+            Math.abs(totDyeAfter - initTotDye) < 1e-8 &&
+            fracInterface > 0.25 && fracInterface < 0.92 &&
+            fracSunken < 0.1 &&
+            dryNaPreserved &&
+            waterLossCovered < waterLossUncovered * 0.25 &&
+            err === null,
+          `layers=${strat.layers.map(l => l.phaseKey).join('->')}, nOrg=${nOrgAfter.toFixed(5)}/tot=${totDyeAfter.toFixed(5)}, fracInt=${fracInterface?.toFixed(2)}, fracDry=${fracSunken?.toFixed(2)}, evapCov=${waterLossCovered.toExponential(2)}<${waterLossUncovered.toExponential(2)}, err=${err}`
+        );
+      } finally {
+        delete SPECIES.__test_oil_l;
+        delete SPECIES.__test_heavy_l;
+        delete SPECIES.__test_dye_aq;
+        delete SPECIES.__test_dye_org;
+      }
+    }
+
+    // TEST 82: Polyprotic Charge-Balance pH, Rapid Complexation Relaxation & Generic Autocatalytic Kinetics
+    {
+      SPECIES.__test_H2A_aq = {
+        id: '__test_H2A_aq', formula: 'H₂CO₃(aq)', nameVi: 'H2CO3 (test)', nameEn: 'H2CO3 (test)',
+        phase: 'aq', molarMass: 62.03, cp: 80, charge: 0, bufferFamily: '__test_carb', pkaValues: [6.35, 10.33],
+      };
+      SPECIES.__test_HA_aq = {
+        id: '__test_HA_aq', formula: 'HCO₃⁻(aq)', nameVi: 'HCO3- (test)', nameEn: 'HCO3- (test)',
+        phase: 'aq', molarMass: 61.02, cp: 80, charge: -1, bufferFamily: '__test_carb', pkaValues: [6.35, 10.33],
+      };
+      SPECIES.__test_A2_aq = {
+        id: '__test_A2_aq', formula: 'CO₃²⁻(aq)', nameVi: 'CO32- (test)', nameEn: 'CO32- (test)',
+        phase: 'aq', molarMass: 60.01, cp: 80, charge: -2, bufferFamily: '__test_carb', pkaValues: [6.35, 10.33],
+      };
+      SPECIES.__test_autoB = {
+        id: '__test_autoB', formula: 'B(s)', nameVi: 'AutoCat (test)', nameEn: 'AutoCat (test)',
+        phase: 's', density: 5.0, molarMass: 100, cp: 30,
+      };
+      const autoRxn = {
+        id: '__test_autocat_rxn',
+        equation: 'H2O2 -> B(s)',
+        nameVi: 'Autocatalytic test', nameEn: 'Autocatalytic test',
+        reactants: { H2O2_aq: 1 }, products: { __test_autoB: 1 },
+        type: 'autocatalytic', k298: 0.04, autocatBoost: 25.0, autocatProductId: '__test_autoB', eaJ: 0, deltaHJ: 0,
+      };
+      REACTIONS.push(autoRxn);
+
+      try {
+        // Polyprotic carbonate buffer titration curve: H2CO3 (~3.7) -> NaHCO3 (~8.3) -> Na2CO3 (~11.6)
+        const v = 1.0;
+        const phAcid = computePH({ H2O_l: 55.5, __test_H2A_aq: 0.1 }, v, 298.15);
+        const phBicarb = computePH({ H2O_l: 55.5, __test_H2A_aq: 0.1, Na_aq: 0.1, OH_aq: 0.1 }, v, 298.15);
+        const phCarb = computePH({ H2O_l: 55.5, __test_H2A_aq: 0.1, Na_aq: 0.2, OH_aq: 0.2 }, v, 298.15);
+
+        // Rapid [Cu(NH3)4]2+ complex formation within ~0.25 s
+        const simC = new LabSimulation();
+        const vc = simC.createApparatus('beaker_250', 220, 427);
+        vc.moles = { H2O_l: 3.0, CuOH2_s: 0.01, NH3_aq: 0.4 };
+        stepSeconds(simC, 0.25, 0.05);
+        const complexFormed = vc.moles.CuNH3_4_2_aq || 0;
+
+        // Autocatalytic acceleration: peak rate rises markedly above initial rate before reactant depletion
+        const simA = new LabSimulation();
+        const va = simA.createApparatus('beaker_250', 420, 427);
+        va.moles = { H2O_l: 5.0, H2O2_aq: 0.5 };
+        const res0 = stepVesselChemistry(va, 0.05, {});
+        const rate0 = res0.activeReactions.find(r => r.id === '__test_autocat_rxn')?.rateMolS || 0;
+        let rateMid = rate0;
+        for (let i = 0; i < 40; i++) {
+          const rStep = stepVesselChemistry(va, 0.05, {});
+          const rVal = rStep.activeReactions.find(r => r.id === '__test_autocat_rxn')?.rateMolS || 0;
+          if (rVal > rateMid) rateMid = rVal;
+        }
+
+        assert(
+          'Polyprotic buffer bisection hits carbonic titration plateaus (~3.7 / ~8.3 / ~11.6); rapid ammine complex relaxation; autocatalytic rate self-accelerates',
+          phAcid > 3.2 && phAcid < 4.2 &&
+            phBicarb > 7.9 && phBicarb < 8.7 &&
+            phCarb > 11.2 && phCarb < 12.1 &&
+            complexFormed > 0.0085 &&
+            rateMid > rate0 * 2.5,
+          `pH=[${phAcid.toFixed(2)}, ${phBicarb.toFixed(2)}, ${phCarb.toFixed(2)}], CuNH3_4=${complexFormed.toFixed(4)}, autoRate:${rate0.toFixed(4)}->${rateMid.toFixed(4)}`
+        );
+      } finally {
+        const idx = REACTIONS.indexOf(autoRxn);
+        if (idx >= 0) REACTIONS.splice(idx, 1);
+        delete SPECIES.__test_H2A_aq;
+        delete SPECIES.__test_HA_aq;
+        delete SPECIES.__test_A2_aq;
+        delete SPECIES.__test_autoB;
+      }
+    }
+
+    // TEST 83: Universal Spectral Beer-Lambert Filtering by Phase & Suspended Solid Turbidity Blending
+    {
+      SPECIES.__test_red_org = {
+        id: '__test_red_org', formula: 'Br₂(org)', nameVi: 'Br2 (org)', nameEn: 'Br2 (org)',
+        phase: 'org', liquidGroup: 'organic_light', molarMass: 159.8, cp: 50,
+        extinctionRGB: { r: 0.05, g: 3.2, b: 4.4 }, opticalCoeff: 0.42,
+      };
+      try {
+        const molesMix = { H2O_l: 3.0, Cu2_aq: 0.08, SO4_2_aq: 0.08, __test_red_org: 0.03, CuOH2_s: 0.04 };
+        const visAq = computeSolutionVisuals(molesMix, 0.054, 7.0, 4.0, 0, 0, { phaseFilter: 'aq', suspensionLevel: 0 });
+        const visOrg = computeSolutionVisuals(molesMix, 0.05, 7.0, 4.0, 0, 0, { phaseFilter: 'organic_light', suspensionLevel: 0 });
+        const visSusp = computeSolutionVisuals(
+          { H2O_l: 3.0, CuOH2_s: 0.04 }, 0.054, 7.0, 4.0, 0, 0, { phaseFilter: 'aq', suspensionLevel: 0.95 }
+        );
+
+        assert(
+          'Spectral Beer-Lambert isolates aqueous Cu2+ blue (b > r) vs organic Br2 orange-red (r > b); suspensionLevel shifts clear liquid toward suspensionRGB turbidity',
+          visAq.b > visAq.r + 30 &&
+            visOrg.r > visOrg.b + 40 &&
+            visSusp.alpha > 0.25 && visSusp.b >= visSusp.r,
+          `aqRGB=(${visAq.r},${visAq.g},${visAq.b}), orgRGB=(${visOrg.r},${visOrg.g},${visOrg.b}), susp=(${visSusp.r},${visSusp.g},${visSusp.b},a=${visSusp.alpha.toFixed(2)})`
+        );
+      } finally {
+        delete SPECIES.__test_red_org;
+      }
+    }
+
+    // TEST 84: Boundary Chaos Stress Tests — 10g Na in 5mL Water, Boiled-Dry 37% HCl, Stoppered High-Rate Overpressure
+    {
+      // A: 10 g Na dropped in 5 mL H2O (porcelain vessel so thermal explosion survival tests numerical stability)
+      const simA = new LabSimulation();
+      const vA = simA.createApparatus('porcelain_dish', 220, 427);
+      vA.moles = { H2O_l: 5 / 18.015, Na_s: 10.0 / 22.99 };
+      stepSeconds(simA, 4.0, 0.05);
+      const invA = validateVesselInvariants(vA);
+
+      // B: Boil 15 mL 37% HCl completely dry on high flame
+      const simB = new LabSimulation();
+      const bnB = simB.createApparatus('burner', 420, 428);
+      simB.setBurnerFlame(bnB.id, 5);
+      const vB = simB.createApparatus('porcelain_dish', 420, 310);
+      simB.addReagentToVessel(vB.id, 'hcl_37', 15, { silentAnim: true, silentEmit: true });
+      simB.updateSupportAttachments();
+      stepSeconds(simB, 90.0, 0.25);
+      const liqLeftB = computeLiquidVolumeL(vB.moles, vB.tempK) * 1000;
+      const invB = validateVesselInvariants(vB);
+
+      // C: Stoppered vessel with Zn + 12M HCl rapid gas generation -> pops or shatters with finite bounded P <= 35 bar
+      const simC = new LabSimulation();
+      const vC = simC.createApparatus('erlenmeyer_250', 620, 427);
+      simC.addReagentToVessel(vC.id, 'hcl_37', 80, { silentAnim: true, silentEmit: true });
+      simC.addReagentToVessel(vC.id, 'zn', 12, { silentAnim: true, silentEmit: true });
+      vC.isStoppered = true;
+      stepSeconds(simC, 8.0, 0.05);
+      const invC = validateVesselInvariants(vC);
+
+      assert(
+        'Extreme stress tests pass with ZERO NaN/Infinity/negative moles & valid invariants (10g Na/5mL H2O, boiled-dry HCl, stoppered rapid Zn+HCl burst)',
+        invA.valid && invB.valid && invC.valid &&
+          liqLeftB < 1.0 &&
+          (!vC.isStoppered || vC.isShattered) &&
+          vC.internalPressureBar <= 35.0,
+        `invA=${invA.valid}, dryLiqB=${liqLeftB.toFixed(3)}mL(invB=${invB.valid}), stopperedPopOrShatterC=${!vC.isStoppered || vC.isShattered}(P=${vC.internalPressureBar.toFixed(2)}bar, invC=${invC.valid})`
+      );
+    }
+
+    // TEST 85: Glassware ISO Thermal Stress Shatter, Cold-Splash Thermal Shock, Solvent Auto-Ignition & Strict IUPAC Check
+    {
+      let shockAlertSeen = false;
+      let ignAlertSeen = false;
+      const sim = new LabSimulation();
+      sim.visualHooks.onAlert = (type) => {
+        if (type === 'thermal_shock') shockAlertSeen = true;
+        if (type === 'solvent_ignition') ignAlertSeen = true;
+      };
+
+      // A: Heating empty borosilicate flask >= maxThermalStressK (783 K) -> shatters
+      const vHot = sim.createApparatus('beaker_250', 220, 427);
+      vHot.tempK = 795;
+      sim.step(0.05);
+      const hotShattered = vHot.isShattered && sim.logs.some(l => l.key === 'alertThermalShock');
+
+      // B: Cold 50 mL water splash into dry hot 500 K borosilicate flask -> thermal shock shatter
+      const vSplash = sim.createApparatus('erlenmeyer_250', 420, 427);
+      vSplash.tempK = 510;
+      sim.addReagentToVessel(vSplash.id, 'h2o', 40, { silentAnim: true, silentEmit: true });
+      const splashShattered = vSplash.isShattered;
+
+      // C: Pure Ethanol heated above autoIgnitionTempK (636.15 K) in high-stress porcelain vessel -> triggers alertSolventIgnition cleanly
+      const vEth = sim.createApparatus('porcelain_dish', 620, 427);
+      vEth.moles = { C2H5OH_l: 0.4 };
+      vEth.tempK = 650;
+      sim.step(0.05);
+      const ethIgnited = sim.logs.some(l => l.key === 'alertSolventIgnition') && ignAlertSeen && validateVesselInvariants(vEth).valid;
+
+      // D: Strict IUPAC check across all REACTIONS VI strings (zero lowercase/Vietnamese element names)
+      const rxnIupacClean = REACTIONS.every((r) => {
+        const txt = `${r.nameVi || ''} ${r.descVi || ''} ${r.equation || ''}`;
+        return !/\b(kẽm|natri)\b|bạc kim loại|gương bạc|bạc xốp|kim loại đồng/i.test(txt);
+      });
+
+      assert(
+        'ISO thermal stress shatter, cold-splash thermal shock shatter, Ethanol auto-ignition alert & 100% IUPAC REACTIONS strings verified',
+        hotShattered && splashShattered && shockAlertSeen && ethIgnited && rxnIupacClean,
+        `hotShat=${hotShattered}, splashShat=${splashShattered}, shockAlert=${shockAlertSeen}, ethIgn=${ethIgnited}, rxnIUPAC=${rxnIupacClean}`
       );
     }
 

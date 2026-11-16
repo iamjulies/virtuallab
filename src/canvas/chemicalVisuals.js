@@ -278,8 +278,13 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     ctx.restore();
   }
 
-  // 3. Sodium (Na) — Marangoni skittering droplet + Phenolphthalein wake trail on water meniscus
+  // 3. Sodium (Na) — Marangoni skittering droplet + Phenolphthalein wake trail on meniscus or oil-water interface
   const wakeTrail = vessel.naWakeTrail;
+  const naAnchorY =
+    bounds.naInterfaceY ??
+    (vessel.naLayerHeightFrac != null && vessel.naLayerHeightFrac < 0.99
+      ? surfaceY + Math.max(0, bottom - surfaceY - 8) * (1 - vessel.naLayerHeightFrac)
+      : surfaceY);
   if (hasWater && Array.isArray(wakeTrail) && wakeTrail.length > 1 && surfaceY < bottom - 4) {
     const hasPhenTrail = (moles.Phenolphthalein_aq || 0) > 1e-9;
     ctx.save();
@@ -290,7 +295,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       if (lifeFrac <= 0.02) continue;
       const wxA = left + 8 + pA.pos * Math.max(10, width - 16);
       const wxB = left + 8 + pB.pos * Math.max(10, width - 16);
-      const wy = surfaceY + 2 + (1 - lifeFrac) * 6 + Math.sin(i * 1.4) * 1.5;
+      const wy = naAnchorY + 2 + (1 - lifeFrac) * 6 + Math.sin(i * 1.4) * 1.5;
       ctx.strokeStyle = hasPhenTrail
         ? `rgba(236, 72, 153, ${(0.72 * lifeFrac).toFixed(2)})`
         : `rgba(226, 232, 240, ${(0.45 * lifeFrac).toFixed(2)})`;
@@ -313,7 +318,12 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
 
     if ((hasWater || hasIceSurface) && surfaceY < bottom - 4) {
       const nx = left + 8 + vessel.naPosRatio * Math.max(10, width - 16);
-      const ny = surfaceY + (hasWater ? 1 : -radius * 0.35);
+      const naDropY =
+        bounds.naInterfaceY ??
+        (vessel.naLayerHeightFrac != null && vessel.naLayerHeightFrac < 0.99
+          ? surfaceY + Math.max(0, bottom - surfaceY - radius - 2) * (1 - vessel.naLayerHeightFrac)
+          : surfaceY);
+      const ny = naDropY + (hasWater ? 1 : -radius * 0.35);
 
       const tNa = vessel.naTempK ?? vessel.tempK;
       if (hasWater || tNa > 273.15) {

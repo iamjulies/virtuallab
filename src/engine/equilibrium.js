@@ -2,19 +2,21 @@ import { CONSTANTS, waterDensityGPerMl } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
 
 /**
- * Compute aqueous liquid volume in Liters.
+ * Compute aqueous phase volume in Liters (H2O + water-miscible Ethanol + _aq solutes).
  * Blends infinite-dilution partial molar volume into realistic finite-concentration
  * apparent molar volume so concentrated solutions do not shrink unphysically.
  */
-export function computeLiquidVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
-  const nH2O = moles.H2O_l || 0;
-  const nEtOH = moles.C2H5OH_l || 0;
+export function computeAqueousVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
+  if (!moles) return 0;
+  const nH2O = Math.max(0, moles.H2O_l || 0);
+  const nEtOH = Math.max(0, moles.C2H5OH_l || 0);
   if (nH2O <= 1e-12 && nEtOH <= 1e-12) return 0;
 
-  const rho = waterDensityGPerMl(tempK);
+  const T = Number.isFinite(tempK) ? Math.max(155, Math.min(800, tempK)) : CONSTANTS.T_STD_K;
+  const rho = waterDensityGPerMl(T);
   const waterVolMl = (nH2O * SPECIES.H2O_l.molarMass) / rho;
   const etohVolMl = (nEtOH * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density;
-  // Ethanol-water mixtures exhibit ~3% excess volume contraction
+  // Ethanol-water mixtures exhibit ~3.5% excess volume contraction
   const mixFactor = nH2O > 1e-9 && nEtOH > 1e-9 ? 0.965 : 1.0;
   const solventVolMl = (waterVolMl + etohVolMl) * mixFactor;
 
@@ -23,7 +25,7 @@ export function computeLiquidVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
   let totalSoluteMassG = 0;
 
   for (const [id, n] of Object.entries(moles)) {
-    if (n <= 0) continue;
+    if (!Number.isFinite(n) || n <= 0) continue;
     const sp = SPECIES[id];
     if (sp && sp.phase === 'aq') {
       totalSoluteMoles += n;
@@ -45,7 +47,37 @@ export function computeLiquidVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
     (1 - highConcWeight) * diluteVolDeltaMl + highConcWeight * Math.max(diluteVolDeltaMl, concVolDeltaMl);
 
   const totalMl = Math.max(solventVolMl * 0.96, solventVolMl + blendedDeltaMl);
-  return totalMl / 1000;
+  return Math.max(0, totalMl / 1000);
+}
+
+/**
+ * Total liquid volume across aqueous AND any stratified immiscible organic liquid phases (L).
+ */
+export function computeLiquidVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
+  if (!moles) return 0;
+  let orgVolMl = 0;
+  for (const [id, n] of Object.entries(moles)) {
+    if (!Number.isFinite(n) || n <= 1e-12) continue;
+    const sp = SPECIES[id];
+    if (sp && sp.phase === 'l' && (sp.liquidGroup === 'organic_light' || sp.liquidGroup === 'organic_heavy') && sp.density > 0) {
+      orgVolMl += (n * sp.molarMass) / sp.density;
+    }
+  }
+  return computeAqueousVolumeL(moles, tempK) + orgVolMl / 1000;
+}
+
+/**
+ * Compute Redlich-Kister excess enthalpy of mixing H_mix (J) for H2O(l) + C2H5OH(l) mixtures
+ * (exothermic peak around x_EtOH ~ 0.25-0.30). Used as state function H(after) - H(before).
+ */
+export function computeEthanolWaterExcessEnthalpyJ(nWaterMol, nEtOHMol) {
+  const nw = Math.max(0, nWaterMol || 0);
+  const ne = Math.max(0, nEtOHMol || 0);
+  const nTot = nw + ne;
+  if (nw <= 1e-12 || ne <= 1e-12 || nTot <= 1e-12) return 0;
+  const xE = ne / nTot;
+  const xW = nw / nTot;
+  return -3600 * nTot * xE * xW * (1.28 - 0.56 * xE);
 }
 
 /**
@@ -100,22 +132,54 @@ export function computeKw(tempK = CONSTANTS.T_STD_K) {
 }
 
 /**
- * Exact strong-electrolyte + water auto-ionization pH calculation.
- * Returns null if vessel contains virtually no liquid water.
+ * Universal proton-balance pH solver supporting strong electrolytes, NH3/NH4+,
+ * and extensible mono/polyprotic weak-acid buffer species declared via SPECIES[id].bufferFamily.
+ * Returns null if vessel contains virtually no aqueous water/protic liquid.
  */
 export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
-  if (liquidVolL <= 1e-6) return null;
+  if (!moles || !Number.isFinite(liquidVolL) || liquidVolL <= 1e-6) return null;
+  const aqVolL = computeAqueousVolumeL(moles, tempK);
+  const effVolL = aqVolL > 1e-6 ? aqVolL : liquidVolL;
 
   const nH = moles.H_aq || 0;
   const nOH = moles.OH_aq || 0;
   const nEthoxide = moles.C2H5O_aq || 0;
-  const cNH3 = Math.max(0, moles.NH3_aq || 0) / liquidVolL;
-  const cNH4 = Math.max(0, moles.NH4_aq || 0) / liquidVolL;
-  const cNet = (nH - nOH - nEthoxide) / liquidVolL;
+  const cNH3 = Math.max(0, moles.NH3_aq || 0) / effVolL;
+  const cNH4 = Math.max(0, moles.NH4_aq || 0) / effVolL;
+
+  // Discover any custom mono/diprotic acid-base conjugate families (e.g. CO3^2-/HCO3-/H2CO3 for beta_v3)
+  let polyGroups = null;
+  for (const [id, n] of Object.entries(moles)) {
+    if (!Number.isFinite(n) || n <= 1e-12) continue;
+    const sp = SPECIES[id];
+    if (!sp || !sp.bufferFamily) continue;
+    const fam = typeof sp.bufferFamily === 'string'
+      ? { id: sp.bufferFamily, pKaList: sp.pKaList || sp.pkaValues, boundProtons: sp.boundProtons }
+      : sp.bufferFamily;
+    const pKaList = fam.pKaList || sp.pKaList || sp.pkaValues;
+    if (!Array.isArray(pKaList) || pKaList.length === 0) continue;
+    if (!polyGroups) polyGroups = new Map();
+    const famId = fam.id || sp.bufferFamily;
+    let entry = polyGroups.get(famId);
+    if (!entry) {
+      entry = {
+        pKaList,
+        totalConc: 0,
+        boundProtonsConc: 0,
+      };
+      polyGroups.set(famId, entry);
+    }
+    const c = n / effVolL;
+    entry.totalConc += c;
+    const bp = fam.boundProtons ?? (sp.charge !== undefined ? Math.max(0, pKaList.length + sp.charge) : 0);
+    entry.boundProtonsConc += c * bp;
+  }
+
+  const cNet = (nH - nOH - nEthoxide) / effVolL;
   const kw = computeKw(tempK);
 
   let hPlus;
-  if (cNH3 <= 1e-12 && cNH4 <= 1e-12) {
+  if (cNH3 <= 1e-12 && cNH4 <= 1e-12 && !polyGroups) {
     if (cNet >= 0) {
       hPlus = 0.5 * (cNet + Math.sqrt(cNet * cNet + 4 * kw));
     } else {
@@ -123,21 +187,39 @@ export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
       hPlus = ohMinus > 0 ? kw / ohMinus : Math.sqrt(kw);
     }
   } else {
-    // Exact monotonic charge-balance bisection over log10([H+]) handling NH3/NH4+ buffer (pKa ~ 9.25)
+    // Monotonic bisection over log10([H+]) solving exact proton-balance identity
     const kbNH3 = 1.77e-5;
     const kaNH4 = kw / kbNH3;
     let lo = -16.0;
     let hi = 2.0;
-    for (let i = 0; i < 44; i++) {
+    for (let i = 0; i < 46; i++) {
       const mid = 0.5 * (lo + hi);
       const h = Math.pow(10, mid);
-      const f = h - kw / h + (cNH3 * h - cNH4 * kaNH4) / (h + kaNH4) - cNet;
+      let f = h - kw / h - cNet;
+      if (cNH3 > 1e-12 || cNH4 > 1e-12) {
+        f += (cNH3 * h - cNH4 * kaNH4) / (h + kaNH4);
+      }
+      if (polyGroups) {
+        for (const grp of polyGroups.values()) {
+          if (grp.pKaList.length === 1) {
+            const ka1 = Math.pow(10, -grp.pKaList[0]);
+            const eqBound = grp.totalConc * (h / (h + ka1));
+            f += eqBound - grp.boundProtonsConc;
+          } else if (grp.pKaList.length === 2) {
+            const k1 = Math.pow(10, -grp.pKaList[0]);
+            const k2 = Math.pow(10, -grp.pKaList[1]);
+            const denom = h * h + k1 * h + k1 * k2;
+            const eqBound = denom > 0 ? grp.totalConc * ((2 * h * h + k1 * h) / denom) : 0;
+            f += eqBound - grp.boundProtonsConc;
+          }
+        }
+      }
       if (f > 0) hi = mid;
       else lo = mid;
     }
     hPlus = Math.pow(10, 0.5 * (lo + hi));
   }
-  if (hPlus <= 0) return 14;
+  if (!Number.isFinite(hPlus) || hPlus <= 0) return 14;
   const ph = -Math.log10(hPlus);
   return Math.max(-1.2, Math.min(15.6, ph));
 }
@@ -181,7 +263,8 @@ export function computePhenolphthaleinOrangeAlpha(ph, irrevFrac = 0) {
 }
 
 /**
- * Beer-Lambert RGB optical color calculation for aqueous solution.
+ * Beer-Lambert RGB optical color calculation across arbitrary phase chromophores
+ * ('aq', 'org_light', 'org_heavy', or 'all') + colloidal suspension turbidity.
  * Returns { css, r, g, b, alpha, hasIndicatorPink, hasIndicatorOrange }
  */
 export function computeSolutionVisuals(
@@ -190,9 +273,11 @@ export function computeSolutionVisuals(
   ph,
   opticalPathCm = 6.5,
   phenBleachFrac = null,
-  phenIrrevFrac = 0
+  phenIrrevFrac = 0,
+  options = {}
 ) {
-  if (liquidVolL <= 1e-6) {
+  const phaseFilter = options.phaseFilter || 'aq';
+  if (!moles || !Number.isFinite(liquidVolL) || liquidVolL <= 1e-6) {
     return {
       css: 'rgba(200, 230, 250, 0.25)',
       r: 200,
@@ -211,12 +296,19 @@ export function computeSolutionVisuals(
   let extraOpacity = 0;
   let indicatorBoost = 0;
 
-  // 1. Dynamic Beer-Lambert RGB absorption for all aqueous chromophores (Cu2+, [CuCl4]2-, [Cu(OH)4]2-, ...)
+  // 1. Dynamic Beer-Lambert RGB absorption for chromophores matching the target liquid stratum
   for (const [spId, nMol] of Object.entries(moles)) {
-    if (!nMol || nMol <= 1e-9) continue;
+    if (!Number.isFinite(nMol) || nMol <= 1e-9) continue;
     const sp = SPECIES[spId];
-    if (!sp || sp.phase !== 'aq' || !sp.extinctionRGB) continue;
-    const conc = nMol / liquidVolL;
+    if (!sp || !sp.extinctionRGB) continue;
+    const inPhase =
+      phaseFilter === 'all'
+        ? sp.phase === 'aq' || sp.phase === 'org' || sp.phase === 'l'
+        : phaseFilter === 'aq'
+        ? sp.phase === 'aq'
+        : sp.phase === 'org' && (sp.liquidGroup || 'organic_light') === phaseFilter;
+    if (!inPhase) continue;
+    const conc = Math.min(100, nMol / liquidVolL);
     const ext = sp.extinctionRGB;
     const coeff = sp.opticalCoeff ?? 0.22;
     const kPath = opticalPathCm * coeff;
@@ -229,13 +321,13 @@ export function computeSolutionVisuals(
     extraOpacity += Math.min(opMax, conc * opScale + opBase);
   }
 
-  // 2. Phenolphthalein indicator 4-state optics + irreversible C-C cleavage guard:
-  const nPhen = moles.Phenolphthalein_aq || 0;
+  // 2. Phenolphthalein indicator 4-state optics + irreversible C-C cleavage guard (aqueous only):
+  const nPhen = phaseFilter === 'aq' || phaseFilter === 'all' ? moles.Phenolphthalein_aq || 0 : 0;
   let alphaPink = 0;
   let alphaOrange = 0;
   if (nPhen > 1e-9 && ph !== null) {
-    const cPhen = nPhen / liquidVolL;
-    const cOH = ((moles.OH_aq || 0) + 2.2 * (moles.C2H5O_aq || 0)) / liquidVolL;
+    const cPhen = Math.min(10, nPhen / liquidVolL);
+    const cOH = Math.min(40, ((moles.OH_aq || 0) + 2.2 * (moles.C2H5O_aq || 0)) / liquidVolL);
     alphaPink = computePhenolphthaleinAlpha(ph, cOH, phenBleachFrac, phenIrrevFrac);
     alphaOrange = computePhenolphthaleinOrangeAlpha(ph, phenIrrevFrac);
 
@@ -258,14 +350,29 @@ export function computeSolutionVisuals(
     }
   }
 
-  // Base watery tint blended with Beer-Lambert transmission
-  const rBase = 224 + 26 * indicatorBoost;
-  const gBase = 240 + 4 * indicatorBoost;
-  const bBase = 252;
-  const r = Math.round(Math.max(12, Math.min(255, rBase * tr)));
-  const g = Math.round(Math.max(12, Math.min(255, gBase * tg)));
-  const b = Math.round(Math.max(18, Math.min(255, bBase * tb)));
-  const alpha = Math.min(0.86, 0.34 + extraOpacity);
+  // Base tint calibrated for aqueous vs organic solvent refractive clarity
+  const isOrg = phaseFilter === 'organic_light' || phaseFilter === 'organic_heavy';
+  const rBase = isOrg ? 242 : 224 + 26 * indicatorBoost;
+  const gBase = isOrg ? 240 : 240 + 4 * indicatorBoost;
+  const bBase = isOrg ? 225 : 252;
+  let r = Math.round(Math.max(12, Math.min(255, rBase * tr)));
+  let g = Math.round(Math.max(12, Math.min(255, gBase * tg)));
+  let b = Math.round(Math.max(18, Math.min(255, bBase * tb)));
+  let alpha = Math.min(0.88, (isOrg ? 0.30 : 0.34) + extraOpacity);
+
+  // 3. Optional colloidal solid suspension scattering (e.g. brown-black MnO2(s), cloudy AgCl)
+  const susp = Math.max(0, Math.min(1, options.suspensionLevel || 0));
+  if (susp > 0.03 && phaseFilter === 'aq') {
+    for (const [spId, nMol] of Object.entries(moles)) {
+      const sp = SPECIES[spId];
+      if (!sp || sp.phase !== 's' || !sp.suspensionRGB || nMol <= 1e-8) continue;
+      const wBlend = Math.min(0.75, susp * Math.min(1, (nMol / liquidVolL) * 4.5));
+      r = Math.round(r * (1 - wBlend) + sp.suspensionRGB.r * wBlend);
+      g = Math.round(g * (1 - wBlend) + sp.suspensionRGB.g * wBlend);
+      b = Math.round(b * (1 - wBlend) + sp.suspensionRGB.b * wBlend);
+      alpha = Math.min(0.92, alpha + wBlend * 0.35);
+    }
+  }
 
   return {
     css: `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`,
@@ -353,4 +460,123 @@ export function calcSolidTransferRatio({
   const settledTransfer = (1 - effectiveSuspension) * (1 - vesselTrap) * bottomDisturbance;
 
   return Math.min(1, suspendedTransfer + settledTransfer);
+}
+
+/**
+ * Multi-phase liquid-liquid stratification analyzer.
+ * Separates immiscible organic layers (light: rho < rho_aq, heavy: rho > rho_aq) from aqueous solution,
+ * sorts bottom-to-top by density, and computes VesselGeometry interface boundaries & interfacial surface area A(h_int).
+ */
+export function computePhaseStratification(moles, tempK = CONSTANTS.T_STD_K, vesselSpec = null, solidVolMl = 0) {
+  const layers = [];
+  if (!moles) {
+    return {
+      isMultiPhase: false,
+      layers,
+      totalLiqMl: 0,
+      totalLiqL: 0,
+      interfaceMl: null,
+      interfaceAreaCm2: 0,
+      topAreaCm2: vesselSpec?.surfaceAreaCm2 || 20,
+      topLayerKey: null,
+      hasLightCover: false,
+      hasHeavyBottom: false,
+      aqueousMl: 0,
+      aqueousDensity: 0.997,
+      lightOrganicMl: 0,
+      lightOrganicDensity: 0,
+      heavyOrganicMl: 0,
+      heavyOrganicDensity: 0,
+    };
+  }
+
+  const T = Number.isFinite(tempK) ? Math.max(155, Math.min(800, tempK)) : CONSTANTS.T_STD_K;
+  const aqVolL = computeAqueousVolumeL(moles, T);
+  const aqVolMl = aqVolL * 1000;
+  let aqMassG = 0;
+  for (const [id, n] of Object.entries(moles)) {
+    if (!Number.isFinite(n) || n <= 1e-12) continue;
+    const sp = SPECIES[id];
+    if (!sp) continue;
+    if (sp.phase === 'aq' || (sp.phase === 'l' && (sp.liquidGroup || 'aqueous') === 'aqueous')) {
+      aqMassG += n * sp.molarMass;
+    }
+  }
+  const aqDensity = aqVolMl > 1e-6 ? aqMassG / aqVolMl : 0.997;
+
+  let lightVolMl = 0;
+  let lightMassG = 0;
+  let heavyVolMl = 0;
+  let heavyMassG = 0;
+
+  for (const [id, n] of Object.entries(moles)) {
+    if (!Number.isFinite(n) || n <= 1e-12) continue;
+    const sp = SPECIES[id];
+    if (!sp || sp.phase !== 'l') continue;
+    const lg = sp.liquidGroup || 'aqueous';
+    if (lg === 'organic_light' && sp.density > 0) {
+      const mG = n * sp.molarMass;
+      lightMassG += mG;
+      lightVolMl += mG / sp.density;
+    } else if (lg === 'organic_heavy' && sp.density > 0) {
+      const mG = n * sp.molarMass;
+      heavyMassG += mG;
+      heavyVolMl += mG / sp.density;
+    }
+  }
+
+  const lightDensity = lightVolMl > 1e-6 ? lightMassG / lightVolMl : 0.72;
+  const heavyDensity = heavyVolMl > 1e-6 ? heavyMassG / heavyVolMl : 1.48;
+
+  if (heavyVolMl > 0.05) {
+    layers.push({ phaseKey: 'organic_heavy', volMl: heavyVolMl, massG: heavyMassG, density: heavyDensity });
+  }
+  if (aqVolMl > 0.05) {
+    layers.push({ phaseKey: 'aqueous', volMl: aqVolMl, massG: aqMassG, density: aqDensity });
+  }
+  if (lightVolMl > 0.05) {
+    layers.push({ phaseKey: 'organic_light', volMl: lightVolMl, massG: lightMassG, density: lightDensity });
+  }
+
+  // Strict thermodynamic gravity ordering: densest stratum at bottom -> lightest stratum on top
+  layers.sort((a, b) => b.density - a.density);
+
+  let accumMl = solidVolMl;
+  for (const layer of layers) {
+    layer.botMl = accumMl;
+    accumMl += layer.volMl;
+    layer.topMl = accumMl;
+  }
+
+  const totalLiqMl = aqVolMl + lightVolMl + heavyVolMl;
+  const isMultiPhase = layers.length >= 2;
+  const interfaceMl = isMultiPhase ? layers[0].topMl : null;
+  const topLayer = layers.length > 0 ? layers[layers.length - 1] : null;
+  const totalVolForGeo = solidVolMl + totalLiqMl;
+
+  const getAreaAtMl = (volMl) => {
+    if (vesselSpec?.geometry) {
+      return Math.max(0.2, vesselSpec.geometry.getLiquidState(volMl).surfaceAreaCm2);
+    }
+    return vesselSpec?.surfaceAreaCm2 || 20.0;
+  };
+
+  return {
+    isMultiPhase,
+    layers,
+    totalLiqMl,
+    totalLiqL: totalLiqMl / 1000,
+    interfaceMl,
+    interfaceAreaCm2: interfaceMl !== null ? getAreaAtMl(interfaceMl) : 0,
+    topAreaCm2: getAreaAtMl(totalVolForGeo),
+    topLayerKey: topLayer ? topLayer.phaseKey : null,
+    hasLightCover: lightVolMl > 0.15 && aqVolMl > 0.05,
+    hasHeavyBottom: heavyVolMl > 0.15 && aqVolMl > 0.05,
+    aqueousMl: aqVolMl,
+    aqueousDensity: aqDensity,
+    lightOrganicMl: lightVolMl,
+    lightOrganicDensity: lightDensity,
+    heavyOrganicMl: heavyVolMl,
+    heavyOrganicDensity: heavyDensity,
+  };
 }

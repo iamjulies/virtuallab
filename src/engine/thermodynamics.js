@@ -10,6 +10,7 @@ import { APPARATUS } from '../data/apparatus.js';
 import {
   calcEffectiveSoluteMoles,
   computeLiquidVolumeL,
+  computePhaseStratification,
   computeSolidVolumeMl,
   solutionFreezingPointK,
 } from './equilibrium.js';
@@ -123,9 +124,11 @@ export function updateFreezeMeltPhase(vessel, dt, candidateTempK = null, heatCap
   const liquidWaterMol = moles.H2O_l || 0;
   const iceMol = moles.H2O_s || 0;
   let T = candidateTempK ?? vessel.tempK;
+  if (!Number.isFinite(T)) T = CONSTANTS.T_STD_K;
+  T = Math.max(155, Math.min(1350, T));
 
   if (liquidWaterMol <= 1e-12 && iceMol <= 1e-12) {
-    vessel.isFrozenSolid = false;
+    vessel.isFrozenSolid = (moles.C2H5OH_l || 0) > 1e-7 && T < 159.05;
     vessel.freezePointK = solutionFreezingPointK(moles);
     vessel.lastFreezeMeltRateMolS = 0;
     return { updatedTempK: T, freezeMeltRateMolS: 0, freezePointK: vessel.freezePointK };
@@ -213,7 +216,8 @@ export function stepVesselThermodynamics(
   flameLevel = 0
 ) {
   const spec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
-  const cTotal = computeHeatCapacityJK(vessel);
+  const cTotal = Math.max(15.0, computeHeatCapacityJK(vessel));
+  if (!Number.isFinite(vessel.tempK)) vessel.tempK = env.tempK || CONSTANTS.T_STD_K;
 
   // Convective + Stefan-Boltzmann radiative heat loss to ambient room
   const baseHLoss = spec.heatLossCoeffWK || 0.35;
@@ -232,10 +236,11 @@ export function stepVesselThermodynamics(
     vessel.tempK < env.tempK;
   const hLoss = isCryoCool ? baseHLoss * 75.0 : isCryoThaw ? baseHLoss * 40.0 : baseHLoss;
   const radCoeff = baseHLoss * 4.0e-9;
-  const tEnv = Math.max(180, env.tempK);
+  const tEnv = Math.max(150, env.tempK);
+  const tCurClamped = Math.max(150, Math.min(1350, vessel.tempK));
   const ambientExchangeJ =
-    (-hLoss * (vessel.tempK - env.tempK) -
-      radCoeff * (Math.pow(vessel.tempK, 4) - Math.pow(tEnv, 4))) *
+    (-hLoss * (tCurClamped - env.tempK) -
+      radCoeff * (Math.pow(tCurClamped, 4) - Math.pow(tEnv, 4))) *
     dt;
 
   // Sub-boiling surface evaporation & concentrated HCl(g) / NH3(g) outgassing
@@ -262,19 +267,18 @@ export function stepVesselThermodynamics(
   const canSubBoilVent = !vessel.isStoppered || (hasOpenTube && vessel.tempK >= 351.0);
   const canEtOHVent = !vessel.isStoppered || (hasOpenTube && nEthanol > 1e-7 && vessel.tempK >= 313.15);
   const canVentFumingHCl = !vessel.isStoppered || hasOpenTube;
-  if ((nWater > 1e-7 || nEthanol > 1e-7 || nAmmonia > 1e-8) && (canSubBoilVent || canEtOHVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
+  const strat = computePhaseStratification(vessel.moles, vessel.tempK, spec, computeSolidVolumeMl(vessel.moles));
+  const effTopAreaCm2 = strat.topAreaCm2 * (vessel.isStoppered && hasOpenTube ? 0.55 : 1.0);
+  const aqCapFactor = strat.hasLightCover ? 0.06 : 1.0;
+
+  if ((nWater > 1e-7 || nEthanol > 1e-7 || nAmmonia > 1e-8 || strat.lightOrganicMl > 0.05) && (canSubBoilVent || canEtOHVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
     const vle = computeEthanolWaterVLE(vessel.moles, vessel.tempK, false);
-    const volMl =
-      computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000 +
-      computeSolidVolumeMl(vessel.moles);
-    const areaCm2 = spec.geometry
-      ? Math.max(0.2, spec.geometry.getLiquidState(volMl).surfaceAreaCm2)
-      : spec.surfaceAreaCm2 || 20.0;
-    const tubingScale = vessel.isStoppered && hasOpenTube ? 0.55 : 1.0;
-    const effAreaCm2 = areaCm2 * tubingScale;
+    const volMl = strat.totalLiqMl + computeSolidVolumeMl(vessel.moles);
+    const areaCm2 = effTopAreaCm2;
+    const effAreaCm2 = areaCm2 * aqCapFactor;
     const isStirred = (vessel.stirTimer || 0) > 0;
 
-    // 1a) Water sub-boiling evaporation (against ambient 60% RH water/ice vapor pressure; co-vents warm above 40C with EtOH)
+    // 1a) Water sub-boiling evaporation (scaled by light organic cover if stratified)
     const pAmbH2OPa = CONSTANTS.RELATIVE_HUMIDITY * waterVaporPressureBar(env.tempK) * 100000;
     const evapH2OMolS =
       nWater > 1e-7 && (canSubBoilVent || canEtOHVent) && !vessel.isFrozenSolid
@@ -288,6 +292,25 @@ export function stepVesselThermodynamics(
         ? calcEvaporationRateMol(SPECIES.C2H5OH_l, vle.xE0 * vle.fIon, vessel.tempK, effAreaCm2, 0, isStirred, vle.gammaE)
         : 0;
     const subBoilEtOH = Math.min(nEthanol, evapEtOHMolS * dt);
+
+    // 1c) Exposed top immiscible organic liquid evaporation (for beta_v3 solvents: Hexane/Ether/etc.)
+    if (!vessel.isStoppered && strat.topLayerKey === 'organic_light') {
+      for (const [id, nOrg] of Object.entries(vessel.moles)) {
+        const sp = SPECIES[id];
+        if (!sp || sp.phase !== 'l' || sp.liquidGroup !== 'organic_light' || !sp.boilTempK || !sp.dHVapJ || nOrg <= 1e-9) continue;
+        const evOrgRate = calcEvaporationRateMol(sp, 1.0, vessel.tempK, areaCm2, 0, isStirred, 1.0);
+        const dEvOrg = Math.min(nOrg, evOrgRate * dt);
+        if (dEvOrg > 1e-12) {
+          vessel.moles[id] = nOrg - dEvOrg;
+          if (vessel.moles[id] < 1e-12) delete vessel.moles[id];
+          evapCoolingJ -= dEvOrg * sp.dHVapJ;
+          const vapId = sp.vaporSpeciesId;
+          if (vapId) {
+            vessel.escapedGasMoles[vapId] = (vessel.escapedGasMoles[vapId] || 0) + dEvOrg;
+          }
+        }
+      }
+    }
 
     const nH = vessel.moles.H_aq || 0;
     const nCl = vessel.moles.Cl_aq || 0;
@@ -368,10 +391,12 @@ export function stepVesselThermodynamics(
     }
   }
 
-  // Update temperature
-  const netHeatJ = reactionHeatJ + effectiveBurnerW * dt + ambientExchangeJ + evapCoolingJ;
-  let newTempK = vessel.tempK + netHeatJ / cTotal;
-  newTempK = Math.max(200, Math.min(1100, newTempK));
+  // Update temperature with strict finite clamping across deep-cryo (155 K) to burner peak (1350 K)
+  const rawHeatJ = reactionHeatJ + effectiveBurnerW * dt + ambientExchangeJ + evapCoolingJ;
+  const netHeatJ = Number.isFinite(rawHeatJ) ? rawHeatJ : 0;
+  let newTempK = tCurClamped + netHeatJ / cTotal;
+  if (!Number.isFinite(newTempK)) newTempK = tCurClamped;
+  newTempK = Math.max(155, Math.min(1350, newTempK));
 
   // Regime 2: Co-distillation boiling clamp for Water + Ethanol (including pure EtOH at 78.3 C!)
   let isBoiling = false;

@@ -9,14 +9,16 @@ import { APPARATUS, clampItemToStandY, getStandGeometry, getSyringeGeometry } fr
 import {
   calcSolidTransferRatio,
   computeContentsMassG,
+  computeEthanolWaterExcessEnthalpyJ,
   computeLiquidVolumeL,
   computePH,
+  computePhaseStratification,
   computePhenolphthaleinBleachEq,
   computeSolidSuspensionFactor,
   computeSolidVolumeMl,
   computeSolutionVisuals,
 } from './equilibrium.js';
-import { enforceDryPhaseBoundary, stepVesselChemistry } from './chemistry.js';
+import { enforceDryPhaseBoundary, stepVesselChemistry, validateVesselInvariants } from './chemistry.js';
 import { ELECTRODE_MATERIALS, stepElectrochemistry } from './electrochemistry.js';
 import {
   computeWashBottleStreamArc,
@@ -1435,9 +1437,18 @@ export class LabSimulation {
     }
     if (amt <= 0) return false;
 
-    // Thermal capacity before addition
+    // Thermal capacity & ethanol-water excess enthalpy baseline before addition
     const cOld = computeHeatCapacityJK(v);
     const tOld = v.tempK;
+    const hMixBefore = computeEthanolWaterExcessEnthalpyJ(v.moles.H2O_l || 0, v.moles.C2H5OH_l || 0, tOld);
+    const liqBeforeMl = computeLiquidVolumeL(v.moles, tOld) * 1000;
+    const coldSplashShock =
+      reg.kind === 'liquid' &&
+      (APPARATUS[v.typeId]?.maxThermalStressK || 783) < 1100 &&
+      tOld >= 463.15 &&
+      this.environment.tempK <= 305 &&
+      liqBeforeMl < 18 &&
+      amt >= 5;
 
     let addedHeatCap = 0;
     let dilutionHeatJ = 0;
@@ -1475,6 +1486,8 @@ export class LabSimulation {
         const sp = SPECIES[spId];
         if (sp) addedHeatCap += addMol * Math.max(0, sp.cp || 0);
       }
+      const hMixAfter = computeEthanolWaterExcessEnthalpyJ(v.moles.H2O_l || 0, v.moles.C2H5OH_l || 0, tOld);
+      dilutionHeatJ += Math.max(0, hMixBefore - hMixAfter);
       if (reg.perMl.Phenolphthalein_aq) {
         const newPhen = v.moles.Phenolphthalein_aq || 0;
         // Fresh indicator starts intact & unbleached (In^2-)
@@ -1495,7 +1508,13 @@ export class LabSimulation {
     // Mix thermal energy with reagent starting at ambient T_env
     const tAdd = this.environment.tempK;
     if (cOld + addedHeatCap > 0) {
-      v.tempK = (cOld * tOld + addedHeatCap * tAdd + dilutionHeatJ) / (cOld + addedHeatCap);
+      const nextT = (cOld * tOld + addedHeatCap * tAdd + dilutionHeatJ) / (cOld + addedHeatCap);
+      v.tempK = Number.isFinite(nextT) ? Math.max(155, Math.min(1350, nextT)) : tOld;
+    }
+    if (coldSplashShock && v.kind === 'vessel') {
+      this.shatterVessel(v, 'alertThermalShock', 'thermal_shock');
+      if (!options.silentEmit) this.emitChange();
+      return true;
     }
 
     if (!options.silentAnim) {
@@ -1518,6 +1537,12 @@ export class LabSimulation {
     }
 
     this.checkOverflow(v);
+    v.liquidStratification = computePhaseStratification(
+      v.moles,
+      v.tempK,
+      APPARATUS[v.typeId] || APPARATUS.beaker_250,
+      computeSolidVolumeMl(v.moles)
+    );
     this.recomputeScaleReadings();
     this.recordHistorySnapshot(v, true);
     if (!options.silentEmit) this.emitChange();
@@ -1716,6 +1741,10 @@ export class LabSimulation {
     const vesselType = srcSpec.shape || 'beaker';
 
     const cDstBefore = computeHeatCapacityJK(dst);
+    const dstTempBefore = dst.tempK;
+    const dstLiqBeforeMl = computeLiquidVolumeL(dst.moles, dstTempBefore) * 1000;
+    const hMixDstBefore = computeEthanolWaterExcessEnthalpyJ(dst.moles.H2O_l || 0, dst.moles.C2H5OH_l || 0, dstTempBefore);
+    const hMixSrcBefore = computeEthanolWaterExcessEnthalpyJ(src.moles.H2O_l || 0, src.moles.C2H5OH_l || 0, src.tempK);
     const oldDstPhen = dst.moles.Phenolphthalein_aq || 0;
     const oldDstBleach = dst.phenBleachFrac || 0;
     let movedPhen = 0;
@@ -1778,8 +1807,22 @@ export class LabSimulation {
           : 0;
     }
 
+    const hMixDstAfter = computeEthanolWaterExcessEnthalpyJ(dst.moles.H2O_l || 0, dst.moles.C2H5OH_l || 0, dstTempBefore);
+    const mixHeatJ = Math.max(0, hMixDstBefore + frac * hMixSrcBefore - hMixDstAfter);
     if (cDstBefore + cMoved > 0) {
-      dst.tempK = (cDstBefore * dst.tempK + cMoved * src.tempK) / (cDstBefore + cMoved);
+      const nextT = (cDstBefore * dstTempBefore + cMoved * src.tempK + mixHeatJ) / (cDstBefore + cMoved);
+      dst.tempK = Number.isFinite(nextT) ? Math.max(155, Math.min(1350, nextT)) : dstTempBefore;
+    }
+    if (
+      dst.kind === 'vessel' &&
+      (APPARATUS[dst.typeId]?.maxThermalStressK || 783) < 1100 &&
+      dstTempBefore >= 463.15 &&
+      src.tempK <= 305 &&
+      dstLiqBeforeMl < 18 &&
+      actualMl >= 5
+    ) {
+      this.shatterVessel(dst, 'alertThermalShock', 'thermal_shock');
+      return actualMl;
     }
 
     // Trigger subtle pour stream visual
@@ -1805,9 +1848,22 @@ export class LabSimulation {
     }
 
     if (dst.kind === 'vessel') this.checkOverflow(dst);
+    dst.liquidStratification = computePhaseStratification(
+      dst.moles,
+      dst.tempK,
+      APPARATUS[dst.typeId] || APPARATUS.beaker_250,
+      computeSolidVolumeMl(dst.moles)
+    );
     this.recomputeScaleReadings();
     if (!streamOpts.silentEmit) this.emitChange();
     return actualMl;
+  }
+
+  /**
+   * Expose mathematical & conservation invariant validation for a vessel.
+   */
+  getVesselInvariants(vesselId) {
+    return validateVesselInvariants(this.getItem(vesselId));
   }
 
   /**
@@ -3611,6 +3667,35 @@ export class LabSimulation {
       let frameNaEvent = null;
       const frameActiveMap = new Map();
 
+      // Data-driven flammable volatile solvent auto-ignition check prior to latent boiling clamp
+      if (!v.isStoppered && !v.isFrozenSolid) {
+        for (const [spId, n] of Object.entries(v.moles)) {
+          const sp = SPECIES[spId];
+          if (!sp || sp.phase !== 'l' || !sp.autoIgnitionTempK || n <= 1e-4) continue;
+          if (v.tempK >= sp.autoIgnitionTempK) {
+            const nBurn = Math.min(n, Math.max(0.001, n * 0.14 * Math.min(1, scaledDt * 4)));
+            v.moles[spId] = n - nBurn;
+            if (v.moles[spId] < 1e-12) delete v.moles[spId];
+            v.escapedGasMoles.H2O_g = (v.escapedGasMoles.H2O_g || 0) + 3 * nBurn;
+            const ignHeatJ = Math.min(9000, nBurn * (sp.combustionHeatJ || 1367000) * 0.18);
+            const cNow = Math.max(25, computeHeatCapacityJK(v));
+            v.tempK = Math.min(1350, v.tempK + ignHeatJ / cNow);
+            if ((this.timeSec - (v.seenReactions.solvent_ignition ?? -99)) > 4.5) {
+              v.seenReactions.solvent_ignition = this.timeSec;
+              this.addLog({
+                type: 'alert',
+                key: 'alertSolventIgnition',
+                vesselLabel: v.label,
+              });
+              if (this.visualHooks.onAlert) {
+                this.visualHooks.onAlert('solvent_ignition', v, { liquidColor: '#f97316' });
+              }
+            }
+            break;
+          }
+        }
+      }
+
       for (let s = 0; s < numSteps; s++) {
         const chemRes = stepVesselChemistry(v, dt, { uvLight: this.environment.uvLight });
         const thermRes = stepVesselThermodynamics(
@@ -3702,6 +3787,29 @@ export class LabSimulation {
       }
 
       if (v.isShattered) continue;
+
+      // Post-step finite mathematical stabilizer across all conserved vessel state fields
+      v.tempK = Number.isFinite(v.tempK) ? Math.max(155, Math.min(1350, v.tempK)) : CONSTANTS.T_STD_K;
+      v.internalPressureBar = Number.isFinite(v.internalPressureBar)
+        ? Math.max(0.02, Math.min(35.0, v.internalPressureBar))
+        : this.environment.pressureBar;
+      v.pickeringFoamMl = Number.isFinite(v.pickeringFoamMl || 0) ? Math.max(0, v.pickeringFoamMl || 0) : 0;
+      for (const [spId, val] of Object.entries(v.moles)) {
+        if (!Number.isFinite(val) || val < 0) delete v.moles[spId];
+      }
+      for (const mapKey of ['headspaceGasMoles', 'escapedGasMoles']) {
+        if (!v[mapKey]) continue;
+        for (const [gId, val] of Object.entries(v[mapKey])) {
+          if (!Number.isFinite(val) || val < 0) v[mapKey][gId] = 0;
+        }
+      }
+
+      // ISO glassware dry/extreme thermal stress limit shatter check
+      const specV = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+      if (v.tempK >= (specV.maxThermalStressK || 783)) {
+        this.shatterVessel(v, 'alertThermalShock', 'thermal_shock');
+        continue;
+      }
 
       // Advance reversible phenolphthalein carbinol fading & high-temp irreversible C-C cleavage (locked while frozen solid)
       if ((v.moles.Phenolphthalein_aq || 0) > 1e-12) {

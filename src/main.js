@@ -255,7 +255,8 @@ sim.visualHooks.onParticlesNeeded = (vessel, metrics) => {
 
 sim.visualHooks.onAlert = (type, vessel, meta) => {
   const t = getTranslator();
-  particles.emitBurst(type, vessel.x, vessel.y, meta);
+  const burstType = type === 'thermal_shock' ? 'shatter' : type === 'solvent_ignition' ? 'o2_flare' : type;
+  particles.emitBurst(burstType, vessel.x, vessel.y, meta);
   if (type === 'explosion') {
     workbench.triggerShake(13, 0.45);
     const latest = sim.logs[0];
@@ -265,6 +266,12 @@ sim.visualHooks.onAlert = (type, vessel, meta) => {
     const latest = sim.logs[0];
     const msgKey = latest?.key || 'alertOverpressureShatter';
     showToast(`💥 ${t(msgKey)}`);
+  } else if (type === 'thermal_shock') {
+    workbench.triggerShake(9.5, 0.38);
+    showToast(`💥 ${t('alertThermalShock')}`);
+  } else if (type === 'solvent_ignition') {
+    workbench.triggerShake(4.8, 0.22);
+    showToast(`🔥 ${t('alertSolventIgnition')}`);
   } else if (type === 'drop_spill') {
     workbench.triggerShake(4.2, 0.20);
     showToast(`💧 ${t('alertDropSpill')}`);

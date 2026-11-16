@@ -820,14 +820,18 @@ export function stepVesselGasAndPressure(
 
   extraGasMol += vessel.headspaceGasMoles.H2O_g || 0;
 
-  const effectiveVolL = maxedSyringe ? headspaceL + 0.25 : headspaceL;
+  const safeTempK = Number.isFinite(vessel.tempK) ? Math.max(150, Math.min(1400, vessel.tempK)) : CONSTANTS.T_STD_K;
+  const effectiveVolL = Math.max(0.008, maxedSyringe ? headspaceL + 0.25 : headspaceL);
   const partialAirAndGas = maxedSyringe
-    ? env.pressureBar + (extraGasMol * CONSTANTS.R_L_BAR_MOL_K * vessel.tempK) / effectiveVolL
-    : ((vessel.sealedAirMoles + extraGasMol) * CONSTANTS.R_L_BAR_MOL_K * vessel.tempK) / headspaceL;
+    ? env.pressureBar + (extraGasMol * CONSTANTS.R_L_BAR_MOL_K * safeTempK) / effectiveVolL
+    : (((vessel.sealedAirMoles || 0) + extraGasMol) * CONSTANTS.R_L_BAR_MOL_K * safeTempK) / effectiveVolL;
   const hasWater = (vessel.moles.H2O_l || 0) > 1e-6;
-  const vaporContribution = !maxedSyringe && hasWater ? Math.max(0, waterVaporPressureBar(vessel.tempK) - 0.03) : 0;
+  const vaporContribution = !maxedSyringe && hasWater ? Math.max(0, waterVaporPressureBar(safeTempK) - 0.03) : 0;
 
-  vessel.internalPressureBar = Math.max(0.02, partialAirAndGas + vaporContribution);
+  const rawPressureBar = partialAirAndGas + vaporContribution;
+  vessel.internalPressureBar = Number.isFinite(rawPressureBar)
+    ? Math.max(0.02, Math.min(35.0, rawPressureBar))
+    : env.pressureBar;
   if (maxedSyringe) {
     maxedSyringe.internalPressureBar = vessel.internalPressureBar;
   }

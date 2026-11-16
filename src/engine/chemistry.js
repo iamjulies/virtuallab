@@ -2,7 +2,13 @@ import { CONSTANTS } from '../data/constants.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { createZeroGasMap, SPECIES } from '../data/species.js';
 import { REACTIONS } from '../data/reactions.js';
-import { computeLiquidVolumeL, computePH, computeSolidVolumeMl } from './equilibrium.js';
+import {
+  computeAqueousVolumeL,
+  computeLiquidVolumeL,
+  computePH,
+  computePhaseStratification,
+  computeSolidVolumeMl,
+} from './equilibrium.js';
 
 /**
  * Arrhenius factor relative to 298.15 K: exp((-Ea / R) * (1/T - 1/298.15)).
@@ -200,8 +206,14 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
       const k = rxn.k298 * arrheniusFactor(rxn.eaJ, tNa) * gammaCoulomb * etohTame;
 
       if (rxn.useWaterContact) {
+        const strat = options.strat;
+        if (strat && strat.lightOrganicMl > 0.2 && strat.aqueousMl <= 0.05) {
+          // Pure light nonpolar oil/alkane completely shields submerged Na from moisture!
+          return 0;
+        }
+        const oilCoverDamp = strat?.hasLightCover ? 0.26 : 1.0;
         const waterFrac = Math.min(1.0, (moles.H2O_l || 0) / 0.1);
-        return k * area * waterFrac;
+        return k * area * waterFrac * oilCoverDamp;
       }
       if (iceMob <= 0) return 0;
       const aqConc = (moles[rxn.aqueousId] || 0) / liquidVolL;
@@ -473,6 +485,21 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * Math.max(1e-5, area) * oxDrive * stirBoost * iceMob * 12.0;
   }
 
+  if (rxn.type === 'autocatalytic') {
+    if (!hasWater || iceMob <= 0) return 0;
+    let minExtent = Infinity;
+    for (const [spId, stoich] of Object.entries(rxn.reactants)) {
+      minExtent = Math.min(minExtent, (moles[spId] || 0) / stoich);
+    }
+    if (minExtent <= 1e-12 || !Number.isFinite(minExtent)) return 0;
+    const catId = rxn.autocatProductId;
+    const catConc = catId ? (moles[catId] || 0) / Math.max(1e-5, liquidVolL) : 0;
+    const uncat = rxn.autocatUncatFrac ?? 0.012;
+    const catTerm = Math.pow(Math.max(0, catConc), rxn.autocatOrder ?? 1.0) * (rxn.autocatBoost ?? 28.0);
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ ?? 30000, T);
+    return Math.min(minExtent * 15, minExtent * k * (uncat + catTerm) * stirBoost * iceMob);
+  }
+
   return 0;
 }
 
@@ -671,7 +698,7 @@ function stepAmphotericHydroxideEquilibria(vessel, liquidVolL, dt, activeReactio
   if (nCuTot > 1e-11) {
     const eqFrac = cOH > 1.0 ? Math.min(0.95, 1 / (1 + Math.pow(6.2 / cOH, 4.0))) : 0;
     const targetComp = nCuTot * eqFrac;
-    let dXi = (targetComp - nCuC) * Math.min(1, 3.2 * dt);
+    let dXi = (targetComp - nCuC) * Math.min(1, 18.0 * dt);
     dXi = dXi > 0 ? Math.min(dXi, nCuS, (moles.OH_aq || 0) / 2) : Math.max(dXi, -nCuC);
 
     heatJ += applyEquilibriumShift({
@@ -699,7 +726,7 @@ function stepAmphotericHydroxideEquilibria(vessel, liquidVolL, dt, activeReactio
   if (nAgTot > 1e-11) {
     const eqFrac = cOH > 1.5 ? Math.min(0.86, 0.86 / (1 + Math.pow(6.6 / cOH, 4.0))) : 0;
     const targetAgC = nAgTot * eqFrac;
-    let dAg = (targetAgC - nAgC) * Math.min(1, 2.8 * dt);
+    let dAg = (targetAgC - nAgC) * Math.min(1, 18.0 * dt);
     dAg = dAg > 0 ? Math.min(dAg, 2 * nAg2O, moles.OH_aq || 0, 2 * (moles.H2O_l || 0)) : Math.max(dAg, -nAgC);
 
     heatJ += applyEquilibriumShift({
@@ -739,7 +766,7 @@ function stepChloroSilverAndCuprousEquilibria(vessel, liquidVolL, dt, activeReac
   if (nAgCl + nAgComp > 1e-11) {
     const maxSolConc = cCl > 3.8 ? 0.16 * Math.pow((cCl - 3.8) / 7.5, 2.2) : 0;
     const targetComp = Math.min(nAgCl + nAgComp, maxSolConc * liquidVolL);
-    let dXi = (targetComp - nAgComp) * Math.min(1, 3.8 * dt);
+    let dXi = (targetComp - nAgComp) * Math.min(1, 20.0 * dt);
     dXi = dXi > 0 ? Math.min(dXi, nAgCl, moles.Cl_aq || 0) : Math.max(dXi, -nAgComp);
 
     heatJ += applyEquilibriumShift({
@@ -767,7 +794,7 @@ function stepChloroSilverAndCuprousEquilibria(vessel, liquidVolL, dt, activeReac
   if (nCuCl + nCuComp > 1e-11) {
     const maxCuCl2Conc = cCl > 2.4 ? 1.1 * Math.pow((cCl - 2.4) / 6.0, 1.8) : 0;
     const targetComp = Math.min(nCuCl + nCuComp, maxCuCl2Conc * liquidVolL);
-    let dXi = (targetComp - nCuComp) * Math.min(1, 4.2 * dt);
+    let dXi = (targetComp - nCuComp) * Math.min(1, 20.0 * dt);
     dXi = dXi > 0 ? Math.min(dXi, nCuCl, moles.Cl_aq || 0) : Math.max(dXi, -nCuComp);
 
     heatJ += applyEquilibriumShift({
@@ -884,7 +911,7 @@ function stepChlorocuprateEquilibrium(vessel, liquidVolL, dt, activeReactions) {
   const ratio = Math.max(0, cCl / 3.0);
   const eqFrac = Math.min(maxStoichFrac, (Math.pow(ratio, 2.2) * kT) / (1 + Math.pow(ratio, 2.2) * kT));
   const targetComp = nCuTot * eqFrac;
-  let dXi = (targetComp - nComp) * Math.min(1, 3.0 * dt);
+  let dXi = (targetComp - nComp) * Math.min(1, 18.0 * dt);
   dXi = dXi > 0 ? Math.min(dXi, nCuFree, (moles.Cl_aq || 0) / 4) : Math.max(dXi, -nComp);
   if (Math.abs(dXi) <= 1e-14) return 0;
 
@@ -920,7 +947,7 @@ function stepAmmineComplexEquilibria(vessel, liquidVolL, dt, activeReactions) {
   let heatJ = 0;
   const cNH3 = (moles.NH3_aq || 0) / liquidVolL;
   const cH = (moles.H_aq || 0) / liquidVolL;
-  const relax = Math.min(1, 5.5 * dt);
+  const relax = Math.min(1, 22.0 * dt);
 
   // 1. Copper(II) hydroxide <-> Tetraamminecopper(II)
   const nCuOH2 = moles.CuOH2_s || 0;
@@ -1246,14 +1273,113 @@ export function enforceDryPhaseBoundary(vessel) {
 }
 
 /**
+ * Equilibrate solutes with Nernst octanol/water partition metadata across multi-phase liquid-liquid strata.
+ */
+export function stepLiquidLiquidPartition(vessel, strat, dt) {
+  if (!vessel?.moles || !strat || vessel.isFrozenSolid || dt <= 0) return;
+  const orgMl = (strat.lightOrganicMl || 0) + (strat.heavyOrganicMl || 0);
+  const vAqL = Math.max(0, strat.aqueousMl || 0) / 1000;
+  const vOrgL = Math.max(0, orgMl) / 1000;
+
+  for (const sp of Object.values(SPECIES)) {
+    if (!sp || !sp.organicSpeciesId || !(sp.partitionKow > 0)) continue;
+    const aqId = sp.id;
+    const orgId = sp.organicSpeciesId;
+    const nAq = vessel.moles[aqId] || 0;
+    const nOrg = vessel.moles[orgId] || 0;
+    const nTot = nAq + nOrg;
+    if (nTot <= 1e-12) continue;
+
+    if (vOrgL <= 1e-7 && vAqL > 1e-7) {
+      if (nOrg > 1e-12) {
+        vessel.moles[aqId] = nTot;
+        delete vessel.moles[orgId];
+      }
+      continue;
+    }
+    if (vAqL <= 1e-7 || vOrgL <= 1e-7) continue;
+
+    const agitate = (vessel.magStirRpm || 0) > 0 || (vessel.stirTimer || 0) > 0 ? 4.2 : 1.0;
+    const kPart = Math.min(8.5, Math.max(0.15, 0.045 * Math.max(1, strat.interfaceAreaCm2 || 15) * agitate));
+    const nOrgEq = nTot * ((sp.partitionKow * vOrgL) / (vAqL + sp.partitionKow * vOrgL));
+    const nextOrg = nOrgEq + (nOrg - nOrgEq) * Math.exp(-kPart * dt);
+    const clampedOrg = Math.max(0, Math.min(nTot, nextOrg));
+    const clampedAq = Math.max(0, nTot - clampedOrg);
+
+    if (clampedAq > 1e-12) vessel.moles[aqId] = clampedAq;
+    else delete vessel.moles[aqId];
+    if (clampedOrg > 1e-12) vessel.moles[orgId] = clampedOrg;
+    else delete vessel.moles[orgId];
+  }
+}
+
+/**
+ * Audit mathematical and mass-conservation invariants on a single vessel state.
+ * Returns { valid: boolean, errors: string[] }.
+ */
+export function validateVesselInvariants(vessel) {
+  const errors = [];
+  if (!vessel) return { valid: false, errors: ['vessel is null'] };
+
+  if (!Number.isFinite(vessel.tempK) || vessel.tempK < 150 || vessel.tempK > 1500) {
+    errors.push(`Invalid tempK=${vessel.tempK}`);
+  }
+  if (
+    !Number.isFinite(vessel.internalPressureBar) ||
+    vessel.internalPressureBar < 0 ||
+    vessel.internalPressureBar > 100
+  ) {
+    errors.push(`Invalid internalPressureBar=${vessel.internalPressureBar}`);
+  }
+  if (!Number.isFinite(vessel.pickeringFoamMl || 0) || (vessel.pickeringFoamMl || 0) < 0) {
+    errors.push(`Invalid pickeringFoamMl=${vessel.pickeringFoamMl}`);
+  }
+  for (const mapName of ['moles', 'headspaceGasMoles', 'escapedGasMoles']) {
+    const map = vessel[mapName];
+    if (!map) continue;
+    for (const [spId, val] of Object.entries(map)) {
+      if (!Number.isFinite(val) || val < 0) {
+        errors.push(`Invalid ${mapName}.${spId}=${val}`);
+      }
+    }
+  }
+  if (
+    !Number.isFinite(vessel.phenBleachFrac || 0) ||
+    (vessel.phenBleachFrac || 0) < 0 ||
+    (vessel.phenBleachFrac || 0) > 1.0001
+  ) {
+    errors.push(`Invalid phenBleachFrac=${vessel.phenBleachFrac}`);
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+/**
  * Advance all chemical reactions inside one vessel by dt seconds.
  * Guarantees non-negative moles and exact stoichiometry.
  * Returns { reactionHeatJ, gasProduced, activeReactions, naEvent }
  */
 export function stepVesselChemistry(vessel, dt, options = {}) {
-  const liquidVolL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
+  const spec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
+  const liquidVolL = computeAqueousVolumeL(vessel.moles, vessel.tempK);
+  const solidVolMl = computeSolidVolumeMl(vessel.moles);
+  const strat = computePhaseStratification(vessel.moles, vessel.tempK, spec, solidVolMl);
+  vessel.liquidStratification = strat;
+
+  if (strat.lightOrganicMl > 0.15 && strat.aqueousMl <= 0.05 && (vessel.moles.Na_s || 0) > 1e-10) {
+    vessel.naLayerHeightFrac = 0.04;
+    vessel.naInterfaceMl = null;
+  } else if (strat.hasLightCover && strat.totalLiqMl > 0.1) {
+    const aqLayer = strat.layers.find((l) => l.phaseKey === 'aqueous');
+    const aqTopMl = aqLayer ? aqLayer.topMl : (strat.interfaceMl ?? strat.aqueousMl);
+    vessel.naInterfaceMl = aqTopMl;
+    vessel.naLayerHeightFrac = Math.max(0.05, Math.min(0.98, aqTopMl / Math.max(0.1, strat.totalLiqMl + solidVolMl)));
+  } else {
+    vessel.naInterfaceMl = null;
+    vessel.naLayerHeightFrac = 1.0;
+  }
+
   const phNow = liquidVolL > 1e-6 && !vessel.isFrozenSolid ? (computePH(vessel.moles, liquidVolL, vessel.tempK) ?? 7.0) : 7.0;
-  options = { ...options, phNow };
+  options = { ...options, phNow, strat };
 
   // Advance Zinc amphoteric surface passivation film across neutral–weak alkali window (pH 6.4 .. 12.2)
   if ((vessel.moles.Zn_s || 0) > 1e-9 && liquidVolL > 1e-6 && computeIceMobilityFactor(vessel) > 0) {
@@ -1380,8 +1506,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     const tNaPrev = vessel.naTempK ?? vessel.tempK;
     const pCount = vessel.particleCounts?.Na_s ?? 1;
     const aNaCm2 = Math.max(0.04, computeSolidSurfaceAreaM2('Na_s', nNaLeft, pCount) * 1e4);
-    const spec = APPARATUS[vessel.typeId];
-    const totMl = liquidVolL * 1000 + computeSolidVolumeMl(vessel.moles);
+    const totMl = strat.totalLiqMl + solidVolMl;
     const areaSurfCm2 = spec?.geometry
       ? Math.max(0.5, spec.geometry.getLiquidState(totMl).surfaceAreaCm2)
       : spec?.surfaceAreaCm2 || 25.0;
@@ -1505,12 +1630,13 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     }
   }
 
-  // 4. Reversible [CuCl4]2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, ammine complexes & chemisorption/garden equilibria
+  // 4. Reversible [CuCl4]2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, ammine complexes, Nernst extraction & chemisorption/garden equilibria
   if (computeIceMobilityFactor(vessel) > 0) {
     reactionHeatJ += stepChlorocuprateEquilibrium(vessel, liquidVolL, dt, activeReactions);
     reactionHeatJ += stepAmphotericHydroxideEquilibria(vessel, liquidVolL, dt, activeReactions);
     reactionHeatJ += stepChloroSilverAndCuprousEquilibria(vessel, liquidVolL, dt, activeReactions);
     reactionHeatJ += stepAmmineComplexEquilibria(vessel, liquidVolL, dt, activeReactions);
+    stepLiquidLiquidPartition(vessel, strat, dt);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
   } else {
     // Only allow dry chemisorption when no aqueous transport exists
