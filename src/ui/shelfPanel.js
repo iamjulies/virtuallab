@@ -19,6 +19,8 @@ function apparatusSvg(typeId) {
       return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 15h20M11 15l-3 15M25 15l3 15"/><rect x="13" y="23" width="10" height="7" rx="2"/><path d="M18 16c-2 2.5-2.5 4.5 0 6 2.5-1.5 2-3.5 0-6z" fill="#f97316" stroke="none"/></svg>`;
     case 'gas_syringe':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7" y="13" width="16" height="10" rx="1"/><path d="M3 18h4M20 14v8M20 18h11M31 14v8"/></svg>`;
+    case 'pipette_10':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 9a3 3 0 016 0v3h-6V9z" fill="currentColor" opacity="0.35"/><path d="M15 12h6l-1.2 14-1.8 5-1.8-5L15 12z"/><path d="M16 16h2.5M16.2 20h2" opacity="0.65"/></svg>`;
     default:
       return '';
   }
@@ -97,9 +99,7 @@ export class ShelfPanel {
   }
 
   render(t) {
-    const selected = this.sim.getItem(this.sim.selectedId);
-    const targetVessel = selected && selected.kind === 'vessel' ? selected : null;
-    const pip = this.sim.pipette;
+    const pipettes = this.sim.items.filter((i) => i.kind === 'pipette');
 
     this.container.innerHTML = `
       <div class="flex flex-col gap-3">
@@ -156,31 +156,26 @@ export class ShelfPanel {
           </div>
         </div>
 
-        <!-- Pipette 10 mL Precision Dropper Tool -->
-        <div class="p-2.5 rounded-lg border border-theme bg-surface-alt flex flex-col gap-2">
+        <!-- Pipette 10 mL Bench Drag & Drop Tool Guide -->
+        <div class="p-2.5 rounded-lg border border-theme bg-surface-alt flex flex-col gap-1.5">
           <div class="flex items-center justify-between">
             <span class="text-xs font-semibold">🧪 ${t('pipetteTool')}</span>
-            <span class="text-xs font-mono font-semibold text-accent">${pip.volumeMl.toFixed(2)} / 10.00 mL</span>
+            <button type="button" id="btn-add-pipette" class="px-2 py-0.5 rounded border border-theme bg-surface text-[11px] font-medium hover:border-accent">+ Bench</button>
           </div>
+          <p class="text-[11px] text-muted leading-relaxed">${t('pipetteEmpty')}</p>
           ${
-            pip.volumeMl > 0
-              ? `<div class="text-xs text-muted truncate">${pip.sourceLabel}</div>`
-              : `<div class="text-xs text-muted">${t('pipetteEmpty')}</div>`
+            pipettes.length > 0
+              ? `<div class="flex flex-wrap gap-1 pt-1 border-t border-theme/50">
+                  ${pipettes
+                    .map(
+                      (p) => `<button type="button" class="bench-pip-select px-2 py-0.5 rounded border ${
+                        this.sim.selectedId === p.id ? 'border-accent bg-accent/15 font-semibold' : 'border-theme bg-surface text-muted'
+                      } text-[11px] font-mono" data-pip-id="${p.id}">🧪 ${p.label}: ${(p.volumeMl || 0).toFixed(1)}mL</button>`
+                    )
+                    .join('')}
+                </div>`
+              : ''
           }
-          <div class="grid grid-cols-2 gap-1.5">
-            <button type="button" id="btn-pip-draw" ${!targetVessel ? 'disabled' : ''} class="px-2 py-1.5 rounded text-xs font-medium border border-theme bg-surface hover:border-accent disabled:opacity-40 transition">
-              ${t('pipetteDraw')}
-            </button>
-            <button type="button" id="btn-pip-drop" ${!targetVessel || pip.volumeMl <= 0 ? 'disabled' : ''} class="px-2 py-1.5 rounded text-xs font-medium bg-accent text-white hover:opacity-90 disabled:opacity-40 transition">
-              ${t('pipetteDispenseDrop')}
-            </button>
-            <button type="button" id="btn-pip-1ml" ${!targetVessel || pip.volumeMl <= 0 ? 'disabled' : ''} class="px-2 py-1.5 rounded text-xs font-medium border border-theme bg-surface hover:border-accent disabled:opacity-40 transition">
-              ${t('pipetteDispense1ml')}
-            </button>
-            <button type="button" id="btn-pip-clear" ${pip.volumeMl <= 0 ? 'disabled' : ''} class="px-2 py-1.5 rounded text-xs font-medium border border-theme bg-surface text-muted hover:text-main disabled:opacity-40 transition">
-              ${t('pipetteClear')}
-            </button>
-          </div>
         </div>
       </div>
     `;
@@ -207,18 +202,15 @@ export class ShelfPanel {
       });
     });
 
-    // Pipette controls
-    this.container.querySelector('#btn-pip-draw')?.addEventListener('click', () => {
-      if (targetVessel) this.sim.pipetteDrawFromVessel(targetVessel.id, 1.0);
+    // Quick add/select bench pipette
+    this.container.querySelector('#btn-add-pipette')?.addEventListener('click', () => {
+      if (this.callbacks.onAddApparatus) this.callbacks.onAddApparatus('pipette_10');
     });
-    this.container.querySelector('#btn-pip-drop')?.addEventListener('click', () => {
-      if (targetVessel) this.sim.pipetteDispenseToVessel(targetVessel.id, 0.05);
-    });
-    this.container.querySelector('#btn-pip-1ml')?.addEventListener('click', () => {
-      if (targetVessel) this.sim.pipetteDispenseToVessel(targetVessel.id, 1.0);
-    });
-    this.container.querySelector('#btn-pip-clear')?.addEventListener('click', () => {
-      this.sim.clearPipette();
+    this.container.querySelectorAll('.bench-pip-select').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.sim.selectedId = btn.dataset.pipId;
+        this.sim.emitChange();
+      });
     });
   }
 }

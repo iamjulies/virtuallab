@@ -719,6 +719,77 @@
       );
     }
 
+    // TEST 23: International Apparatus Standards (ISO 4142 Test Tube 50mL, Gas Syringe 250mL specs, & continuous 0-650W burner power)
+    {
+      const tubeSpec = APPARATUS.test_tube_50;
+      const syrSpec = APPARATUS.gas_syringe;
+      const specsOk =
+        tubeSpec.diameterMm === 25 &&
+        tubeSpec.heightMm === 150 &&
+        tubeSpec.wallThicknessMm >= 1.2 &&
+        tubeSpec.width === 29 &&
+        syrSpec.barrelOdMm >= 47.5 &&
+        syrSpec.barrelOdMm <= 48.0 &&
+        syrSpec.innerDiameterMm === 42.9 &&
+        Math.abs(syrSpec.crossSectionCm2 - 14.45) < 0.1 &&
+        syrSpec.lengthMm >= 280 &&
+        syrSpec.lengthMm <= 306 &&
+        syrSpec.graduationErrorPct === 1.5;
+
+      const sim = new LabSimulation();
+      const bn = sim.createApparatus('burner', 300, 426);
+      const bk = sim.createApparatus('beaker_250', 300, 302);
+      sim.updateSupportAttachments();
+      sim.addReagentToVessel(bk.id, 'h2o', 40);
+
+      sim.setBurnerPower(bn.id, 420);
+      stepSeconds(sim, 14.0, 0.04);
+      const tMid420 = bk.tempK;
+
+      sim.setBurnerPower(bn.id, 0);
+      assert(
+        'ISO 4142 Test Tube & Gastight 250 mL Syringe geometry match standards; continuous 0-650 W burner control heats smoothly',
+        specsOk && bn.powerW === 0 && tMid420 > 316,
+        `Tube=${tubeSpec.diameterMm}x${tubeSpec.heightMm}mm, Syr=OD${syrSpec.barrelOdMm}/ID${syrSpec.innerDiameterMm}mm(${syrSpec.crossSectionCm2}cm²), T(420W)=${(tMid420-273.15).toFixed(1)}°C`
+      );
+    }
+
+    // TEST 24: Drag-and-drop bench Pipette 10 mL draws up to 10 mL from vessel A and dispenses cleanly to vessel B with animations & mass conservation
+    {
+      const sim = new LabSimulation();
+      const b1 = sim.createApparatus('beaker_250', 220, 350);
+      const b2 = sim.createApparatus('beaker_250', 460, 350);
+      const pip = sim.createApparatus('pipette_10', 320, 400);
+      let suckFired = false;
+      let dropFired = false;
+      sim.visualHooks.onAlert = (type) => {
+        if (type === 'pipette_suck') suckFired = true;
+        if (type === 'pipette_drop') dropFired = true;
+      };
+
+      sim.addReagentToVessel(b1.id, 'h2o', 40);
+      sim.addReagentToVessel(b1.id, 'naoh', 0.4, { fine: true });
+      sim.addReagentToVessel(b2.id, 'h2o', 30);
+      sim.addReagentToVessel(b2.id, 'phen', 0.2);
+      stepSeconds(sim, 2.0, 0.02);
+
+      const drewMl = sim.pipetteDrawFromVessel(b1.id, 10.0, pip);
+      const dispensedMl = sim.pipetteDispenseToVessel(b2.id, 1.0, pip);
+      const b2Liq = computeLiquidVolumeL(b2.moles, b2.tempK);
+      const b2Ph = computePH(b2.moles, b2Liq, b2.tempK);
+
+      assert(
+        'Bench Pipette 10 mL draws up to 10 mL with suction FX and dispenses dropwise to target vessel (turning Phenolphthalein pink)',
+        Math.abs(drewMl - 10.0) < 0.05 &&
+          Math.abs(dispensedMl - 1.0) < 0.02 &&
+          Math.abs(pip.volumeMl - 9.0) < 0.05 &&
+          suckFired &&
+          dropFired &&
+          b2Ph > 11.5,
+        `drew=${drewMl.toFixed(2)}mL, dispensed=${dispensedMl.toFixed(2)}mL, left=${pip.volumeMl.toFixed(2)}mL, b2_pH=${b2Ph.toFixed(2)}`
+      );
+    }
+
     // Render test report
     const passed = results.filter(r => r.pass).length;
     document.getElementById('summary').innerHTML = `<span class="${passed === results.length ? 'pass' : 'fail'}">${passed} / ${results.length} tests passed</span>`;

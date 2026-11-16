@@ -27,7 +27,7 @@ export class ParticleSystem {
         const sSpec = APPARATUS.gas_syringe;
         const rate = Math.min(60, 14 + metrics.overflowOutRateMlS * 0.45);
         const dropCount = Math.floor(rate * dt) + (Math.random() < (rate * dt) % 1 ? 1 : 0);
-        const rearX = item.x - sSpec.width / 2 + 16 + 136;
+        const rearX = item.x - sSpec.width / 2 + (sSpec.barrelLeftOffset || 20) + (sSpec.barrelW || 192);
         const col = metrics.overflowOutColor || 'rgba(186, 230, 253, 0.85)';
         for (let i = 0; i < dropCount; i++) {
           this.particles.push({
@@ -253,6 +253,81 @@ export class ParticleSystem {
 
   emitBurst(type, x, y, meta = null) {
     if (type === 'overflow' || type === 'syringe_overflow') return;
+
+    if (type === 'pipette_suck') {
+      const pip = meta?.pipette;
+      const tipX = pip ? pip.x : x;
+      const tipY = pip ? pip.y + 70 : y - 50;
+      const srcY = y + 8;
+      const col = meta?.color || 'rgba(186, 230, 253, 0.9)';
+      const count = 10;
+      for (let i = 0; i < count; i++) {
+        const delayFrac = i / count;
+        const dx = tipX - x;
+        const dy = tipY - srcY;
+        const lifeSpan = 0.42 + delayFrac * 0.22;
+        this.particles.push({
+          kind: 'pipette_suck',
+          x: x + (Math.random() - 0.5) * 8,
+          y: srcY + Math.random() * 6,
+          vx: dx / lifeSpan + (Math.random() - 0.5) * 14,
+          vy: dy / lifeSpan - 12,
+          r: 2.0 + Math.random() * 1.6,
+          life: 0,
+          maxLife: lifeSpan,
+          color: col,
+        });
+      }
+      this.particles.push({
+        kind: 'shockwave',
+        x,
+        y: srcY,
+        vx: 0,
+        vy: 0,
+        r: 4,
+        maxR: 26,
+        life: 0,
+        maxLife: 0.36,
+        color: col,
+      });
+      return;
+    }
+
+    if (type === 'pipette_drop') {
+      const pip = meta?.pipette;
+      const tipX = pip ? pip.x : x;
+      const tipY = pip ? pip.y + 68 : y - 65;
+      const col = meta?.color || 'rgba(186, 230, 253, 0.92)';
+      const dropCount = Math.min(12, Math.max(2, Math.round((meta?.liquidMl || 0.5) * 4)));
+      for (let i = 0; i < dropCount; i++) {
+        this.particles.push({
+          kind: 'drip',
+          x: tipX + (Math.random() - 0.5) * 5,
+          y: tipY + i * 4,
+          vx: (x - tipX) * 1.6 + (Math.random() - 0.5) * 12,
+          vy: 75 + Math.random() * 45,
+          r: 2.4 + Math.random() * 1.4,
+          stopY: y - 10,
+          life: 0,
+          maxLife: 0.55,
+          color: col,
+          splashed: false,
+        });
+      }
+      this.particles.push({
+        kind: 'shockwave',
+        x,
+        y: y - 8,
+        vx: 0,
+        vy: 0,
+        r: 4,
+        maxR: 24,
+        life: 0,
+        maxLife: 0.34,
+        color: col,
+      });
+      return;
+    }
 
     if (type === 'tube_drip') {
       const count = Math.min(20, Math.max(6, Math.round((meta?.liquidMl || 4) * 1.4)));
@@ -493,19 +568,30 @@ export class ParticleSystem {
           p.vx *= 0.72;
           p.spin *= 0.6;
         }
+      } else if (p.kind === 'pipette_suck') {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
       } else if (p.kind === 'drip') {
         p.vy += 390 * dt;
-        if (p.y >= BENCH_FLOOR_Y) {
-          p.y = BENCH_FLOOR_Y;
+        const limitY = p.stopY || BENCH_FLOOR_Y;
+        if (p.y >= limitY) {
+          p.y = limitY;
           if (!p.splashed) {
             p.splashed = true;
-            p.vy = -Math.abs(p.vy) * 0.16;
-            p.vx = (p.vx === 0 ? (Math.random() - 0.5) * 40 : p.vx * 1.35);
+            p.vy = p.stopY ? 0 : -Math.abs(p.vy) * 0.16;
+            p.vx = p.stopY ? 0 : (p.vx === 0 ? (Math.random() - 0.5) * 40 : p.vx * 1.35);
           } else {
             p.vy = 0;
             p.vx *= 0.85;
           }
         }
+      } else if (p.kind === 'pipette_suck') {
+        p.vx *= 0.98;
       } else if (p.kind === 'stopper_fly') {
         p.vy += 470 * dt;
         p.angle += p.spin * dt;
@@ -555,6 +641,14 @@ export class ParticleSystem {
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
         ctx.fill();
+      } else if (p.kind === 'pipette_suck') {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
       } else if (p.kind === 'drip') {
         ctx.beginPath();
         if (p.splashed) {

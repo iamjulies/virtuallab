@@ -101,7 +101,10 @@ export class InspectorPanel {
       return `v|${item.id}|${item.isStoppered}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'burner') {
-      return `b|${item.id}|${item.flameLevel}|${langCode}|${logLen}`;
+      return `b|${item.id}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'pipette') {
+      return `p|${item.id}|${Math.round((item.dropDoseMl || 1) * 100)}|${langCode}|${logLen}`;
     }
     if (item.kind === 'scale') {
       return `s|${item.id}|${Math.abs(item.tareG) > 0.001}|${langCode}|${logLen}`;
@@ -152,11 +155,12 @@ export class InspectorPanel {
         </div>
       `;
     } else if (item.kind === 'burner') {
+      const powerW = item.powerW ?? (APPARATUS.burner.powerLevelsW[item.flameLevel || 0] || 0);
       const levels = [
         { lvl: 0, label: t('burnerOff'), w: 0 },
-        { lvl: 1, label: t('burnerLow'), w: 120 },
-        { lvl: 2, label: t('burnerMed'), w: 280 },
-        { lvl: 3, label: t('burnerHigh'), w: 520 },
+        { lvl: 1, label: t('burnerLow'), w: 160 },
+        { lvl: 2, label: t('burnerMed'), w: 360 },
+        { lvl: 3, label: t('burnerHigh'), w: 650 },
       ];
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
@@ -164,13 +168,23 @@ export class InspectorPanel {
             <span class="text-sm font-bold">🔥 ${t('eq_burner')} ${item.label}</span>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
           </div>
-          <div class="text-xs text-muted">${t('burnerPower')} <strong class="text-main">${APPARATUS.burner.powerLevelsW[item.flameLevel]} W</strong></div>
+          <div class="flex items-center justify-between text-xs text-muted">
+            <span>${t('burnerPower')}</span>
+            <strong class="text-sm font-mono text-orange-400" id="live-burner-power">${Math.round(powerW)} W</strong>
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-[11px] text-muted">${t('burnerSliderLabel')}</label>
+            <input type="range" id="burner-power-slider" min="0" max="650" step="5" value="${Math.round(powerW)}" class="w-full accent-orange-500 cursor-pointer" />
+            <div class="flex justify-between text-[10px] font-mono text-muted">
+              <span>0 W</span><span>160 W</span><span>360 W</span><span>650 W</span>
+            </div>
+          </div>
           <div class="grid grid-cols-4 gap-1.5">
             ${levels
               .map(
                 (l) => `
-              <button type="button" data-flame="${l.lvl}" class="flame-btn py-2 rounded-lg text-xs font-semibold border ${
-                item.flameLevel === l.lvl
+              <button type="button" data-flame="${l.lvl}" data-w="${l.w}" class="flame-btn py-1.5 rounded-lg text-[11px] font-semibold border ${
+                Math.round(powerW) === l.w
                   ? 'border-orange-500 bg-orange-500/20 text-orange-400'
                   : 'border-theme bg-surface text-muted'
               }">${l.label}</button>
@@ -180,14 +194,67 @@ export class InspectorPanel {
           </div>
         </div>
       `;
+    } else if (item.kind === 'pipette') {
+      const pipSpec = APPARATUS.pipette_10;
+      const pipVol = item.volumeMl || 0;
+      const dropDose = item.dropDoseMl || 1.0;
+      const doses = [
+        { val: 0.05, label: '0.05 mL (1g)' },
+        { val: 0.5, label: '0.50 mL' },
+        { val: 1.0, label: '1.00 mL' },
+        { val: 10.0, label: t('pipetteFullDose') },
+      ];
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-sm font-bold">🧪 ${t('eq_pipette_10')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${pipSpec.materialSpec} · ${pipSpec.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="p-2.5 rounded-lg border border-theme bg-surface">
+              <div class="text-xs text-muted">${t('pipetteVolumeLabel')}</div>
+              <div class="text-base font-bold font-mono text-accent" id="live-pip-vol">${pipVol.toFixed(2)} / 10.00 mL</div>
+            </div>
+            <div class="p-2.5 rounded-lg border border-theme bg-surface">
+              <div class="text-xs text-muted">${t('pipetteSourceLabel')}</div>
+              <div class="text-xs font-semibold truncate mt-0.5" id="live-pip-src">${item.sourceLabel || '—'}</div>
+            </div>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <div class="text-xs text-muted">${t('pipetteDropDoseLabel')}</div>
+            <div class="grid grid-cols-4 gap-1.5">
+              ${doses
+                .map(
+                  (d) => `
+                <button type="button" data-dose="${d.val}" class="pip-dose-btn py-1.5 px-1 rounded-lg text-[11px] font-semibold border ${
+                  Math.abs(dropDose - d.val) < 0.01
+                    ? 'border-accent bg-accent/15 text-main'
+                    : 'border-theme bg-surface text-muted'
+                }">${d.label}</button>
+              `
+                )
+                .join('')}
+            </div>
+          </div>
+          <p class="text-[11px] text-muted leading-relaxed">${t('pipetteBenchHint')}</p>
+          <button type="button" id="ins-clear-pipette" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('pipetteClear')}</button>
+        </div>
+      `;
     } else if (item.kind === 'gas_syringe') {
+      const syrSpec = APPARATUS.gas_syringe;
       const volMl = computeSyringeTotalVolumeMl(item, this.sim.environment);
       const totalGasMol = sumAllGasMoles(item.gasMoles);
       const condInfo = getSyringeCondenseInfo(item, this.sim.environment, t);
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
-          <div class="flex items-center justify-between">
-            <span class="text-sm font-bold">${t('eq_gas_syringe')} ${item.label}</span>
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t('eq_gas_syringe')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${syrSpec.materialSpec} · ${syrSpec.isoStandard}</div>
+            </div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
           </div>
           <div class="grid grid-cols-2 gap-2">
@@ -463,9 +530,17 @@ export class InspectorPanel {
       this.container.querySelector('#ins-tare')?.addEventListener('click', () => this.sim.tareScale(item.id));
       this.container.querySelector('#ins-clear-tare')?.addEventListener('click', () => this.sim.clearTare(item.id));
     } else if (item.kind === 'burner') {
+      this.container.querySelector('#burner-power-slider')?.addEventListener('input', (e) => {
+        this.sim.setBurnerPower(item.id, Number(e.target.value));
+      });
       this.container.querySelectorAll('.flame-btn').forEach((btn) => {
         btn.addEventListener('click', () => this.sim.setBurnerFlame(item.id, Number(btn.dataset.flame)));
       });
+    } else if (item.kind === 'pipette') {
+      this.container.querySelectorAll('.pip-dose-btn').forEach((btn) => {
+        btn.addEventListener('click', () => this.sim.setPipetteDropDose(item.id, Number(btn.dataset.dose)));
+      });
+      this.container.querySelector('#ins-clear-pipette')?.addEventListener('click', () => this.sim.clearPipette(item.id));
     } else if (item.kind === 'gas_syringe') {
       this.container.querySelector('#ins-vent-syringe')?.addEventListener('click', () => this.sim.ventSyringe(item.id));
     } else if (item.kind === 'vessel') {
@@ -504,6 +579,29 @@ export class InspectorPanel {
     if (item.kind === 'scale') {
       const el = this.container.querySelector('#live-scale-readout');
       if (el) el.textContent = `${(item.measuredG || 0).toFixed(2)} g`;
+      return;
+    }
+
+    if (item.kind === 'burner') {
+      const powerW = Math.round(item.powerW ?? (APPARATUS.burner.powerLevelsW[item.flameLevel || 0] || 0));
+      const pEl = this.container.querySelector('#live-burner-power');
+      const sEl = this.container.querySelector('#burner-power-slider');
+      if (pEl) pEl.textContent = `${powerW} W`;
+      if (sEl && Number(sEl.value) !== powerW) sEl.value = String(powerW);
+      this.container.querySelectorAll('.flame-btn').forEach((btn) => {
+        const isMatch = powerW === Number(btn.dataset.w);
+        btn.className = `flame-btn py-1.5 rounded-lg text-[11px] font-semibold border ${
+          isMatch ? 'border-orange-500 bg-orange-500/20 text-orange-400' : 'border-theme bg-surface text-muted'
+        }`;
+      });
+      return;
+    }
+
+    if (item.kind === 'pipette') {
+      const vEl = this.container.querySelector('#live-pip-vol');
+      const sEl = this.container.querySelector('#live-pip-src');
+      if (vEl) vEl.textContent = `${(item.volumeMl || 0).toFixed(2)} / 10.00 mL`;
+      if (sEl) sEl.textContent = item.sourceLabel || '—';
       return;
     }
 

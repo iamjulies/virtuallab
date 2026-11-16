@@ -89,6 +89,8 @@ button:disabled {
 .border-orange-500 { border-color: #f97316; }
 .bg-orange-500\/20 { background-color: rgba(249, 115, 22, 0.2); }
 .text-orange-400 { color: #fb923c; }
+.accent-orange-500 { accent-color: #f97316; }
+.accent-blue-500 { accent-color: #3b82f6; }
 .text-sky-400 { color: #38bdf8; }
 .text-amber-400 { color: #fbbf24; }
 .border-sky-500\/35 { border-color: rgba(14, 165, 233, 0.42); }
@@ -181,6 +183,8 @@ button:disabled {
 .rounded-2xl { border-radius: 1rem; }
 .rounded-full { border-radius: 9999px; }
 
+.text-\[10px\] { font-size: 0.625rem; line-height: 0.875rem; }
+.text-\[11px\] { font-size: 0.6875rem; line-height: 1rem; }
 .text-xs { font-size: 0.75rem; line-height: 1rem; }
 .text-sm { font-size: 0.875rem; line-height: 1.25rem; }
 .text-base { font-size: 1rem; line-height: 1.5rem; }

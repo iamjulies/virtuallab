@@ -181,6 +181,26 @@ export class LabSimulation {
     } else if (spec.kind === 'burner') {
       Object.assign(base, {
         flameLevel: 0, // 0=off, 1=low, 2=med, 3=high
+        powerW: 0,     // 0..650 W continuous burner power
+      });
+    } else if (spec.kind === 'pipette') {
+      Object.assign(base, {
+        capacityMl: spec.maxVolumeMl || 10.0,
+        volumeMl: 0,
+        moles: {},
+        tempK: this.environment.tempK,
+        phenBleachFrac: 0,
+        sourceLabel: '',
+        liquidColor: null,
+        dropDoseMl: 1.0,
+        drawAnimTimer: 0,
+        drawAnimColor: null,
+        drawFromX: x,
+        drawFromY: y,
+        dispenseAnimTimer: 0,
+        dispenseAnimColor: null,
+        dispenseToX: x,
+        dispenseToY: y,
       });
     } else if (spec.kind === 'gas_syringe') {
       Object.assign(base, {
@@ -332,7 +352,29 @@ export class LabSimulation {
   setBurnerFlame(burnerId, level) {
     const b = this.getItem(burnerId);
     if (!b || b.kind !== 'burner') return;
-    b.flameLevel = Math.max(0, Math.min(3, level));
+    const lvl = Math.max(0, Math.min(3, level));
+    b.flameLevel = lvl;
+    b.powerW = APPARATUS.burner.powerLevelsW[lvl] ?? 0;
+    this.emitChange();
+  }
+
+  setBurnerPower(burnerId, watts) {
+    const b = this.getItem(burnerId);
+    if (!b || b.kind !== 'burner') return;
+    const maxW = APPARATUS.burner.maxPowerW || 650;
+    const w = Math.max(0, Math.min(maxW, Math.round(Number(watts) || 0)));
+    b.powerW = w;
+    if (w <= 0) {
+      b.flameLevel = 0;
+    } else if (w === 160) {
+      b.flameLevel = 1;
+    } else if (w === 360) {
+      b.flameLevel = 2;
+    } else if (w === 650) {
+      b.flameLevel = 3;
+    } else {
+      b.flameLevel = (w / maxW) * 3;
+    }
     this.emitChange();
   }
 
@@ -725,31 +767,68 @@ export class LabSimulation {
   }
 
   /**
-   * Pipette operations: draw from vessel or liquid reagent, dispense to vessel.
+   * Pipette operations: draw up to 10 mL from vessel or reagent, or dispense dropwise to a vessel.
    */
-  pipetteDrawFromVessel(vesselId, drawMl = 1.0) {
+  pipetteDrawFromVessel(vesselId, drawMl = 10.0, targetPipette = null) {
     const src = this.getItem(vesselId);
-    if (!src || src.kind !== 'vessel' || src.isShattered) return 0;
-    const availRoom = this.pipette.capacityMl - this.pipette.volumeMl;
+    const pip = targetPipette || this.pipette;
+    if (!src || src.kind !== 'vessel' || src.isShattered || !pip) return 0;
+    const cap = pip.capacityMl || 10.0;
+    const availRoom = cap - (pip.volumeMl || 0);
     if (availRoom <= 0.01) return 0;
 
-    const srcLiqMl = computeLiquidVolumeL(src.moles, src.tempK) * 1000;
+    const srcLiqL = computeLiquidVolumeL(src.moles, src.tempK);
+    const srcLiqMl = srcLiqL * 1000;
     if (srcLiqMl <= 0.01) return 0;
 
+    const srcSpec = APPARATUS[src.typeId];
+    const vis = computeSolutionVisuals(
+      src.moles,
+      srcLiqL,
+      computePH(src.moles, srcLiqL, src.tempK),
+      srcSpec.opticalPathCm,
+      src.phenBleachFrac
+    );
     const actual = Math.min(availRoom, srcLiqMl, drawMl);
     const frac = actual / srcLiqMl;
+    const oldVol = pip.volumeMl || 0;
+    const oldPhen = pip.moles.Phenolphthalein_aq || 0;
+    const oldBleach = pip.phenBleachFrac || 0;
+    let movedPhen = 0;
 
     for (const [spId, n] of Object.entries(src.moles)) {
       const sp = SPECIES[spId];
       if (!sp || (sp.phase !== 'l' && sp.phase !== 'aq')) continue;
       const move = n * frac;
+      if (spId === 'Phenolphthalein_aq') movedPhen = move;
       src.moles[spId] = n - move;
       if (src.moles[spId] < 1e-13) delete src.moles[spId];
-      this.pipette.moles[spId] = (this.pipette.moles[spId] || 0) + move;
+      pip.moles[spId] = (pip.moles[spId] || 0) + move;
     }
-    this.pipette.volumeMl += actual;
-    this.pipette.tempK = src.tempK;
-    this.pipette.sourceLabel = `${APPARATUS[src.typeId].id} ${src.label}`;
+
+    if (movedPhen > 0) {
+      const totP = oldPhen + movedPhen;
+      pip.phenBleachFrac = totP > 1e-14 ? (oldPhen * oldBleach + movedPhen * (src.phenBleachFrac || 0)) / totP : 0;
+    }
+    pip.tempK = oldVol + actual > 0 ? (oldVol * (pip.tempK || src.tempK) + actual * src.tempK) / (oldVol + actual) : src.tempK;
+    pip.volumeMl = oldVol + actual;
+    pip.sourceLabel = `${srcSpec.id} ${src.label}`;
+    pip.liquidColor = vis.css;
+
+    if (pip.kind === 'pipette') {
+      pip.drawAnimTimer = 0.68;
+      pip.drawAnimColor = vis.css;
+      pip.drawFromX = src.x;
+      pip.drawFromY = src.y - srcSpec.height * 0.15;
+      if (this.visualHooks.onAlert) {
+        this.visualHooks.onAlert('pipette_suck', src, {
+          pipette: pip,
+          color: vis.css,
+          liquidMl: actual,
+        });
+      }
+    }
+
     this.recomputeScaleReadings();
     this.emitChange();
     return actual;
@@ -758,38 +837,54 @@ export class LabSimulation {
   pipetteDrawFromReagent(reagentId, drawMl = 2.0) {
     const reg = STARTER_REAGENTS.find((r) => r.id === reagentId && r.kind === 'liquid');
     if (!reg) return 0;
-    const availRoom = this.pipette.capacityMl - this.pipette.volumeMl;
+
+    // Create or reuse an unemptied/available Pipette 10 mL directly on the bench
+    let pip = this.items.find((it) => it.kind === 'pipette' && (it.capacityMl - (it.volumeMl || 0)) > 0.05);
+    if (!pip) {
+      const pipSpec = APPARATUS.pipette_10;
+      pip = this.createApparatus('pipette_10', 460, 482 - pipSpec.height / 2 + 2);
+    }
+
+    const availRoom = pip.capacityMl - (pip.volumeMl || 0);
     const actual = Math.min(availRoom, drawMl);
     if (actual <= 0.01) return 0;
 
     for (const [spId, molPerMl] of Object.entries(reg.perMl)) {
-      this.pipette.moles[spId] = (this.pipette.moles[spId] || 0) + molPerMl * actual;
+      pip.moles[spId] = (pip.moles[spId] || 0) + molPerMl * actual;
     }
-    this.pipette.volumeMl += actual;
-    this.pipette.tempK = this.environment.tempK;
-    this.pipette.sourceLabel = reg.formula;
+    pip.volumeMl = (pip.volumeMl || 0) + actual;
+    pip.tempK = this.environment.tempK;
+    pip.sourceLabel = reg.formula;
+    pip.liquidColor = reg.id === 'phen' ? 'rgba(244, 114, 182, 0.45)' : 'rgba(186, 230, 253, 0.72)';
+    pip.drawAnimTimer = 0.55;
+    pip.drawAnimColor = pip.liquidColor;
+    this.selectedId = pip.id;
     this.emitChange();
     return actual;
   }
 
-  pipetteDispenseToVessel(vesselId, dropMl = 0.05) {
+  pipetteDispenseToVessel(vesselId, dropMl = 0.05, sourcePipette = null) {
     const dst = this.getItem(vesselId);
-    if (!dst || dst.kind !== 'vessel' || dst.isShattered) return 0;
-    if (this.pipette.volumeMl <= 1e-5) return 0;
+    const pip = sourcePipette || this.pipette;
+    if (!dst || dst.kind !== 'vessel' || dst.isShattered || !pip) return 0;
+    if ((pip.volumeMl || 0) <= 1e-5) return 0;
 
-    const actual = Math.min(this.pipette.volumeMl, dropMl);
-    const frac = actual / this.pipette.volumeMl;
+    const dstSpec = APPARATUS[dst.typeId];
+    const actual = Math.min(pip.volumeMl, Math.max(0.05, dropMl));
+    const frac = actual / pip.volumeMl;
+    const pipColor = pip.liquidColor || 'rgba(186, 230, 253, 0.85)';
+
     const cOld = computeHeatCapacityJK(dst);
     const oldDstPhen = dst.moles.Phenolphthalein_aq || 0;
     const oldDstBleach = dst.phenBleachFrac || 0;
     let movedPhen = 0;
     let cAdd = 0;
 
-    for (const [spId, n] of Object.entries(this.pipette.moles)) {
+    for (const [spId, n] of Object.entries(pip.moles)) {
       const move = n * frac;
       if (spId === 'Phenolphthalein_aq') movedPhen = move;
-      this.pipette.moles[spId] = n - move;
-      if (this.pipette.moles[spId] < 1e-14) delete this.pipette.moles[spId];
+      pip.moles[spId] = n - move;
+      if (pip.moles[spId] < 1e-14) delete pip.moles[spId];
       dst.moles[spId] = (dst.moles[spId] || 0) + move;
       const sp = SPECIES[spId];
       if (sp) cAdd += move * Math.max(0, sp.cp || 0);
@@ -797,18 +892,35 @@ export class LabSimulation {
 
     if (movedPhen > 0) {
       const totalPhen = oldDstPhen + movedPhen;
-      dst.phenBleachFrac = totalPhen > 1e-14 ? (oldDstPhen * oldDstBleach) / totalPhen : 0;
+      dst.phenBleachFrac =
+        totalPhen > 1e-14 ? (oldDstPhen * oldDstBleach + movedPhen * (pip.phenBleachFrac || 0)) / totalPhen : 0;
     }
 
     if (cOld + cAdd > 0) {
-      dst.tempK = (cOld * dst.tempK + cAdd * this.pipette.tempK) / (cOld + cAdd);
+      dst.tempK = (cOld * dst.tempK + cAdd * (pip.tempK || this.environment.tempK)) / (cOld + cAdd);
     }
 
-    this.pipette.volumeMl = Math.max(0, this.pipette.volumeMl - actual);
-    if (this.pipette.volumeMl < 1e-4) {
-      this.pipette.volumeMl = 0;
-      this.pipette.moles = {};
-      this.pipette.sourceLabel = '';
+    pip.volumeMl = Math.max(0, pip.volumeMl - actual);
+    if (pip.volumeMl < 1e-4) {
+      pip.volumeMl = 0;
+      pip.moles = {};
+      pip.phenBleachFrac = 0;
+      pip.sourceLabel = '';
+      pip.liquidColor = null;
+    }
+
+    if (pip.kind === 'pipette') {
+      pip.dispenseAnimTimer = 0.48;
+      pip.dispenseAnimColor = pipColor;
+      pip.dispenseToX = dst.x;
+      pip.dispenseToY = dst.y - dstSpec.height * 0.12;
+      if (this.visualHooks.onAlert) {
+        this.visualHooks.onAlert('pipette_drop', dst, {
+          pipette: pip,
+          color: pipColor,
+          liquidMl: actual,
+        });
+      }
     }
 
     this.checkOverflow(dst);
@@ -817,10 +929,23 @@ export class LabSimulation {
     return actual;
   }
 
-  clearPipette() {
-    this.pipette.volumeMl = 0;
-    this.pipette.moles = {};
-    this.pipette.sourceLabel = '';
+  clearPipette(pipetteId = null) {
+    const pip = pipetteId ? this.getItem(pipetteId) : this.pipette;
+    if (!pip) return;
+    pip.volumeMl = 0;
+    pip.moles = {};
+    pip.phenBleachFrac = 0;
+    pip.sourceLabel = '';
+    pip.liquidColor = null;
+    pip.drawAnimTimer = 0;
+    pip.dispenseAnimTimer = 0;
+    this.emitChange();
+  }
+
+  setPipetteDropDose(pipetteId, doseMl) {
+    const pip = this.getItem(pipetteId);
+    if (!pip || pip.kind !== 'pipette') return;
+    pip.dropDoseMl = Math.max(0.05, Math.min(10.0, Number(doseMl) || 1.0));
     this.emitChange();
   }
 
@@ -1200,6 +1325,17 @@ export class LabSimulation {
    * Main simulation tick called by animation loop (realDeltaSec).
    */
   step(realDeltaSec) {
+    // Always animate visual pipette suction & dispense timers smoothly even while paused
+    for (const item of this.items) {
+      if (item.kind !== 'pipette') continue;
+      if (item.drawAnimTimer > 0) {
+        item.drawAnimTimer = Math.max(0, item.drawAnimTimer - realDeltaSec);
+      }
+      if (item.dispenseAnimTimer > 0) {
+        item.dispenseAnimTimer = Math.max(0, item.dispenseAnimTimer - realDeltaSec);
+      }
+    }
+
     if (this.environment.paused) return;
 
     const scaledDt = Math.min(0.25, realDeltaSec * this.environment.speed);
@@ -1243,7 +1379,7 @@ export class LabSimulation {
         if (sup && sup.kind === 'burner') {
           const bSpec = APPARATUS.burner;
           burnerFlameLevel = sup.flameLevel || 0;
-          burnerPowerW = bSpec.powerLevelsW[burnerFlameLevel] || 0;
+          burnerPowerW = sup.powerW ?? bSpec.powerLevelsW[Math.round(burnerFlameLevel)] ?? 0;
         }
       }
 

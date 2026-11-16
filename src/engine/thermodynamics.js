@@ -48,10 +48,12 @@ function computeHClVaporRatio(nHCl, nWater) {
  */
 function computeEffectiveBurnerPowerW(spec, vesselTempK, burnerPowerW, flameLevel) {
   if (burnerPowerW <= 0) return 0;
+  const maxW = APPARATUS.burner.maxPowerW || 650;
+  const frac = Math.max(0.02, Math.min(1, burnerPowerW / maxW));
   const tFlame =
-    flameLevel > 0
-      ? APPARATUS.burner.effectiveFlameK?.[flameLevel] || 696.0
-      : 696.0;
+    flameLevel > 0 && Number.isInteger(flameLevel) && APPARATUS.burner.effectiveFlameK?.[flameLevel]
+      ? APPARATUS.burner.effectiveFlameK[flameLevel]
+      : 335.0 + 361.0 * Math.pow(frac, 0.54);
   const captureScale = Math.min(1.0, (spec.heatLossCoeffWK || 0.45) / 0.42);
   const tStart = 350.0;
   if (vesselTempK <= tStart) return burnerPowerW * captureScale;

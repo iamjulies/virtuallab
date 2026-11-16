@@ -108,32 +108,32 @@ export const APPARATUS = {
     kind: 'vessel',
     shape: 'test_tube',
     i18nKey: 'eq_test_tube_50',
-    isoStandard: 'ISO 4142 · Heavy Wall (Ø25×150 mm)',
+    isoStandard: 'ISO 4142 / DIN 12395 (Ø25×150 mm · Rimmed)',
     materialSpec: 'Borosilicate 3.3',
     diameterMm: 25,
     heightMm: 150,
-    wallThicknessMm: 1.2,
+    wallThicknessMm: 1.5,
     maxVolumeMl: 50,
     tareMassG: 26.0,
     glassHeatCapacityJK: 22.0,
-    width: 34,
-    height: 168,
-    neckRadius: 17,
+    width: 29,   // 25 mm * 1.15 px/mm
+    height: 172, // 150 mm * 1.15 px/mm
+    neckRadius: 14.5,
     heatable: true,
     stopperable: true,
     popPressureBar: 1.45,
     shatterPressureBar: 2.5,
     heatLossCoeffWK: 0.22,
     surfaceAreaCm2: 4.0,
-    opticalPathCm: 2.3,
+    opticalPathCm: 2.2,
     geometry: new VesselGeometry([
       [0.0, 0.08],  // U-bottom pole
       [0.15, 0.56],
       [0.40, 0.87],
       [0.75, 1.07],
-      [1.13, 1.13], // Full inner tube radius
-      [14.3, 1.13], // Cylindrical wall
-      [14.9, 1.28], // Flared lip
+      [1.10, 1.10], // Full inner tube radius (~22 mm ID -> 50 mL at ~13.5 cm)
+      [14.2, 1.10], // Straight cylindrical wall
+      [14.9, 1.25], // Flared rimmed lip
     ]),
   },
   cylinder_100: {
@@ -180,6 +180,7 @@ export const APPARATUS = {
     i18nKey: 'eq_burner',
     width: 120,
     height: 112,
+    maxPowerW: 650,
     // Thermal power delivered to vessel on stand (Watts = J/s)
     powerLevelsW: {
       0: 0,
@@ -199,9 +200,31 @@ export const APPARATUS = {
     id: 'gas_syringe',
     kind: 'gas_syringe',
     i18nKey: 'eq_gas_syringe',
+    isoStandard: 'Borosilicate 3.3 Gastight · Luer Lock (Ø47.8×290 mm · ID 42.9 mm · ±1.5%)',
+    materialSpec: 'Borosilicate 3.3 + PTFE',
+    barrelOdMm: 47.8,
+    innerDiameterMm: 42.9,
+    crossSectionCm2: 14.45,
+    lengthMm: 290,
+    collarOdMm: 57,
+    graduationErrorPct: 1.5,
     maxVolumeMl: 250,
-    width: 210,
-    height: 76,
+    width: 256,
+    height: 84,
+    barrelW: 192,
+    barrelH: 54,
+    barrelLeftOffset: 20,
+    collarH: 64,
+  },
+  pipette_10: {
+    id: 'pipette_10',
+    kind: 'pipette',
+    i18nKey: 'eq_pipette_10',
+    isoStandard: 'ISO 835 Class A · Mohr Dropper (10 mL)',
+    materialSpec: 'Borosilicate 3.3 + Silicone',
+    maxVolumeMl: 10,
+    width: 30,
+    height: 156,
   },
 };
 
@@ -211,6 +234,7 @@ export const APPARATUS_ORDER = [
   'erlenmeyer_250',
   'test_tube_50',
   'cylinder_100',
+  'pipette_10',
   'scale',
   'burner',
   'gas_syringe',

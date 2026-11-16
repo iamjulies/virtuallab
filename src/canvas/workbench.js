@@ -3,6 +3,7 @@ import { computeLiquidVolumeL, computePH, computeSolutionVisuals } from '../engi
 import {
   renderBurner,
   renderGasSyringe,
+  renderPipette,
   renderScale,
   renderTubingConnections,
   renderVessel,
@@ -121,7 +122,7 @@ export class LabWorkbenchCanvas {
       if (hit) {
         this.sim.selectedId = hit.id;
         // Bring dragged item to front visually unless it's a support base (scale/burner)
-        if (hit.kind === 'vessel') {
+        if (hit.kind === 'vessel' || hit.kind === 'pipette') {
           this.sim.items = this.sim.items.filter((i) => i.id !== hit.id);
           this.sim.items.push(hit);
         }
@@ -130,6 +131,7 @@ export class LabWorkbenchCanvas {
           offsetX: pt.x - hit.x,
           offsetY: pt.y - hit.y,
           pourTargetId: null,
+          pipetteTargetId: null,
           pouredMl: 0,
         };
         this.canvas.setPointerCapture(e.pointerId);
@@ -183,6 +185,26 @@ export class LabWorkbenchCanvas {
           this.dropTargetVesselId = null;
           item.tiltAngle = 0;
         }
+      } else if (item.kind === 'pipette') {
+        const tgt = this.findVesselAt(item.x, item.y + spec.height * 0.28);
+        if (tgt && !tgt.isShattered && !tgt.isStoppered) {
+          this.dragState.pipetteTargetId = tgt.id;
+          this.dropTargetVesselId = tgt.id;
+          item.tiltAngle = -0.14;
+          const hasVol = (item.volumeMl || 0) > 0.05;
+          item.hoveredActionLabel = hasVol
+            ? this.langCode === 'vi'
+              ? `💧 Thả nhỏ (${(item.dropDoseMl || 1).toFixed(2)} mL)`
+              : `💧 Drop (${(item.dropDoseMl || 1).toFixed(2)} mL)`
+            : this.langCode === 'vi'
+            ? '🧪 Thả hút (≤10 mL)'
+            : '🧪 Drop to draw (≤10 mL)';
+        } else {
+          this.dragState.pipetteTargetId = null;
+          this.dropTargetVesselId = null;
+          item.tiltAngle = 0;
+          item.hoveredActionLabel = null;
+        }
       }
 
       this.sim.recomputeScaleReadings();
@@ -191,8 +213,28 @@ export class LabWorkbenchCanvas {
     const endDrag = () => {
       if (!this.dragState) return;
       const item = this.sim.getItem(this.dragState.itemId);
-      if (item && item.kind === 'vessel') {
+      const pipTargetId = this.dragState.pipetteTargetId;
+      if (item && (item.kind === 'vessel' || item.kind === 'pipette')) {
         item.tiltAngle = 0;
+      }
+      if (item && item.kind === 'pipette') {
+        item.hoveredActionLabel = null;
+        if (pipTargetId) {
+          const tgt = this.sim.getItem(pipTargetId);
+          if (tgt && !tgt.isShattered && !tgt.isStoppered) {
+            if ((item.volumeMl || 0) <= 0.05) {
+              this.sim.pipetteDrawFromVessel(tgt.id, item.capacityMl || 10.0, item);
+            } else {
+              this.sim.pipetteDispenseToVessel(tgt.id, item.dropDoseMl || 1.0, item);
+            }
+            const tSpec = APPARATUS[tgt.typeId];
+            const pSpec = APPARATUS[item.typeId];
+            const parkRightX = tgt.x + tSpec.width / 2 + 26;
+            const parkLeftX = tgt.x - tSpec.width / 2 - 26;
+            item.x = parkRightX <= BENCH_LOGICAL_W - 45 ? parkRightX : Math.max(45, parkLeftX);
+            item.y = BENCH_FLOOR_Y - pSpec.height / 2 + 2;
+          }
+        }
       }
       this.dragState = null;
       this.dropTargetVesselId = null;
@@ -227,9 +269,20 @@ export class LabWorkbenchCanvas {
 
       if (apparatusId) {
         const spec = APPARATUS[apparatusId];
+        const hoverVessel = apparatusId === 'pipette_10' ? this.findVesselAt(pt.x, pt.y) : null;
         const clampedX = Math.max(70, Math.min(BENCH_LOGICAL_W - 70, pt.x));
         const clampedY = Math.min(BENCH_FLOOR_Y - (spec?.height || 100) / 2, Math.max(80, pt.y));
         const created = this.sim.createApparatus(apparatusId, clampedX, clampedY);
+        if (created && hoverVessel && !hoverVessel.isShattered && !hoverVessel.isStoppered) {
+          const drew = this.sim.pipetteDrawFromVessel(hoverVessel.id, created.capacityMl || 10.0, created);
+          if (drew > 0) {
+            const hSpec = APPARATUS[hoverVessel.typeId];
+            const parkRightX = hoverVessel.x + hSpec.width / 2 + 26;
+            const parkLeftX = hoverVessel.x - hSpec.width / 2 - 26;
+            created.x = parkRightX <= BENCH_LOGICAL_W - 45 ? parkRightX : Math.max(45, parkLeftX);
+            created.y = BENCH_FLOOR_Y - spec.height / 2 + 2;
+          }
+        }
         if (created && this.callbacks.onSelect) this.callbacks.onSelect(created);
       } else if (reagentId) {
         const target = this.findVesselAt(pt.x, pt.y);
@@ -336,11 +389,12 @@ export class LabWorkbenchCanvas {
     // 2. Render rubber tubing behind/between vessels
     renderTubingConnections(ctx, this.sim.items, this.isDark, timeNow, this.langCode);
 
-    // 3. Render supports first (Scales & Burners), then Syringes, then Vessels on top
+    // 3. Render supports first (Scales & Burners), then Syringes, then Vessels, then Pipettes on top
     const ordered = [
       ...this.sim.items.filter((i) => i.kind === 'scale' || i.kind === 'burner'),
       ...this.sim.items.filter((i) => i.kind === 'gas_syringe'),
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
+      ...this.sim.items.filter((i) => i.kind === 'pipette'),
     ];
 
     for (const item of ordered) {
@@ -359,6 +413,8 @@ export class LabWorkbenchCanvas {
           timeNow,
           langCode: this.langCode,
         });
+      } else if (item.kind === 'pipette') {
+        renderPipette(ctx, item, isSelected, this.isDark, this.langCode, timeNow);
       }
     }
 
