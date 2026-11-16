@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.17',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.18',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envPress: 'Áp suất',
@@ -133,6 +133,9 @@ export const I18N = {
     fineGranules: 'Nghiền mịn (phản ứng nhanh)',
     coarseLump: 'Khối / Hạt lớn',
     transferPrecipitateToo: 'Rót kèm cặn/kết tủa lơ lửng',
+    transferShakeBeforePour: 'Lắc đều trước khi rót (Rót kèm kết tủa)',
+    decantModeHint: 'Chế độ Gạn (Decant): Rút nước trong bên trên, giữ cặn nặng/lắng lại đáy bình; Na nổi trôi sang trước.',
+    shakeModeHint: 'Chế độ Lắc: Phân tán huyền phù hoàn toàn, rót kèm cả kết tủa sang bình mới theo tỉ lệ thể tích.',
 
     // Inspector Panel
     inspectorTitle: 'Thông số Thời gian thực',
@@ -205,7 +208,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.17',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.18',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envPress: 'Pressure',
@@ -327,6 +330,9 @@ export const I18N = {
     fineGranules: 'Fine powder / granules (faster)',
     coarseLump: 'Coarse lump / large grains',
     transferPrecipitateToo: 'Include suspended precipitate',
+    transferShakeBeforePour: 'Shake before pouring (include settled solids)',
+    decantModeHint: 'Decant Mode: Transfers clear liquid while retaining settled solids/metals; floating Na pours first.',
+    shakeModeHint: 'Shake Mode: Forces full suspension (1.0), transferring solids along with the liquid fraction.',
 
     inspectorTitle: 'Real-Time Telemetry',
     vesselMetrics: 'Physical & Chemical State',

@@ -269,3 +269,59 @@ export function computeSolidVolumeMl(moles) {
   }
   return vol;
 }
+
+const COLLOIDAL_PRECIPITATE_IDS = new Set([
+  'AgCl_s',
+  'CuOH2_s',
+  'ZnOH2_s',
+  'CuCl_s',
+  'CuO_s',
+  'Ag2O_s',
+]);
+
+/**
+ * Compute natural undisturbed solid suspension factor (0 = settled on bottom, 1 = dispersed).
+ * Coarse heavy metals/crystals sink immediately; fine colloidal precipitates follow vessel stir/settling state (~12-15s).
+ */
+export function computeSolidSuspensionFactor(vessel, spId, sp) {
+  if (!sp || sp.phase !== 's') return 0;
+  if (COLLOIDAL_PRECIPITATE_IDS.has(spId)) {
+    const settleFrac = vessel?.precipitateSettle?.[spId];
+    const settleSusp = settleFrac !== undefined ? Math.max(0, 1 - settleFrac) : 0;
+    return Math.max(vessel?.suspensionLevel || 0, settleSusp);
+  }
+  // Heavy metallic lumps / coarse salt crystals drop to bottom almost immediately
+  return vessel?.stirTimer > 0 ? Math.min(0.12, (vessel?.suspensionLevel || 0) * 0.12) : 0;
+}
+
+/**
+ * Physical Decantation vs Shake solid transfer ratio during vessel pouring.
+ * Accounts for floating solids (Na), suspension/stirring state, Erlenmeyer shoulder trap (98%) vs Beaker (88%),
+ * and bottom-sludge disturbance near empty (>75%).
+ */
+export function calcSolidTransferRatio({
+  pourFraction,
+  solidDensity,
+  liquidDensity,
+  vesselType,
+  suspensionFactor,
+  shakeBeforePour,
+}) {
+  if (pourFraction <= 0) return 0;
+  if (pourFraction >= 0.995) return 1;
+
+  // 1. Floating solids (rho_s < rho_l, e.g. Na metal at 0.968 g/cm3) skim across first
+  if (solidDensity < liquidDensity) {
+    return Math.min(1, pourFraction * 2.5);
+  }
+
+  // 2. Sinking solids: governed by suspension vs Erlenmeyer shoulder trap
+  const effectiveSuspension = shakeBeforePour ? 1.0 : Math.max(0, Math.min(1, suspensionFactor));
+  const suspendedTransfer = pourFraction * effectiveSuspension;
+
+  const vesselTrap = vesselType === 'erlenmeyer' ? 0.98 : 0.88;
+  const bottomDisturbance = Math.pow(pourFraction, 4);
+  const settledTransfer = (1 - effectiveSuspension) * (1 - vesselTrap) * bottomDisturbance;
+
+  return Math.min(1, suspendedTransfer + settledTransfer);
+}

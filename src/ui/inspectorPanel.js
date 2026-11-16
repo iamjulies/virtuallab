@@ -337,7 +337,11 @@ export class InspectorPanel {
           </div>
           ${
             item.isBroken
-              ? `<p class="text-xs text-red-400 font-medium">${t('shatteredEmptyMsg')}</p>`
+              ? `<p class="text-xs text-red-400 font-medium">${t('shatteredEmptyMsg')}</p>${
+                  item.clampedToId
+                    ? `<button type="button" id="ins-toggle-clamp" class="mt-1 py-1.5 px-2.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-xs font-medium text-amber-300 hover:bg-amber-500/20">${t('actionUnclampStand')}</button>`
+                    : ''
+                }`
               : `
             <div class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-[11px] flex items-center justify-between gap-2">
               <span class="text-muted">${t('syringeCatchHint')}</span>
@@ -403,7 +407,9 @@ export class InspectorPanel {
 
           ${
             item.isShattered
-              ? ''
+              ? item.clampedToId
+                ? `<div class="flex flex-wrap gap-1.5"><button type="button" id="ins-toggle-clamp" class="px-2.5 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-xs font-medium text-amber-300 hover:bg-amber-500/20">${t('actionUnclampStand')}</button></div>`
+                : ''
               : `<div class="flex flex-wrap gap-1.5">
             <button type="button" id="ins-pour" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionPourTo')}</button>
             <button type="button" id="ins-stir" title="${t('actionStirTip')}" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionStir')}</button>

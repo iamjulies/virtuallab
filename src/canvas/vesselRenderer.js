@@ -507,8 +507,11 @@ export function renderRetortStand(ctx, stand, isSelected, isDark) {
 }
 
 export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
-  if (!stand || !clampedItem) return;
+  if (!stand || !clampedItem || clampedItem.isShattered || clampedItem.isBroken) return;
+  const stSpec = APPARATUS.retort_stand;
   const rodX = stand.x + 36;
+  const standTop = stand.y - stSpec.height / 2;
+  const standBot = stand.y + stSpec.height / 2;
   const spec = APPARATUS[clampedItem.typeId];
   const isSyr = clampedItem.kind === 'gas_syringe';
 
@@ -523,6 +526,8 @@ export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
   } else {
     attachY = clampedItem.y - spec.height / 2 + (spec.shape === 'erlenmeyer' ? 24 : 26);
   }
+  // Keep bosshead clamp strictly mounted along the stainless steel rod shaft
+  attachY = Math.max(standTop + 14, Math.min(standBot - 22, attachY));
 
   ctx.save();
   // Bosshead block mounted on stainless steel rod

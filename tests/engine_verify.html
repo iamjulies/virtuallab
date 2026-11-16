@@ -1301,6 +1301,107 @@
       );
     }
 
+    // TEST 40: Shattered vessel / broken syringe releases Retort Stand clamp automatically & falls to bench
+    {
+      const sim = new LabSimulation();
+      const stand = sim.createApparatus('retort_stand', 320, 482 - APPARATUS.retort_stand.height / 2 + 2);
+      const erl = sim.createApparatus('erlenmeyer_250', 292, 260);
+      sim.attachToStand(erl.id, stand.id);
+      const clampedBefore = erl.clampedToId === stand.id;
+      sim.shatterVessel(erl, 'alertOverpressureShatter', 'shatter');
+      stepSeconds(sim, 0.8, 0.02);
+      const attachBlocked = sim.attachToStand(erl.id, stand.id) === false;
+      const floorCenterY = 482 - APPARATUS.erlenmeyer_250.height / 2 + 2;
+
+      assert(
+        'Shattering a clamped vessel releases stand clamp automatically, lets glass pile fall to bench, & rejects re-clamping broken glass',
+        clampedBefore && erl.clampedToId === null && attachBlocked && Math.abs(erl.y - floorCenterY) < 4,
+        `clampedBefore=${clampedBefore}, clampedAfter=${erl.clampedToId}, blockedReclamp=${attachBlocked}, finalY=${erl.y.toFixed(0)} (floor=${floorCenterY.toFixed(0)})`
+      );
+    }
+
+    // TEST 41: Dropping a Retort Stand holding a clamped vessel drops BOTH together synchronously without mid-air floating!
+    {
+      const sim = new LabSimulation();
+      const standFloorY = 482 - APPARATUS.retort_stand.height / 2 + 2; // 329
+      const stand = sim.createApparatus('retort_stand', 340, 210); // lifted 119 px above bench
+      const erl = sim.createApparatus('erlenmeyer_250', 312, 165);
+      sim.attachToStand(erl.id, stand.id);
+      const initOffsetY = erl.y - stand.y;
+      stand.fallStartY = stand.y;
+      stepSeconds(sim, 0.8, 0.02);
+      const finalOffsetY = erl.y - stand.y;
+
+      assert(
+        'Dropping Retort Stand holding clamped flask falls both together onto bench maintaining rigid clamp offset',
+        Math.abs(stand.y - standFloorY) < 2 &&
+          erl.clampedToId === stand.id &&
+          Math.abs(finalOffsetY - initOffsetY) < 2.0,
+        `standY=${stand.y.toFixed(1)}, erlY=${erl.y.toFixed(1)}, initDy=${initOffsetY.toFixed(1)}, finalDy=${finalOffsetY.toFixed(1)}`
+      );
+    }
+
+    // TEST 42: Physical Decantation (shape trapping, floating Na skimming, stir vs 13s settling, & shake-before-pour toggle)
+    {
+      // A) Cu metal stays behind when decanting ZnSO4 from Erlenmeyer (even 80% pour)
+      const simA = new LabSimulation();
+      const erl = simA.createApparatus('erlenmeyer_250', 220, 401);
+      const dstA = simA.createApparatus('beaker_250', 420, 429);
+      simA.addReagentToVessel(erl.id, 'h2o', 100);
+      erl.moles.Zn2_aq = 0.05;
+      erl.moles.SO4_2_aq = 0.05;
+      erl.moles.Cu_s = 0.05;
+      erl.precipitateSettle.Cu_s = 1.0;
+      simA.pourBetweenVessels(erl.id, dstA.id, 80, false); // Decant 80% -> Erlenmeyer traps 98% settled!
+      const cuLeftPct = ((erl.moles.Cu_s || 0) / 0.05) * 100;
+      const znMovedPct = ((dstA.moles.Zn2_aq || 0) / 0.05) * 100;
+
+      // B) Floating Na (rho 0.968 < H2O 1.0) pours across preferentially FIRST!
+      const simB = new LabSimulation();
+      const bSrc = simB.createApparatus('beaker_250', 220, 429);
+      const bDst = simB.createApparatus('beaker_250', 420, 429);
+      simB.addReagentToVessel(bSrc.id, 'h2o', 100);
+      bSrc.moles.Na_s = 0.02;
+      simB.pourBetweenVessels(bSrc.id, bDst.id, 30, false); // 30% pour * 2.5 = 75% floating Na transfers!
+      const naMovedPct = ((bDst.moles.Na_s || 0) / 0.02) * 100;
+
+      // C) Fine AgCl precipitate: stirred transfers proportionally vs settled (~14s) decants clean in Erlenmeyer, shake=true forces transfer
+      const simC = new LabSimulation();
+      const erlStir = simC.createApparatus('erlenmeyer_250', 220, 401);
+      const dstStir = simC.createApparatus('beaker_250', 420, 429);
+      simC.addReagentToVessel(erlStir.id, 'h2o', 100);
+      erlStir.moles.AgCl_s = 0.02;
+      simC.stirVessel(erlStir.id);
+      simC.pourBetweenVessels(erlStir.id, dstStir.id, 50, false); // Stirred 50% -> ~50% AgCl moves!
+      const agClStirMoved = ((dstStir.moles.AgCl_s || 0) / 0.02) * 100;
+
+      const erlCalm = simC.createApparatus('erlenmeyer_250', 600, 401);
+      const dstCalm = simC.createApparatus('beaker_250', 780, 429);
+      simC.addReagentToVessel(erlCalm.id, 'h2o', 100);
+      erlCalm.moles.AgCl_s = 0.02;
+      erlCalm.precipitateSettle.AgCl_s = 0.0;
+      erlCalm.suspensionLevel = 1.0;
+      stepSeconds(simC, 14.0, 0.1); // Wait ~14s to settle cleanly!
+      simC.pourBetweenVessels(erlCalm.id, dstCalm.id, 60, false); // Decant 60% -> AgCl stays >98% behind!
+      const agClCalmLeft = ((erlCalm.moles.AgCl_s || 0) / 0.02) * 100;
+
+      const dstShake = simC.createApparatus('beaker_250', 920, 429);
+      const agClBeforeShake = erlCalm.moles.AgCl_s;
+      simC.pourBetweenVessels(erlCalm.id, dstShake.id, 20, true); // Half remaining liquid (20/40) + shakeBeforePour=true!
+      const agClShakeMovedPct = ((dstShake.moles.AgCl_s || 0) / agClBeforeShake) * 100;
+
+      assert(
+        'Physical Decantation: Erlenmeyer keeps >98% settled Cu, floating Na pours first, stirred AgCl flows (~50%), settled (14s) decants clean, & shake forces suspension',
+        cuLeftPct > 98.5 &&
+          Math.abs(znMovedPct - 80) < 2 &&
+          naMovedPct > 70 &&
+          agClStirMoved > 45 &&
+          agClCalmLeft > 98.5 &&
+          agClShakeMovedPct > 45,
+        `Cu_left=${cuLeftPct.toFixed(1)}%, Zn_moved=${znMovedPct.toFixed(0)}%, Na_moved=${naMovedPct.toFixed(0)}%, AgCl_stir=${agClStirMoved.toFixed(0)}%, AgCl_calmLeft=${agClCalmLeft.toFixed(1)}%, AgCl_shake=${agClShakeMovedPct.toFixed(0)}%`
+      );
+    }
+
     // Render test report
     const passed = results.filter(r => r.pass).length;
     document.getElementById('summary').innerHTML = `<span class="${passed === results.length ? 'pass' : 'fail'}">${passed} / ${results.length} tests passed</span>`;

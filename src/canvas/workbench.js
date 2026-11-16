@@ -93,6 +93,15 @@ export class LabWorkbenchCanvas {
       const it = this.sim.items[i];
       if (it.id === excludeId) continue;
       const spec = APPARATUS[it.typeId];
+      if (it.isShattered || it.isBroken) {
+        const hw = Math.max(spec.width / 2 + 20, 48);
+        const topEdge = it.y + spec.height / 2 - 48;
+        const botEdge = it.y + spec.height / 2 + 12;
+        if (lx >= it.x - hw && lx <= it.x + hw && ly >= topEdge && ly <= botEdge) {
+          return it;
+        }
+        continue;
+      }
       const hw = spec.width / 2 + 8;
       const hh = spec.height / 2 + 10;
       if (lx >= it.x - hw && lx <= it.x + hw && ly >= it.y - hh && ly <= it.y + hh) {
@@ -200,8 +209,9 @@ export class LabWorkbenchCanvas {
       if (!item) return;
 
       const spec = APPARATUS[item.typeId];
+      const minStandY = item.kind === 'stand' ? spec.height / 2 + 24 : 65;
       const nextX = Math.max(60, Math.min(BENCH_LOGICAL_W - 60, pt.x - this.dragState.offsetX));
-      const nextY = Math.max(65, Math.min(BENCH_FLOOR_Y - spec.height / 2 + 4, pt.y - this.dragState.offsetY));
+      const nextY = Math.max(minStandY, Math.min(BENCH_FLOOR_Y - spec.height / 2 + 4, pt.y - this.dragState.offsetY));
       const dxMove = nextX - item.x;
       const dyMove = nextY - item.y;
       item.x = nextX;
@@ -209,25 +219,42 @@ export class LabWorkbenchCanvas {
       item.vy = 0;
       item.fallStartY = item.y;
 
-      // Move clamped items along with stand when dragging a Retort Stand
+      // Move clamped items rigidly along with stand when dragging a Retort Stand
       if (item.kind === 'stand') {
+        const standTop = item.y - spec.height / 2;
+        const standBot = item.y + spec.height / 2;
         for (const child of this.sim.items) {
-          if (child.clampedToId === item.id) {
-            child.x = Math.max(60, Math.min(BENCH_LOGICAL_W - 60, child.x + dxMove));
-            child.y = Math.max(65, Math.min(BENCH_FLOOR_Y - APPARATUS[child.typeId].height / 2 - 4, child.y + dyMove));
+          if (child.clampedToId !== item.id) continue;
+          if (child.isShattered || child.isBroken) {
+            child.clampedToId = null;
+            child.fallStartY = child.y;
+            continue;
           }
+          const cSpec = APPARATUS[child.typeId];
+          const neckOff = child.kind === 'gas_syringe' ? 0 : -cSpec.height / 2 + (cSpec.shape === 'erlenmeyer' ? 24 : 26);
+          const minCY = standTop + 14 - neckOff;
+          const maxCY = Math.min(BENCH_FLOOR_Y - cSpec.height / 2 - 4, standBot - 22 - neckOff);
+          child.x = Math.max(50, Math.min(BENCH_LOGICAL_W - 50, child.x + dxMove));
+          child.y = Math.max(minCY, Math.min(maxCY, child.y + dyMove));
+          child.vy = 0;
+          child.fallStartY = null;
         }
       }
 
-      // Check Retort Stand clamp snap/release for vessels & syringes
-      if ((item.kind === 'vessel' && !item.isShattered) || (item.kind === 'gas_syringe' && !item.isBroken)) {
-        const stand = this.findStandNear(item);
-        if (stand && item.y < BENCH_FLOOR_Y - spec.height / 2 - 20) {
-          this.dragState.clampStandId = stand.id;
-          item.clampedToId = stand.id;
-        } else {
+      // Check Retort Stand clamp snap/release for vessels & syringes (always unclamp broken glass)
+      if (item.kind === 'vessel' || item.kind === 'gas_syringe') {
+        if (item.isShattered || item.isBroken) {
           this.dragState.clampStandId = null;
           item.clampedToId = null;
+        } else {
+          const stand = this.findStandNear(item);
+          if (stand && item.y < BENCH_FLOOR_Y - spec.height / 2 - 20) {
+            this.dragState.clampStandId = stand.id;
+            item.clampedToId = stand.id;
+          } else {
+            this.dragState.clampStandId = null;
+            item.clampedToId = null;
+          }
         }
       }
 
@@ -423,7 +450,8 @@ export class LabWorkbenchCanvas {
     if (!src || !dst) return;
 
     const transferRateMlS = 22.0;
-    const poured = this.sim.pourBetweenVessels(src.id, dst.id, transferRateMlS * realDeltaSec, true);
+    // Physical hand-tilted decanting: settled dense solids remain behind unless previously stirred
+    const poured = this.sim.pourBetweenVessels(src.id, dst.id, transferRateMlS * realDeltaSec, false);
     if (poured > 0) {
       this.dragState.pouredMl += poured;
       const srcLiqL = computeLiquidVolumeL(src.moles, src.tempK);

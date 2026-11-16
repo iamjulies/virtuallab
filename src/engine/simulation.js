@@ -2,10 +2,12 @@ import { CONSTANTS, waterBoilingPointK } from '../data/constants.js';
 import { SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
 import {
+  calcSolidTransferRatio,
   computeContentsMassG,
   computeLiquidVolumeL,
   computePH,
   computePhenolphthaleinBleachEq,
+  computeSolidSuspensionFactor,
   computeSolidVolumeMl,
   computeSolutionVisuals,
 } from './equilibrium.js';
@@ -194,6 +196,7 @@ export class LabSimulation {
         seenReactions: {},
         history: [], // [{ t, moles: {...}, tempK, ph }]
         precipitateSettle: {}, // speciesId -> 0..1 settled fraction
+        suspensionLevel: 0,    // 0..1 overall colloid suspension (1.0 on stir, decays to 0 over ~13s)
         phenBleachFrac: 0, // 0..1 fraction converted to colorless carbinol In(OH)^3-
         phenIrrevFrac: 0,  // 0..1 fraction irreversibly C-C cleaved at >4.5 M OH- & high heat
         gardenActive: false,
@@ -330,13 +333,19 @@ export class LabSimulation {
     const stand = this.getItem(standId);
     if (!item || !stand || stand.kind !== 'stand') return false;
     if (item.kind !== 'vessel' && item.kind !== 'gas_syringe') return false;
-    const standTop = stand.y - APPARATUS.retort_stand.height / 2;
+    if (item.isShattered || item.isBroken) return false;
+    const stSpec = APPARATUS.retort_stand;
+    const standTop = stand.y - stSpec.height / 2;
+    const standBot = stand.y + stSpec.height / 2;
     const spec = APPARATUS[item.typeId];
     item.clampedToId = stand.id;
     item.restingOnId = null;
     item.vy = 0;
     item.fallStartY = null;
-    item.y = Math.max(standTop + 18, Math.min(SIM_BENCH_FLOOR_Y - spec.height / 2 - 6, item.y));
+    const neckOff = item.kind === 'gas_syringe' ? 0 : -spec.height / 2 + (spec.shape === 'erlenmeyer' ? 24 : 26);
+    const minItemY = standTop + 14 - neckOff;
+    const maxItemY = Math.min(SIM_BENCH_FLOOR_Y - spec.height / 2 - 6, standBot - 22 - neckOff);
+    item.y = Math.max(minItemY, Math.min(maxItemY, item.y));
     this.recomputeScaleReadings();
     this.emitChange();
     return true;
@@ -981,9 +990,10 @@ export class LabSimulation {
     const v = this.getItem(vesselId);
     if (!v || v.kind !== 'vessel' || v.isShattered) return;
     v.stirTimer = 3.0;
-    // Re-suspend precipitates when stirred
+    v.suspensionLevel = 1.0;
+    // Re-suspend precipitates when stirred (decays back toward 0 over ~13s of standing still)
     for (const key of Object.keys(v.precipitateSettle)) {
-      v.precipitateSettle[key] = Math.min(v.precipitateSettle[key], 0.15);
+      v.precipitateSettle[key] = 0.0;
     }
     this.emitChange();
   }
@@ -1005,6 +1015,7 @@ export class LabSimulation {
     v.seenReactions = {};
     v.history = [];
     v.precipitateSettle = {};
+    v.suspensionLevel = 0;
     v.phenBleachFrac = 0;
     v.phenIrrevFrac = 0;
     v.gardenActive = false;
@@ -1139,9 +1150,10 @@ export class LabSimulation {
   }
 
   /**
-   * Pour solution from source vessel into target vessel.
+   * Pour solution from source vessel into target vessel using physical Decantation (default)
+   * or Shake-Before-Pour mechanics driven by vessel shape, solid buoyancy, and suspension state.
    */
-  pourBetweenVessels(sourceId, targetId, volumeMl, includePrecipitate = true) {
+  pourBetweenVessels(sourceId, targetId, volumeMl, shakeBeforePour = false) {
     const src = this.getItem(sourceId);
     const dst = this.getItem(targetId);
     if (!src || !dst || src.id === dst.id || src.isShattered || dst.isShattered) return 0;
@@ -1154,34 +1166,66 @@ export class LabSimulation {
     const frac = Math.min(1, actualMl / srcLiqMl);
     if (frac <= 0) return 0;
 
+    // Effective density of the liquid phase (g/cm3)
+    let liqMassG = 0;
+    for (const [id, n] of Object.entries(src.moles)) {
+      if (n <= 0) continue;
+      const sp = SPECIES[id];
+      if (sp && (sp.phase === 'l' || sp.phase === 'aq')) {
+        liqMassG += n * sp.molarMass;
+      }
+    }
+    const liquidDensity = Math.max(0.65, Math.min(1.6, liqMassG / Math.max(0.01, srcLiqMl)));
+    const srcSpec = APPARATUS[src.typeId] || APPARATUS.beaker_250;
+    const vesselType = srcSpec.shape || 'beaker';
+
     const cDstBefore = computeHeatCapacityJK(dst);
     const oldDstPhen = dst.moles.Phenolphthalein_aq || 0;
     const oldDstBleach = dst.phenBleachFrac || 0;
     let movedPhen = 0;
     let cMoved = 0;
+    let movedNaMol = 0;
 
     for (const [spId, n] of Object.entries(src.moles)) {
       if (n <= 0) continue;
       const sp = SPECIES[spId];
       if (!sp) continue;
 
-      const isTransferable =
-        sp.phase === 'l' ||
-        sp.phase === 'aq' ||
-        (includePrecipitate && sp.isPrecipitate && sp.id !== 'Cu_s' && sp.id !== 'Ag_s');
+      let moveRatio = 0;
+      if (sp.phase === 'l' || sp.phase === 'aq') {
+        moveRatio = frac;
+      } else if (sp.phase === 's') {
+        moveRatio = calcSolidTransferRatio({
+          pourFraction: frac,
+          solidDensity: sp.density || 2.5,
+          liquidDensity,
+          vesselType,
+          suspensionFactor: computeSolidSuspensionFactor(src, spId, sp),
+          shakeBeforePour,
+        });
+      }
 
-      if (!isTransferable) continue;
+      if (moveRatio <= 1e-12) continue;
 
-      const moveMol = n * frac;
+      const moveMol = n * moveRatio;
       if (spId === 'Phenolphthalein_aq') movedPhen = moveMol;
+      if (spId === 'Na_s') movedNaMol = moveMol;
       src.moles[spId] = n - moveMol;
       if (src.moles[spId] < 1e-13) delete src.moles[spId];
       dst.moles[spId] = (dst.moles[spId] || 0) + moveMol;
       cMoved += moveMol * Math.max(0, sp.cp || 0);
 
-      if (sp.isPrecipitate) {
-        dst.precipitateSettle[spId] = 0.05; // Newly poured precipitate swirls
+      if (sp.phase === 's') {
+        const srcPCount = src.particleCounts?.[spId] || 6;
+        dst.particleCounts[spId] = (dst.particleCounts[spId] || 0) + Math.max(1, Math.round(srcPCount * moveRatio));
+        if (sp.isPrecipitate) {
+          dst.precipitateSettle[spId] = 0.05; // Poured precipitate swirls freshly in receiving vessel
+        }
       }
+    }
+
+    if (movedNaMol > 0 && src.naTempK != null) {
+      dst.naTempK = dst.naTempK != null ? (dst.naTempK + src.naTempK) * 0.5 : src.naTempK;
     }
 
     if (movedPhen > 0) {
@@ -1816,10 +1860,13 @@ export class LabSimulation {
 
     vessel.isShattered = true;
     vessel.isStoppered = false;
+    vessel.clampedToId = null;
+    vessel.fallStartY = vessel.y;
     this.disconnectSyringe(vessel.id);
     vessel.moles = {};
     vessel.headspaceGasMoles = {};
     vessel.precipitateSettle = {};
+    vessel.suspensionLevel = 0;
     vessel.phenBleachFrac = 0;
     vessel.phenIrrevFrac = 0;
     vessel.gardenActive = false;
@@ -1860,6 +1907,8 @@ export class LabSimulation {
       this.disconnectSyringe(syringe.connectedFromId);
     }
     syringe.isBroken = true;
+    syringe.clampedToId = null;
+    syringe.fallStartY = syringe.y;
     syringe.isDischarging = false;
     syringe.autoDischargeTimer = 0;
     syringe.dischargeLiquidRateMlS = 0;
@@ -2053,7 +2102,7 @@ export class LabSimulation {
       }
     }
 
-    // 2. Step vertical gravitational fall (process support bases before items resting on them)
+    // 2. Step vertical gravitational fall (process support bases before items resting/clamped on them)
     const gravityOrder = [
       ...this.items.filter((it) => it.kind === 'scale' || it.kind === 'burner' || it.kind === 'stand'),
       ...this.items.filter((it) => it.kind !== 'scale' && it.kind !== 'burner' && it.kind !== 'stand'),
@@ -2067,13 +2116,21 @@ export class LabSimulation {
 
       if (item.clampedToId) {
         const stand = this.getItem(item.clampedToId);
-        if (stand && stand.kind === 'stand') {
+        // Shattered/broken glassware cannot stay suspended in a clamp — release to fall naturally
+        if (stand && stand.kind === 'stand' && !item.isShattered && !item.isBroken) {
           item.vy = 0;
           item.fallStartY = null;
           item.restingOnId = null;
+          const stSpec = APPARATUS.retort_stand;
+          const sp = APPARATUS[item.typeId];
+          const neckOff = item.kind === 'gas_syringe' ? 0 : -sp.height / 2 + (sp.shape === 'erlenmeyer' ? 24 : 26);
+          const minItemY = (stand.y - stSpec.height / 2) + 14 - neckOff;
+          const maxItemY = Math.min(SIM_BENCH_FLOOR_Y - sp.height / 2 - 4, (stand.y + stSpec.height / 2) - 22 - neckOff);
+          item.y = Math.max(minItemY, Math.min(maxItemY, item.y));
           continue;
         }
         item.clampedToId = null;
+        item.fallStartY = item.fallStartY ?? item.y;
       }
 
       const { centerY, support } = this.getSupportSurfaceForItem(item);
@@ -2099,13 +2156,17 @@ export class LabSimulation {
       if (item.fallStartY == null) {
         item.fallStartY = item.y;
       }
+      const prevY = item.y;
       item.restingOnId = null;
       item.vy = (item.vy || 0) + gPx * dt;
       item.y += item.vy * dt;
 
+      let didLand = false;
+      let landDropDist = 0;
+      let landVy = item.vy;
       if (item.y >= centerY) {
-        const dropDist = Math.max(0, centerY - (item.fallStartY ?? centerY));
-        const impactVy = item.vy;
+        didLand = true;
+        landDropDist = Math.max(0, centerY - (item.fallStartY ?? centerY));
         item.y = centerY;
         item.vy = 0;
         item.fallStartY = null;
@@ -2113,7 +2174,33 @@ export class LabSimulation {
         if (support && Math.abs(item.x - support.x) < 28) {
           item.x = support.x;
         }
-        this.handleLandingImpact(item, dropDist, impactVy, support);
+        this.handleLandingImpact(item, landDropDist, landVy, support);
+      }
+
+      // Keep any vessel/syringe clamped to a falling Retort Stand moving locked to the stand rod!
+      if (item.kind === 'stand') {
+        const dyStand = item.y - prevY;
+        const stSpec = APPARATUS.retort_stand;
+        const standTop = item.y - stSpec.height / 2;
+        const standBot = item.y + stSpec.height / 2;
+        for (const child of this.items) {
+          if (child.clampedToId !== item.id) continue;
+          if (child.isShattered || child.isBroken) {
+            child.clampedToId = null;
+            child.fallStartY = child.y;
+            continue;
+          }
+          if (!child.isDragging && Math.abs(dyStand) > 1e-6) {
+            const cSpec = APPARATUS[child.typeId];
+            const neckOff = child.kind === 'gas_syringe' ? 0 : -cSpec.height / 2 + (cSpec.shape === 'erlenmeyer' ? 24 : 26);
+            const minCY = standTop + 14 - neckOff;
+            const maxCY = Math.min(SIM_BENCH_FLOOR_Y - cSpec.height / 2 - 4, standBot - 22 - neckOff);
+            child.y = Math.max(minCY, Math.min(maxCY, child.y + dyStand));
+          }
+          if (didLand && landDropDist >= 112) {
+            this.handleLandingImpact(child, landDropDist * 0.9, landVy, item);
+          }
+        }
       }
     }
   }
@@ -2434,14 +2521,21 @@ export class LabSimulation {
       }
       v.wasBoiling = frameBoiling;
 
-      // Update precipitate settling & Sodium skitter physics for renderer
+      // Update precipitate settling (~12-15s undisturbed rest) & suspension decay
+      const vigAgitation = v.stirTimer > 0 || frameGasH2 > 1e-5 || frameBoiling;
+      if (vigAgitation) {
+        v.suspensionLevel = Math.min(1.0, (v.suspensionLevel || 0) + 0.65 * realDeltaSec);
+      } else {
+        v.suspensionLevel = Math.max(0, (v.suspensionLevel || 0) - 0.078 * realDeltaSec);
+      }
       for (const [spId, n] of Object.entries(v.moles)) {
         const sp = SPECIES[spId];
         if (sp && sp.isPrecipitate && n > 1e-8) {
           const prev = v.precipitateSettle[spId] ?? 0.0;
-          // Precipitates settle downward gradually unless stirred or vigorously bubbling
-          const agitation = v.stirTimer > 0 || frameGasH2 > 1e-5 ? -0.35 : 0.14;
-          v.precipitateSettle[spId] = Math.max(0.05, Math.min(1.0, prev + agitation * realDeltaSec));
+          // Precipitates settle gradually over ~12.5s unless stirred, boiling, or vigorously bubbling
+          const isDenseMetal = spId === 'Cu_s' || spId === 'Zn_s' || spId === 'Ag_s' || spId === 'Cu3Zn_gamma_s' || spId === 'Cu3Zn_alpha_s';
+          const settleSpeed = vigAgitation ? (isDenseMetal ? -0.25 : -0.45) : (isDenseMetal ? 0.55 : 0.08);
+          v.precipitateSettle[spId] = Math.max(0.0, Math.min(1.0, prev + settleSpeed * realDeltaSec));
         }
       }
       for (const spId of Object.keys(v.precipitateSettle)) {

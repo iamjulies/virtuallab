@@ -46,7 +46,7 @@ export class DosingModal {
       targetVesselId: others[0].id,
       amount: Math.min(25, Math.max(0.5, Number((liqMl * 0.5).toFixed(2)))),
       rateMlS: 10,
-      includePpt: true,
+      includePpt: false, // Default to physical Decantation (Gạn), unchecked "Shake before pour"
       pouredLive: 0,
     };
     this.render();
@@ -288,10 +288,21 @@ export class DosingModal {
                 </div>
               </div>
               <input id="dosing-slider" type="range" min="0.05" max="${Math.max(0.1, srcLiqMl.toFixed(2))}" step="0.5" value="${st.amount}" class="w-full accent-blue-500" />
-              <label class="flex items-center gap-2 text-xs text-muted pt-1 cursor-pointer">
-                <input type="checkbox" id="chk-include-ppt" ${st.includePpt ? 'checked' : ''} />
-                <span>${t('transferPrecipitateToo')}</span>
+              <label class="flex items-center gap-2 text-xs font-medium text-main pt-1 cursor-pointer">
+                <input type="checkbox" id="chk-include-ppt" ${st.includePpt ? 'checked' : ''} class="accent-blue-500" />
+                <span>${t('transferShakeBeforePour')}</span>
               </label>
+              <div class="text-[11px] text-muted leading-snug pt-0.5">
+                ${
+                  st.includePpt
+                    ? t('shakeModeHint')
+                    : `${t('decantModeHint')} (${
+                        APPARATUS[src.typeId]?.shape === 'erlenmeyer'
+                          ? 'Erlenmeyer: ~98%'
+                          : 'Beaker: ~88%'
+                      })`
+                }
+              </div>
             </div>
 
             <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2">
@@ -451,6 +462,7 @@ export class DosingModal {
 
     this.container.querySelector('#chk-include-ppt')?.addEventListener('change', (e) => {
       this.state.includePpt = e.target.checked;
+      this.render();
     });
 
     this.container.querySelectorAll('.rate-opt').forEach((btn) => {
