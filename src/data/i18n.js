@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v3+build.1',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v3+build.2',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -85,6 +85,7 @@ export const I18N = {
     eq_crucible_porcelain: 'Chén nung sứ (kèm nắp)',
     eq_quartz_tube: 'Ống thạch anh nung ngang',
     eq_crucible_tongs: 'Kẹp chén nung & kim loại',
+    eq_iron_spoon: 'Thìa sắt (Múc & Đốt chất rắn)',
 
     // Reagent labels (strict IUPAC)
     reg_h2o: 'Water (H₂O)',
@@ -339,7 +340,7 @@ export const I18N = {
     flipDirRight: 'Hướng Phải',
     actionSprayContinuousStart: '💦 Xịt tia liên tục',
     actionSprayContinuousStop: '⏹️ Ngưng xịt nước',
-    washBottleAimHint: 'Kéo hoặc lật trái–phải để hướng tia nước parabol vào cốc, phễu lọc, chén hoặc cối; double-click để bật/tắt tia liên tục.',
+    washBottleAimHint: 'Nhấn giữ & kéo bình tia nước trên bàn để tự động bóp phun tia nước parabol vào cốc, phễu lọc, chén hoặc cối; thả tay ra bình sẽ tự ngắt tia.',
     btnPickOnBench: '🎯 Chọn trên bàn',
     pickBenchPrompt: '🎯 Nhấn trực tiếp vào bình / dụng cụ đích đang phát sáng trên bàn thí nghiệm (Esc để hủy)',
     pickBenchCancel: 'Hủy chọn',
@@ -432,10 +433,16 @@ export const I18N = {
     tongsHoldingLabel: 'Đang giữ:',
     tongsEmpty: 'Kẹp trống',
     borosilicateSoftenWarn: '🔥 Thủy tinh Borosilicate đang hóa mềm (>820 °C)! Giảm nhiệt hoặc đổi sang Chén sứ / Ống thạch anh!',
+    spoonHint: 'Kéo chất rắn từ Tủ hóa chất thả vào thìa hoặc kéo thìa chạm bình để múc chất rắn (vd: Zinc, Sodium, CaCO₃), sau đó đưa vào ngọn lửa để đốt/nung hoặc đưa lên miệng bình khác để đổ vào!',
+    spoonScoopBtn: '🥄 Múc chất rắn từ bình gần nhất',
+    spoonPourBtn: '📥 Đổ chất rắn trên thìa vào bình gần nhất',
+    spoonCleanBtn: '🧹 Rửa sạch thìa sắt',
+    spoonEmpty: 'Thìa trống',
+    spoonContentsLabel: 'Chất rắn trên thìa:',
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v3+build.1',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v3+build.2',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -510,6 +517,7 @@ export const I18N = {
     eq_crucible_porcelain: 'Porcelain Crucible (w/ Lid)',
     eq_quartz_tube: 'Horizontal Quartz Tube',
     eq_crucible_tongs: 'Crucible & Metal Tongs',
+    eq_iron_spoon: 'Iron Combustion & Scoop Spoon',
 
     reg_h2o: 'Water (H₂O)',
     reg_h2o_desc: 'Distilled water · Liquid',
@@ -852,5 +860,11 @@ export const I18N = {
     tongsHoldingLabel: 'Currently holding:',
     tongsEmpty: 'Jaws empty',
     borosilicateSoftenWarn: '🔥 Borosilicate glass softening (>820 °C)! Remove heat or use Porcelain Crucible / Quartz Tube!',
+    spoonHint: 'Drop solid reagents onto the spoon or drag the spoon into a vessel to scoop solids (e.g. Zinc, Sodium, CaCO₃), then hold in a burner flame to ignite/calcine or dump into another vessel!',
+    spoonScoopBtn: '🥄 Scoop Solid from Nearby Vessel',
+    spoonPourBtn: '📥 Dump Spoon Contents into Nearby Vessel',
+    spoonCleanBtn: '🧹 Clean Iron Spoon',
+    spoonEmpty: 'Spoon empty',
+    spoonContentsLabel: 'Solid on spoon:',
   }
 };

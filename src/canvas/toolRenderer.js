@@ -1457,3 +1457,111 @@ export function renderCrucibleTongs(ctx, item, isSelected, isDark, timeNow = 0) 
   });
   ctx.restore();
 }
+
+export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const dir = item.flippedX ? 1 : -1;
+  const bowlX = x + dir * 48;
+  const bowlY = y + 2;
+  const handleEndX = x - dir * 52;
+  const tilt = item.tiltAngle || 0;
+
+  ctx.save();
+  if (Math.abs(tilt) > 0.01) {
+    ctx.translate(x, y);
+    ctx.rotate(tilt);
+    ctx.translate(-x, -y);
+  }
+  drawSelectionGlow(ctx, isSelected, false);
+
+  // Heat-resistant stainless/iron stem + hanging loop ring + neck bend
+  ctx.strokeStyle = isSelected ? '#3b82f6' : isDark ? '#cbd5e1' : '#334155';
+  ctx.lineWidth = 3.2;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(handleEndX, y - 3);
+  ctx.lineTo(x + dir * 24, y - 3);
+  ctx.quadraticCurveTo(x + dir * 34, y - 3, bowlX - dir * 10, bowlY);
+  ctx.stroke();
+
+  // Rear hanging ring
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.arc(handleEndX - dir * 5, y - 3, 5, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Deep deflagrating spoon cup bowl (glows cherry-orange when heated > 720 K)
+  const tempK = item.tempK || 298.15;
+  const glowFrac = Math.max(0, Math.min(1, (tempK - 720) / 480));
+  ctx.fillStyle =
+    glowFrac > 0.08
+      ? `rgb(${Math.round(148 + glowFrac * 105)}, ${Math.round(163 - glowFrac * 70)}, ${Math.round(184 - glowFrac * 150)})`
+      : isDark
+      ? '#64748b'
+      : '#94a3b8';
+  ctx.strokeStyle = glowFrac > 0.2 ? '#f97316' : isDark ? '#e2e8f0' : '#1e293b';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.arc(bowlX, bowlY, 10.5, 0, Math.PI, false);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Solid contents mound inside the spoon bowl
+  const entries = Object.entries(item.moles || {}).filter(([, n]) => n > 1e-9);
+  const totalMol = entries.reduce((s, [, n]) => s + n, 0);
+  if (totalMol > 1e-9) {
+    entries.sort((a, b) => b[1] - a[1]);
+    const topSpId = entries[0][0];
+    const sp = SPECIES[topSpId];
+    const moundCol =
+      topSpId === 'ZnO_s' && tempK >= 580
+        ? sp?.hotColor || '#fef08a'
+        : sp?.color || '#cbd5e1';
+
+    // Active combustion flame envelope above spoon bowl
+    if ((item.burnTimer || 0) > 0.04) {
+      const fCol =
+        item.flameColor === 'cyan_zn'
+          ? 'rgba(103, 232, 249, 0.92)'
+          : item.flameColor === 'emerald_cu'
+          ? 'rgba(52, 211, 153, 0.90)'
+          : 'rgba(253, 224, 71, 0.95)';
+      const fGrad = ctx.createRadialGradient(bowlX, bowlY - 4, 2, bowlX, bowlY - 10, 26);
+      fGrad.addColorStop(0, '#ffffff');
+      fGrad.addColorStop(0.45, fCol);
+      fGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = fGrad;
+      ctx.beginPath();
+      ctx.arc(bowlX, bowlY - 8, 23 + Math.sin(timeNow * 25) * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const moundH = Math.min(8.5, 3.2 + Math.cbrt(totalMol * 80) * 3.5);
+    ctx.fillStyle = moundCol;
+    ctx.strokeStyle = sp?.highlightColor || '#475569';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bowlX - 8.5, bowlY + 0.5);
+    ctx.quadraticCurveTo(bowlX, bowlY - moundH * 1.6, bowlX + 8.5, bowlY + 0.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  const labelFormula = entries.length > 0 ? entries.map(([k]) => SPECIES[k]?.formula || k).slice(0, 2).join('+') : '';
+  const pillText = item.hoveredActionLabel
+    ? item.hoveredActionLabel
+    : labelFormula
+    ? `${item.label} · ${labelFormula}`
+    : item.label;
+  drawLabelPill(ctx, x, y - 22, pillText, {
+    pal,
+    borderColor: item.hoveredActionLabel ? '#10b981' : isSelected ? '#3b82f6' : pal.badgeBorder,
+    font: '600 10px system-ui, sans-serif',
+    height: 17,
+    itemId: item.id,
+  });
+  ctx.restore();
+}

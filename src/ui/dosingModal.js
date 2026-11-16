@@ -78,7 +78,10 @@ export class DosingModal {
       (i) =>
         !i.isShattered &&
         !i.isBroken &&
-        (i.kind === 'vessel' || i.kind === 'filter_funnel' || (i.kind === 'burette' && reg.kind === 'liquid'))
+        (i.kind === 'vessel' ||
+          i.kind === 'filter_funnel' ||
+          (i.kind === 'burette' && reg.kind === 'liquid') ||
+          (i.kind === 'spoon' && reg.kind === 'solid'))
     );
     const target = containers.find((v) => v.id === targetVesselId) || containers[0];
     if (!target) return;

@@ -4,6 +4,7 @@ import {
   getCondenserPorts,
   getStandGeometry,
   getSyringeGeometry,
+  getVesselTubingPort,
 } from '../data/apparatus.js';
 import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
@@ -857,6 +858,18 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   ctx.fillStyle = '#cbd5e1';
   ctx.fillRect(collarMinX, y - 7, 8, 14);
   ctx.strokeRect(collarMinX, y - 7, 8, 14);
+
+  // Interactive tubing port indicator ring on syringe nozzle tip
+  ctx.save();
+  const syrConnected = Boolean(item.connectedFromId);
+  ctx.fillStyle = syrConnected ? '#0ea5e9' : pal.badgeBg;
+  ctx.strokeStyle = '#0ea5e9';
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.arc(nozzleX, y, 4.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 
   // Borosilicate 3.3 Barrel (Ø 47.8 mm OD) + Rear Flared Flange (Ø 57 mm OD)
   ctx.fillStyle = pal.glassFill;
@@ -2072,6 +2085,18 @@ export function renderVessel(ctx, vessel, opts) {
       ctx.roundRect(sxQ - 5, y - h * 0.42, 10, h * 0.84, 2);
       ctx.fill();
       ctx.stroke();
+
+      const qPort = getVesselTubingPort(vessel);
+      if (qPort) {
+        const isConn = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);
+        ctx.fillStyle = isConn ? '#f59e0b' : pal.badgeBg;
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(qPort.x, qPort.y, 4.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
     }
   }
 
@@ -2285,6 +2310,18 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+
+    const vPort = getVesselTubingPort(vessel);
+    if (vPort) {
+      const isConn = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);
+      ctx.fillStyle = isConn ? '#f59e0b' : pal.badgeBg;
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(vPort.x, vPort.y, 4.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
   } else if (vessel.hasPhenCotton && !vessel.isShattered) {
     // Phenolphthalein-soaked cotton/indicator strip at mouth (turns bright rose-pink on NH3 gas!)
     const cLvl = Math.max(0, Math.min(1, vessel.phenCottonLevel || 0));

@@ -5,7 +5,7 @@ import {
   SPECIES,
   STARTER_REAGENTS,
 } from '../data/species.js';
-import { APPARATUS, clampItemToStandY, getStandGeometry, getSyringeGeometry } from '../data/apparatus.js';
+import { APPARATUS, clampItemToStandY, getProbeTipPos, getStandGeometry, getSyringeGeometry } from '../data/apparatus.js';
 import {
   calcSolidTransferRatio,
   computeContentsMassG,
@@ -343,7 +343,8 @@ export class LabSimulation {
     } else if (spec.kind === 'wash_bottle') {
       Object.assign(base, {
         waterMl: 250,
-        isSpraying: true,
+        isSpraying: false,
+        manualSprayHold: false,
         sprayTargetId: null,
         squirtTimer: 0,
         squirtArc: null,
@@ -506,6 +507,19 @@ export class LabSimulation {
     } else if (spec.kind === 'stand') {
       Object.assign(base, {
         clampY: y - 45,
+      });
+    } else if (spec.kind === 'spoon') {
+      Object.assign(base, {
+        moles: {},
+        particleCounts: {},
+        groundPowderMap: {},
+        tempK: this.environment.tempK,
+        tiltAngle: 0,
+        burnTimer: 0,
+        flameColor: null,
+        activeReactions: [],
+        seenReactions: {},
+        hoveredActionLabel: null,
       });
     }
 
@@ -951,6 +965,19 @@ export class LabSimulation {
     let bestCenterY = floorCenterY;
     let bestSupport = null;
 
+    if (item.kind === 'spoon') {
+      const { x: bowlX } = getProbeTipPos(item);
+      for (const sup of this.items) {
+        if (sup.kind !== 'burner') continue;
+        const supSpec = APPARATUS[sup.typeId] || APPARATUS.burner;
+        const flameSeatY = sup.y - supSpec.height / 2 - 14;
+        if (Math.abs(bowlX - sup.x) <= 44 && (item.restingOnId === sup.id || item.y <= sup.y - 6)) {
+          return { centerY: flameSeatY, support: sup };
+        }
+      }
+      return { centerY: floorCenterY, support: null };
+    }
+
     if (
       item.kind === 'scale' ||
       item.kind === 'burner' ||
@@ -1013,7 +1040,14 @@ export class LabSimulation {
    */
   updateSupportAttachments() {
     for (const it of this.items) {
-      if (it.kind === 'scale' || it.kind === 'burner' || it.kind === 'clay_triangle' || it.kind === 'stand' || it.kind === 'tongs') continue;
+      if (
+        it.kind === 'scale' ||
+        it.kind === 'burner' ||
+        it.kind === 'clay_triangle' ||
+        it.kind === 'stand' ||
+        it.kind === 'tongs'
+      )
+        continue;
       if (it.dockedVesselId || it.inVesselId || it.mountedOverElectrodeId) {
         syncDockedToolPositions(this);
         continue;
@@ -1030,10 +1064,16 @@ export class LabSimulation {
       const prevSupId = it.restingOnId;
       it.restingOnId = null;
       const { centerY, support } = this.getSupportSurfaceForItem(it);
-      if (support && Math.abs(it.y - centerY) <= 22) {
+      const snapTolY = it.kind === 'spoon' ? 34 : 22;
+      if (support && Math.abs(it.y - centerY) <= snapTolY) {
         it.restingOnId = support.id;
         it.y = centerY;
-        if (Math.abs(it.x - support.x) < 28) it.x = support.x;
+        if (it.kind === 'spoon') {
+          const dir = it.flippedX ? 1 : -1;
+          if (Math.abs(it.x + dir * 48 - support.x) < 28) it.x = support.x - dir * 48;
+        } else if (Math.abs(it.x - support.x) < 28) {
+          it.x = support.x;
+        }
         it.vy = 0;
         it.fallStartY = null;
         if (it.kind === 'filter_funnel' && support.kind === 'vessel') {
@@ -1221,6 +1261,92 @@ export class LabSimulation {
     tongs.grippedVesselId = null;
     tongs.heldSample = null;
     this.updateSupportAttachments();
+    this.emitChange();
+    return true;
+  }
+
+  spoonScoopFromVessel(spoonId, vesselId, maxGrams = 1.6) {
+    const spoon = this.getItem(spoonId);
+    const v = this.getItem(vesselId);
+    if (!spoon || spoon.kind !== 'spoon' || !v || v.kind !== 'vessel' || v.isShattered) return false;
+    const priorityOrder = ['Zn_s', 'Na_s', 'CaCO3_s', 'CuO_s', 'CuSO4_5H2O_s', 'Cu_s', 'CaO_s'];
+    const allSolidKeys = [
+      ...priorityOrder.filter((k) => (v.moles?.[k] || 0) > 1e-8),
+      ...Object.keys(v.moles || {}).filter(
+        (k) => !priorityOrder.includes(k) && SPECIES[k]?.phase === 's' && (v.moles[k] || 0) > 1e-8
+      ),
+    ];
+    if (allSolidKeys.length === 0) return false;
+
+    const spId = allSolidKeys[0];
+    const sp = SPECIES[spId];
+    const availMol = v.moles[spId] || 0;
+    const takeMol = Math.min(availMol, maxGrams / Math.max(10, sp?.molarMass || 60));
+    if (takeMol <= 1e-9) return false;
+
+    v.moles[spId] = availMol - takeMol;
+    if (v.moles[spId] < 1e-12) delete v.moles[spId];
+    spoon.moles = spoon.moles || {};
+    spoon.moles[spId] = (spoon.moles[spId] || 0) + takeMol;
+    spoon.particleCounts = spoon.particleCounts || {};
+    spoon.particleCounts[spId] = Math.max(spoon.particleCounts[spId] || 0, v.particleCounts?.[spId] || 12);
+    if (v.groundPowderMap?.[spId]) {
+      spoon.groundPowderMap = spoon.groundPowderMap || {};
+      spoon.groundPowderMap[spId] = true;
+    }
+    spoon.tempK = v.tempK || this.environment.tempK;
+    this.recomputeScaleReadings();
+    this.emitChange();
+    return true;
+  }
+
+  spoonPourIntoVessel(spoonId, vesselId) {
+    const spoon = this.getItem(spoonId);
+    const v = this.getItem(vesselId);
+    if (!spoon || spoon.kind !== 'spoon' || !v || v.kind !== 'vessel' || v.isShattered || v.isStoppered) return false;
+    const entries = Object.entries(spoon.moles || {}).filter(([, n]) => n > 1e-10);
+    if (entries.length === 0) return false;
+
+    const cVessel = Math.max(18, computeHeatCapacityJK(v));
+    let cSpoon = 0;
+    for (const [spId, n] of entries) {
+      const sp = SPECIES[spId];
+      cSpoon += n * (sp?.cp || 35);
+      v.moles[spId] = (v.moles[spId] || 0) + n;
+      v.particleCounts = v.particleCounts || {};
+      v.particleCounts[spId] = Math.max(v.particleCounts[spId] || 0, spoon.particleCounts?.[spId] || 12);
+      if (spoon.groundPowderMap?.[spId]) {
+        v.groundPowderMap = v.groundPowderMap || {};
+        v.groundPowderMap[spId] = true;
+      }
+      if (spId === 'Na_s' && (spoon.tempK || 298) > 370) {
+        v.naTempK = Math.max(v.naTempK || v.tempK, spoon.tempK);
+      }
+    }
+    if (cSpoon > 0) {
+      const tMix = (cVessel * v.tempK + cSpoon * (spoon.tempK || this.environment.tempK)) / (cVessel + cSpoon);
+      v.tempK = Math.max(155, Math.min(1950, tMix));
+    }
+    spoon.moles = {};
+    spoon.particleCounts = {};
+    spoon.groundPowderMap = {};
+    spoon.burnTimer = 0;
+    spoon.flameColor = null;
+    this.recomputeScaleReadings();
+    this.recordHistorySnapshot(v, true);
+    this.emitChange();
+    return true;
+  }
+
+  rinseSpoon(spoonId) {
+    const spoon = this.getItem(spoonId);
+    if (!spoon || spoon.kind !== 'spoon') return false;
+    spoon.moles = {};
+    spoon.particleCounts = {};
+    spoon.groundPowderMap = {};
+    spoon.burnTimer = 0;
+    spoon.flameColor = null;
+    spoon.tempK = this.environment.tempK;
     this.emitChange();
     return true;
   }
@@ -1775,13 +1901,18 @@ export class LabSimulation {
     const reg = STARTER_REAGENTS.find((r) => r.id === reagentId);
     if (!v || !reg || v.isShattered || v.isBroken) return false;
     const isContainer =
-      v.kind === 'vessel' || v.kind === 'filter_funnel' || (v.kind === 'burette' && reg.kind === 'liquid');
+      v.kind === 'vessel' ||
+      v.kind === 'filter_funnel' ||
+      (v.kind === 'burette' && reg.kind === 'liquid') ||
+      (v.kind === 'spoon' && reg.kind === 'solid');
     if (!isContainer) return false;
 
     let amt = Math.max(0, Number(amount) || 0);
     if (v.kind === 'burette') {
       const curMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
       amt = Math.min(amt, Math.max(0, 50.0 - curMl));
+    } else if (v.kind === 'spoon') {
+      amt = Math.min(amt, 15.0);
     }
     if (amt <= 0) return false;
 
@@ -1888,15 +2019,19 @@ export class LabSimulation {
       }
     }
 
-    this.checkOverflow(v);
-    v.liquidStratification = computePhaseStratification(
-      v.moles,
-      v.tempK,
-      APPARATUS[v.typeId] || APPARATUS.beaker_250,
-      computeSolidVolumeMl(v.moles)
-    );
+    if (v.kind === 'vessel' || v.kind === 'filter_funnel') {
+      this.checkOverflow(v);
+      v.liquidStratification = computePhaseStratification(
+        v.moles,
+        v.tempK,
+        APPARATUS[v.typeId] || APPARATUS.beaker_250,
+        computeSolidVolumeMl(v.moles)
+      );
+    }
     this.recomputeScaleReadings();
-    this.recordHistorySnapshot(v, true);
+    if (v.kind === 'vessel') {
+      this.recordHistorySnapshot(v, true);
+    }
     if (!options.silentEmit) this.emitChange();
     return true;
   }
@@ -2311,10 +2446,12 @@ export class LabSimulation {
     const next = active === null ? !wb.isSpraying : Boolean(active);
     if (next && (wb.waterMl || 0) <= 0.1) {
       wb.isSpraying = false;
+      wb.manualSprayHold = false;
       this.emitChange();
       return false;
     }
     wb.isSpraying = next;
+    wb.manualSprayHold = next;
     if (next) {
       const arc = computeWashBottleStreamArc(wb, this.items, SIM_BENCH_FLOOR_Y, CONSTANTS.GRAVITY_PX_S2 || 1800);
       wb.squirtArc = arc;

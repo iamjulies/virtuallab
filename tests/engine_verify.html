@@ -27,6 +27,7 @@
       getProbeTipPos,
       getStandGeometry,
       getSyringeGeometry,
+      getVesselTubingPort,
     } from '../src/data/apparatus.js';
     import {
       GAS_DISPLAY_META,
@@ -2428,7 +2429,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.1';
+      const expectedBuild = 'virlab_beta_v3+build.2';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2452,13 +2453,14 @@
         Boolean(I18N.vi.eq_crucible_porcelain && I18N.en.eq_crucible_porcelain) &&
         Boolean(I18N.vi.eq_quartz_tube && I18N.en.eq_quartz_tube) &&
         Boolean(I18N.vi.eq_crucible_tongs && I18N.en.eq_crucible_tongs) &&
+        Boolean(I18N.vi.eq_iron_spoon && I18N.en.eq_iron_spoon) &&
         Boolean(I18N.vi.alertGlassSoftenMelt && I18N.en.alertGlassSoftenMelt) &&
         Boolean(I18N.vi.alertCo2Extinguish && I18N.en.alertCo2Extinguish) &&
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v3+build.1 parity: All 32 apparatus translated in VI/EN, all beta_v3 keys present, IUPAC spellings enforced',
-        APPARATUS_ORDER.length === 32 &&
+        'Build virlab_beta_v3+build.2 parity: All 33 apparatus translated in VI/EN, all beta_v3 keys present, IUPAC spellings enforced',
+        APPARATUS_ORDER.length === 33 &&
           allTranslated &&
           newKeysPresent &&
           I18N.vi.appSubtitle.includes(expectedBuild) &&
@@ -3217,23 +3219,31 @@
       );
     }
 
-    // TEST 71: Wash Bottle Default Continuous Spray Mode
+    // TEST 71: Wash Bottle Squeeze-While-Held Spray Mode (Idle on bench = OFF, Dragging/Held = ON, Released = OFF)
     {
       const sim = new LabSimulation();
       const target = sim.createApparatus('beaker_250', 240, 427);
       const wb = sim.createApparatus('wash_bottle', 355, 422);
-      const defaultOn = wb.isSpraying === true;
+      const defaultIdleOff = wb.isSpraying === false;
+      stepSeconds(sim, 0.4, 0.05);
+      const idleWater = target.moles.H2O_l || 0;
+
+      // User grabs and holds wash bottle -> automatically sprays
+      wb.isDragging = true;
       stepSeconds(sim, 0.6, 0.05);
       const sprayedWater = target.moles.H2O_l || 0;
-      sim.toggleWashBottleSpray(wb.id, false);
+
+      // User releases wash bottle -> immediately stops spraying
+      wb.isDragging = false;
+      stepSeconds(sim, 0.1, 0.05);
       const afterOff = wb.isSpraying === false;
       const waterAtStop = target.moles.H2O_l || 0;
       stepSeconds(sim, 0.4, 0.05);
 
       assert(
-        'Wash Bottle defaults to continuous spray ON (isSpraying === true) immediately upon spawn until toggled OFF',
-        defaultOn && sprayedWater > 0.15 && afterOff && Math.abs((target.moles.H2O_l || 0) - waterAtStop) < 1e-3,
-        `defaultOn=${defaultOn}, sprayedH2O=${sprayedWater.toFixed(3)}, deltaAfterStop=${((target.moles.H2O_l || 0) - waterAtStop).toExponential(2)}, stopped=${afterOff}`
+        'Wash Bottle stays OFF when sitting idle on bench, automatically sprays when held/dragged (isDragging === true), and stops upon release',
+        defaultIdleOff && idleWater === 0 && sprayedWater > 0.15 && afterOff && Math.abs((target.moles.H2O_l || 0) - waterAtStop) < 1e-3,
+        `idleOff=${defaultIdleOff}(H2O=${idleWater}), heldH2O=${sprayedWater.toFixed(3)}, deltaAfterRelease=${((target.moles.H2O_l || 0) - waterAtStop).toExponential(2)}, stopped=${afterOff}`
       );
     }
 
@@ -4475,6 +4485,69 @@
         'All 4 virlab_beta_v3+build.1 presets (ammine, rate compare, galvanic corrosion compare, CaCO3 calcination) & strict IUPAC VI/EN audit pass 100%',
         ok && galvanicActive && badHits.length === 0,
         `presetsOK=${ok}, corrV=${vm?.measuredV?.toFixed(2)}, corrI=${vm?.measuredCurrentA?.toFixed(3)}, badIUPAC=${badHits.length}${badHits[0] ? `(${badHits[0].slice(0, 40)})` : ''}`
+      );
+    }
+
+    // TEST 97: Prompt 22 Suite — Iron Spoon (Scoop + Burn Zn -> ZnO + Dump), Syringe/Stopper Port Drag Handles & CuO + 2HCl -> CuCl2 + H2O
+    {
+      const sim22 = new LabSimulation();
+
+      // 1) Iron Spoon: scoop Zn(s) from beaker, hold over burner flame to burn into ZnO(s), then dump into receiving beaker
+      const bSrc = sim22.createApparatus('beaker_250', 180, 427);
+      sim22.addReagentToVessel(bSrc.id, 'zn', 3.0, { silentAnim: true, silentEmit: true });
+      const burner = sim22.createApparatus('burner', 360, 434);
+      sim22.setBurnerFlame(burner.id, 3);
+      const spoon = sim22.createApparatus('iron_spoon', 408, 380); // Bowl at x = 408 - 48 = 360 (directly in burner flame!)
+      const scooped = sim22.spoonScoopFromVessel(spoon.id, bSrc.id, 1.5);
+      const znOnSpoonBefore = spoon.moles.Zn_s || 0;
+      stepSeconds(sim22, 3.5, 0.05);
+      const znoOnSpoon = spoon.moles.ZnO_s || 0;
+      const spoonBurnedCyan = spoon.flameColor === 'cyan_zn';
+      const bDst = sim22.createApparatus('beaker_250', 540, 427);
+      const dumped = sim22.spoonPourIntoVessel(spoon.id, bDst.id);
+      const znoInDst = bDst.moles.ZnO_s || 0;
+
+      // 2) Interactive Tubing Port Detection on Stoppered Vessel & Gas Syringe Nozzle
+      const flaskStop = sim22.createApparatus('erlenmeyer_250', 680, 400);
+      flaskStop.isStoppered = true;
+      const syr = sim22.createApparatus('gas_syringe', 860, 260);
+      const vPort = getVesselTubingPort(flaskStop);
+      const syrGeom = getSyringeGeometry(syr);
+
+      const cWrap = document.createElement('div');
+      cWrap.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:448px;pointer-events:none;opacity:0.01;';
+      const cvs = document.createElement('canvas');
+      cvs.style.cssText = 'width:800px;height:448px;display:block;';
+      cWrap.appendChild(cvs);
+      document.body.appendChild(cWrap);
+      const wbCanvas = new LabWorkbenchCanvas(cvs, sim22, new ParticleSystem());
+      wbCanvas.resize();
+      const hitVPort = wbCanvas.findCondenserPortAt(vPort.x, vPort.y);
+      const hitSyrPort = wbCanvas.findCondenserPortAt(syrGeom.nozzleX, syrGeom.nozzleY);
+      wbCanvas.render(1.0);
+      cWrap.remove();
+
+      // 3) CuO(s) + 2 HCl(aq) -> Cu2+(aq) + 2 Cl-(aq) + H2O(l)
+      const bCuO = sim22.createApparatus('beaker_250', 760, 427);
+      bCuO.moles = { H2O_l: 2.5, CuO_s: 0.02, H_aq: 0.06, Cl_aq: 0.06 };
+      stepSeconds(sim22, 2.0, 0.05);
+      const cu2Formed = bCuO.moles.Cu2_aq || 0;
+      const cuoLeft = bCuO.moles.CuO_s || 0;
+
+      assert(
+        'Iron Spoon scoops Zn, burns in flame (cyan_zn -> ZnO) & dumps to vessel; Stoppered Vessel & Gas Syringe expose draggable tubing ports; CuO + HCl -> CuCl2 + H2O verified',
+        scooped &&
+          znOnSpoonBefore > 0.01 &&
+          znoOnSpoon > 0.005 &&
+          spoonBurnedCyan &&
+          dumped &&
+          znoInDst > 0.005 &&
+          hitVPort?.port === 'stopper' &&
+          hitSyrPort?.port === 'nozzle' &&
+          cu2Formed > 0.015 &&
+          cuoLeft < 0.005 &&
+          validateVesselInvariants(bCuO).valid,
+        `scoop=${scooped}, zn0=${(znOnSpoonBefore*1000).toFixed(1)}mmol, znoSpoon=${(znoOnSpoon*1000).toFixed(1)}(${spoonBurnedCyan}), znoDst=${(znoInDst*1000).toFixed(1)}, ports=${hitVPort?.port}/${hitSyrPort?.port}, Cu2+=${(cu2Formed*1000).toFixed(1)}mmol(CuO_left=${(cuoLeft*1000).toFixed(1)})`
       );
     }
 

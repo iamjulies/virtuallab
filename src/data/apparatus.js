@@ -484,6 +484,23 @@ export const APPARATUS = {
     height: 44,
     fragilityDropPx: Infinity,
   },
+  iron_spoon: {
+    id: 'iron_spoon',
+    kind: 'spoon',
+    category: 'thermal',
+    flippable: true,
+    breakable: false,
+    heatable: true,
+    i18nKey: 'eq_iron_spoon',
+    isoStandard: 'Deflagrating & Combustion Spoon · Fe–Cr Steel (Max 1450 °C)',
+    materialSpec: 'Heat-Resistant Steel (Fe–Cr)',
+    maxThermalStressK: 1723,
+    maxVolumeMl: 15,
+    tareMassG: 28.0,
+    width: 118,
+    height: 28,
+    fragilityDropPx: Infinity,
+  },
   porcelain_dish: {
     id: 'porcelain_dish',
     kind: 'vessel',
@@ -820,6 +837,7 @@ export const APPARATUS_ORDER = [
   'bunsen_burner',
   'clay_triangle',
   'crucible_tongs',
+  'iron_spoon',
   'gas_syringe',
   'splint',
   'flame_loop',
@@ -934,5 +952,21 @@ export function getProbeTipPos(item) {
   if (item.kind === 'tongs') {
     return { x: item.x + dir * 64, y: item.y, dir };
   }
+  if (item.kind === 'spoon') {
+    return { x: item.x + dir * 48, y: item.y + 2, dir };
+  }
   return { x: item.x, y: item.y, dir };
+}
+
+export function getVesselTubingPort(vessel) {
+  if (!vessel || vessel.kind !== 'vessel' || vessel.isShattered || !vessel.isStoppered) return null;
+  const spec = APPARATUS[vessel.typeId] || APPARATUS.erlenmeyer_250;
+  if (spec.isHorizontalTube) {
+    const dir = vessel.flippedX ? -1 : 1;
+    return { x: vessel.x + dir * (spec.width / 2 + 4), y: vessel.y };
+  }
+  if (vessel.isInverted) {
+    return { x: vessel.x, y: vessel.y + spec.height / 2 + 8 };
+  }
+  return { x: vessel.x, y: vessel.y - spec.height / 2 - 8 };
 }

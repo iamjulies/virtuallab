@@ -68,6 +68,8 @@ function apparatusSvg(typeId) {
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="14" width="28" height="8" rx="2"/><rect x="13" y="15.5" width="10" height="5" fill="currentColor" opacity="0.25" stroke="none"/><path d="M4 18h2M30 18h2" stroke-width="2.2"/></svg>`;
     case 'crucible_tongs':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 26l10-10 11-8M11 29l7-11 9-4"/><circle cx="17" cy="16" r="1.5" fill="currentColor"/></svg>`;
+    case 'iron_spoon':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="6.5" cy="17" r="2.2"/><path d="M9 17h13l2 3"/><path d="M22 20a5.5 5.5 0 0010 0H22z" fill="currentColor" opacity="0.3"/></svg>`;
     default:
       return '';
   }

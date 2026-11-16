@@ -1,5 +1,6 @@
 import { I18N } from './data/i18n.js';
 import { APPARATUS } from './data/apparatus.js';
+import { STARTER_REAGENTS } from './data/species.js';
 import { LabManager } from './engine/labManager.js';
 import { LabWorkbenchCanvas, BENCH_FLOOR_Y } from './canvas/workbench.js';
 import { EnvironmentBar } from './ui/environmentBar.js';
@@ -326,11 +327,15 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
   },
   onSelectReagent: (reagentId) => {
     const sel = sim.getItem(sim.selectedId);
+    const isSolidReg = STARTER_REAGENTS.find((r) => r.id === reagentId)?.kind === 'solid';
     const validKind = (it) =>
       it &&
       !it.isShattered &&
       !it.isBroken &&
-      (it.kind === 'vessel' || it.kind === 'filter_funnel' || it.kind === 'burette');
+      (it.kind === 'vessel' ||
+        it.kind === 'filter_funnel' ||
+        it.kind === 'burette' ||
+        (it.kind === 'spoon' && isSolidReg));
     let target = validKind(sel) ? sel : null;
     if (!target) {
       target = sim.items.find((i) => validKind(i)) || null;

@@ -231,6 +231,14 @@ export class InspectorPanel {
     if (item.kind === 'clay_triangle') {
       return `ct|${item.id}|${langCode}|${logLen}`;
     }
+    if (item.kind === 'spoon') {
+      const spKeys = Object.keys(item.moles || {})
+        .filter((k) => item.moles[k] > 1e-10)
+        .sort()
+        .join(',');
+      const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered).length;
+      return `spn|${item.id}|${item.flippedX ? 1 : 0}|${spKeys}|${vCnt}|${langCode}|${logLen}`;
+    }
     return `other|${item.id}|${langCode}|${logLen}`;
   }
 
@@ -1001,6 +1009,49 @@ export class InspectorPanel {
           <p class="text-[11px] text-muted leading-relaxed">${t('tongsHint')}</p>
         </div>
       `;
+    } else if (item.kind === 'spoon') {
+      const spSpec = APPARATUS.iron_spoon;
+      const entries = Object.entries(item.moles || {}).filter(([, n]) => n > 1e-10);
+      const summary =
+        entries.length > 0
+          ? entries
+              .map(([k, n]) => `${SPECIES[k]?.formula || k}: ${(n * (SPECIES[k]?.molarMass || 0)).toFixed(2)} g`)
+              .join(' · ')
+          : t('spoonEmpty');
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">🥄 ${t('eq_iron_spoon')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${spSpec.materialSpec} · ${spSpec.isoStandard}</div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${renderFlipButtonHtml(item, t)}
+              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs">
+              <div class="text-muted">${t('metricTemp')}</div>
+              <div class="font-mono font-bold text-sm mt-0.5" id="live-spoon-temp">${(item.tempK || 298.15).toFixed(1)} K (${kelvinToCelsius(item.tempK || 298.15).toFixed(1)}°C)</div>
+            </div>
+            <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs">
+              <div class="text-muted">${t('spoonContentsLabel')}</div>
+              <div class="font-mono font-semibold text-xs mt-0.5 truncate" id="live-spoon-contents">${summary}</div>
+            </div>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <button type="button" id="ins-spoon-scoop" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent text-left">${t('spoonScoopBtn')}</button>
+            <button type="button" id="ins-spoon-pour" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent text-left">${t('spoonPourBtn')}</button>
+            ${
+              entries.length > 0
+                ? `<button type="button" id="ins-spoon-rinse" class="py-1.5 px-2.5 rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 text-xs font-semibold hover:bg-red-500/20 text-left">${t('spoonCleanBtn')}</button>`
+                : ''
+            }
+          </div>
+          <p class="text-[11px] text-muted leading-relaxed">${t('spoonHint')}</p>
+        </div>
+      `;
     } else if (item.kind === 'vessel') {
       const spec = APPARATUS[item.typeId];
       const liqL = computeLiquidVolumeL(item.moles, item.tempK);
@@ -1709,6 +1760,31 @@ export class InspectorPanel {
       this.container.querySelector('#ins-tongs-release')?.addEventListener('click', () => {
         this.sim.tongsReleaseAll(item.id);
       });
+    } else if (item.kind === 'spoon') {
+      this.container.querySelector('#ins-spoon-scoop')?.addEventListener('click', () => {
+        const candidates = this.sim.items.filter(
+          (v) =>
+            v.kind === 'vessel' &&
+            !v.isShattered &&
+            Object.entries(v.moles || {}).some(([k, n]) => SPECIES[k]?.phase === 's' && n > 1e-8)
+        );
+        if (candidates.length === 0) return;
+        const nearest = candidates.sort(
+          (a, b) => Math.hypot(a.x - item.x, a.y - item.y) - Math.hypot(b.x - item.x, b.y - item.y)
+        )[0];
+        this.sim.spoonScoopFromVessel(item.id, nearest.id);
+      });
+      this.container.querySelector('#ins-spoon-pour')?.addEventListener('click', () => {
+        const candidates = this.sim.items.filter((v) => v.kind === 'vessel' && !v.isShattered && !v.isStoppered);
+        if (candidates.length === 0) return;
+        const nearest = candidates.sort(
+          (a, b) => Math.hypot(a.x - item.x, a.y - item.y) - Math.hypot(b.x - item.x, b.y - item.y)
+        )[0];
+        this.sim.spoonPourIntoVessel(item.id, nearest.id);
+      });
+      this.container.querySelector('#ins-spoon-rinse')?.addEventListener('click', () => {
+        this.sim.rinseSpoon(item.id);
+      });
     }
   }
 
@@ -1753,6 +1829,24 @@ export class InspectorPanel {
     if (item.kind === 'wash_bottle') {
       const wEl = this.container.querySelector('#live-wb-vol');
       if (wEl) wEl.textContent = `${(item.waterMl || 0).toFixed(1)} / 250 mL`;
+      return;
+    }
+
+    if (item.kind === 'spoon') {
+      const tEl = this.container.querySelector('#live-spoon-temp');
+      const cEl = this.container.querySelector('#live-spoon-contents');
+      if (tEl) {
+        tEl.textContent = `${(item.tempK || 298.15).toFixed(1)} K (${kelvinToCelsius(item.tempK || 298.15).toFixed(1)}°C)`;
+      }
+      if (cEl) {
+        const entries = Object.entries(item.moles || {}).filter(([, n]) => n > 1e-10);
+        cEl.textContent =
+          entries.length > 0
+            ? entries
+                .map(([k, n]) => `${SPECIES[k]?.formula || k}: ${(n * (SPECIES[k]?.molarMass || 0)).toFixed(2)} g`)
+                .join(' · ')
+            : t('spoonEmpty');
+      }
       return;
     }
     if (item.kind === 'condenser') {
