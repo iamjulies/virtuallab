@@ -1,7 +1,8 @@
 import {
   CONSTANTS,
   solutionBoilingPointK,
-  waterVaporPressureBar,
+  waterMoleFraction,
+  waterVaporPressureMmHg,
 } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
@@ -101,10 +102,17 @@ export function stepVesselThermodynamics(
 
   const boilingPointK = solutionBoilingPointK(vessel.moles, effectivePressureBar);
 
-  if (nWater > 1e-7 && !vessel.isStoppered) {
-    const pSat = waterVaporPressureBar(vessel.tempK);
-    const evapRateMolS = Math.max(0, (pSat / Math.max(0.1, env.pressureBar)) * 0.00025);
-    const subBoilEvap = Math.min(nWater, evapRateMolS * dt);
+  // Regime 1: Sub-boiling surface evaporation (Dalton + Raoult + Antoine)
+  // dm_evap/dt = km * A_surface * max(0, x_H2O * P_sat(T) - RH * P_sat(T_room))
+  if (nWater > 1e-7 && !vessel.isStoppered && vessel.tempK < boilingPointK) {
+    const xH2O = waterMoleFraction(vessel.moles);
+    const pSurfMmHg = xH2O * waterVaporPressureMmHg(vessel.tempK);
+    const pAmbMmHg = CONSTANTS.RELATIVE_HUMIDITY * waterVaporPressureMmHg(env.tempK);
+    const deltaPMmHg = Math.max(0, pSurfMmHg - pAmbMmHg);
+    const areaCm2 = spec.surfaceAreaCm2 || 20.0;
+    const km = 2.4e-6 * (vessel.stirTimer > 0 ? 2.0 : 1.0); // g / (cm^2 * s * mmHg)
+    const evapMolS = (km * areaCm2 * deltaPMmHg) / CONSTANTS.M_H2O;
+    const subBoilEvap = Math.min(nWater, evapMolS * dt);
 
     const nH = vessel.moles.H_aq || 0;
     const nCl = vessel.moles.Cl_aq || 0;

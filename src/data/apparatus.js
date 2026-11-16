@@ -18,6 +18,7 @@ export const APPARATUS = {
     popPressureBar: null,
     shatterPressureBar: null,
     heatLossCoeffWK: 0.45,
+    surfaceAreaCm2: 34.0,
     opticalPathCm: 6.8,
   },
   erlenmeyer_250: {
@@ -36,6 +37,7 @@ export const APPARATUS = {
     popPressureBar: 1.55,
     shatterPressureBar: 2.8,
     heatLossCoeffWK: 0.38,
+    surfaceAreaCm2: 12.5,
     opticalPathCm: 7.2,
   },
   test_tube_50: {
@@ -54,6 +56,7 @@ export const APPARATUS = {
     popPressureBar: 1.45,
     shatterPressureBar: 2.5,
     heatLossCoeffWK: 0.22,
+    surfaceAreaCm2: 3.8,
     opticalPathCm: 2.5,
   },
   cylinder_100: {
@@ -72,6 +75,7 @@ export const APPARATUS = {
     popPressureBar: null,
     shatterPressureBar: null,
     heatLossCoeffWK: 0.30,
+    surfaceAreaCm2: 6.2,
     opticalPathCm: 3.0,
   },
   scale: {

@@ -75,7 +75,8 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     }
     if (minExtent <= 1e-12 || !Number.isFinite(minExtent)) return 0;
 
-    const kRelax = rxn.kRelax298 * arrheniusFactor(rxn.eaJ, T) * (vessel.stirTimer > 0 ? 1.5 : 1.0);
+    // Homogeneous ionic reactions are activation/collision controlled -> unaffected by stirring
+    const kRelax = rxn.kRelax298 * arrheniusFactor(rxn.eaJ, T);
     return minExtent * kRelax;
   }
 
@@ -120,8 +121,8 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
 
     // Effective kinetic order with mild saturation at very high acid molarity
     const concFactor = Math.pow(Math.min(14.0, aqConc), 1.05);
-    // Slight passivation reduction when stirred
-    return k * area * concFactor * (vessel.stirTimer > 0 ? 1.6 : 1.0) * 3.5;
+    // Noyes-Whitney diffusion boundary layer thinning when stirred
+    return k * area * concFactor * (vessel.stirTimer > 0 ? 2.6 : 1.0) * 3.5;
   }
 
   if (rxn.type === 'thermal_decomposition') {

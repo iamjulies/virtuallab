@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.7',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.8',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envPress: 'Áp suất',
@@ -69,6 +69,7 @@ export const I18N = {
     actionConnectSyringe: 'Nối ống tới Gas syringe',
     actionDisconnectTube: 'Tháo ống dẫn khí',
     actionStir: 'Khuấy đều',
+    actionStirTip: 'Phá lớp biên Nernst tăng tốc hòa tan & phản ứng rắn–lỏng, tăng bay hơi mặt thoáng; không đổi phản ứng ion đồng thể.',
     actionRinse: 'Rửa sạch bình',
     actionDelete: 'Xóa dụng cụ',
     actionTare: 'Trừ bì (Tare)',
@@ -157,7 +158,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.7',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.8',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envPress: 'Pressure',
@@ -216,6 +217,7 @@ export const I18N = {
     actionConnectSyringe: 'Connect tube to Gas syringe',
     actionDisconnectTube: 'Disconnect tubing',
     actionStir: 'Stir contents',
+    actionStirTip: 'Reduces Nernst diffusion boundary layer (speeds solid dissolution/redox & evaporation); leaves homogeneous ionic kinetics unchanged.',
     actionRinse: 'Rinse & empty',
     actionDelete: 'Remove item',
     actionTare: 'Tare (Zero)',

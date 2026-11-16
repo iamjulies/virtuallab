@@ -351,6 +351,97 @@
       );
     }
 
+    // TEST 14: Stirring speeds up heterogeneous (solid-liquid) reactions & surface evaporation, NOT homogeneous ionic neutralization
+    {
+      // Compare Zn + HCl still vs stirred
+      const runHet = (stir) => {
+        const s = new LabSimulation();
+        const b = s.createApparatus('beaker_250', 300, 350);
+        s.addReagentToVessel(b.id, 'h2o', 40);
+        s.addReagentToVessel(b.id, 'hcl_37', 5);
+        s.addReagentToVessel(b.id, 'zn', 1.3, { fine: false });
+        if (stir) s.stirVessel(b.id);
+        stepSeconds(s, 2.0, 0.02);
+        return b.escapedGasMoles.H2_g || 0;
+      };
+      const hetStill = runHet(false);
+      const hetStir = runHet(true);
+
+      // Compare homogeneous H+ + OH- neutralization still vs stirred over 0.1 s
+      const runHom = (stir) => {
+        const s = new LabSimulation();
+        const b = s.createApparatus('beaker_250', 300, 350);
+        b.moles = { H2O_l: 5.0, H_aq: 0.05, Cl_aq: 0.05, Na_aq: 0.05, OH_aq: 0.05 };
+        if (stir) s.stirVessel(b.id);
+        stepSeconds(s, 0.1, 0.01);
+        return b.moles.H_aq || 0;
+      };
+      const homStill = runHom(false);
+      const homStir = runHom(true);
+
+      // Compare surface evaporation at 70 C still vs stirred
+      const runEvap = (stir) => {
+        const s = new LabSimulation();
+        const b = s.createApparatus('beaker_250', 300, 350);
+        s.addReagentToVessel(b.id, 'h2o', 80);
+        b.tempK = 343.15;
+        if (stir) s.stirVessel(b.id);
+        stepSeconds(s, 3.0, 0.05);
+        return b.escapedGasMoles.H2O_g || 0;
+      };
+      const evapStill = runEvap(false);
+      const evapStir = runEvap(true);
+
+      assert(
+        'Stirring boosts heterogeneous Zn+HCl (>2x) and surface evaporation (~2x), while homogeneous ionic reaction stays unchanged',
+        hetStir > hetStill * 2.0 && evapStir > evapStill * 1.7 && Math.abs(homStir - homStill) < 1e-6,
+        `het=${(hetStir/hetStill).toFixed(2)}x, evap=${(evapStir/evapStill).toFixed(2)}x, Δhom=${Math.abs(homStir-homStill).toExponential(1)}`
+      );
+    }
+
+    // TEST 15: Antoine + Raoult + Dalton heating curve (surface area, solute lowering, pre-boil curvature -> steady T_boil)
+    {
+      // Compare wide beaker vs narrow test tube sub-boiling evaporation at 353 K
+      const simA = new LabSimulation();
+      const wide = simA.createApparatus('beaker_250', 250, 350);
+      const narrow = simA.createApparatus('test_tube_50', 450, 350);
+      simA.addReagentToVessel(wide.id, 'h2o', 40);
+      simA.addReagentToVessel(narrow.id, 'h2o', 40);
+      wide.tempK = 353.15;
+      narrow.tempK = 353.15;
+      stepSeconds(simA, 4.0, 0.05);
+      const wideEvap = wide.escapedGasMoles.H2O_g || 0;
+      const narrowEvap = narrow.escapedGasMoles.H2O_g || 0;
+
+      // Measure dT/dt at low T (~40 C) vs high sub-boiling T (~92 C) under 650 W burner, and boiling plateau
+      const simB = new LabSimulation();
+      const bk = simB.createApparatus('beaker_250', 300, 350);
+      const bn = simB.createApparatus('burner', 300, 380);
+      simB.setBurnerFlame(bn.id, 3);
+      bk.restingOnId = bn.id;
+      simB.addReagentToVessel(bk.id, 'h2o', 100);
+
+      bk.tempK = 313.15; // 40 C
+      stepSeconds(simB, 2.0, 0.02);
+      const slopeLow = (bk.tempK - 313.15) / 2.0;
+
+      bk.tempK = 365.15; // 92 C
+      stepSeconds(simB, 2.0, 0.02);
+      const slopeHigh = (bk.tempK - 365.15) / 2.0;
+
+      // Reach Regime 2 boiling plateau and hold dT ≈ 0 while liquid remains
+      stepSeconds(simB, 15.0, 0.05);
+      const tBoil1 = bk.tempK;
+      stepSeconds(simB, 5.0, 0.05);
+      const tBoil2 = bk.tempK;
+
+      assert(
+        'Antoine+Raoult+Dalton model: wide surface evaporates faster than tube, heating bends before boiling, and Regime 2 locks at T_boil',
+        wideEvap > narrowEvap * 5.0 && slopeHigh < slopeLow * 0.85 && Math.abs(tBoil2 - tBoil1) < 0.05 && Math.abs((tBoil2 - 273.15) - 99.63) < 0.25,
+        `beaker/tube=${(wideEvap/narrowEvap).toFixed(1)}x, slope40=${slopeLow.toFixed(2)}K/s vs slope92=${slopeHigh.toFixed(2)}K/s, T_boil=${(tBoil2-273.15).toFixed(2)}°C`
+      );
+    }
+
     // Render test report
     const passed = results.filter(r => r.pass).length;
     document.getElementById('summary').innerHTML = `<span class="${passed === results.length ? 'pass' : 'fail'}">${passed} / ${results.length} tests passed</span>`;

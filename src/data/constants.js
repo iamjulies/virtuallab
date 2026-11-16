@@ -6,10 +6,11 @@ export const CONSTANTS = {
   R_J_MOL_K: 8.314462618,
   R_L_BAR_MOL_K: 0.08314462618,
 
-  // IUPAC Standard Ambient Temperature & Pressure (SATP)
+  // IUPAC Standard Ambient Temperature & Pressure (SATP) & Lab Air Humidity
   T_STD_K: 298.15,
   P_STD_BAR: 1.0,
   KELVIN_OFFSET: 273.15,
+  RELATIVE_HUMIDITY: 0.60, // 60% RH in ambient lab room air
 
   // Water properties & auto-ionization
   KW_298: 1.0e-14,
@@ -53,13 +54,41 @@ export function celsiusToKelvin(c) {
 }
 
 /**
+ * Water vapor saturation pressure in mmHg using the Antoine equation (valid ~0..150 C).
+ */
+export function waterVaporPressureMmHg(T_K) {
+  const T_C = Math.max(0, Math.min(200, T_K - CONSTANTS.KELVIN_OFFSET));
+  const { A, B, C } = CONSTANTS.ANTOINE_WATER;
+  return Math.pow(10, A - B / (C + T_C));
+}
+
+/**
  * Water vapor saturation pressure in bar using the Antoine equation.
  */
 export function waterVaporPressureBar(T_K) {
-  const T_C = Math.max(0, Math.min(200, T_K - CONSTANTS.KELVIN_OFFSET));
-  const { A, B, C, MMHG_PER_BAR } = CONSTANTS.ANTOINE_WATER;
-  const pMmHg = Math.pow(10, A - B / (C + T_C));
-  return pMmHg / MMHG_PER_BAR;
+  return waterVaporPressureMmHg(T_K) / CONSTANTS.ANTOINE_WATER.MMHG_PER_BAR;
+}
+
+/**
+ * Solvent water mole fraction x_H2O for Raoult's Law vapor pressure lowering.
+ */
+export function waterMoleFraction(moles) {
+  const nH2O = moles.H2O_l || 0;
+  if (nH2O <= 1e-12) return 0;
+  const soluteMol =
+    (moles.C2H5OH_l || 0) +
+    (moles.Na_aq || 0) +
+    (moles.OH_aq || 0) +
+    (moles.H_aq || 0) +
+    (moles.Cl_aq || 0) +
+    (moles.Cu2_aq || 0) +
+    (moles.Zn2_aq || 0) +
+    (moles.Ag_aq || 0) +
+    (moles.SO4_2_aq || 0) +
+    (moles.NO3_aq || 0) +
+    (moles.CuCl4_2_aq || 0) +
+    (moles.ZnOH4_2_aq || 0);
+  return nH2O / (nH2O + Math.max(0, soluteMol));
 }
 
 /**
@@ -73,9 +102,9 @@ export function waterBoilingPointK(P_bar) {
 }
 
 /**
- * Aqueous solution boiling temperature (K), accounting for the HCl-H2O azeotrope
- * (20.24% w/w boiling at 108.6 C, while 37% fuming HCl starts around ~48 C)
- * and mild colligative boiling-point elevation from dissolved salts.
+ * Aqueous solution boiling temperature (K), using:
+ * - Exact HCl-H2O azeotropic boiling curve (20.24% w/w azeotrope at 108.6 C, 37% fuming ~48 C)
+ * - Raoult's Law P_surface = x_H2O * P_sat(T) = P_bar for non-volatile dissolved salts/bases
  */
 export function solutionBoilingPointK(moles, P_bar) {
   const baseK = waterBoilingPointK(P_bar);
@@ -84,37 +113,24 @@ export function solutionBoilingPointK(moles, P_bar) {
 
   const mH2O = nH2O * CONSTANTS.M_H2O;
   const nHCl = Math.min(moles.H_aq || 0, moles.Cl_aq || 0);
-  let deltaK = 0;
 
   if (nHCl > 1e-9) {
     const mHCl = nHCl * CONSTANTS.M_HCL;
     const wHCl = mHCl / (mHCl + mH2O);
     const wAz = CONSTANTS.HCL_AZEOTROPE_WT_FRAC;
+    let deltaK = 0;
     if (wHCl <= wAz) {
-      deltaK += 8.97 * Math.pow(wHCl / wAz, 1.35);
+      deltaK = 8.97 * Math.pow(wHCl / wAz, 1.35);
     } else {
       const over = Math.min(1.15, (wHCl - wAz) / (0.37 - wAz));
-      deltaK += 8.97 - 60.6 * Math.pow(over, 1.15);
+      deltaK = 8.97 - 60.6 * Math.pow(over, 1.15);
     }
-  } else {
-    // Mild non-volatile electrolyte colligative elevation (Kb ≈ 0.512 K·kg/mol, capped at +8 K)
-    const waterKg = mH2O / 1000;
-    const ionMoles =
-      (moles.Na_aq || 0) +
-      (moles.OH_aq || 0) +
-      (moles.Cu2_aq || 0) +
-      (moles.Zn2_aq || 0) +
-      (moles.Ag_aq || 0) +
-      (moles.SO4_2_aq || 0) +
-      (moles.NO3_aq || 0) +
-      (moles.Cl_aq || 0) +
-      (moles.CuCl4_2_aq || 0);
-    if (waterKg > 1e-8 && ionMoles > 0) {
-      deltaK += Math.min(8.0, 0.512 * (ionMoles / waterKg));
-    }
+    return Math.max(295, baseK + deltaK);
   }
 
-  return Math.max(295, baseK + deltaK);
+  // Raoult's Law: boiling occurs where P_sat(T) = P_bar / x_H2O
+  const xEff = Math.max(0.55, waterMoleFraction(moles));
+  return waterBoilingPointK(P_bar / xEff);
 }
 
 /**
