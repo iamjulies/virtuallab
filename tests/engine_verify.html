@@ -18,7 +18,9 @@
 
   <script type="module">
     import { CONSTANTS, waterBoilingPointK } from '../src/data/constants.js';
+    import { APPARATUS } from '../src/data/apparatus.js';
     import { SPECIES } from '../src/data/species.js';
+    import { computeVesselFluidGeometry } from '../src/canvas/vesselRenderer.js';
     import { LabSimulation } from '../src/engine/simulation.js';
     import {
       computeContentsMassG,
@@ -439,6 +441,42 @@
         'Antoine+Raoult+Dalton model: wide surface evaporates faster than tube, heating bends before boiling, and Regime 2 locks at T_boil',
         wideEvap > narrowEvap * 5.0 && slopeHigh < slopeLow * 0.85 && Math.abs(tBoil2 - tBoil1) < 0.05 && Math.abs((tBoil2 - 273.15) - 99.63) < 0.25,
         `beaker/tube=${(wideEvap/narrowEvap).toFixed(1)}x, slope40=${slopeLow.toFixed(2)}K/s vs slope92=${slopeHigh.toFixed(2)}K/s, T_boil=${(tBoil2-273.15).toFixed(2)}°C`
+      );
+    }
+
+    // TEST 16: ISO 1773 / ISO 3819 glassware specs, frustum Erlenmeyer meniscus calibration, & Low vs Tall beaker surface evaporation
+    {
+      const low = APPARATUS.beaker_250;
+      const tall = APPARATUS.beaker_tall_250;
+      const erl = APPARATUS.erlenmeyer_250;
+
+      // Verify ISO 3819 (70x95 mm low, 60x120 mm tall) & ISO 1773 (85x144 mm, neck 32 mm, wall 0.8 mm)
+      const isoSpecsOk =
+        low.diameterMm === 70 && low.heightMm === 95 && low.wallThicknessMm >= 1.1 &&
+        tall.diameterMm === 60 && tall.heightMm === 120 && tall.wallThicknessMm >= 1.1 &&
+        erl.diameterMm === 85 && erl.heightMm >= 140 && erl.heightMm <= 145 && erl.neckDiameterMm >= 30 && erl.wallThicknessMm >= 0.8;
+
+      // Verify conical frustum height increments grow cleanly upward: Δy(200->250) > Δy(0->50)
+      const g = computeVesselFluidGeometry(erl, 300, 0);
+      const dyBot50 = g.volumeMlToY(0) - g.volumeMlToY(50);
+      const dyTop50 = g.volumeMlToY(200) - g.volumeMlToY(250);
+
+      // Compare Low Form (36.1 cm2) vs Tall Form (26.2 cm2) sub-boiling evaporation at 353 K
+      const sim = new LabSimulation();
+      const bLow = sim.createApparatus('beaker_250', 250, 350);
+      const bTall = sim.createApparatus('beaker_tall_250', 450, 350);
+      sim.addReagentToVessel(bLow.id, 'h2o', 80);
+      sim.addReagentToVessel(bTall.id, 'h2o', 80);
+      bLow.tempK = 353.15;
+      bTall.tempK = 353.15;
+      stepSeconds(sim, 4.0, 0.05);
+      const lowEvap = bLow.escapedGasMoles.H2O_g || 0;
+      const tallEvap = bTall.escapedGasMoles.H2O_g || 0;
+
+      assert(
+        'ISO 3819 / ISO 1773 dimensions, conical frustum graduations, & Low > Tall surface evaporation hold',
+        isoSpecsOk && dyTop50 > dyBot50 * 2.5 && lowEvap > tallEvap * 1.25,
+        `dy(200-250)=${dyTop50.toFixed(1)}px > dy(0-50)=${dyBot50.toFixed(1)}px, evap(Low/Tall)=${(lowEvap/tallEvap).toFixed(2)}x`
       );
     }
 

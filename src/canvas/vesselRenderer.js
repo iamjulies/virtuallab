@@ -12,10 +12,14 @@ import { renderVesselSolids } from './chemicalVisuals.js';
 function getThemePalette(isDark) {
   return isDark
     ? {
-        glassStroke: 'rgba(148, 163, 184, 0.78)',
-        glassHighlight: 'rgba(255, 255, 255, 0.22)',
+        glassStroke: 'rgba(148, 163, 184, 0.82)',
+        glassHighlight: 'rgba(255, 255, 255, 0.24)',
         glassFill: 'rgba(148, 163, 184, 0.08)',
-        tickStroke: 'rgba(226, 232, 240, 0.5)',
+        tickStroke: 'rgba(241, 245, 249, 0.68)',
+        tickMinor: 'rgba(226, 232, 240, 0.36)',
+        enamelText: 'rgba(241, 245, 249, 0.78)',
+        writePatchBg: 'rgba(248, 250, 252, 0.14)',
+        writePatchBorder: 'rgba(241, 245, 249, 0.38)',
         textPrimary: '#f1f5f9',
         textMuted: '#94a3b8',
         badgeBg: 'rgba(15, 23, 42, 0.85)',
@@ -29,10 +33,14 @@ function getThemePalette(isDark) {
         burnerMetal: '#64748b',
       }
     : {
-        glassStroke: 'rgba(71, 85, 105, 0.72)',
-        glassHighlight: 'rgba(255, 255, 255, 0.58)',
+        glassStroke: 'rgba(71, 85, 105, 0.78)',
+        glassHighlight: 'rgba(255, 255, 255, 0.62)',
         glassFill: 'rgba(226, 232, 240, 0.22)',
-        tickStroke: 'rgba(51, 65, 85, 0.45)',
+        tickStroke: 'rgba(30, 41, 59, 0.58)',
+        tickMinor: 'rgba(51, 65, 85, 0.32)',
+        enamelText: 'rgba(15, 23, 42, 0.68)',
+        writePatchBg: 'rgba(255, 255, 255, 0.65)',
+        writePatchBorder: 'rgba(100, 116, 139, 0.42)',
         textPrimary: '#0f172a',
         textMuted: '#475569',
         badgeBg: 'rgba(255, 255, 255, 0.9)',
@@ -48,75 +56,123 @@ function getThemePalette(isDark) {
 }
 
 /**
- * Trace the interior clipping path for each vessel shape.
+ * Exact volume (mL) -> vertical Y coordinate & inner fluid geometry for ISO glassware.
+ * Ensures graduation tick marks match liquid meniscus levels cleanly for conical and cylindrical vessels.
  */
-function traceVesselPath(ctx, shape, x, y, w, h) {
+export function computeVesselFluidGeometry(spec, y, volMl = 0) {
+  const w = spec.width;
+  const h = spec.height;
+  const halfW = w / 2;
+  const top = y - h / 2;
+  const bottom = y + h / 2;
+  const interiorBottom = bottom - (spec.shape === 'cylinder' ? 9 : 3.5);
+  const interiorHeight = h - (spec.shape === 'cylinder' ? 18 : 13);
+  const neckEnd = top + h * 0.28;
+  const neckHalf = spec.neckRadius || 18.5;
+
+  const volumeMlToY = (ml) => {
+    const vFrac = Math.max(0, ml / Math.max(1, spec.maxVolumeMl));
+    if (spec.shape === 'erlenmeyer') {
+      const coneH = Math.max(10, interiorBottom - neckEnd);
+      const r0 = halfW - 3;
+      const r1 = neckHalf - 2;
+      if (vFrac <= 1.0) {
+        const rAtV = Math.cbrt(r0 * r0 * r0 + vFrac * (r1 * r1 * r1 - r0 * r0 * r0));
+        const coneFrac = (rAtV - r0) / (r1 - r0);
+        return interiorBottom - coneFrac * coneH;
+      }
+      return Math.max(top + 6, neckEnd - (vFrac - 1.0) * (neckEnd - top) * 2.2);
+    }
+    const heightFrac = Math.min(0.94, vFrac * 0.82);
+    return interiorBottom - heightFrac * interiorHeight;
+  };
+
+  return {
+    top,
+    bottom,
+    interiorBottom,
+    interiorHeight,
+    neckEnd,
+    neckHalf,
+    surfaceY: volumeMlToY(volMl),
+    volumeMlToY,
+  };
+}
+
+/**
+ * Trace the outer glass silhouette path for each ISO vessel shape.
+ */
+function traceVesselPath(ctx, spec, x, y) {
+  const w = spec.width;
+  const h = spec.height;
   const halfW = w / 2;
   const top = y - h / 2;
   const bottom = y + h / 2;
 
   ctx.beginPath();
-  if (shape === 'beaker') {
-    const r = 10;
-    ctx.moveTo(x - halfW - 5, top);
-    ctx.lineTo(x - halfW, top + 8);
+  if (spec.shape === 'beaker') {
+    const r = 7;
+    // Left pouring spout (mỏ rót) + flared ISO 3819 reinforced rim
+    ctx.moveTo(x - halfW - 6, top);
+    ctx.lineTo(x - halfW, top + 6);
     ctx.lineTo(x - halfW, bottom - r);
     ctx.quadraticCurveTo(x - halfW, bottom, x - halfW + r, bottom);
     ctx.lineTo(x + halfW - r, bottom);
     ctx.quadraticCurveTo(x + halfW, bottom, x + halfW, bottom - r);
-    ctx.lineTo(x + halfW, top + 8);
-    ctx.lineTo(x + halfW + 4, top);
-  } else if (shape === 'erlenmeyer') {
-    const neckHalf = 16;
+    ctx.lineTo(x + halfW, top + 6);
+    ctx.lineTo(x + halfW + 3, top);
+  } else if (spec.shape === 'erlenmeyer') {
+    const neckHalf = spec.neckRadius || 18.5;
     const neckEnd = top + h * 0.28;
-    const r = 14;
-    ctx.moveTo(x - neckHalf - 4, top);
-    ctx.lineTo(x - neckHalf, top + 6);
+    const r = 12;
+    // Rolled ISO 1773 narrow-neck lip -> conical body
+    ctx.moveTo(x - neckHalf - 3.5, top);
+    ctx.lineTo(x - neckHalf, top + 5.5);
     ctx.lineTo(x - neckHalf, neckEnd);
     ctx.lineTo(x - halfW, bottom - r);
     ctx.quadraticCurveTo(x - halfW, bottom, x - halfW + r, bottom);
     ctx.lineTo(x + halfW - r, bottom);
     ctx.quadraticCurveTo(x + halfW, bottom, x + halfW, bottom - r);
     ctx.lineTo(x + neckHalf, neckEnd);
-    ctx.lineTo(x + neckHalf, top + 6);
-    ctx.lineTo(x + neckHalf + 4, top);
-  } else if (shape === 'test_tube') {
+    ctx.lineTo(x + neckHalf, top + 5.5);
+    ctx.lineTo(x + neckHalf + 3.5, top);
+  } else if (spec.shape === 'test_tube') {
     const r = halfW;
-    ctx.moveTo(x - halfW - 4, top);
+    ctx.moveTo(x - halfW - 3.5, top);
     ctx.lineTo(x - halfW, top + 5);
     ctx.lineTo(x - halfW, bottom - r);
     ctx.arc(x, bottom - r, r, Math.PI, 0, true);
     ctx.lineTo(x + halfW, top + 5);
-    ctx.lineTo(x + halfW + 4, top);
-  } else if (shape === 'cylinder') {
-    const r = 4;
-    ctx.moveTo(x - halfW - 3, top);
+    ctx.lineTo(x + halfW + 3.5, top);
+  } else if (spec.shape === 'cylinder') {
+    ctx.moveTo(x - halfW - 4, top);
     ctx.lineTo(x - halfW, top + 5);
     ctx.lineTo(x - halfW, bottom - 8);
     ctx.lineTo(x + halfW, bottom - 8);
     ctx.lineTo(x + halfW, top + 5);
-    ctx.lineTo(x + halfW + 3, top);
-    ctx.moveTo(x - halfW - 14, bottom);
-    ctx.lineTo(x + halfW + 14, bottom);
+    ctx.lineTo(x + halfW + 2.5, top);
+    ctx.moveTo(x - halfW - 11, bottom);
+    ctx.lineTo(x + halfW + 11, bottom);
     ctx.lineTo(x + halfW, bottom - 8);
     ctx.lineTo(x - halfW, bottom - 8);
     ctx.closePath();
-    return;
   }
 }
 
 /**
  * Trace closed interior liquid-clipping area.
  */
-function traceVesselInteriorClip(ctx, shape, x, y, w, h) {
-  const pad = 2.5;
+function traceVesselInteriorClip(ctx, spec, x, y) {
+  const w = spec.width;
+  const h = spec.height;
+  const pad = spec.shape === 'beaker' ? 2.8 : 2.2;
   const halfW = w / 2 - pad;
   const top = y - h / 2 + 4;
-  const bottom = y + h / 2 - (shape === 'cylinder' ? 9 : 2.5);
+  const bottom = y + h / 2 - (spec.shape === 'cylinder' ? 9 : 3.5);
 
   ctx.beginPath();
-  if (shape === 'beaker') {
-    const r = 8;
+  if (spec.shape === 'beaker') {
+    const r = 6;
     ctx.moveTo(x - halfW, top);
     ctx.lineTo(x - halfW, bottom - r);
     ctx.quadraticCurveTo(x - halfW, bottom, x - halfW + r, bottom);
@@ -124,10 +180,10 @@ function traceVesselInteriorClip(ctx, shape, x, y, w, h) {
     ctx.quadraticCurveTo(x + halfW, bottom, x + halfW, bottom - r);
     ctx.lineTo(x + halfW, top);
     ctx.closePath();
-  } else if (shape === 'erlenmeyer') {
-    const neckHalf = 14;
-    const neckEnd = top + h * 0.26;
-    const r = 12;
+  } else if (spec.shape === 'erlenmeyer') {
+    const neckHalf = (spec.neckRadius || 18.5) - 2.0;
+    const neckEnd = y - h / 2 + h * 0.28;
+    const r = 10;
     ctx.moveTo(x - neckHalf, top);
     ctx.lineTo(x - neckHalf, neckEnd);
     ctx.lineTo(x - halfW, bottom - r);
@@ -137,14 +193,14 @@ function traceVesselInteriorClip(ctx, shape, x, y, w, h) {
     ctx.lineTo(x + neckHalf, neckEnd);
     ctx.lineTo(x + neckHalf, top);
     ctx.closePath();
-  } else if (shape === 'test_tube') {
+  } else if (spec.shape === 'test_tube') {
     const r = halfW;
     ctx.moveTo(x - halfW, top);
     ctx.lineTo(x - halfW, bottom - r);
     ctx.arc(x, bottom - r, r, Math.PI, 0, true);
     ctx.lineTo(x + halfW, top);
     ctx.closePath();
-  } else if (shape === 'cylinder') {
+  } else if (spec.shape === 'cylinder') {
     ctx.rect(x - halfW, top, halfW * 2, bottom - top);
   }
 }
@@ -436,20 +492,17 @@ export function renderVessel(ctx, vessel, opts) {
 
   // Draw subtle glass interior fill first
   ctx.save();
-  traceVesselInteriorClip(ctx, spec.shape, x, y, w, h);
+  traceVesselInteriorClip(ctx, spec, x, y);
   ctx.fillStyle = pal.glassFill;
   ctx.fill();
   ctx.clip();
 
-  // Compute liquid & solid levels
+  // Compute liquid & solid levels calibrated to ISO graduation geometry
   const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
   const liqMl = liqL * 1000;
   const solMl = computeSolidVolumeMl(vessel.moles);
-  const totalFillFrac = Math.min(0.92, (liqMl + solMl) / spec.maxVolumeMl);
-
-  const interiorBottom = bottom - (spec.shape === 'cylinder' ? 9 : 3);
-  const interiorHeight = h - (spec.shape === 'cylinder' ? 18 : 14);
-  const surfaceY = interiorBottom - totalFillFrac * interiorHeight;
+  const geom = computeVesselFluidGeometry(spec, y, liqMl + solMl);
+  const { interiorBottom, interiorHeight, surfaceY, neckEnd, neckHalf, volumeMlToY } = geom;
   const hasWater = (vessel.moles.H2O_l || 0) > 1e-7 && liqMl > 0.15;
 
   // Draw liquid body using Beer-Lambert + Phenolphthalein color
@@ -504,9 +557,9 @@ export function renderVessel(ctx, vessel, opts) {
 
   ctx.restore(); // Remove clip
 
-  // Draw glass outer silhouette
+  // Draw glass outer silhouette + ISO reinforced wall feel
   ctx.shadowBlur = 0;
-  traceVesselPath(ctx, spec.shape, x, y, w, h);
+  traceVesselPath(ctx, spec, x, y);
   ctx.strokeStyle = vessel.isShattered
     ? '#ef4444'
     : isDropTarget
@@ -514,45 +567,146 @@ export function renderVessel(ctx, vessel, opts) {
     : isSelected
     ? '#3b82f6'
     : pal.glassStroke;
-  ctx.lineWidth = isSelected || isDropTarget ? 2.4 : 1.8;
+  ctx.lineWidth = isSelected || isDropTarget ? 2.5 : spec.wallThicknessMm >= 1.1 ? 2.1 : 1.75;
   ctx.stroke();
 
-  // Glass vertical specular highlight
+  // Glass vertical specular highlight & bottom heavy-base tint
   ctx.strokeStyle = pal.glassHighlight;
   ctx.lineWidth = 2;
   ctx.beginPath();
   if (spec.shape === 'erlenmeyer') {
-    ctx.moveTo(x - 10, top + h * 0.32);
-    ctx.lineTo(x - w * 0.36, bottom - 16);
+    ctx.moveTo(x - neckHalf + 4, top + h * 0.28);
+    ctx.lineTo(x - w * 0.36, bottom - 15);
   } else {
-    ctx.moveTo(x - w * 0.35, top + 14);
-    ctx.lineTo(x - w * 0.35, bottom - 14);
+    ctx.moveTo(x - w * 0.33, top + 12);
+    ctx.lineTo(x - w * 0.33, bottom - 12);
   }
   ctx.stroke();
 
-  // Graduation tick marks
-  ctx.strokeStyle = pal.tickStroke;
-  ctx.lineWidth = 1;
-  const ticks = spec.shape === 'cylinder' ? 5 : 4;
-  for (let i = 1; i <= ticks; i++) {
-    const ty = interiorBottom - (i / (ticks + 0.5)) * interiorHeight;
-    const tw = i % 2 === 0 ? 12 : 7;
+  // White ceramic enamel ISO graduations + frosted write-on patch
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 8px system-ui, sans-serif';
+  if (spec.shape === 'beaker') {
+    const marks = [25, 50, 75, 100, 125, 150, 175, 200, 225, 250];
+    for (const ml of marks) {
+      const ty = volumeMlToY(ml);
+      const isMajor = ml % 50 === 0;
+      const tickX = x - w * 0.32;
+      const tickLen = isMajor ? 9 : 5;
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.1 : 0.8;
+      ctx.beginPath();
+      ctx.moveTo(tickX, ty);
+      ctx.lineTo(tickX + tickLen, ty);
+      ctx.stroke();
+      if (isMajor && ml < 250) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'left';
+        ctx.fillText(String(ml), tickX + 11, ty + 0.5);
+      }
+    }
+    // Frosted write-on enamel label patch
+    const patchW = spec.formVariant === 'tall' ? 17 : 19;
+    const patchH = spec.formVariant === 'tall' ? 23 : 20;
+    const patchX = x + w * 0.17;
+    const patchY = top + h * 0.28;
+    ctx.fillStyle = pal.writePatchBg;
+    ctx.strokeStyle = pal.writePatchBorder;
+    ctx.lineWidth = 0.8;
     ctx.beginPath();
-    ctx.moveTo(x - w * 0.22, ty);
-    ctx.lineTo(x - w * 0.22 + tw, ty);
+    ctx.roundRect(patchX, patchY, patchW, patchH, 2.5);
+    ctx.fill();
     ctx.stroke();
+    ctx.fillStyle = pal.enamelText;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 7.5px system-ui, sans-serif';
+    ctx.fillText('250', patchX + patchW / 2, patchY + 7);
+    ctx.font = '600 6.5px system-ui, sans-serif';
+    ctx.fillText('mL', patchX + patchW / 2, patchY + 15);
+  } else if (spec.shape === 'erlenmeyer') {
+    // Non-linear conical graduations matching frustum height-volume geometry
+    const marks = [50, 100, 150, 200, 250];
+    const coneH = Math.max(10, interiorBottom - neckEnd);
+    for (const ml of marks) {
+      const ty = volumeMlToY(ml);
+      const fracFromBot = Math.max(0, Math.min(1, (interiorBottom - ty) / coneH));
+      const localHalf = w / 2 - fracFromBot * (w / 2 - neckHalf);
+      const tickX = x - localHalf * 0.72;
+      const tickLen = ml === 250 ? 6 : ml === 100 || ml === 200 ? 9 : 5.5;
+      ctx.strokeStyle = pal.tickStroke;
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(tickX, ty);
+      ctx.lineTo(tickX + tickLen, ty);
+      ctx.stroke();
+      if (ml === 100 || ml === 200 || ml === 250) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'left';
+        ctx.fillText(String(ml), tickX + tickLen + 2, ty + 0.5);
+      }
+    }
+    // Frosted write-on enamel patch on slanted conical shoulder
+    const patchW = 20;
+    const patchH = 22;
+    const patchX = x + 9;
+    const patchY = bottom - 46;
+    ctx.fillStyle = pal.writePatchBg;
+    ctx.strokeStyle = pal.writePatchBorder;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.roundRect(patchX, patchY, patchW, patchH, 2.5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = pal.enamelText;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 7.5px system-ui, sans-serif';
+    ctx.fillText('250', patchX + patchW / 2, patchY + 7.5);
+    ctx.font = '600 6.5px system-ui, sans-serif';
+    ctx.fillText('ISO', patchX + patchW / 2, patchY + 15.5);
+  } else if (spec.shape === 'cylinder') {
+    for (let ml = 10; ml <= 100; ml += 10) {
+      const ty = volumeMlToY(ml);
+      const isMajor = ml % 20 === 0;
+      const tickX = x - w * 0.34;
+      const tickLen = isMajor ? 10 : 5;
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.1 : 0.8;
+      ctx.beginPath();
+      ctx.moveTo(tickX, ty);
+      ctx.lineTo(tickX + tickLen, ty);
+      ctx.stroke();
+      if (isMajor) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'left';
+        ctx.font = '600 7.5px system-ui, sans-serif';
+        ctx.fillText(String(ml), tickX + 11.5, ty + 0.5);
+      }
+    }
+  } else {
+    // Test tube reference marks (10..40 mL)
+    for (let ml = 10; ml <= 40; ml += 10) {
+      const ty = volumeMlToY(ml);
+      ctx.strokeStyle = pal.tickMinor;
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(x - w * 0.25, ty);
+      ctx.lineTo(x - w * 0.25 + 7, ty);
+      ctx.stroke();
+    }
   }
 
-  // Rubber stopper on narrow-neck vessels
+  // Rubber stopper on narrow-neck vessels sized proportionally to neck ID
   if (vessel.isStoppered && !vessel.isShattered) {
+    const stopTop = Math.max(15, (spec.neckRadius || 18) + 1.5);
+    const stopBot = Math.max(11, (spec.neckRadius || 18) - 3);
     ctx.fillStyle = '#334155';
     ctx.strokeStyle = '#1e293b';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(x - 18, top - 9);
-    ctx.lineTo(x + 18, top - 9);
-    ctx.lineTo(x + 14, top + 9);
-    ctx.lineTo(x - 14, top + 9);
+    ctx.moveTo(x - stopTop, top - 8);
+    ctx.lineTo(x + stopTop, top - 8);
+    ctx.lineTo(x + stopBot, top + 9);
+    ctx.lineTo(x - stopBot, top + 9);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();

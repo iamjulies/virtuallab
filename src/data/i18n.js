@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.8',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.9',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envPress: 'Áp suất',
@@ -32,7 +32,8 @@ export const I18N = {
     pureFormNote: 'Chỉ cung cấp dạng bền nhất — tự pha chế & điều chế',
 
     // Equipment labels
-    eq_beaker_250: 'Cốc thủy tinh 250 mL',
+    eq_beaker_250: 'Cốc 250 mL (Thấp)',
+    eq_beaker_tall_250: 'Cốc 250 mL (Cao)',
     eq_erlenmeyer_250: 'Bình Erlenmeyer 250 mL',
     eq_test_tube_50: 'Ống nghiệm 50 mL',
     eq_cylinder_100: 'Ống đong chia vạch 100 mL',
@@ -158,7 +159,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.8',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.9',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envPress: 'Pressure',
@@ -182,7 +183,8 @@ export const I18N = {
     reagentsHint: 'Drag & drop onto a vessel, or select a vessel and meter precisely',
     pureFormNote: 'Pure stable forms only — prepare & dilute solutions yourself',
 
-    eq_beaker_250: 'Beaker 250 mL',
+    eq_beaker_250: 'Beaker 250 mL (Low)',
+    eq_beaker_tall_250: 'Beaker 250 mL (Tall)',
     eq_erlenmeyer_250: 'Erlenmeyer Flask 250 mL',
     eq_test_tube_50: 'Test Tube 50 mL',
     eq_cylinder_100: 'Graduated Cylinder 100 mL',

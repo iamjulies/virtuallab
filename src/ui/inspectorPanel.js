@@ -41,7 +41,7 @@ function formatGasSummaryHtml(gasMap = {}) {
       parts.push(`<span class="whitespace-nowrap">${g.label}: ${(val * 1000).toFixed(2)} mmol</span>`);
     }
   }
-  return parts.join('<span class="text-muted"> · </span>');
+  return parts.join('<span class="text-muted px-1">·</span>');
 }
 
 export class InspectorPanel {
@@ -203,6 +203,7 @@ export class InspectorPanel {
           <div class="flex items-center justify-between gap-2">
             <div>
               <div class="text-sm font-bold">${t(spec.i18nKey)} ${item.label}</div>
+              ${spec.isoStandard ? `<div class="text-[11px] text-muted">${spec.materialSpec} · ${spec.isoStandard}</div>` : ''}
               <div class="text-xs text-muted" id="live-state-label">${stateLabel}</div>
             </div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>

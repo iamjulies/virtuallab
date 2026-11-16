@@ -1,5 +1,6 @@
 import { APPARATUS } from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl } from '../engine/equilibrium.js';
+import { computeVesselFluidGeometry } from './vesselRenderer.js';
 
 export class ParticleSystem {
   constructor() {
@@ -20,13 +21,12 @@ export class ParticleSystem {
 
     const liqMl = computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000;
     const solMl = computeSolidVolumeMl(vessel.moles);
-    const fillFrac = Math.min(0.92, (liqMl + solMl) / spec.maxVolumeMl);
-
-    const interiorH = spec.height - 16;
-    const bottomY = vessel.y + spec.height / 2 - 6;
-    const surfaceY = bottomY - fillFrac * interiorH;
+    const geom = computeVesselFluidGeometry(spec, vessel.y, liqMl + solMl);
+    const bottomY = geom.interiorBottom;
+    const surfaceY = geom.surfaceY;
+    const fillFrac = Math.min(0.95, Math.max(0, (bottomY - surfaceY) / Math.max(10, geom.interiorHeight)));
     const halfW = spec.shape === 'erlenmeyer'
-      ? Math.max(18, (spec.width * 0.42) * (1 - fillFrac * 0.55))
+      ? Math.max(15, (spec.width * 0.42) * (1 - fillFrac * 0.62))
       : spec.width * 0.36;
 
     // 1. Gas bubbles (H2 / O2) inside liquid

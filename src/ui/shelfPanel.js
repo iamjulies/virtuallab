@@ -4,9 +4,11 @@ import { STARTER_REAGENTS } from '../data/species.js';
 function apparatusSvg(typeId) {
   switch (typeId) {
     case 'beaker_250':
-      return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 7l2 2v17a3 3 0 003 3h10a3 3 0 003-3V9l2-2"/><path d="M13 15h4M13 20h6M13 25h4" opacity="0.6"/></svg>`;
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 10l3 2.5v14.5a3 3 0 003 3h14a3 3 0 003-3V12l2-2"/><path d="M12 16h5M12 21h7M12 26h5" opacity="0.6"/></svg>`;
+    case 'beaker_tall_250':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6l3 2.5v18.5a3 3 0 003 3h8a3 3 0 003-3V8.5l2-2.5"/><path d="M14 13h4M14 18h6M14 23h4" opacity="0.6"/></svg>`;
     case 'erlenmeyer_250':
-      return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 6h8M15 6v7l-7 13a3 3 0 002.6 4h14.8a3 3 0 002.6-4l-7-13V6"/><path d="M12 24h12" opacity="0.5"/></svg>`;
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 6h10M14.5 6v6.5l-7 13.5a3 3 0 002.6 4h15.8a3 3 0 002.6-4l-7-13.5V6"/><path d="M12 23h12" opacity="0.5"/></svg>`;
     case 'test_tube_50':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 6h10M14 6v19a4 4 0 008 0V6"/><path d="M15 18h6" opacity="0.5"/></svg>`;
     case 'cylinder_100':

@@ -166,17 +166,17 @@ export class LabSimulation {
     this.nextId = 1;
 
     if (presetName === 'gas_collect') {
-      const flask = this.createApparatus('erlenmeyer_250', 300, 406);
+      const flask = this.createApparatus('erlenmeyer_250', 300, 482 - APPARATUS.erlenmeyer_250.height / 2 + 2);
       const syringe = this.createApparatus('gas_syringe', 620, 345);
-      const burner = this.createApparatus('burner', 140, 426);
+      const burner = this.createApparatus('burner', 140, 482 - APPARATUS.burner.height / 2 + 2);
       this.connectSyringe(flask.id, syringe.id);
       this.selectedId = flask.id;
     } else {
-      // Default clean bench: Scale + Beaker + Burner ready to go
-      const scale = this.createApparatus('scale', 220, 451);
-      const beaker = this.createApparatus('beaker_250', 220, 355);
-      const burner = this.createApparatus('burner', 560, 426);
-      const flask = this.createApparatus('erlenmeyer_250', 760, 406);
+      // Default clean bench: Scale + ISO Beaker + Burner + ISO Erlenmeyer
+      const scale = this.createApparatus('scale', 220, 482 - APPARATUS.scale.height / 2);
+      const beaker = this.createApparatus('beaker_250', 220, 482 - APPARATUS.scale.height - APPARATUS.beaker_250.height / 2 + 2);
+      const burner = this.createApparatus('burner', 560, 482 - APPARATUS.burner.height / 2 + 2);
+      const flask = this.createApparatus('erlenmeyer_250', 760, 482 - APPARATUS.erlenmeyer_250.height / 2 + 2);
       this.updateSupportAttachments();
       this.selectedId = beaker.id;
     }
