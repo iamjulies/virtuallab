@@ -24,10 +24,7 @@ export class ParticleSystem {
     const geom = computeVesselFluidGeometry(spec, vessel.y, liqMl + solMl);
     const bottomY = geom.interiorBottom;
     const surfaceY = geom.surfaceY;
-    const fillFrac = Math.min(0.95, Math.max(0, (bottomY - surfaceY) / Math.max(10, geom.interiorHeight)));
-    const halfW = spec.shape === 'erlenmeyer'
-      ? Math.max(15, (spec.width * 0.42) * (1 - fillFrac * 0.62))
-      : spec.width * 0.36;
+    const halfW = Math.max(6, geom.surfaceHalfWPx || spec.width * 0.34);
 
     // 1. Gas bubbles (H2 / O2) inside liquid
     const gasIntensity = metrics.gasRateH2 + metrics.gasRateO2;

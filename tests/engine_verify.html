@@ -480,6 +480,34 @@
       );
     }
 
+    // TEST 17: VesselGeometry frustum profile drives dynamic Dalton evaporation (narrow neck < wide cone belly, & test tube heel tapers)
+    {
+      const erlGeom = APPARATUS.erlenmeyer_250.geometry;
+      const tubeGeom = APPARATUS.test_tube_50.geometry;
+      const s250 = erlGeom.getLiquidState(250);
+      const s60 = erlGeom.getLiquidState(60);
+      const tLow = tubeGeom.getLiquidState(1.0);
+      const tMid = tubeGeom.getLiquidState(25.0);
+
+      // Compare Erlenmeyer evaporation rate when filled near narrow neck (245 mL) vs mid wide belly (70 mL)
+      const sim = new LabSimulation();
+      const fFull = sim.createApparatus('erlenmeyer_250', 250, 350);
+      const fLow = sim.createApparatus('erlenmeyer_250', 500, 350);
+      sim.addReagentToVessel(fFull.id, 'h2o', 245);
+      sim.addReagentToVessel(fLow.id, 'h2o', 70);
+      fFull.tempK = 353.15;
+      fLow.tempK = 353.15;
+      stepSeconds(sim, 4.0, 0.05);
+      const evapFull = fFull.escapedGasMoles.H2O_g || 0;
+      const evapLow = fLow.escapedGasMoles.H2O_g || 0;
+
+      assert(
+        'VesselGeometry dynamic surface area: Erlenmeyer widens as water drops (70 mL evaporates >3x faster than 245 mL) & U-bottom tapers cleanly',
+        s60.surfaceAreaCm2 > s250.surfaceAreaCm2 * 3.5 && tLow.surfaceAreaCm2 < tMid.surfaceAreaCm2 && evapLow > evapFull * 3.0,
+        `A(60mL)=${s60.surfaceAreaCm2.toFixed(1)} vs A(250mL)=${s250.surfaceAreaCm2.toFixed(1)}cm², evap(70/245)=${(evapLow/evapFull).toFixed(2)}x`
+      );
+    }
+
     // Render test report
     const passed = results.filter(r => r.pass).length;
     document.getElementById('summary').innerHTML = `<span class="${passed === results.length ? 'pass' : 'fail'}">${passed} / ${results.length} tests passed</span>`;

@@ -6,6 +6,7 @@ import {
 } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
+import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
 
 /**
  * Compute total heat capacity C_total (J/K) of vessel + contents.
@@ -109,7 +110,12 @@ export function stepVesselThermodynamics(
     const pSurfMmHg = xH2O * waterVaporPressureMmHg(vessel.tempK);
     const pAmbMmHg = CONSTANTS.RELATIVE_HUMIDITY * waterVaporPressureMmHg(env.tempK);
     const deltaPMmHg = Math.max(0, pSurfMmHg - pAmbMmHg);
-    const areaCm2 = spec.surfaceAreaCm2 || 20.0;
+    const volMl =
+      computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000 +
+      computeSolidVolumeMl(vessel.moles);
+    const areaCm2 = spec.geometry
+      ? Math.max(0.2, spec.geometry.getLiquidState(volMl).surfaceAreaCm2)
+      : spec.surfaceAreaCm2 || 20.0;
     const km = 2.4e-6 * (vessel.stirTimer > 0 ? 2.0 : 1.0); // g / (cm^2 * s * mmHg)
     const evapMolS = (km * areaCm2 * deltaPMmHg) / CONSTANTS.M_H2O;
     const subBoilEvap = Math.min(nWater, evapMolS * dt);

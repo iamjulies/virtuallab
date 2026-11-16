@@ -1,7 +1,9 @@
+import { VesselGeometry } from './vesselGeometry.js';
+
 /**
  * Apparatus specifications calibrated to ISO / DIN international glassware standards
  * (ISO 3819 / DIN 12331 Beakers, ISO 1773 / DIN 12380 Erlenmeyer, ISO 4788 Cylinder, ISO 4142 Test Tube).
- * Canvas uses a consistent ~1.15 px/mm visual scale across glassware.
+ * Glassware liquid height, radius & Dalton surface area derive directly from VesselGeometry slice profiles.
  */
 export const APPARATUS = {
   beaker_250: {
@@ -26,8 +28,15 @@ export const APPARATUS = {
     popPressureBar: null,
     shatterPressureBar: null,
     heatLossCoeffWK: 0.45,
-    surfaceAreaCm2: 36.1, // pi * (3.39 cm)^2 inner ID (~67.8 mm)
+    surfaceAreaCm2: 39.6,
     opticalPathCm: 6.78,
+    geometry: new VesselGeometry([
+      [0.0, 3.10], // Flat contact base inside rounded heel
+      [0.3, 3.45], // Lower corner fillet
+      [0.7, 3.55], // Full inner cylindrical wall (~71 mm ID)
+      [8.6, 3.55], // Straight vertical cylinder
+      [9.3, 3.85], // Slightly flared top rim
+    ]),
   },
   beaker_tall_250: {
     id: 'beaker_tall_250',
@@ -51,15 +60,22 @@ export const APPARATUS = {
     popPressureBar: null,
     shatterPressureBar: null,
     heatLossCoeffWK: 0.43,
-    surfaceAreaCm2: 26.2, // pi * (2.89 cm)^2 inner ID (~57.8 mm)
+    surfaceAreaCm2: 26.8,
     opticalPathCm: 5.78,
+    geometry: new VesselGeometry([
+      [0.0, 2.52],
+      [0.3, 2.84],
+      [0.7, 2.92],
+      [11.2, 2.92],
+      [11.9, 3.16],
+    ]),
   },
   erlenmeyer_250: {
     id: 'erlenmeyer_250',
     kind: 'vessel',
     shape: 'erlenmeyer',
     i18nKey: 'eq_erlenmeyer_250',
-    isoStandard: 'ISO 1773 · DIN 12380 (Ø85×144 mm, cổ Ø32 mm)',
+    isoStandard: 'ISO 1773 · DIN 12380 (Ø85×144 mm · Ø32 mm)',
     materialSpec: 'Borosilicate 3.3',
     diameterMm: 85,
     heightMm: 144,
@@ -78,6 +94,14 @@ export const APPARATUS = {
     heatLossCoeffWK: 0.38,
     surfaceAreaCm2: 12.5,
     opticalPathCm: 7.2,
+    geometry: new VesselGeometry([
+      [0.0, 3.35],  // Flat base contact
+      [0.25, 3.85], // Rounded bottom heel (lower)
+      [0.7, 4.10],  // Widest lower belly
+      [9.2, 1.55],  // Conical body tapering to shoulder
+      [12.6, 1.55], // Cylindrical neck
+      [13.4, 1.80], // Flared neck rim
+    ]),
   },
   test_tube_50: {
     id: 'test_tube_50',
@@ -100,8 +124,17 @@ export const APPARATUS = {
     popPressureBar: 1.45,
     shatterPressureBar: 2.5,
     heatLossCoeffWK: 0.22,
-    surfaceAreaCm2: 4.1,
+    surfaceAreaCm2: 4.0,
     opticalPathCm: 2.3,
+    geometry: new VesselGeometry([
+      [0.0, 0.08],  // U-bottom pole
+      [0.15, 0.56],
+      [0.40, 0.87],
+      [0.75, 1.07],
+      [1.13, 1.13], // Full inner tube radius
+      [14.3, 1.13], // Cylindrical wall
+      [14.9, 1.28], // Flared lip
+    ]),
   },
   cylinder_100: {
     id: 'cylinder_100',
@@ -124,8 +157,13 @@ export const APPARATUS = {
     popPressureBar: null,
     shatterPressureBar: null,
     heatLossCoeffWK: 0.30,
-    surfaceAreaCm2: 6.2,
+    surfaceAreaCm2: 6.16,
     opticalPathCm: 2.9,
+    geometry: new VesselGeometry([
+      [0.0, 1.40],
+      [19.4, 1.40],
+      [20.2, 1.54],
+    ]),
   },
   scale: {
     id: 'scale',

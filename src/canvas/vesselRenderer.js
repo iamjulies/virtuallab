@@ -56,153 +56,120 @@ function getThemePalette(isDark) {
 }
 
 /**
- * Exact volume (mL) -> vertical Y coordinate & inner fluid geometry for ISO glassware.
- * Ensures graduation tick marks match liquid meniscus levels cleanly for conical and cylindrical vessels.
+ * Map VesselGeometry profile points [yCm, rCm] onto canvas pixels at (x, y).
+ * Unified helper backing glass outline, liquid interior clip, meniscus, ticks & particles.
  */
-export function computeVesselFluidGeometry(spec, y, volMl = 0) {
+function mapProfileToCanvas(spec, x, y, padPx = 0) {
+  const geomDef = spec.geometry;
   const w = spec.width;
   const h = spec.height;
-  const halfW = w / 2;
   const top = y - h / 2;
   const bottom = y + h / 2;
-  const interiorBottom = bottom - (spec.shape === 'cylinder' ? 9 : 3.5);
-  const interiorHeight = h - (spec.shape === 'cylinder' ? 18 : 13);
-  const neckEnd = top + h * 0.28;
-  const neckHalf = spec.neckRadius || 18.5;
+  const footH = spec.shape === 'cylinder' ? 9 : 3.5;
+  const baseBottom = padPx > 0 ? bottom - footH : bottom - (spec.shape === 'cylinder' ? 8 : 0);
+  const topY = top + (padPx > 0 ? 4 : 0);
+  const spanH = Math.max(10, baseBottom - topY);
 
-  const volumeMlToY = (ml) => {
-    const vFrac = Math.max(0, ml / Math.max(1, spec.maxVolumeMl));
-    if (spec.shape === 'erlenmeyer') {
-      const coneH = Math.max(10, interiorBottom - neckEnd);
-      const r0 = halfW - 3;
-      const r1 = neckHalf - 2;
-      if (vFrac <= 1.0) {
-        const rAtV = Math.cbrt(r0 * r0 * r0 + vFrac * (r1 * r1 * r1 - r0 * r0 * r0));
-        const coneFrac = (rAtV - r0) / (r1 - r0);
-        return interiorBottom - coneFrac * coneH;
-      }
-      return Math.max(top + 6, neckEnd - (vFrac - 1.0) * (neckEnd - top) * 2.2);
-    }
-    const heightFrac = Math.min(0.94, vFrac * 0.82);
-    return interiorBottom - heightFrac * interiorHeight;
+  const scaleX = (w / 2) / geomDef.bodyMaxRadiusCm;
+  const scaleY = spanH / geomDef.maxHeightCm;
+
+  const pts = geomDef.profilePoints.map(([yCm, rCm]) => ({
+    cy: baseBottom - yCm * scaleY,
+    rx: Math.max(0, rCm * scaleX - padPx),
+  }));
+
+  return { pts, top, bottom, baseBottom, spanH, scaleX, scaleY };
+}
+
+/**
+ * Exact volume (mL) -> vertical Y coordinate & inner fluid geometry from VesselGeometry slices.
+ * Ensures graduation tick marks, meniscus width, particle bounds & Dalton evaporation match 1:1.
+ */
+export function computeVesselFluidGeometry(spec, y, volMl = 0) {
+  const geomDef = spec.geometry;
+  const { top, bottom, baseBottom, spanH, scaleX, scaleY } = mapProfileToCanvas(spec, xFallback(spec), y, 2.2);
+  const state = geomDef.getLiquidState(volMl);
+  const volumeMlToState = (ml) => {
+    const st = geomDef.getLiquidState(ml);
+    return {
+      cy: baseBottom - st.fillRatio * spanH,
+      halfWPx: Math.max(2, st.radiusCm * scaleX - 2.2),
+      surfaceAreaCm2: st.surfaceAreaCm2,
+    };
   };
 
   return {
     top,
     bottom,
-    interiorBottom,
-    interiorHeight,
-    neckEnd,
-    neckHalf,
-    surfaceY: volumeMlToY(volMl),
-    volumeMlToY,
+    interiorBottom: baseBottom,
+    interiorHeight: spanH,
+    scaleX,
+    scaleY,
+    neckHalf: spec.neckRadius || 18.5,
+    surfaceY: baseBottom - state.fillRatio * spanH,
+    surfaceHalfWPx: Math.max(2, state.radiusCm * scaleX - 2.2),
+    volumeMlToY: (ml) => volumeMlToState(ml).cy,
+    volumeMlToState,
   };
 }
 
+function xFallback() {
+  return 0;
+}
+
 /**
- * Trace the outer glass silhouette path for each ISO vessel shape.
+ * Trace the outer glass silhouette path directly from VesselGeometry profilePoints.
  */
 function traceVesselPath(ctx, spec, x, y) {
-  const w = spec.width;
-  const h = spec.height;
-  const halfW = w / 2;
-  const top = y - h / 2;
-  const bottom = y + h / 2;
+  const { pts, bottom, baseBottom } = mapProfileToCanvas(spec, x, y, 0);
+  const lastIdx = pts.length - 1;
+  const spoutLeftExtra = spec.shape === 'beaker' || spec.shape === 'cylinder' ? 3.5 : 0;
 
   ctx.beginPath();
-  if (spec.shape === 'beaker') {
-    const r = 7;
-    // Left pouring spout (mỏ rót) + flared ISO 3819 reinforced rim
-    ctx.moveTo(x - halfW - 6, top);
-    ctx.lineTo(x - halfW, top + 6);
-    ctx.lineTo(x - halfW, bottom - r);
-    ctx.quadraticCurveTo(x - halfW, bottom, x - halfW + r, bottom);
-    ctx.lineTo(x + halfW - r, bottom);
-    ctx.quadraticCurveTo(x + halfW, bottom, x + halfW, bottom - r);
-    ctx.lineTo(x + halfW, top + 6);
-    ctx.lineTo(x + halfW + 3, top);
-  } else if (spec.shape === 'erlenmeyer') {
-    const neckHalf = spec.neckRadius || 18.5;
-    const neckEnd = top + h * 0.28;
-    const r = 12;
-    // Rolled ISO 1773 narrow-neck lip -> conical body
-    ctx.moveTo(x - neckHalf - 3.5, top);
-    ctx.lineTo(x - neckHalf, top + 5.5);
-    ctx.lineTo(x - neckHalf, neckEnd);
-    ctx.lineTo(x - halfW, bottom - r);
-    ctx.quadraticCurveTo(x - halfW, bottom, x - halfW + r, bottom);
-    ctx.lineTo(x + halfW - r, bottom);
-    ctx.quadraticCurveTo(x + halfW, bottom, x + halfW, bottom - r);
-    ctx.lineTo(x + neckHalf, neckEnd);
-    ctx.lineTo(x + neckHalf, top + 5.5);
-    ctx.lineTo(x + neckHalf + 3.5, top);
-  } else if (spec.shape === 'test_tube') {
-    const r = halfW;
-    ctx.moveTo(x - halfW - 3.5, top);
-    ctx.lineTo(x - halfW, top + 5);
-    ctx.lineTo(x - halfW, bottom - r);
-    ctx.arc(x, bottom - r, r, Math.PI, 0, true);
-    ctx.lineTo(x + halfW, top + 5);
-    ctx.lineTo(x + halfW + 3.5, top);
-  } else if (spec.shape === 'cylinder') {
-    ctx.moveTo(x - halfW - 4, top);
-    ctx.lineTo(x - halfW, top + 5);
-    ctx.lineTo(x - halfW, bottom - 8);
-    ctx.lineTo(x + halfW, bottom - 8);
-    ctx.lineTo(x + halfW, top + 5);
-    ctx.lineTo(x + halfW + 2.5, top);
-    ctx.moveTo(x - halfW - 11, bottom);
-    ctx.lineTo(x + halfW + 11, bottom);
-    ctx.lineTo(x + halfW, bottom - 8);
-    ctx.lineTo(x - halfW, bottom - 8);
+  // Top-left rim -> descend left wall across bottom fillet -> cross base -> ascend right wall
+  ctx.moveTo(x - pts[lastIdx].rx - spoutLeftExtra, pts[lastIdx].cy);
+  for (let i = lastIdx - 1; i >= 0; i--) {
+    ctx.lineTo(x - pts[i].rx, pts[i].cy);
+  }
+  if (spec.shape === 'test_tube') {
+    // Smooth curve through rounded pole at i = 0
+    ctx.lineTo(x + pts[0].rx, pts[0].cy);
+  } else {
+    ctx.lineTo(x + pts[0].rx, pts[0].cy);
+  }
+  for (let i = 1; i <= lastIdx; i++) {
+    ctx.lineTo(x + pts[i].rx, pts[i].cy);
+  }
+
+  // Graduated cylinder stable pedestal base foot
+  if (spec.shape === 'cylinder') {
+    const halfBase = spec.width / 2 + 11;
+    ctx.moveTo(x - halfBase, bottom);
+    ctx.lineTo(x + halfBase, bottom);
+    ctx.lineTo(x + pts[0].rx, baseBottom);
+    ctx.lineTo(x - pts[0].rx, baseBottom);
     ctx.closePath();
   }
 }
 
 /**
- * Trace closed interior liquid-clipping area.
+ * Trace closed interior liquid-clipping area directly from VesselGeometry profilePoints.
  */
 function traceVesselInteriorClip(ctx, spec, x, y) {
-  const w = spec.width;
-  const h = spec.height;
-  const pad = spec.shape === 'beaker' ? 2.8 : 2.2;
-  const halfW = w / 2 - pad;
-  const top = y - h / 2 + 4;
-  const bottom = y + h / 2 - (spec.shape === 'cylinder' ? 9 : 3.5);
+  const pad = spec.shape === 'beaker' ? 2.6 : 2.1;
+  const { pts } = mapProfileToCanvas(spec, x, y, pad);
+  const lastIdx = pts.length - 1;
 
   ctx.beginPath();
-  if (spec.shape === 'beaker') {
-    const r = 6;
-    ctx.moveTo(x - halfW, top);
-    ctx.lineTo(x - halfW, bottom - r);
-    ctx.quadraticCurveTo(x - halfW, bottom, x - halfW + r, bottom);
-    ctx.lineTo(x + halfW - r, bottom);
-    ctx.quadraticCurveTo(x + halfW, bottom, x + halfW, bottom - r);
-    ctx.lineTo(x + halfW, top);
-    ctx.closePath();
-  } else if (spec.shape === 'erlenmeyer') {
-    const neckHalf = (spec.neckRadius || 18.5) - 2.0;
-    const neckEnd = y - h / 2 + h * 0.28;
-    const r = 10;
-    ctx.moveTo(x - neckHalf, top);
-    ctx.lineTo(x - neckHalf, neckEnd);
-    ctx.lineTo(x - halfW, bottom - r);
-    ctx.quadraticCurveTo(x - halfW, bottom, x - halfW + r, bottom);
-    ctx.lineTo(x + halfW - r, bottom);
-    ctx.quadraticCurveTo(x + halfW, bottom, x + halfW, bottom - r);
-    ctx.lineTo(x + neckHalf, neckEnd);
-    ctx.lineTo(x + neckHalf, top);
-    ctx.closePath();
-  } else if (spec.shape === 'test_tube') {
-    const r = halfW;
-    ctx.moveTo(x - halfW, top);
-    ctx.lineTo(x - halfW, bottom - r);
-    ctx.arc(x, bottom - r, r, Math.PI, 0, true);
-    ctx.lineTo(x + halfW, top);
-    ctx.closePath();
-  } else if (spec.shape === 'cylinder') {
-    ctx.rect(x - halfW, top, halfW * 2, bottom - top);
+  ctx.moveTo(x - pts[lastIdx].rx, pts[lastIdx].cy);
+  for (let i = lastIdx - 1; i >= 0; i--) {
+    ctx.lineTo(x - pts[i].rx, pts[i].cy);
   }
+  ctx.lineTo(x + pts[0].rx, pts[0].cy);
+  for (let i = 1; i <= lastIdx; i++) {
+    ctx.lineTo(x + pts[i].rx, pts[i].cy);
+  }
+  ctx.closePath();
 }
 
 export function renderScale(ctx, item, isSelected, isDark, timeNow) {
@@ -497,12 +464,12 @@ export function renderVessel(ctx, vessel, opts) {
   ctx.fill();
   ctx.clip();
 
-  // Compute liquid & solid levels calibrated to ISO graduation geometry
+  // Compute liquid & solid levels calibrated to VesselGeometry slice profile
   const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
   const liqMl = liqL * 1000;
   const solMl = computeSolidVolumeMl(vessel.moles);
   const geom = computeVesselFluidGeometry(spec, y, liqMl + solMl);
-  const { interiorBottom, interiorHeight, surfaceY, neckEnd, neckHalf, volumeMlToY } = geom;
+  const { interiorBottom, scaleY, neckHalf, surfaceY, surfaceHalfWPx, volumeMlToY, volumeMlToState } = geom;
   const hasWater = (vessel.moles.H2O_l || 0) > 1e-7 && liqMl > 0.15;
 
   // Draw liquid body using Beer-Lambert + Phenolphthalein color
@@ -519,10 +486,10 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.fillStyle = vis.css;
     ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
 
-    // Concave meniscus highlight along surface
+    // Concave meniscus highlight sized accurately to the vessel's radial slice width
     ctx.beginPath();
-    ctx.moveTo(x - w / 2, surfaceY);
-    ctx.quadraticCurveTo(x, surfaceY + 3.5, x + w / 2, surfaceY);
+    ctx.moveTo(x - surfaceHalfWPx, surfaceY);
+    ctx.quadraticCurveTo(x, surfaceY + 3.2, x + surfaceHalfWPx, surfaceY);
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
     ctx.lineWidth = 1.6;
     ctx.stroke();
@@ -575,11 +542,12 @@ export function renderVessel(ctx, vessel, opts) {
   ctx.lineWidth = 2;
   ctx.beginPath();
   if (spec.shape === 'erlenmeyer') {
-    ctx.moveTo(x - neckHalf + 4, top + h * 0.28);
+    const shoulderY = interiorBottom - spec.geometry.profilePoints[3][0] * scaleY;
+    ctx.moveTo(x - neckHalf + 4, shoulderY + 2);
     ctx.lineTo(x - w * 0.36, bottom - 15);
   } else {
     ctx.moveTo(x - w * 0.33, top + 12);
-    ctx.lineTo(x - w * 0.33, bottom - 12);
+    ctx.lineTo(x - w * 0.33, bottom - 14);
   }
   ctx.stroke();
 
@@ -624,14 +592,12 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.font = '600 6.5px system-ui, sans-serif';
     ctx.fillText('mL', patchX + patchW / 2, patchY + 15);
   } else if (spec.shape === 'erlenmeyer') {
-    // Non-linear conical graduations matching frustum height-volume geometry
+    // Non-linear conical graduations directly from VesselGeometry radial-volume slices
     const marks = [50, 100, 150, 200, 250];
-    const coneH = Math.max(10, interiorBottom - neckEnd);
     for (const ml of marks) {
-      const ty = volumeMlToY(ml);
-      const fracFromBot = Math.max(0, Math.min(1, (interiorBottom - ty) / coneH));
-      const localHalf = w / 2 - fracFromBot * (w / 2 - neckHalf);
-      const tickX = x - localHalf * 0.72;
+      const st = volumeMlToState(ml);
+      const ty = st.cy;
+      const tickX = x - st.halfWPx * 0.72;
       const tickLen = ml === 250 ? 6 : ml === 100 || ml === 200 ? 9 : 5.5;
       ctx.strokeStyle = pal.tickStroke;
       ctx.lineWidth = 1.1;

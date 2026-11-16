@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v1-build-9';
+const CACHE_NAME = 'virlab-beta-v1-build-10';
 const ASSETS = [
   './',
   './index.html',
@@ -7,6 +7,7 @@ const ASSETS = [
   './assets/icon.svg',
   './src/main.js',
   './src/data/constants.js',
+  './src/data/vesselGeometry.js',
   './src/data/i18n.js',
   './src/data/species.js',
   './src/data/reactions.js',
