@@ -333,25 +333,35 @@ export function stepVesselThermodynamics(
     }
 
     // 1d) Group 4 volatile reactant outgassing: NH3(aq) -> NH3(g)
-    if (!vessel.isFrozenSolid && nWater > 1e-7 && nAmmonia > 1e-10) {
+    // Henry's Law constant increases sharply above ~50 °C (dH_sol ~ -34 kJ/mol), enabling thermal Phenolphthalein fading
+    if (!vessel.isFrozenSolid && nWater > 1e-7 && nAmmonia > 1e-12) {
       const liqVolL = Math.max(1e-5, volMl / 1000);
       const cNH3 = nAmmonia / liqVolL;
-      const outgasNH3MolS =
+      const roomLossMolS =
         2.4e-5 *
         (effAreaCm2 / 4.0) *
         Math.pow(cNH3 / 10.0, 1.25) *
-        Math.exp(0.052 * Math.max(-20, vessel.tempK - CONSTANTS.T_STD_K)) *
+        Math.exp(0.052 * Math.max(-20, Math.min(25, vessel.tempK - CONSTANTS.T_STD_K))) *
         (isStirred ? 1.75 : 1.0);
+      const excessHotK = Math.max(0, vessel.tempK - 323.15);
+      const thermalStripRateS =
+        excessHotK > 0
+          ? 0.055 *
+            (effAreaCm2 / 8.0) *
+            Math.exp(0.068 * Math.min(55, excessHotK)) *
+            (isStirred ? 1.85 : 1.0)
+          : 0;
+      const outgasNH3MolS = roomLossMolS + nAmmonia * thermalStripRateS;
       let subBoilNH3 = Math.min(
         nAmmonia,
-        outgasNH3MolS * dt + subBoilEvap * (nAmmonia / Math.max(1e-6, nWater)) * 3.0
+        outgasNH3MolS * dt + subBoilEvap * (nAmmonia / Math.max(1e-6, nWater)) * 3.5
       );
       if (subBoilEvap >= nWater * 0.9999) {
         subBoilNH3 = nAmmonia;
       }
-      if (subBoilNH3 > 1e-12) {
+      if (subBoilNH3 > 1e-13) {
         vessel.moles.NH3_aq = Math.max(0, nAmmonia - subBoilNH3);
-        if (vessel.moles.NH3_aq < 1e-13) delete vessel.moles.NH3_aq;
+        if (vessel.moles.NH3_aq < 1e-14) delete vessel.moles.NH3_aq;
         nh3ProducedMol += subBoilNH3;
         evapCoolingJ -= subBoilNH3 * 23350;
       }
@@ -425,14 +435,17 @@ export function stepVesselThermodynamics(
         hclProducedMol += boilHCl;
       }
       const nNH3Now = vessel.moles.NH3_aq || 0;
-      if (nNH3Now > 1e-12) {
+      if (nNH3Now > 1e-14) {
         const boilNH3 =
           remainingWater - boilMol <= 1e-7
             ? nNH3Now
-            : Math.min(nNH3Now, (nNH3Now / Math.max(1e-6, remainingWater)) * boilMol * 6.5);
-        if (boilNH3 > 1e-12) {
+            : Math.min(
+                nNH3Now,
+                (nNH3Now / Math.max(1e-6, remainingWater)) * boilMol * 18.0 + nNH3Now * Math.min(0.85, 0.35 * dt)
+              );
+        if (boilNH3 > 1e-14) {
           vessel.moles.NH3_aq = Math.max(0, nNH3Now - boilNH3);
-          if (vessel.moles.NH3_aq < 1e-13) delete vessel.moles.NH3_aq;
+          if (vessel.moles.NH3_aq < 1e-14) delete vessel.moles.NH3_aq;
           nh3ProducedMol += boilNH3;
         }
       }

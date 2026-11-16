@@ -21,10 +21,12 @@
     import { APPARATUS, APPARATUS_ORDER, clampItemToStandY, getClampNeckOffsetY } from '../src/data/apparatus.js';
     import {
       GAS_DISPLAY_META,
+      REAGENT_CATEGORIES,
       SORTED_BOTTOM_SOLID_SPECIES,
       SORTED_PRECIPITATE_SPECIES,
       SPECIES,
       STARTER_REAGENTS,
+      getGasRelativeAirDensity,
     } from '../src/data/species.js';
     import { REACTIONS } from '../src/data/reactions.js';
     import { computeVesselFluidGeometry } from '../src/canvas/vesselRenderer.js';
@@ -2388,16 +2390,16 @@
       );
     }
 
-    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.4 Sync
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.5 Sync
     {
       const allTranslated = APPARATUS_ORDER.every((id) => {
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_v2+build.4';
+      const expectedBuild = 'virlab_v2+build.5';
       assert(
-        'Build virlab_v2+build.4 parity: All 25 apparatus translated in VI/EN, IUPAC spellings enforced',
-        APPARATUS_ORDER.length === 25 &&
+        'Build virlab_v2+build.5 parity: All 27 apparatus translated in VI/EN, IUPAC spellings enforced',
+        APPARATUS_ORDER.length === 27 &&
           allTranslated &&
           I18N.vi.appSubtitle.includes(expectedBuild) &&
           I18N.en.appSubtitle.includes(expectedBuild) &&
@@ -2613,6 +2615,251 @@
           sigBefore !== sigAfter &&
           elHit?.id === el.id,
         `aim=${aimed?.id}, stand=${nearStand?.id}, lit=${litText.includes('1.5')}, phs=${phsText.includes('2.4')}, elMat=${el.material}, elHit=${elHit?.id}`
+      );
+    }
+
+    // TEST 68: Reagent Shelf Categories + Clean Bench Reset (0 items) + Quick Presets + Zn + dil. NaOH reaction fix
+    {
+      const sim = new LabSimulation();
+      const shelfDiv = document.createElement('div');
+      const shelf = new ShelfPanel(shelfDiv, sim, () => (k) => I18N.vi[k] || k, {});
+      shelf.render((k) => I18N.vi[k] || k, true);
+      const acidBtn = shelfDiv.querySelector('.reg-cat-btn[data-reg-cat="acid"]');
+      acidBtn?.click();
+      const acidCount = shelfDiv.querySelectorAll('.reagent-card').length;
+
+      sim.setupPreset('clean');
+      const cleanCount = sim.items.length;
+      sim.setupPreset('daniell_cell');
+      const daniellCount = sim.items.length;
+      sim.setupPreset('graham_diffusion');
+      const diffCount = sim.items.length;
+      sim.setupPreset('starter');
+      const starterCount = sim.items.length;
+
+      // Reproduce Screenshot 212735.png: 5.0 g Zn + 50 mL H2O + 6.25 mmol NaOH (~0.125 M) MUST react to evolve H2 & [Zn(OH)4]2-
+      const simZn = new LabSimulation();
+      const bk = simZn.createApparatus('beaker_250', 300, 427);
+      bk.moles = { H2O_l: 2.76, Zn_s: 0.0765, Na_aq: 0.00625, OH_aq: 0.00625 };
+      bk.particleCounts = { Zn_s: 8 };
+      stepSeconds(simZn, 10.0, 0.05);
+
+      assert(
+        'Reagent filters work, Clean Bench clears 0 items, Quick Presets populate cleanly, and Zn + 0.125M NaOH evolves H2 & [Zn(OH)4]2-',
+        REAGENT_CATEGORIES.length >= 5 &&
+          acidCount === 1 &&
+          cleanCount === 0 &&
+          daniellCount >= 5 &&
+          diffCount === 1 &&
+          starterCount === 4 &&
+          (bk.moles.ZnOH4_2_aq || 0) > 1e-4 &&
+          (bk.escapedGasMoles.H2_g || 0) > 1e-4,
+        `acid=${acidCount}, clean=${cleanCount}, dan=${daniellCount}, diff=${diffCount}, starter=${starterCount}, zincate=${((bk.moles.ZnOH4_2_aq||0)*1000).toFixed(3)}mmol, H2=${((bk.escapedGasMoles.H2_g||0)*1000).toFixed(3)}mmol`
+      );
+    }
+
+    // TEST 69: Inverted Open Vessel Gravity Spill + Gas Air Density Buoyancy + Water Trough Overfill Bubbles
+    {
+      // A) Inverted unsubmerged open cylinder with water spills downward onto bench (fixes Screenshot 210334.png)
+      const sim = new LabSimulation();
+      const cyl = sim.createApparatus('cylinder_100', 300, 260);
+      sim.addReagentToVessel(cyl.id, 'h2o', 27.5);
+      sim.toggleVesselInverted(cyl.id);
+      stepSeconds(sim, 1.5, 0.05);
+      const spillLeftMl = computeLiquidVolumeL(cyl.moles, cyl.tempK) * 1000;
+
+      // B) Gas relative air densities: light H2 (0.07) retained inside inverted tube longer than heavy Cl2 (2.45)
+      const simAir = new LabSimulation();
+      const tubeLight = simAir.createApparatus('test_tube_50', 200, 260);
+      const tubeHeavy = simAir.createApparatus('test_tube_50', 350, 260);
+      simAir.toggleVesselInverted(tubeLight.id);
+      simAir.toggleVesselInverted(tubeHeavy.id);
+      tubeLight.headspaceGasMoles.H2_g = 0.002;
+      tubeHeavy.headspaceGasMoles.Cl2_g = 0.002;
+      stepSeconds(simAir, 2.0, 0.05);
+      const h2Left = tubeLight.headspaceGasMoles.H2_g || 0;
+      const cl2Left = tubeHeavy.headspaceGasMoles.Cl2_g || 0;
+
+      // C) Overfilling pneumatic trough-submerged inverted tube vents excess bubbles into water trough
+      const simTr = new LabSimulation();
+      simTr.setupPreset('trough_collect');
+      const flask = simTr.items.find((i) => i.typeId === 'erlenmeyer_250');
+      const trTube = simTr.items.find((i) => i.typeId === 'test_tube_50');
+      const trough = simTr.items.find((i) => i.typeId === 'water_trough');
+      flask.moles = { H2O_l: 2.0, Zn_s: 0.1, H_aq: 0.25, Cl_aq: 0.25 };
+      stepSeconds(simTr, 6.0, 0.05);
+
+      assert(
+        'Open inverted vessel spills water under gravity, H2 (d<1) floats trapped longer than dense Cl2 (d>1), and trough overfill vents bubbles',
+        spillLeftMl < 0.5 &&
+          getGasRelativeAirDensity('H2_g') < 0.1 &&
+          getGasRelativeAirDensity('Cl2_g') > 2.3 &&
+          h2Left > cl2Left * 8 &&
+          (trTube.headspaceGasMoles.H2_g || 0) > 1e-3 &&
+          (trough.escapedGasMoles.H2_g || 0) > 1e-4,
+        `spillLeft=${spillLeftMl.toFixed(2)}mL, H2=${(h2Left*1000).toFixed(3)}mmol, Cl2=${(cl2Left*1000).toFixed(3)}mmol, trTubeH2=${((trTube.headspaceGasMoles.H2_g||0)*1000).toFixed(2)}mmol, trOut=${((trough.escapedGasMoles.H2_g||0)*1000).toFixed(2)}mmol`
+      );
+    }
+
+    // TEST 70: Dedicated Volt-Ammeter + Daniell Nernst Complexation EMF Drop (NH3 -> [Cu(NH3)4]2+, HCl restores)
+    {
+      const sim = new LabSimulation();
+      sim.setupPreset('daniell_cell');
+      const beakers = sim.items.filter((i) => i.kind === 'vessel');
+      const bZn = beakers[0];
+      const bCu = beakers[1];
+      const dmm = sim.items.find((i) => i.kind === 'volt_ammeter');
+      bZn.moles = { H2O_l: 3.0, Zn2_aq: 0.05, SO4_2_aq: 0.05 };
+      bCu.moles = { H2O_l: 3.0, Cu2_aq: 0.05, SO4_2_aq: 0.05 };
+      stepSeconds(sim, 0.5, 0.05);
+      const emfInit = dmm.measuredV;
+
+      // Add excess NH3 to Cu half-cell -> forms Cu(OH)2 -> [Cu(NH3)4]2+ depressing free [Cu2+]
+      sim.addReagentToVessel(bCu.id, 'nh3_25', 25, { silentAnim: true });
+      stepSeconds(sim, 3.0, 0.05);
+      const emfNH3 = dmm.measuredV;
+
+      // Acidify with HCl 37% -> destroys [Cu(NH3)4]2+ liberating free Cu2+ -> EMF snaps back up!
+      sim.addReagentToVessel(bCu.id, 'hcl_37', 35, { silentAnim: true });
+      stepSeconds(sim, 1.5, 0.05);
+      const emfHCl = dmm.measuredV;
+
+      assert(
+        'Volt-Ammeter reads Daniell ~1.10V, complexing Cu2+ with NH3 drops EMF drastically (<0.85V), and HCl snaps EMF right back (>1.00V)',
+        emfInit > 1.05 && emfNH3 < 0.85 && emfHCl > 1.00 && (bCu.moles.Cu2_aq || 0) > 0.02,
+        `E_init=${emfInit.toFixed(3)}V, E_NH3=${emfNH3.toFixed(3)}V, E_HCl=${emfHCl.toFixed(3)}V`
+      );
+    }
+
+    // TEST 71: Phenomenon #2 Ammonia Fountain + Phenomenon #4 Thermal-Reversible Phen Switch (no acid)
+    {
+      // A) Ammonia Fountain vacuum suction
+      const simF = new LabSimulation();
+      const flaskF = simF.createApparatus('erlenmeyer_250', 300, 210);
+      simF.toggleVesselInverted(flaskF.id);
+      flaskF.headspaceGasMoles.NH3_g = 0.0085; // ~210 mL NH3(g)
+      const bWater = simF.createApparatus('beaker_250', 300, 427);
+      simF.addReagentToVessel(bWater.id, 'h2o', 140, { silentAnim: true });
+      simF.addReagentToVessel(bWater.id, 'phen', 0.2, { silentAnim: true });
+      simF.connectTube(flaskF.id, bWater.id);
+      simF.injectFountainPrimer(flaskF.id);
+      let maxFountainFlow = 0;
+      for (let i = 0; i < 60; i++) {
+        simF.step(0.05);
+        maxFountainFlow = Math.max(maxFountainFlow, flaskF.fountainFlowMlS || 0);
+      }
+      const suckedMl = computeLiquidVolumeL(flaskF.moles, flaskF.tempK) * 1000;
+      const phF = computePH(flaskF.moles, computeLiquidVolumeL(flaskF.moles, flaskF.tempK), flaskF.tempK);
+
+      // B) Heating dilute NH3 + Phen strips NH3(g) turning pink -> colorless cleanly WITHOUT acid!
+      const simH = new LabSimulation();
+      const burner = simH.createApparatus('burner', 300, 441);
+      burner.flameLevel = 3;
+      burner.powerW = 650;
+      const bkH = simH.createApparatus('beaker_250', 300, 350);
+      bkH.restingOnId = burner.id;
+      simH.addReagentToVessel(bkH.id, 'h2o', 25, { silentAnim: true });
+      simH.addReagentToVessel(bkH.id, 'nh3_25', 0.3, { silentAnim: true });
+      simH.addReagentToVessel(bkH.id, 'phen', 0.15, { silentAnim: true });
+      const phBefore = computePH(bkH.moles, computeLiquidVolumeL(bkH.moles, bkH.tempK), bkH.tempK);
+      stepSeconds(simH, 22.0, 0.05);
+      const liqAfterH = computeLiquidVolumeL(bkH.moles, bkH.tempK);
+      const phAfter = computePH(bkH.moles, liqAfterH, bkH.tempK);
+      const alphaAfter = computePhenolphthaleinAlpha(phAfter);
+
+      assert(
+        'Ammonia Fountain sucks pink indicator water violently into inverted flask; Heating NH3 + Phen strips NH3 turning colorless without acid',
+        maxFountainFlow > 8 && suckedMl > 35 && phF > 9.5 && phBefore > 10.5 && alphaAfter < 0.15,
+        `fountainMax=${maxFountainFlow.toFixed(1)}mL/s, sucked=${suckedMl.toFixed(1)}mL, pH_F=${phF?.toFixed(2)}, pH_heat=${phBefore.toFixed(2)}->${phAfter?.toFixed(2)} (α=${alphaAfter.toFixed(3)})`
+      );
+    }
+
+    // TEST 72: Phenomena #3, #5, #6, #7, #8, #9, #10 Complete Physical-Chemistry Suite
+    {
+      // #3 Silver Mirror Burst: AgNO3 + NaOH -> Ag2O + NH3 -> [Ag(NH3)2]+ + H2O2 30%
+      const simMir = new LabSimulation();
+      const bMir = simMir.createApparatus('beaker_250', 300, 427);
+      bMir.moles = { H2O_l: 2.0, AgNH3_2_aq: 0.02, OH_aq: 0.04, H2O2_aq: 0.08, NH3_aq: 0.08 };
+      stepSeconds(simMir, 4.0, 0.05);
+      const okMir = (bMir.moles.Ag_s || 0) > 0.01 && (bMir.silverMirrorFrac || 0) > 0.25 && (bMir.escapedGasMoles.O2_g || 0) > 0.02 && bMir.tempK > 305;
+
+      // #5 Mechanochemistry + Thermal Dehydration to black CuO
+      const simMech = new LabSimulation();
+      const mortar = simMech.createApparatus('mortar_pestle', 250, 451);
+      mortar.moles = { CuSO4_5H2O_s: 0.01, NaOH_s: 0.02 };
+      simMech.grindMortar(mortar.id);
+      const dish = simMech.createApparatus('porcelain_dish', 450, 460);
+      simMech.transferSolidsToVessel(mortar.id, dish.id, 1.0);
+      dish.tempK = 430;
+      stepSeconds(simMech, 4.0, 0.05);
+      const okMech = (mortar.moles.H2O_l || 0) > 0.03 && (dish.moles.CuO_s || 0) > 0.008;
+
+      // #6 Oxyhydrogen 2H2:O2 accumulation & scaled detonation + HCl Cl2 bleaching
+      const simOx = new LabSimulation();
+      const tubeOx = simOx.createApparatus('test_tube_50', 300, 300);
+      simOx.toggleVesselInverted(tubeOx.id);
+      tubeOx.submergedInTroughId = null;
+      tubeOx.isStoppered = true;
+      tubeOx.headspaceGasMoles.H2_g = 0.0008;
+      tubeOx.headspaceGasMoles.O2_g = 0.0004;
+      tubeOx.isStoppered = false;
+      const spOx = simOx.createApparatus('splint', tubeOx.x + 50, tubeOx.y + 35);
+      spOx.mode = 'burning';
+      stepSeconds(simOx, 0.2, 0.05);
+      const okOxDet = spOx.lastTestEvent === 'oxyhydrogen_detonation' && (tubeOx.headspaceGasMoles.O2_g || 0) < 1e-6;
+
+      // #7 AgCl Photolysis (50% masked on filter paper) & NH3 Fixing
+      const simPh = new LabSimulation();
+      simPh.setUvLight(true);
+      const fnPh = simPh.createApparatus('filter_funnel', 300, 360);
+      fnPh.moles = { AgCl_s: 0.02 };
+      fnPh.uvMaskHalf = true;
+      stepSeconds(simPh, 8.0, 0.05);
+      const agDark = fnPh.moles.Ag_s || 0;
+      const agWhite = fnPh.moles.AgCl_s || 0;
+      simPh.addReagentToVessel(fnPh.id, 'nh3_25', 20, { silentAnim: true });
+      stepSeconds(simPh, 4.0, 0.05);
+      const okPhoto = Math.abs(agDark - 0.01) < 0.003 && Math.abs(agWhite - 0.01) < 0.003 && (fnPh.moles.AgCl_s || 0) < 0.001 && (fnPh.moles.Ag_s || 0) > 0.008;
+
+      // #8 Graham's Law Diffusion Tube (~59.4% from NH3 end)
+      const simGr = new LabSimulation();
+      const tubeG = simGr.createApparatus('diffusion_tube', 430, 459);
+      simGr.dropDiffusionReagent(tubeG.id, 'left', 'NH3_g');
+      simGr.dropDiffusionReagent(tubeG.id, 'right', 'HCl_g');
+      stepSeconds(simGr, 14.0, 0.05);
+      const okGraham = tubeG.ringPosFrac != null && Math.abs(tubeG.ringPosFrac * 100 - 59.4) < 0.3 && (tubeG.ringGrowth || 0) > 0.8;
+
+      // #9 & #10 Electroplating smooth vs burned Cu + NH3/H2O2 etching + Micro-cell Cu/Zn + Sacrificial Protection
+      const simEc = new LabSimulation();
+      const bPlate = simEc.createApparatus('beaker_250', 220, 427);
+      bPlate.moles = { H2O_l: 3.0, Cu2_aq: 0.08, SO4_2_aq: 0.08 };
+      const elA = simEc.createApparatus('electrode_rod', 200, 412); elA.material = 'Cu'; elA.dockedVesselId = bPlate.id;
+      const elB = simEc.createApparatus('electrode_rod', 240, 412); elB.material = 'C'; elB.dockedVesselId = bPlate.id;
+      const dcLow = simEc.createApparatus('dc_power', 450, 441);
+      dcLow.posElectrodeId = elA.id; dcLow.negElectrodeId = elB.id;
+      simEc.setDcPowerState(dcLow.id, { voltageV: 3.0, rheostatOhm: 15.0, powerOn: true });
+      stepSeconds(simEc, 3.0, 0.05);
+      const qualLow = elB.platedQuality;
+      simEc.setDcPowerState(dcLow.id, { voltageV: 12.0, rheostatOhm: 0.5, powerOn: true });
+      stepSeconds(simEc, 2.0, 0.05);
+      const qualHigh = elB.platedQuality;
+      // Dip Cu-plated cathode in NH3 + H2O2 to etch cleanly to [Cu(NH3)4]2+
+      bPlate.moles = { H2O_l: 3.0, NH3_aq: 0.4, H2O2_aq: 0.2 };
+      simEc.setDcPowerState(dcLow.id, { powerOn: false });
+      stepSeconds(simEc, 6.0, 0.05);
+      const etchedComplex = bPlate.moles.CuNH3_4_2_aq || 0;
+
+      // #10 Sacrificial Protection: Zn + Cu in HCl + H2O2 protects 100% of Cu while sacrificial Zn remains
+      const simProt = new LabSimulation();
+      const bProt = simProt.createApparatus('beaker_250', 300, 427);
+      bProt.moles = { H2O_l: 3.0, H_aq: 0.4, Cl_aq: 0.4, H2O2_aq: 0.1, Zn_s: 0.08, Cu_s: 0.01 };
+      stepSeconds(simProt, 0.8, 0.05);
+      const okProt = (bProt.moles.Zn_s || 0) > 0.005 && (bProt.moles.Cu_s || 0) >= 0.0099 && (bProt.moles.Cu2_aq || 0) < 1e-6 && bProt.cathodicProtected;
+
+      assert(
+        'Phenomena #3 Silver Mirror, #5 Mechanochem CuO, #6 Oxyhydrogen Blast, #7 AgCl UV Fix, #8 Graham 59.4%, #9 Cu Etch & #10 Cathodic Prot all pass',
+        okMir && okMech && okOxDet && okPhoto && okGraham && qualLow === 'smooth' && qualHigh === 'burned' && etchedComplex > 1e-6 && okProt,
+        `mir=${okMir}, mech=${okMech}, oxDet=${okOxDet}, photo=${okPhoto}(agD=${agDark.toFixed(3)}), graham=${((tubeG.ringPosFrac||0)*100).toFixed(1)}%, plate=${qualLow}->${qualHigh}, etch=${(etchedComplex*1000).toFixed(2)}m, prot=${okProt}`
       );
     }
 

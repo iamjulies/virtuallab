@@ -110,7 +110,9 @@ export function renderFilterFunnel(ctx, item, isSelected, isDropTarget, isDark, 
     ctx.fill();
   }
 
-  // Retained solid precipitate residue mound on filter paper
+  // Retained solid precipitate residue mound on filter paper (plus Phenomenon #7 UV AgCl->Ag photo split)
+  const nAgClSol = item.moles?.AgCl_s || 0;
+  const nAgSol = item.moles?.Ag_s || 0;
   let solMol = 0;
   let solColor = '#f8fafc';
   for (const [id, n] of Object.entries(item.moles || {})) {
@@ -123,16 +125,51 @@ export function renderFilterFunnel(ctx, item, isSelected, isDropTarget, isDark, 
   if (solMol > 1e-6) {
     const sMl = computeSolidVolumeMl(item.moles);
     const sH = Math.min(16, 4 + Math.cbrt(sMl) * 3.8);
-    ctx.fillStyle = solColor;
-    ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.65)' : 'rgba(71,85,105,0.55)';
-    ctx.lineWidth = 0.8;
+    if (nAgSol > 1e-6 && nAgClSol > 1e-6) {
+      // Exposed left half darkened silver Ag(s) + masked right half white AgCl(s)
+      ctx.fillStyle = '#334155';
+      ctx.beginPath();
+      ctx.moveTo(x - sH * 1.15, coneBotY - 4 - sH * 0.7);
+      ctx.quadraticCurveTo(x - sH * 0.55, coneBotY - 6 - sH * 0.9, x, coneBotY - 5 - sH * 0.85);
+      ctx.lineTo(x, coneBotY - 3);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.moveTo(x, coneBotY - 5 - sH * 0.85);
+      ctx.quadraticCurveTo(x + sH * 0.55, coneBotY - 6 - sH * 0.9, x + sH * 1.15, coneBotY - 4 - sH * 0.7);
+      ctx.lineTo(x, coneBotY - 3);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.fillStyle = nAgSol > 1e-6 && nAgClSol <= 1e-6 ? '#334155' : solColor;
+      ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.65)' : 'rgba(71,85,105,0.55)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(x - sH * 1.15, coneBotY - 4 - sH * 0.7);
+      ctx.quadraticCurveTo(x, coneBotY - 6 - sH * 0.9, x + sH * 1.15, coneBotY - 4 - sH * 0.7);
+      ctx.lineTo(x, coneBotY - 3);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  // Opaque photographic half-mask shield over right side of filter paper
+  if (item.uvMaskHalf) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.moveTo(x - sH * 1.15, coneBotY - 4 - sH * 0.7);
-    ctx.quadraticCurveTo(x, coneBotY - 6 - sH * 0.9, x + sH * 1.15, coneBotY - 4 - sH * 0.7);
+    ctx.moveTo(x, topY + 2);
+    ctx.lineTo(x + rimHalfW - 2, topY + 2);
     ctx.lineTo(x, coneBotY - 3);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+    ctx.restore();
   }
 
   // Active filtrate stream dripping from stem tip
@@ -721,12 +758,48 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
 
   // Metal/graphite plate dipped vertically
   ctx.fillStyle = mat.color;
-  ctx.strokeStyle = isSelected ? '#3b82f6' : mat.stroke;
-  ctx.lineWidth = isSelected ? 2.1 : 1.4;
+  ctx.strokeStyle = isSelected ? '#3b82f6' : item.cathodicProtectedActive ? '#10b981' : mat.stroke;
+  ctx.lineWidth = isSelected || item.cathodicProtectedActive ? 2.1 : 1.4;
   ctx.beginPath();
   ctx.roundRect(x - 4.5, topY + 12, 9, spec.height - 16, 2);
   ctx.fill();
   ctx.stroke();
+
+  // Phenomenon #9A: Electroplated Cu(s) layer along immersed lower half (salmon-pink smooth vs dark burned)
+  if (item.platedMaterial === 'Cu' && (item.platedCuMol || 0) > 1e-7) {
+    const isBurned = item.platedQuality === 'burned';
+    const coatH = (spec.height - 20) * 0.56;
+    const coatTop = botY - 4 - coatH;
+    ctx.save();
+    if (isBurned) {
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(x - 5.2, coatTop, 10.4, coatH);
+      ctx.fillStyle = '#1c1917';
+      for (let g = 0; g < 8; g++) {
+        ctx.beginPath();
+        ctx.arc(x + ((g % 2 === 0 ? -1 : 1) * 3.8), coatTop + 6 + g * (coatH / 9), 2.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      const cuGrad = ctx.createLinearGradient(x - 5, 0, x + 5, 0);
+      cuGrad.addColorStop(0, '#c2410c');
+      cuGrad.addColorStop(0.45, '#fb923c');
+      cuGrad.addColorStop(1, '#ea580c');
+      ctx.fillStyle = cuGrad;
+      ctx.fillRect(x - 5, coatTop, 10, coatH);
+    }
+    ctx.restore();
+  }
+
+  // Cathodic sacrificial protection emerald halo ring
+  if (item.cathodicProtectedActive) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(16, 185, 129, 0.8)';
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([3, 3]);
+    ctx.strokeRect(x - 7, y, 14, spec.height / 2);
+    ctx.restore();
+  }
 
   // Top binding terminal cap
   ctx.fillStyle = item.polarityLabel?.startsWith('+') ? '#ef4444' : item.polarityLabel?.startsWith('-') ? '#1e293b' : '#475569';
@@ -853,4 +926,237 @@ export function renderDcPowerAndWires(ctx, items, selectedId, isDark) {
     });
     ctx.restore();
   }
+}
+
+export function renderVoltAmmeterAndWires(ctx, items, selectedId, isDark) {
+  const pal = getThemePalette(isDark);
+  const meters = items.filter((i) => i.kind === 'volt_ammeter');
+  const electrodes = items.filter((i) => i.kind === 'electrode');
+
+  for (const meter of meters) {
+    const { x, y } = meter;
+    const spec = APPARATUS.volt_ammeter;
+    const topY = y - spec.height / 2;
+    const leftX = x - spec.width / 2;
+    const isSelected = meter.id === selectedId;
+
+    const posEl = electrodes.find((e) => e.id === meter.posElectrodeId);
+    const negEl = electrodes.find((e) => e.id === meter.negElectrodeId);
+    const postPos = { x: x - 24, y: y + 23 };
+    const postNeg = { x: x + 24, y: y + 23 };
+
+    const drawLead = (from, el, color) => {
+      if (!el) return;
+      const eSpec = APPARATUS.electrode_rod;
+      const to = { x: el.x, y: el.y - eSpec.height / 2 + 5 };
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.bezierCurveTo(from.x, Math.max(from.y, to.y) + 28, to.x, to.y - 40, to.x, to.y);
+      ctx.stroke();
+      ctx.restore();
+    };
+    drawLead(postPos, posEl, '#ef4444');
+    drawLead(postNeg, negEl, isDark ? '#94a3b8' : '#1e293b');
+
+    ctx.save();
+    drawSelectionGlow(ctx, isSelected, false);
+    // Iconic bench Multimeter Amber/Slate holster
+    ctx.fillStyle = isDark ? '#b45309' : '#f59e0b';
+    ctx.strokeStyle = isSelected ? '#3b82f6' : isDark ? '#f59e0b' : '#b45309';
+    ctx.lineWidth = isSelected ? 2.2 : 1.7;
+    ctx.beginPath();
+    ctx.roundRect(leftX, topY, spec.width, spec.height, 9);
+    ctx.fill();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Inner dark bezel & LCD readout
+    ctx.fillStyle = '#0f172a';
+    ctx.beginPath();
+    ctx.roundRect(leftX + 7, topY + 7, spec.width - 14, spec.height - 14, 6);
+    ctx.fill();
+
+    ctx.fillStyle = pal.lcdBg;
+    ctx.beginPath();
+    ctx.roundRect(leftX + 11, topY + 11, spec.width - 22, 34, 4);
+    ctx.fill();
+
+    const vStr = `${(meter.measuredV || 0).toFixed(2)}V`;
+    const aStr = `${(meter.measuredCurrentA || 0).toFixed(2)}A`;
+    ctx.fillStyle = pal.lcdText;
+    ctx.font = 'bold 12px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(meter.mode === 'voltmeter' ? vStr : `${vStr} · ${aStr}`, x, topY + 28);
+
+    ctx.font = '600 8px system-ui, sans-serif';
+    const modeLabel =
+      meter.cathodicProtectedActive
+        ? '🛡️ CATHODE PROT.'
+        : meter.mode === 'short'
+        ? 'SHORT WIRE'
+        : meter.mode === 'ammeter'
+        ? 'AMMETER (LOAD)'
+        : meter.circuitMode === 'open_circuit'
+        ? 'NO BRIDGE'
+        : 'VOLTMETER (10MΩ)';
+    ctx.fillText(modeLabel, x, topY + 40);
+
+    // Banana jacks (+V/A Red / COM Black)
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.arc(postPos.x, postPos.y, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#334155';
+    ctx.beginPath();
+    ctx.arc(postNeg.x, postNeg.y, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 8.5px system-ui, sans-serif';
+    ctx.fillText('+', postPos.x, postPos.y + 3);
+    ctx.fillText('−', postNeg.x, postNeg.y + 3);
+
+    drawLabelPill(ctx, x, topY - 12, meter.cathodicProtectedActive ? `🛡️ ${meter.label} · Prot` : `${meter.label} · Volt-Ammeter`, {
+      pal,
+      borderColor: meter.cathodicProtectedActive ? '#10b981' : isSelected ? '#3b82f6' : null,
+      font: '600 10.5px system-ui, sans-serif',
+      height: 18,
+    });
+    ctx.restore();
+  }
+}
+
+export function renderDiffusionTube(ctx, item, isSelected, isDropTarget, isDark, langCode = 'vi') {
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const spec = APPARATUS.diffusion_tube;
+  const leftX = x - spec.width / 2;
+  const rightX = x + spec.width / 2;
+  const tubeHalfH = 12;
+  const innerLeft = leftX + 16;
+  const innerRight = rightX - 16;
+  const innerW = innerRight - innerLeft;
+
+  if (item.isBroken) {
+    renderBrokenToolShards(ctx, item, pal, isSelected, spec.width * 0.7, spec.height);
+    return;
+  }
+
+  ctx.save();
+  drawSelectionGlow(ctx, isSelected, isDropTarget);
+
+  // Bench rubber cradle stands supporting horizontal tube
+  ctx.fillStyle = isDark ? '#334155' : '#475569';
+  for (const sx of [x - 76, x + 76]) {
+    ctx.beginPath();
+    ctx.roundRect(sx - 9, y + tubeHalfH - 2, 18, spec.height / 2 - tubeHalfH + 2, 2);
+    ctx.fill();
+  }
+
+  // Horizontal Borosilicate glass tube body
+  ctx.fillStyle = pal.glassFill;
+  ctx.strokeStyle = isDropTarget ? '#10b981' : isSelected ? '#3b82f6' : pal.glassStroke;
+  ctx.lineWidth = isSelected || isDropTarget ? 2.2 : 1.7;
+  ctx.beginPath();
+  ctx.roundRect(leftX, y - tubeHalfH, spec.width, tubeHalfH * 2, 6);
+  ctx.fill();
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Advancing subtle vapor plumes inside bore before meeting
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(innerLeft, y - tubeHalfH + 2, innerW, tubeHalfH * 2 - 4);
+  ctx.clip();
+
+  if (item.leftGasId && (item.leftFront || 0) > 0.01) {
+    const fW = Math.min(1, item.leftFront) * innerW;
+    const gradL = ctx.createLinearGradient(innerLeft, y, innerLeft + fW, y);
+    gradL.addColorStop(0, item.leftGasId === 'NH3_g' ? 'rgba(56, 189, 248, 0.20)' : 'rgba(226, 232, 240, 0.22)');
+    gradL.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = gradL;
+    ctx.fillRect(innerLeft, y - tubeHalfH + 2, fW, tubeHalfH * 2 - 4);
+  }
+  if (item.rightGasId && (item.rightFront ?? 1) < 0.99) {
+    const rX = innerLeft + Math.max(0, item.rightFront) * innerW;
+    const fW = innerRight - rX;
+    const gradR = ctx.createLinearGradient(innerRight, y, rX, y);
+    gradR.addColorStop(0, item.rightGasId === 'NH3_g' ? 'rgba(56, 189, 248, 0.20)' : 'rgba(226, 232, 240, 0.22)');
+    gradR.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = gradR;
+    ctx.fillRect(rX, y - tubeHalfH + 2, fW, tubeHalfH * 2 - 4);
+  }
+
+  // Phenomenon #8: White crisp NH4Cl(s) smoke ring nucleating at Graham meeting coordinate!
+  if (item.ringPosFrac != null && (item.ringGrowth || 0) > 0.02) {
+    const rx = innerLeft + item.ringPosFrac * innerW;
+    const gAmt = Math.min(1, item.ringGrowth);
+    const ringGrad = ctx.createLinearGradient(rx - 10, y, rx + 10, y);
+    ringGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+    ringGrad.addColorStop(0.5, `rgba(255, 255, 255, ${(0.95 * gAmt).toFixed(2)})`);
+    ringGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = ringGrad;
+    ctx.fillRect(rx - 10, y - tubeHalfH + 1, 20, tubeHalfH * 2 - 2);
+
+    ctx.strokeStyle = isDark ? 'rgba(248, 250, 252, 0.92)' : 'rgba(148, 163, 184, 0.95)';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(rx, y - tubeHalfH + 2);
+    ctx.lineTo(rx, y + tubeHalfH - 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Graduated centimeter ruler ticks (0, 25, 50 midpoint, 75, 100 cm)
+  ctx.strokeStyle = pal.tickStroke;
+  ctx.fillStyle = pal.enamelText;
+  ctx.font = '600 7px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  for (let cm = 0; cm <= 100; cm += 10) {
+    const tx = innerLeft + (cm / 100) * innerW;
+    const isMajor = cm % 50 === 0;
+    ctx.lineWidth = isMajor ? 1.2 : 0.8;
+    ctx.beginPath();
+    ctx.moveTo(tx, y + tubeHalfH - (isMajor ? 6 : 3.5));
+    ctx.lineTo(tx, y + tubeHalfH);
+    ctx.stroke();
+  }
+
+  // Soaked cotton wool plugs at Left (0cm) and Right (100cm)
+  const drawPlug = (px, gasId) => {
+    ctx.fillStyle = gasId === 'NH3_g' ? '#bae6fd' : gasId === 'HCl_g' ? '#fef08a' : '#e2e8f0';
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(px - 6, y - tubeHalfH + 2, 12, tubeHalfH * 2 - 4, 4);
+    ctx.fill();
+    ctx.stroke();
+  };
+  drawPlug(leftX + 8, item.leftGasId);
+  drawPlug(rightX - 8, item.rightGasId);
+
+  // Floating tags for loaded ends & formed ring position
+  let badge = `${item.label} · 100 cm`;
+  if (item.ringPosFrac != null && (item.ringGrowth || 0) > 0.1) {
+    const pctLeft = (item.ringPosFrac * 100).toFixed(1);
+    badge = `${item.label} · NH₄Cl(s) @ ${pctLeft} cm`;
+  } else if (item.leftGasId || item.rightGasId) {
+    const lTag = item.leftGasId ? SPECIES[item.leftGasId]?.formula : '?';
+    const rTag = item.rightGasId ? SPECIES[item.rightGasId]?.formula : '?';
+    badge = `${lTag} ⟶ ⟵ ${rTag}`;
+  }
+  drawLabelPill(ctx, x, y - tubeHalfH - 16, badge, {
+    pal,
+    borderColor: (item.ringGrowth || 0) > 0.2 ? '#10b981' : isSelected ? '#3b82f6' : null,
+    font: '600 10.5px system-ui, sans-serif',
+    height: 18,
+  });
+  ctx.restore();
 }

@@ -1,5 +1,5 @@
 import { APPARATUS, APPARATUS_CATEGORIES, APPARATUS_ORDER } from '../data/apparatus.js';
-import { STARTER_REAGENTS } from '../data/species.js';
+import { REAGENT_CATEGORIES, STARTER_REAGENTS } from '../data/species.js';
 import { drawReagentBottle } from '../canvas/reagentRenderer.js';
 
 function apparatusSvg(typeId) {
@@ -50,6 +50,10 @@ function apparatusSvg(typeId) {
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="14" width="20" height="8" rx="4" fill="currentColor" opacity="0.25"/><path d="M13 11c3-2 7-2 10 0M13 25c3 2 7 2 10 0" opacity="0.6"/></svg>`;
     case 'dc_power':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="9" width="24" height="18" rx="3"/><rect x="10" y="13" width="16" height="6" rx="1" fill="#059669" opacity="0.55"/><circle cx="12" cy="23" r="1.8" fill="#ef4444" stroke="none"/><circle cx="24" cy="23" r="1.8" fill="currentColor" stroke="none"/></svg>`;
+    case 'volt_ammeter':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="7" y="8" width="22" height="20" rx="3" stroke="#f59e0b"/><rect x="10" y="11" width="16" height="7" rx="1" fill="#10b981" opacity="0.5"/><text x="18" y="24" text-anchor="middle" font-size="6.5" fill="currentColor" stroke="none" font-weight="bold">V·A</text></svg>`;
+    case 'diffusion_tube':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="14" width="28" height="8" rx="3"/><line x1="21" y1="14" x2="21" y2="22" stroke="#f8fafc" stroke-width="2"/><path d="M11 22v4M25 22v4" opacity="0.65"/></svg>`;
     case 'electrode_rod':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="15" y="9" width="6" height="21" rx="1" fill="currentColor" opacity="0.3"/><rect x="13" y="6" width="10" height="4" rx="1" fill="#ef4444" stroke="none"/></svg>`;
     case 'salt_bridge':
@@ -138,6 +142,7 @@ export class ShelfPanel {
     this.getLang = getLang;
     this.callbacks = callbacks; // { onAddApparatus, onSelectReagent, onExternalDragMove, onExternalDrop }
     this.activeCategory = 'all';
+    this.activeReagentCategory = 'all';
     this.lastShelfSig = '';
     this._dragSession = null;
     this._boundPointer = false;
@@ -222,7 +227,7 @@ export class ShelfPanel {
       .filter((i) => i.kind === 'pipette')
       .map((p) => `${p.id}:${(p.volumeMl || 0).toFixed(1)}:${this.sim.selectedId === p.id ? 1 : 0}`)
       .join(',');
-    return `${t('equipmentTitle')}|${this.activeCategory}|${pipSig}`;
+    return `${t('equipmentTitle')}|${this.activeCategory}|${this.activeReagentCategory}|${pipSig}`;
   }
 
   render(t, force = false) {
@@ -279,8 +284,19 @@ export class ShelfPanel {
             <h2 class="text-xs font-bold uppercase tracking-wider text-muted">${t('reagentsTitle')}</h2>
             <p class="text-xs text-muted mt-0.5">${t('pureFormNote')}</p>
           </div>
+          <div class="flex flex-wrap gap-1 mb-2" id="shelf-reg-cats">
+            ${REAGENT_CATEGORIES.map((cat) => {
+              const active = this.activeReagentCategory === cat.id;
+              return `<button type="button" data-reg-cat="${cat.id}" class="reg-cat-btn px-2 py-0.5 rounded-full text-[11px] font-medium border transition ${
+                active ? 'border-accent bg-accent/15 text-accent font-semibold' : 'border-theme bg-surface-alt text-muted hover:text-main'
+              }">${t(cat.i18nKey)}</button>`;
+            }).join('')}
+          </div>
           <div class="space-y-1.5" id="shelf-reagents-list">
-            ${STARTER_REAGENTS.map((reg) => `
+            ${(this.activeReagentCategory === 'all'
+              ? STARTER_REAGENTS
+              : STARTER_REAGENTS.filter((r) => r.category === this.activeReagentCategory)
+            ).map((reg) => `
               <div
                 role="button"
                 tabindex="0"
@@ -326,10 +342,16 @@ export class ShelfPanel {
       </div>
     `;
 
-    // Category filter buttons
+    // Category filter buttons (Apparatus + Reagents)
     this.container.querySelectorAll('.shelf-cat-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         this.activeCategory = btn.dataset.catId;
+        this.render(this.getLang(), true);
+      });
+    });
+    this.container.querySelectorAll('.reg-cat-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.activeReagentCategory = btn.dataset.regCat;
         this.render(this.getLang(), true);
       });
     });

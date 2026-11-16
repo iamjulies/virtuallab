@@ -153,13 +153,20 @@ export class InspectorPanel {
     }
     if (item.kind === 'filter_funnel' || item.kind === 'burette') {
       const spKeys = Object.keys(item.moles || {}).filter((k) => item.moles[k] > 1e-10).sort().join(',');
-      return `${item.kind}|${item.id}|${item.isBroken ? 1 : 0}|${item.clampedToId}|${item.valveRateMlS || 0}|${item.isFiltering ? 1 : 0}|${spKeys}|${langCode}|${logLen}`;
+      return `${item.kind}|${item.id}|${item.isBroken ? 1 : 0}|${item.clampedToId}|${item.valveRateMlS || 0}|${item.isFiltering ? 1 : 0}|${item.uvMaskHalf ? 1 : 0}|${spKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'dc_power') {
-      return `dc|${item.id}|${item.powerOn ? 1 : 0}|${item.circuitMode}|${langCode}|${logLen}`;
+      return `dc|${item.id}|${item.powerOn ? 1 : 0}|${item.circuitMode}|${Math.round((item.rheostatOhm ?? 2) * 10)}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'volt_ammeter') {
+      const elCnt = this.sim.items.filter((i) => i.kind === 'electrode' && i.dockedVesselId).length;
+      return `vm|${item.id}|${item.mode}|${item.circuitMode}|${item.posElectrodeId || ''}|${item.negElectrodeId || ''}|${item.cathodicProtectedActive ? 1 : 0}|${elCnt}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'diffusion_tube') {
+      return `dtube|${item.id}|${item.leftGasId || ''}|${item.rightGasId || ''}|${(item.ringGrowth || 0) > 0.05 ? 1 : 0}|${item.isBroken ? 1 : 0}|${langCode}|${logLen}`;
     }
     if (item.kind === 'electrode') {
-      return `el|${item.id}|${item.material}|${item.dockedVesselId || ''}|${item.polarityLabel || ''}|${langCode}|${logLen}`;
+      return `el|${item.id}|${item.material}|${item.dockedVesselId || ''}|${item.polarityLabel || ''}|${item.platedMaterial || ''}|${item.platedQuality || ''}|${item.cathodicProtectedActive ? 1 : 0}|${langCode}|${logLen}`;
     }
     if (item.kind === 'splint') {
       return `sp|${item.id}|${item.mode}|${langCode}|${logLen}`;
@@ -452,6 +459,7 @@ export class InspectorPanel {
                 </div>
                 <div class="flex flex-wrap gap-1.5">
                   ${solids.length > 0 ? `<button type="button" id="ins-solid-xfer" class="px-2.5 py-1.5 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">${t('actionTransferSolid')}</button>` : ''}
+                  ${((item.moles?.AgCl_s || 0) > 1e-7 || (item.moles?.Ag_s || 0) > 1e-7) ? `<button type="button" id="ins-funnel-mask" class="px-2.5 py-1.5 rounded-lg border ${item.uvMaskHalf ? 'border-amber-500/60 bg-amber-500/15 text-amber-300' : 'border-theme bg-surface'} text-xs font-medium hover:border-accent">${item.uvMaskHalf ? t('actionUvUnmask') : t('actionUvMaskHalf')}</button>` : ''}
                   ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
                 </div>`
           }
@@ -647,6 +655,7 @@ export class InspectorPanel {
           </div>
           <div class="p-3 rounded-lg border border-theme bg-slate-950 font-mono text-center">
             <div class="text-lg font-bold text-emerald-400" id="live-dc-readout">${(item.measuredV || 0).toFixed(2)} V · ${(item.measuredCurrentA || 0).toFixed(2)} A</div>
+            <div class="text-[11px] text-amber-400" id="live-dc-j">${t('dcCurrentDensityLabel')}: ${(item.currentDensityADm2 || 0).toFixed(1)} A/dm²</div>
             <div class="text-[11px] text-sky-400 uppercase" id="live-dc-mode">${item.circuitMode || 'idle'}</div>
           </div>
           <div class="flex flex-col gap-1.5">
@@ -656,9 +665,72 @@ export class InspectorPanel {
             </div>
             <input id="dc-voltage-slider" type="range" min="0" max="12" step="0.5" value="${item.voltageV ?? 6}" class="w-full accent-blue-500" />
           </div>
+          <div class="flex flex-col gap-1.5">
+            <div class="flex justify-between text-xs">
+              <span class="text-muted">${t('dcRheostatLabel')}</span>
+              <strong class="font-mono" id="live-dc-rheo">${(item.rheostatOhm ?? 2.0).toFixed(1)} Ω</strong>
+            </div>
+            <input id="dc-rheostat-slider" type="range" min="0.5" max="25" step="0.5" value="${item.rheostatOhm ?? 2.0}" class="w-full accent-amber-500" />
+          </div>
           <button type="button" id="ins-dc-toggle" class="py-2 rounded-lg text-xs font-bold text-white transition ${
             item.powerOn ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-sky-600 hover:bg-sky-500'
           }">${item.powerOn ? t('dcPowerOn') : t('dcPowerOff')}</button>
+        </div>
+      `;
+    } else if (item.kind === 'volt_ammeter') {
+      const dockedEls = this.sim.items.filter((i) => i.kind === 'electrode');
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t('eq_volt_ammeter')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${APPARATUS.volt_ammeter.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-3 rounded-lg border border-theme bg-slate-950 font-mono text-center">
+            <div class="text-xl font-bold text-emerald-400" id="live-vm-readout">${(item.measuredV || 0).toFixed(3)} V · ${(item.measuredCurrentA || 0).toFixed(3)} A</div>
+            <div class="text-[11px] text-sky-400 uppercase" id="live-vm-mode">${item.circuitMode || 'idle'}</div>
+          </div>
+          ${item.cathodicProtectedActive ? `<div class="p-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs font-semibold text-center">${t('dmmCathProtBadge')}</div>` : ''}
+          <div class="text-xs text-muted">${t('dmmModeLabel')}</div>
+          <div class="flex flex-col gap-1.5">
+            ${['voltmeter', 'ammeter', 'short'].map((m) => `<button type="button" class="vm-mode-btn py-1.5 px-2.5 rounded-lg border text-xs font-semibold text-left ${item.mode === m ? 'border-accent bg-accent/15 text-accent' : 'border-theme bg-surface text-muted'}" data-mode="${m}">${t(m === 'voltmeter' ? 'dmmModeVolt' : m === 'ammeter' ? 'dmmModeAmp' : 'dmmModeShort')}</button>`).join('')}
+          </div>
+          ${dockedEls.length >= 2 ? `<div class="grid grid-cols-2 gap-1.5 text-xs pt-1 border-t border-theme/50">
+            <label class="flex flex-col gap-1"><span class="text-red-400 font-semibold">+ Lead (Red)</span>
+              <select id="vm-pos-sel" class="px-2 py-1 rounded border border-theme bg-surface font-mono">${dockedEls.map((e) => `<option value="${e.id}" ${item.posElectrodeId === e.id ? 'selected' : ''}>${e.label} (${e.material})</option>`).join('')}</select>
+            </label>
+            <label class="flex flex-col gap-1"><span class="text-slate-400 font-semibold">− COM (Black)</span>
+              <select id="vm-neg-sel" class="px-2 py-1 rounded border border-theme bg-surface font-mono">${dockedEls.map((e) => `<option value="${e.id}" ${item.negElectrodeId === e.id ? 'selected' : ''}>${e.label} (${e.material})</option>`).join('')}</select>
+            </label>
+          </div>` : `<p class="text-[11px] text-muted">${t('dmmWiringHint')}</p>`}
+        </div>
+      `;
+    } else if (item.kind === 'diffusion_tube') {
+      const ringPct = item.ringPosFrac != null ? `${(item.ringPosFrac * 100).toFixed(1)} cm (${(item.ringPosFrac * 100).toFixed(1)}%)` : '—';
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t('eq_diffusion_tube')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
+              <div class="text-[11px] text-muted">${APPARATUS.diffusion_tube.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex flex-col gap-1 font-mono" id="live-diff-stats">
+            <div class="flex justify-between"><span>Left (0 cm):</span><strong>${item.leftGasId || 'Empty'} (${((item.leftFront || 0) * 100).toFixed(0)}%)</strong></div>
+            <div class="flex justify-between"><span>Right (100 cm):</span><strong>${item.rightGasId || 'Empty'} (${((item.rightFront ?? 1) * 100).toFixed(0)}%)</strong></div>
+            <div class="flex justify-between text-emerald-400"><span>${t('diffRingPosLabel')}</span><strong id="live-diff-ring">${ringPct}</strong></div>
+          </div>
+          <div class="grid grid-cols-2 gap-1.5">
+            <button type="button" id="diff-left-nh3" class="py-1.5 px-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs font-semibold hover:opacity-90">${t('diffDropLeftNH3')}</button>
+            <button type="button" id="diff-right-hcl" class="py-1.5 px-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90">${t('diffDropRightHCl')}</button>
+            <button type="button" id="diff-left-hcl" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('diffDropLeftHCl')}</button>
+            <button type="button" id="diff-right-nh3" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('diffDropRightNH3')}</button>
+          </div>
+          <button type="button" id="diff-clear" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('diffClearTube')}</button>
+          <p class="text-[11px] text-muted leading-relaxed">${t('diffHint')}</p>
         </div>
       `;
     } else if (item.kind === 'electrode') {
@@ -680,6 +752,8 @@ export class InspectorPanel {
           </div>
           <div class="text-[11px] text-muted">${(ELECTRODE_MATERIALS[item.material]?.[langCode === 'en' ? 'nameEn' : 'nameVi']) || item.material}</div>
           ${item.polarityLabel ? `<div class="p-2 rounded border border-theme bg-surface text-xs font-mono text-center">${item.polarityLabel}</div>` : ''}
+          ${item.platedMaterial === 'Cu' && (item.platedCuMol || 0) > 1e-7 ? `<div class="p-2 rounded border border-amber-500/40 bg-amber-500/10 text-xs flex items-center justify-between gap-2"><span>${t(item.platedQuality === 'burned' ? 'platedCuBurned' : 'platedCuSmooth')} (${((item.platedCuMol || 0) * 63.546 * 1000).toFixed(1)} mg)</span><button type="button" id="ins-el-strip" class="px-2 py-0.5 rounded border border-theme bg-surface text-[11px]">${t('actionClearElectrodes')}</button></div>` : ''}
+          ${item.cathodicProtectedActive ? `<div class="p-2 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs font-semibold text-center">${t('dmmCathProtBadge')}</div>` : ''}
         </div>
       `;
     } else if (item.kind === 'stir_bar') {
@@ -847,6 +921,11 @@ export class InspectorPanel {
                 : ''
             }
             ${
+              ((item.headspaceGasMoles?.NH3_g || 0) > 1e-6 || (item.headspaceGasMoles?.HCl_g || 0) > 1e-6) && connTarget && connTarget.kind === 'vessel'
+                ? `<button type="button" id="ins-fountain-primer" class="px-2.5 py-1.5 rounded-lg bg-pink-600 text-white text-xs font-semibold hover:bg-pink-500">${t('actionTriggerFountain')}</button>`
+                : ''
+            }
+            ${
               spec.isMortar
                 ? `<button type="button" id="ins-grind" class="px-2.5 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90">${t('actionGrindMortar')}</button>
                    <button type="button" id="ins-solid-xfer" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionTransferSolid')}</button>`
@@ -943,6 +1022,21 @@ export class InspectorPanel {
                 <div class="font-mono text-main flex flex-wrap gap-x-2 gap-y-0.5" id="live-escaped-gas">${formatGasSummaryHtml(item.escapedGasMoles, item.escapedFrostH2OMol || 0, t)}</div>
               </div>`
         }
+        ${(() => {
+          const headGases = Object.entries(item.headspaceGasMoles || {}).filter(([g, n]) => g !== 'H2O_g' && (n || 0) > 1e-6);
+          if (headGases.length === 0) return '';
+          const rows = headGases
+            .map(([gId, n]) => {
+              const sp = SPECIES[gId];
+              const dAir = (sp?.relAirDensity ?? (sp?.molarMass ? sp.molarMass / 28.97 : 1.0)).toFixed(2);
+              return `<span class="whitespace-nowrap">${sp?.formula || gId}: ${(n * 1000).toFixed(2)} mmol (d=${dAir})</span>`;
+            })
+            .join('<span class="text-muted px-1">·</span>');
+          return `<div class="px-3 py-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-xs flex flex-col gap-1">
+            <span class="text-sky-400 font-semibold">${t('collectedGasHeadspaceLabel')}</span>
+            <div class="font-mono text-main flex flex-wrap gap-x-1" id="live-headspace-gas">${rows}</div>
+          </div>`;
+        })()}
 
         <!-- Species Breakdown Table -->
         <div class="rounded-xl border border-theme bg-surface-alt p-3">
@@ -1126,6 +1220,7 @@ export class InspectorPanel {
       this.container.querySelector('#ins-stopper')?.addEventListener('click', () => this.sim.toggleStopper(item.id));
       this.container.querySelector('#ins-phen-cotton')?.addEventListener('click', () => this.sim.togglePhenCotton(item.id));
       this.container.querySelector('#ins-invert')?.addEventListener('click', () => this.sim.toggleVesselInverted(item.id));
+      this.container.querySelector('#ins-fountain-primer')?.addEventListener('click', () => this.sim.injectFountainPrimer(item.id));
       this.container.querySelector('#ins-grind')?.addEventListener('click', () => this.sim.grindMortar(item.id));
       this.container.querySelector('#ins-solid-xfer')?.addEventListener('click', () => this.callbacks.onOpenSolidTransfer?.(item.id));
       this.container.querySelectorAll('.mag-rpm-btn').forEach((btn) => {
@@ -1171,6 +1266,7 @@ export class InspectorPanel {
         }
       });
       this.container.querySelector('#ins-solid-xfer')?.addEventListener('click', () => this.callbacks.onOpenSolidTransfer?.(item.id));
+      this.container.querySelector('#ins-funnel-mask')?.addEventListener('click', () => this.sim.toggleFunnelUvMask(item.id));
       this.container.querySelector('#ins-cond-water')?.addEventListener('click', () => {
         item.waterFlowOn = !item.waterFlowOn;
         this.sim.emitChange();
@@ -1233,13 +1329,33 @@ export class InspectorPanel {
       this.container.querySelector('#dc-voltage-slider')?.addEventListener('input', (e) => {
         this.sim.setDcPowerState(item.id, { voltageV: Number(e.target.value) });
       });
+      this.container.querySelector('#dc-rheostat-slider')?.addEventListener('input', (e) => {
+        this.sim.setDcPowerState(item.id, { rheostatOhm: Number(e.target.value) });
+      });
       this.container.querySelector('#ins-dc-toggle')?.addEventListener('click', () => {
         this.sim.setDcPowerState(item.id, { powerOn: !item.powerOn });
       });
+    } else if (item.kind === 'volt_ammeter') {
+      this.container.querySelectorAll('.vm-mode-btn').forEach((btn) => {
+        btn.addEventListener('click', () => this.sim.setVoltAmmeterState(item.id, { mode: btn.dataset.mode }));
+      });
+      this.container.querySelector('#vm-pos-sel')?.addEventListener('change', (e) => {
+        this.sim.setVoltAmmeterState(item.id, { posElectrodeId: Number(e.target.value) });
+      });
+      this.container.querySelector('#vm-neg-sel')?.addEventListener('change', (e) => {
+        this.sim.setVoltAmmeterState(item.id, { negElectrodeId: Number(e.target.value) });
+      });
+    } else if (item.kind === 'diffusion_tube') {
+      this.container.querySelector('#diff-left-nh3')?.addEventListener('click', () => this.sim.dropDiffusionReagent(item.id, 'left', 'NH3_g'));
+      this.container.querySelector('#diff-left-hcl')?.addEventListener('click', () => this.sim.dropDiffusionReagent(item.id, 'left', 'HCl_g'));
+      this.container.querySelector('#diff-right-nh3')?.addEventListener('click', () => this.sim.dropDiffusionReagent(item.id, 'right', 'NH3_g'));
+      this.container.querySelector('#diff-right-hcl')?.addEventListener('click', () => this.sim.dropDiffusionReagent(item.id, 'right', 'HCl_g'));
+      this.container.querySelector('#diff-clear')?.addEventListener('click', () => this.sim.clearDiffusionTube(item.id));
     } else if (item.kind === 'electrode') {
       this.container.querySelectorAll('.el-mat-btn').forEach((btn) => {
         btn.addEventListener('click', () => this.sim.setElectrodeMaterial(item.id, btn.dataset.mat));
       });
+      this.container.querySelector('#ins-el-strip')?.addEventListener('click', () => this.sim.clearElectrodePlating(item.id));
     } else if (item.kind === 'stir_bar') {
       this.container.querySelectorAll('.sb-rpm-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -1263,8 +1379,27 @@ export class InspectorPanel {
     if (item.kind === 'dc_power') {
       const rEl = this.container.querySelector('#live-dc-readout');
       const mEl = this.container.querySelector('#live-dc-mode');
+      const jEl = this.container.querySelector('#live-dc-j');
+      const rheoEl = this.container.querySelector('#live-dc-rheo');
       if (rEl) rEl.textContent = `${(item.measuredV || 0).toFixed(2)} V · ${(item.measuredCurrentA || 0).toFixed(2)} A`;
       if (mEl) mEl.textContent = item.circuitMode || 'idle';
+      if (jEl) jEl.textContent = `${t('dcCurrentDensityLabel')}: ${(item.currentDensityADm2 || 0).toFixed(1)} A/dm²`;
+      if (rheoEl) rheoEl.textContent = `${(item.rheostatOhm ?? 2.0).toFixed(1)} Ω`;
+      return;
+    }
+    if (item.kind === 'volt_ammeter') {
+      const rEl = this.container.querySelector('#live-vm-readout');
+      const mEl = this.container.querySelector('#live-vm-mode');
+      if (rEl) rEl.textContent = `${(item.measuredV || 0).toFixed(3)} V · ${(item.measuredCurrentA || 0).toFixed(3)} A`;
+      if (mEl) mEl.textContent = item.circuitMode || 'idle';
+      return;
+    }
+    if (item.kind === 'diffusion_tube') {
+      const statsEl = this.container.querySelector('#live-diff-stats');
+      if (statsEl) {
+        const ringPct = item.ringPosFrac != null ? `${(item.ringPosFrac * 100).toFixed(1)} cm (${(item.ringPosFrac * 100).toFixed(1)}%)` : '—';
+        statsEl.innerHTML = `<div class="flex justify-between"><span>Left (0 cm):</span><strong>${item.leftGasId || 'Empty'} (${((item.leftFront || 0) * 100).toFixed(0)}%)</strong></div><div class="flex justify-between"><span>Right (100 cm):</span><strong>${item.rightGasId || 'Empty'} (${((item.rightFront ?? 1) * 100).toFixed(0)}%)</strong></div><div class="flex justify-between text-emerald-400"><span>${t('diffRingPosLabel')}</span><strong id="live-diff-ring">${ringPct}</strong></div>`;
+      }
       return;
     }
     if (item.kind === 'burette') {

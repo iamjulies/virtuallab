@@ -1,5 +1,11 @@
 import { CONSTANTS, ethanolVaporPressureBar, waterBoilingPointK, waterVaporPressureBar } from '../data/constants.js';
-import { ALL_GAS_IDS, createZeroGasMap, NON_STEAM_GAS_IDS, SPECIES } from '../data/species.js';
+import {
+  ALL_GAS_IDS,
+  createZeroGasMap,
+  getGasRelativeAirDensity,
+  NON_STEAM_GAS_IDS,
+  SPECIES,
+} from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, solutionFreezingPointK } from './equilibrium.js';
 
@@ -102,7 +108,9 @@ export function cubicBezierPoint(t, p0, p1, p2, p3) {
 export function computeTubingGeometry(vessel, target) {
   const vSpec = APPARATUS[vessel.typeId] || APPARATUS.erlenmeyer_250;
   const tSpec = APPARATUS[target.typeId] || APPARATUS.gas_syringe;
-  const p0 = { x: vessel.x, y: vessel.y - vSpec.height / 2 - 8 };
+  const p0 = vessel.isInverted
+    ? { x: vessel.x, y: vessel.y + vSpec.height / 2 + 8 }
+    : { x: vessel.x, y: vessel.y - vSpec.height / 2 - 8 };
   const p3 =
     target.kind === 'gas_syringe'
       ? { x: target.x - tSpec.width / 2 + 2, y: target.y }
@@ -112,7 +120,7 @@ export function computeTubingGeometry(vessel, target) {
       ? { x: target.x, y: target.y + tSpec.height / 2 - 4 }
       : { x: target.x, y: target.y - tSpec.height / 2 + (target.isStoppered ? -8 : 12) };
 
-  const archTopY = Math.min(p0.y, p3.y) - 66;
+  const archTopY = vessel.isInverted ? Math.max(p0.y, p3.y) + 34 : Math.min(p0.y, p3.y) - 66;
   const p1 = { x: p0.x, y: archTopY };
   const p2 =
     target.kind === 'gas_syringe'
@@ -562,13 +570,17 @@ export function stepVesselGasAndPressure(
       vessel.internalPressureBar = env.pressureBar;
       return events;
     } else if (target && target.kind === 'vessel' && target.isInverted && !target.isShattered) {
-      // Pneumatic water-trough displacement: collect gas in inverted dome & push water out to trough
+      // Pneumatic water-trough displacement OR dry upward displacement of light gases (NH3, H2)
       target.headspaceGasMoles = target.headspaceGasMoles || createEmptyGasMap();
+      const trough = target.submergedInTroughId ? getApparatusById(target.submergedInTroughId) : null;
+      const targetSpec = APPARATUS[target.typeId] || APPARATUS.test_tube_50;
+      const tgtT = target.tempK || env.tempK;
       let newPermMol = 0;
+
       for (const g of NON_STEAM_GASES) {
         if (produced[g] > 0) {
-          if (g === 'HCl_g' || g === 'NH3_g') {
-            // Highly soluble gases dissolve into inverted water column
+          if ((g === 'HCl_g' || g === 'NH3_g') && (target.moles.H2O_l || 0) > 0.02) {
+            // Highly soluble gases dissolve into inverted water column when trough water fills tube
             const dSol = produced[g];
             if (g === 'HCl_g') {
               target.moles.H_aq = (target.moles.H_aq || 0) + dSol;
@@ -585,18 +597,49 @@ export function stepVesselGasAndPressure(
       if (totalSteam > 0 && target.tempK < waterBoilingPointK(env.pressureBar)) {
         target.moles.H2O_l = (target.moles.H2O_l || 0) + totalSteam;
       }
+
+      // Displace water down into trough and vent excess bubbles if inverted dome reaches capacity
+      const curLiqMl = computeLiquidVolumeL(target.moles, tgtT) * 1000;
+      const curSolMl = computeSolidVolumeMl(target.moles);
       if (newPermMol > 0) {
-        target.gasDisplacedRate = (newPermMol / 0.02);
-        const dispL = (newPermMol * CONSTANTS.R_L_BAR_MOL_K * (target.tempK || env.tempK)) / Math.max(0.1, env.pressureBar);
-        const dispMol = (dispL * 1000 * 0.997) / SPECIES.H2O_l.molarMass;
-        const actualOut = Math.min(target.moles.H2O_l || 0, dispMol);
-        if (actualOut > 0) {
-          target.moles.H2O_l -= actualOut;
-          if (target.moles.H2O_l < 1e-12) delete target.moles.H2O_l;
-          const trough = target.submergedInTroughId ? getApparatusById(target.submergedInTroughId) : null;
-          if (trough) {
+        target.gasDisplacedRate = newPermMol / 0.02;
+        if (trough) {
+          const dispL = (newPermMol * CONSTANTS.R_L_BAR_MOL_K * tgtT) / Math.max(0.1, env.pressureBar);
+          const dispMol = (dispL * 1000 * 0.997) / SPECIES.H2O_l.molarMass;
+          const actualOut = Math.min(Math.max(0, (target.moles.H2O_l || 0) - 0.02), dispMol);
+          if (actualOut > 0) {
+            target.moles.H2O_l -= actualOut;
+            if (target.moles.H2O_l < 1e-12) delete target.moles.H2O_l;
             trough.moles.H2O_l = (trough.moles.H2O_l || 0) + actualOut;
           }
+        }
+      }
+
+      // Enforce physical capacity ceiling of inverted vessel: excess gas bubbles out bottom rim!
+      const maxCapL = Math.max(0.015, (targetSpec.maxVolumeMl - Math.min(targetSpec.maxVolumeMl * 0.5, curSolMl + (trough ? 1.5 : 0))) / 1000);
+      const maxHeadMol = (env.pressureBar * maxCapL) / (CONSTANTS.R_L_BAR_MOL_K * tgtT);
+      let headSum = 0;
+      for (const g of NON_STEAM_GASES) headSum += target.headspaceGasMoles[g] || 0;
+      if (headSum > maxHeadMol) {
+        const keepFrac = maxHeadMol / headSum;
+        let overflowed = 0;
+        for (const g of NON_STEAM_GASES) {
+          const curG = target.headspaceGasMoles[g] || 0;
+          if (curG <= 0) continue;
+          const ex = curG * (1 - keepFrac);
+          target.headspaceGasMoles[g] = curG * keepFrac;
+          overflowed += ex;
+          if (trough) {
+            trough.escapedGasMoles[g] = (trough.escapedGasMoles[g] || 0) + ex;
+            trough.lastGasRateMap = trough.lastGasRateMap || createEmptyGasMap();
+            trough.lastGasRateMap[g] = (trough.lastGasRateMap[g] || 0) + ex * 35;
+          } else {
+            target.escapedGasMoles[g] = (target.escapedGasMoles[g] || 0) + ex;
+          }
+        }
+        if (trough && overflowed > 1e-8) {
+          trough.troughOverfillRate = overflowed * 40;
+          trough.troughOverfillX = target.x;
         }
       }
       vessel.internalPressureBar = env.pressureBar;
@@ -671,19 +714,61 @@ export function stepVesselGasAndPressure(
         }
         target.tempK = Math.min(waterBoilingPointK(env.pressureBar), target.tempK + heatAddedJ / Math.max(40, cTarget + addedCapJK));
       }
-      vessel.internalPressureBar = env.pressureBar;
-      return events;
+      // If forward gas/steam is actively pushing downstream and no internal Ammonia/HCl fountain dissolution is occurring, stay at atmospheric pressure
+      const hasFountainSoluble =
+        ((vessel.headspaceGasMoles?.NH3_g || 0) > 1e-7 || (vessel.headspaceGasMoles?.HCl_g || 0) > 1e-7) &&
+        (vessel.moles.H2O_l || 0) > 1e-4;
+      if (!hasFountainSoluble && (vessel.internalPressureBar ?? env.pressureBar) >= env.pressureBar - 0.02) {
+        vessel.internalPressureBar = env.pressureBar;
+        return events;
+      }
     }
   }
 
   // Stoppered closed (or syringe bottomed out) -> gas accumulates in headspace
   if (vessel.sealedAirMoles === null || vessel.sealedAirMoles === undefined) {
-    vessel.sealedAirMoles = (env.pressureBar * headspaceL) / (CONSTANTS.R_L_BAR_MOL_K * vessel.tempK);
+    const nHead1Bar = (env.pressureBar * headspaceL) / (CONSTANTS.R_L_BAR_MOL_K * vessel.tempK);
+    let preCollectedGas = 0;
+    for (const g of NON_STEAM_GASES) {
+      preCollectedGas += vessel.headspaceGasMoles[g] || 0;
+    }
+    // Pre-collected gases (e.g. NH3(g) or H2(g) displaced air before stoppering) reduce initial trapped air
+    vessel.sealedAirMoles = Math.max(nHead1Bar * 0.04, nHead1Bar - preCollectedGas);
   }
 
   let extraGasMol = 0;
   for (const g of NON_STEAM_GASES) {
     vessel.headspaceGasMoles[g] = (vessel.headspaceGasMoles[g] || 0) + produced[g];
+  }
+
+  // Rapid Ammonia / HCl gas absorption into liquid water inside stoppered flask (drives Ammonia Fountain vacuum!)
+  const nWaterIn = vessel.moles.H2O_l || 0;
+  if (nWaterIn > 1e-4) {
+    const liqVolL = Math.max(1e-5, computeLiquidVolumeL(vessel.moles, vessel.tempK));
+    const headNH3 = vessel.headspaceGasMoles.NH3_g || 0;
+    if (headNH3 > 1e-9) {
+      const cNH3Now = (vessel.moles.NH3_aq || 0) / liqVolL;
+      const roomCap = Math.max(0, 18.0 - cNH3Now) * liqVolL;
+      const dDissNH3 = Math.min(headNH3, roomCap, headNH3 * 0.72 + 0.002);
+      if (dDissNH3 > 1e-11) {
+        vessel.headspaceGasMoles.NH3_g = Math.max(0, headNH3 - dDissNH3);
+        vessel.moles.NH3_aq = (vessel.moles.NH3_aq || 0) + dDissNH3;
+      }
+    }
+    const headHCl = vessel.headspaceGasMoles.HCl_g || 0;
+    if (headHCl > 1e-9) {
+      const cClNow = (vessel.moles.Cl_aq || 0) / liqVolL;
+      const roomCapH = Math.max(0, 12.5 - cClNow) * liqVolL;
+      const dDissHCl = Math.min(headHCl, roomCapH, headHCl * 0.72 + 0.002);
+      if (dDissHCl > 1e-11) {
+        vessel.headspaceGasMoles.HCl_g = Math.max(0, headHCl - dDissHCl);
+        vessel.moles.H_aq = (vessel.moles.H_aq || 0) + dDissHCl;
+        vessel.moles.Cl_aq = (vessel.moles.Cl_aq || 0) + dDissHCl;
+      }
+    }
+  }
+
+  for (const g of NON_STEAM_GASES) {
     extraGasMol += vessel.headspaceGasMoles[g] || 0;
   }
   vessel.headspaceGasMoles.H2O_g = (vessel.headspaceGasMoles.H2O_g || 0) + totalSteam;
@@ -749,9 +834,14 @@ export function stepVesselGasAndPressure(
     }
   }
 
+  const connectedTarget = vessel.connectedTargetId ? getApparatusById(vessel.connectedTargetId) : null;
+  const hasLiquidSuctionRelief = Boolean(
+    connectedTarget && connectedTarget.kind === 'vessel' && !connectedTarget.isShattered && (connectedTarget.moles?.H2O_l || 0) > 1e-4
+  );
+
   if (
     (shatterDeltaBar && overpressureBar >= shatterDeltaBar) ||
-    (spec.implosionUnderpressureBar && underpressureBar >= spec.implosionUnderpressureBar)
+    (!hasLiquidSuctionRelief && spec.implosionUnderpressureBar && underpressureBar >= spec.implosionUnderpressureBar)
   ) {
     vessel.isShattered = true;
     vessel.isStoppered = false;
@@ -772,4 +862,42 @@ export function stepVesselGasAndPressure(
   }
 
   return events;
+}
+
+/**
+ * Simulate buoyant retention vs diffusive/gravitational escape of gases in unstoppered open vessels
+ * using each gas's air-relative molar mass density (M_gas / 28.97).
+ */
+export function stepOpenGasBuoyancy(vessel, env, dt) {
+  if (!vessel || vessel.isShattered || vessel.isStoppered || (vessel.isInverted && vessel.submergedInTroughId)) {
+    return;
+  }
+  const head = vessel.headspaceGasMoles;
+  if (!head) return;
+
+  for (const gId of ALL_GASES) {
+    const n = head[gId] || 0;
+    if (n <= 1e-10) {
+      if (head[gId]) head[gId] = 0;
+      continue;
+    }
+    const relD = getGasRelativeAirDensity(gId);
+    let leakRateS = 0;
+    if (vessel.isInverted) {
+      // Inverted in open air (not in water trough): light gases (H2, NH3) float upward inside the inverted dome;
+      // heavy gases (Cl2, NO2, O2, HCl) pour downward out of the mouth
+      leakRateS = relD < 0.96 ? 0.032 * Math.sqrt(relD) : 0.35 + 1.35 * (relD - 0.95);
+    } else {
+      // Upright open vessel: light gases shoot upward quickly; heavy gases linger in the bottom trough
+      leakRateS = relD < 0.96 ? 1.05 + 1.4 * (1 - relD) : 0.14 / Math.max(0.55, relD);
+    }
+    const lost = n * (1 - Math.exp(-leakRateS * dt));
+    if (lost > 1e-12) {
+      head[gId] = Math.max(0, n - lost);
+      if (head[gId] < 1e-12) head[gId] = 0;
+      vessel.escapedGasMoles[gId] = (vessel.escapedGasMoles[gId] || 0) + lost;
+      vessel.lastGasRateMap = vessel.lastGasRateMap || createEmptyGasMap();
+      vessel.lastGasRateMap[gId] = (vessel.lastGasRateMap[gId] || 0) + lost / Math.max(1e-4, dt);
+    }
+  }
 }

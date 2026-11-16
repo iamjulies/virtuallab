@@ -33,6 +33,7 @@ import {
   computeSyringeTotalVolumeMl,
   computeTubingGeometry,
   getSyringeNozzlePos,
+  stepOpenGasBuoyancy,
   stepSyringeThermodynamics,
   stepVesselGasAndPressure,
 } from './gasNetwork.js';
@@ -119,6 +120,7 @@ export class LabSimulation {
       pressureBar: CONSTANTS.P_STD_BAR, // 1.00 bar
       speed: 1.0,
       paused: false,
+      uvLight: false,
     };
     this.items = [];
     this.selectedId = null;
@@ -254,6 +256,12 @@ export class LabSimulation {
         stirBarPhase: 0,
         grindAnimTimer: 0,
         gasDisplacedRate: 0,
+        silverMirrorFrac: 0,
+        fountainFlowMlS: 0,
+        fountainFlowColor: null,
+        gravitySpillRateMlS: 0,
+        gravitySpillColor: null,
+        troughOverfillRate: 0,
       });
       if (typeId === 'water_trough') {
         base.moles.H2O_l = (650 * 0.997) / CONSTANTS.M_H2O;
@@ -284,6 +292,8 @@ export class LabSimulation {
         filtrateRateMlS: 0,
         filtrateTargetId: null,
         filtrateColor: null,
+        uvMaskHalf: false,
+        uvDarkFrac: 0,
         isBroken: false,
       });
     } else if (spec.kind === 'wash_bottle') {
@@ -349,12 +359,34 @@ export class LabSimulation {
     } else if (spec.kind === 'dc_power') {
       Object.assign(base, {
         voltageV: 6.0,
+        rheostatOhm: 2.0,
         powerOn: false,
+        measuredV: 0,
+        measuredCurrentA: 0,
+        currentDensityADm2: 0,
+        circuitMode: 'idle',
+        posElectrodeId: null,
+        negElectrodeId: null,
+      });
+    } else if (spec.kind === 'volt_ammeter') {
+      Object.assign(base, {
+        mode: 'voltmeter', // 'voltmeter' | 'ammeter' | 'short'
         measuredV: 0,
         measuredCurrentA: 0,
         circuitMode: 'idle',
         posElectrodeId: null,
         negElectrodeId: null,
+        cathodicProtectedActive: false,
+      });
+    } else if (spec.kind === 'diffusion_tube') {
+      Object.assign(base, {
+        leftGasId: null,
+        rightGasId: null,
+        leftFront: 0,
+        rightFront: 1,
+        ringPosFrac: null,
+        ringGrowth: 0,
+        isBroken: false,
       });
     } else if (spec.kind === 'electrode') {
       const idx = this.items.filter((i) => i.kind === 'electrode').length;
@@ -523,23 +555,111 @@ export class LabSimulation {
     this.timeSec = 0;
     this.nextId = 1;
 
+    if (presetName === 'clean') {
+      // Truly empty workbench (0 items)
+      this.selectedId = null;
+      this.emitChange();
+      return;
+    }
+
     if (presetName === 'gas_collect') {
       const flask = this.createApparatus('erlenmeyer_250', 290, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
       const stand = this.createApparatus('retort_stand', 685, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
       const syringe = this.createApparatus('gas_syringe', 625, 325);
       this.attachToStand(syringe.id, stand.id);
-      const burner = this.createApparatus('burner', 135, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
+      this.createApparatus('burner', 135, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
       this.connectSyringe(flask.id, syringe.id);
       this.selectedId = flask.id;
+    } else if (presetName === 'trough_collect') {
+      const flask = this.createApparatus('erlenmeyer_250', 220, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      const trough = this.createApparatus('water_trough', 540, SIM_BENCH_FLOOR_Y - APPARATUS.water_trough.height / 2 + 2);
+      const tube = this.createApparatus('test_tube_50', trough.x, trough.y - 68);
+      this.toggleVesselInverted(tube.id);
+      tube.submergedInTroughId = trough.id;
+      this.connectTube(flask.id, tube.id);
+      this.selectedId = flask.id;
+    } else if (presetName === 'titration') {
+      const stand = this.createApparatus('retort_stand', 360, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
+      const burette = this.createApparatus('burette_50', 300, 235);
+      this.attachToStand(burette.id, stand.id);
+      const flask = this.createApparatus('erlenmeyer_250', 300, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      const stirBar = this.createApparatus('stir_bar', 490, SIM_BENCH_FLOOR_Y - 8);
+      this.insertStirBarIntoVessel(stirBar.id, flask.id, 600);
+      this.createApparatus('litmus_paper', 540, SIM_BENCH_FLOOR_Y - 12);
+      this.selectedId = burette.id;
+    } else if (presetName === 'filtration') {
+      const beaker = this.createApparatus('beaker_250', 340, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      const funnel = this.createApparatus('filter_funnel', 340, beaker.y - APPARATUS.beaker_250.height / 2 - APPARATUS.filter_funnel.height * 0.18);
+      funnel.mountedOnVesselId = beaker.id;
+      this.createApparatus('wash_bottle', 510, SIM_BENCH_FLOOR_Y - APPARATUS.wash_bottle.height / 2 + 2);
+      this.createApparatus('beaker_tall_250', 180, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_tall_250.height / 2 + 2);
+      this.selectedId = funnel.id;
+    } else if (presetName === 'daniell_cell') {
+      const bLeft = this.createApparatus('beaker_250', 270, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      const bRight = this.createApparatus('beaker_250', 410, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      const bridge = this.createApparatus('salt_bridge', 340, bLeft.y - 36);
+      bridge.vesselAId = bLeft.id;
+      bridge.vesselBId = bRight.id;
+      const elZn = this.createApparatus('electrode_rod', bLeft.x - 16, bLeft.y - 16);
+      elZn.material = 'Zn';
+      elZn.dockedVesselId = bLeft.id;
+      elZn.dockSide = 'left';
+      const elCu = this.createApparatus('electrode_rod', bRight.x + 16, bRight.y - 16);
+      elCu.material = 'Cu';
+      elCu.dockedVesselId = bRight.id;
+      elCu.dockSide = 'right';
+      const dmm = this.createApparatus('volt_ammeter', 620, SIM_BENCH_FLOOR_Y - APPARATUS.volt_ammeter.height / 2 + 2);
+      dmm.posElectrodeId = elCu.id;
+      dmm.negElectrodeId = elZn.id;
+      this.selectedId = dmm.id;
+    } else if (presetName === 'electrolysis') {
+      const beaker = this.createApparatus('beaker_250', 300, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      const elA = this.createApparatus('electrode_rod', beaker.x - 18, beaker.y - 16);
+      elA.material = 'C';
+      elA.dockedVesselId = beaker.id;
+      elA.dockSide = 'left';
+      const elB = this.createApparatus('electrode_rod', beaker.x + 18, beaker.y - 16);
+      elB.material = 'C';
+      elB.dockedVesselId = beaker.id;
+      elB.dockSide = 'right';
+      const dc = this.createApparatus('dc_power', 520, SIM_BENCH_FLOOR_Y - APPARATUS.dc_power.height / 2 + 2);
+      dc.posElectrodeId = elA.id;
+      dc.negElectrodeId = elB.id;
+      this.createApparatus('splint', 690, SIM_BENCH_FLOOR_Y - 12);
+      this.selectedId = dc.id;
+    } else if (presetName === 'distillation') {
+      const burner = this.createApparatus('burner', 220, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
+      const flask = this.createApparatus('erlenmeyer_250', 220, burner.y - APPARATUS.burner.height / 2 + 10 - APPARATUS.erlenmeyer_250.height / 2);
+      const stand = this.createApparatus('retort_stand', 500, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
+      const cond = this.createApparatus('liebig_condenser', 450, 250);
+      this.attachToStand(cond.id, stand.id);
+      const recv = this.createApparatus('beaker_250', 610, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      this.connectTube(flask.id, cond.id);
+      this.connectCondenserOutlet(cond.id, recv.id);
+      this.selectedId = flask.id;
+    } else if (presetName === 'ammonia_fountain') {
+      const flask = this.createApparatus('erlenmeyer_250', 220, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      const burner = this.createApparatus('burner', 220, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
+      flask.y = burner.y - APPARATUS.burner.height / 2 + 10 - APPARATUS.erlenmeyer_250.height / 2;
+      const stand = this.createApparatus('retort_stand', 520, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
+      const fountainFlask = this.createApparatus('erlenmeyer_250', 460, 210);
+      this.toggleVesselInverted(fountainFlask.id);
+      this.attachToStand(fountainFlask.id, stand.id);
+      const waterBeaker = this.createApparatus('beaker_250', 460, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      this.connectTube(flask.id, fountainFlask.id);
+      this.selectedId = waterBeaker.id;
+    } else if (presetName === 'graham_diffusion') {
+      const tube = this.createApparatus('diffusion_tube', 430, SIM_BENCH_FLOOR_Y - APPARATUS.diffusion_tube.height / 2 + 2);
+      this.selectedId = tube.id;
     } else {
-      // Default clean bench: Scale + ISO Beaker + Burner + ISO Erlenmeyer
-      const scale = this.createApparatus('scale', 220, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height / 2 + 2);
+      // 'starter' default bench: Scale + Beaker 250 mL + Burner + Erlenmeyer 250 mL
+      this.createApparatus('scale', 220, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height / 2 + 2);
       const beaker = this.createApparatus('beaker_250', 220, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height - APPARATUS.beaker_250.height / 2 + 2);
-      const burner = this.createApparatus('burner', 560, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
-      const flask = this.createApparatus('erlenmeyer_250', 760, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      this.updateSupportAttachments();
+      this.createApparatus('burner', 560, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
+      this.createApparatus('erlenmeyer_250', 760, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
       this.selectedId = beaker.id;
     }
+    this.updateSupportAttachments();
     this.emitChange();
   }
 
@@ -1748,10 +1868,15 @@ export class LabSimulation {
     v.isInverted = !v.isInverted;
     if (v.isInverted) {
       v.isStoppered = false;
-      // When inverted over a wet water trough, auto-fill working water column from trough if nearly empty
-      const trough = this.items.find(
-        (t) => t.typeId === 'water_trough' && !t.isShattered && Math.abs(t.x - v.x) <= 90 && (t.moles.H2O_l || 0) > 2.0
-      );
+      const mouthY = v.y + spec.height / 2;
+      // Pull working water column ONLY when the inverted mouth sits submerged inside a wet water trough
+      const trough = this.items.find((t) => {
+        if (t.typeId !== 'water_trough' || t.isShattered || (t.moles.H2O_l || 0) <= 2.0) return false;
+        const tSpec = APPARATUS.water_trough;
+        const trTop = t.y - tSpec.height / 2;
+        const trBot = t.y + tSpec.height / 2;
+        return Math.abs(t.x - v.x) <= 78 && mouthY >= trTop - 16 && mouthY <= trBot + 12;
+      });
       const curMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
       const targetMl = spec.maxVolumeMl * 0.85;
       if (trough && curMl < targetMl) {
@@ -1760,9 +1885,13 @@ export class LabSimulation {
           trough.moles.H2O_l -= pullMol;
           v.moles.H2O_l = (v.moles.H2O_l || 0) + pullMol;
         }
+        v.submergedInTroughId = trough.id;
+      } else {
+        v.submergedInTroughId = null;
       }
     } else {
       v.submergedInTroughId = null;
+      v.gravitySpillRateMlS = 0;
     }
     this.emitChange();
     return true;
@@ -1840,12 +1969,127 @@ export class LabSimulation {
     const s = this.getItem(supplyId);
     if (!s || s.kind !== 'dc_power') return;
     if (patch.voltageV !== undefined) s.voltageV = Math.max(0, Math.min(12, Number(patch.voltageV) || 0));
+    if (patch.rheostatOhm !== undefined) s.rheostatOhm = Math.max(0.2, Math.min(25, Number(patch.rheostatOhm) || 2.0));
     if (patch.powerOn !== undefined) s.powerOn = Boolean(patch.powerOn);
     this.emitChange();
   }
 
-  emitElectrolysisGas(v, gasId, mol) {
+  setVoltAmmeterState(meterId, patch = {}) {
+    const m = this.getItem(meterId);
+    if (!m || m.kind !== 'volt_ammeter') return;
+    if (patch.mode !== undefined && ['voltmeter', 'ammeter', 'short'].includes(patch.mode)) {
+      m.mode = patch.mode;
+    }
+    if (patch.posElectrodeId !== undefined) m.posElectrodeId = patch.posElectrodeId;
+    if (patch.negElectrodeId !== undefined) m.negElectrodeId = patch.negElectrodeId;
+    this.emitChange();
+  }
+
+  clearElectrodePlating(electrodeId) {
+    const el = this.getItem(electrodeId);
+    if (!el || el.kind !== 'electrode') return;
+    el.platedMaterial = null;
+    el.platedQuality = null;
+    el.platedCuMol = 0;
+    this.emitChange();
+  }
+
+  toggleFunnelUvMask(funnelId) {
+    const f = this.getItem(funnelId);
+    if (!f || f.kind !== 'filter_funnel') return;
+    f.uvMaskHalf = !f.uvMaskHalf;
+    this.emitChange();
+  }
+
+  dropDiffusionReagent(tubeId, side, gasId) {
+    const t = this.getItem(tubeId);
+    if (!t || t.kind !== 'diffusion_tube' || t.isBroken) return false;
+    if (gasId !== 'NH3_g' && gasId !== 'HCl_g') return false;
+    if (side === 'left') {
+      t.leftGasId = gasId;
+      t.leftFront = 0;
+    } else if (side === 'right') {
+      t.rightGasId = gasId;
+      t.rightFront = 1;
+    }
+    t.ringGrowth = 0;
+    t.ringPosFrac = null;
+    t._ringLogged = false;
+    this.emitChange();
+    return true;
+  }
+
+  clearDiffusionTube(tubeId) {
+    const t = this.getItem(tubeId);
+    if (!t || t.kind !== 'diffusion_tube') return;
+    t.leftGasId = null;
+    t.rightGasId = null;
+    t.leftFront = 0;
+    t.rightFront = 1;
+    t.ringPosFrac = null;
+    t.ringGrowth = 0;
+    t._ringLogged = false;
+    this.emitChange();
+  }
+
+  /**
+   * Inject tiny capillary water primer drop (~0.15 mL) from connected receiver vessel into Ammonia/HCl-filled flask
+   * to initiate the rapid vacuum fountain suction.
+   */
+  injectFountainPrimer(vesselId) {
+    const v = this.getItem(vesselId);
+    if (!v || v.kind !== 'vessel' || v.isShattered) return false;
+    const headNH3 = v.headspaceGasMoles?.NH3_g || 0;
+    const headHCl = v.headspaceGasMoles?.HCl_g || 0;
+    if (headNH3 <= 1e-6 && headHCl <= 1e-6) return false;
+    const target = v.connectedTargetId ? this.getItem(v.connectedTargetId) : null;
+    let primerW = 0.01;
+    if (target && target.kind === 'vessel' && (target.moles?.H2O_l || 0) > 0.02) {
+      const pull = Math.min(0.015, target.moles.H2O_l * 0.05);
+      target.moles.H2O_l -= pull;
+      primerW = pull;
+    }
+    v.moles.H2O_l = (v.moles.H2O_l || 0) + primerW;
+    if (!v.isStoppered && target) {
+      v.isStoppered = true;
+    }
+    stepVesselGasAndPressure(v, createZeroGasMap(), 0, this.environment, (id) => this.getItem(id));
+    this.emitChange();
+    return true;
+  }
+
+  emitElectrolysisGas(v, gasId, mol, electrodeX = null) {
     if (!v || mol <= 0) return;
+    const vSpec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+    // Phenomenon #6: Collect rising bubbles directly into any open inverted test tube / cylinder held over the electrode(s)
+    if (!v.isStoppered && !v.isInverted) {
+      const targetX = electrodeX ?? v.x;
+      const vTop = v.y - vSpec.height / 2;
+      const vBot = v.y + vSpec.height / 2;
+      const overheadInv = this.items.find((inv) => {
+        if (inv.kind !== 'vessel' || !inv.isInverted || inv.isShattered || inv.isStoppered) return false;
+        const iSpec = APPARATUS[inv.typeId];
+        const iMouthY = inv.y + iSpec.height / 2;
+        return Math.abs(inv.x - targetX) <= Math.max(44, vSpec.width * 0.45) && iMouthY >= vTop - 22 && iMouthY <= vBot + 12;
+      });
+      if (overheadInv) {
+        const dummy = createEmptyGasMap();
+        dummy[gasId] = mol;
+        overheadInv.headspaceGasMoles = overheadInv.headspaceGasMoles || createEmptyGasMap();
+        overheadInv.headspaceGasMoles[gasId] = (overheadInv.headspaceGasMoles[gasId] || 0) + mol;
+        // Displace water down into parent vessel up to capacity
+        const dispL = (mol * CONSTANTS.R_L_BAR_MOL_K * (overheadInv.tempK || v.tempK)) / Math.max(0.1, this.environment.pressureBar);
+        const dispMol = (dispL * 1000 * 0.997) / CONSTANTS.M_H2O;
+        const outW = Math.min(Math.max(0, (overheadInv.moles.H2O_l || 0) - 0.01), dispMol);
+        if (outW > 0) {
+          overheadInv.moles.H2O_l -= outW;
+          if (overheadInv.moles.H2O_l < 1e-12) delete overheadInv.moles.H2O_l;
+          v.moles.H2O_l = (v.moles.H2O_l || 0) + outW;
+        }
+        overheadInv.gasDisplacedRate = (overheadInv.gasDisplacedRate || 0) + mol / 0.02;
+        return;
+      }
+    }
     if (v.isStoppered && (v.connectedTargetId || v.connectedSyringeId)) {
       const dummyGas = createEmptyGasMap();
       dummyGas[gasId] = mol;
@@ -2940,6 +3184,148 @@ export class LabSimulation {
     this.emitChange();
   }
 
+  setUvLight(on) {
+    this.environment.uvLight = Boolean(on);
+    this.emitChange();
+  }
+
+  /**
+   * Pour liquid and loose solids downward under gravity whenever an open inverted vessel is held in air
+   * (unstoppered and not submerged inside a pneumatic water trough).
+   */
+  stepInvertedGravitySpill(v, dt) {
+    v.gravitySpillRateMlS = 0;
+    v.gravitySpillColor = null;
+    if (!v || v.kind !== 'vessel' || v.isShattered || !v.isInverted || v.isStoppered || v.submergedInTroughId) {
+      return;
+    }
+    const spec = APPARATUS[v.typeId];
+    const liqL = computeLiquidVolumeL(v.moles, v.tempK);
+    const liqMl = liqL * 1000;
+    let hasSolids = false;
+    for (const [id, n] of Object.entries(v.moles || {})) {
+      if (n > 1e-8 && SPECIES[id]?.phase === 's') {
+        hasSolids = true;
+        break;
+      }
+    }
+    if (liqMl <= 0.02 && !hasSolids) return;
+
+    const mouthY = v.y + spec.height / 2;
+    const dst = this.items.find((other) => {
+      if (other.id === v.id || other.kind !== 'vessel' || other.isShattered || other.isStoppered || other.isInverted) {
+        return false;
+      }
+      const oSpec = APPARATUS[other.typeId];
+      const oRimY = other.y - oSpec.height / 2;
+      const halfMouth = Math.max(22, oSpec.neckRadius || oSpec.width * 0.42);
+      return Math.abs(other.x - v.x) <= halfMouth + 14 && oRimY >= mouthY - 22 && oRimY - mouthY <= 280;
+    });
+
+    const vis =
+      liqL > 1e-6
+        ? computeSolutionVisuals(v.moles, liqL, computePH(v.moles, liqL, v.tempK), spec.opticalPathCm, v.phenBleachFrac, v.phenIrrevFrac || 0)
+        : { css: 'rgba(186, 230, 253, 0.85)' };
+
+    const spillRateMlS = Math.max(60, liqMl * 4.0);
+    const drainFrac = liqMl > 0.02 ? Math.min(1, (spillRateMlS * dt) / Math.max(0.05, liqMl)) : 1.0;
+
+    v.gravitySpillRateMlS = liqMl > 0.02 ? spillRateMlS : 12;
+    v.gravitySpillColor = vis.css;
+
+    const cMovedBase = dst ? computeHeatCapacityJK(dst) : 0;
+    let cMoved = 0;
+    for (const [spId, n] of Object.entries(v.moles)) {
+      if (n <= 0) continue;
+      const sp = SPECIES[spId];
+      if (!sp) continue;
+      const dm = drainFrac >= 0.999 ? n : n * drainFrac;
+      v.moles[spId] = n - dm;
+      if (v.moles[spId] < 1e-12) delete v.moles[spId];
+      if (dst) {
+        dst.moles[spId] = (dst.moles[spId] || 0) + dm;
+        cMoved += dm * Math.max(0, sp.cp || 0);
+      }
+    }
+
+    if (dst) {
+      if (cMovedBase + cMoved > 0) {
+        dst.tempK = (cMovedBase * dst.tempK + cMoved * v.tempK) / (cMovedBase + cMoved);
+      }
+      this.checkOverflow(dst);
+    } else {
+      v.spilledPuddleColor = vis.css;
+      if (!v._gravSpillLogged && (liqMl > 0.5 || hasSolids)) {
+        v._gravSpillLogged = true;
+        this.addLog({ type: 'alert', key: 'alertGravitySpill', vesselLabel: v.label });
+        if (this.visualHooks.onAlert) {
+          this.visualHooks.onAlert('drop_spill', v, { liquidColor: vis.css, spilledMl: Math.min(40, Math.max(5, liqMl)) });
+        }
+      }
+    }
+  }
+
+  /**
+   * Phenomenon #2: Vacuum suction through tubing when stoppered flask pressure < ambient pressure
+   * (e.g., Ammonia Fountain when NH3(g) dissolves rapidly into trace water).
+   */
+  stepAmmoniaFountainSuction(v, dt) {
+    v.fountainFlowMlS = 0;
+    v.fountainFlowColor = null;
+    if (!v || v.kind !== 'vessel' || v.isShattered || !v.isStoppered || !v.connectedTargetId) return;
+    const target = this.getItem(v.connectedTargetId);
+    if (!target || target.kind !== 'vessel' || target.isShattered) return;
+
+    const dpVac = this.environment.pressureBar - (v.internalPressureBar ?? this.environment.pressureBar);
+    const tLiqL = computeLiquidVolumeL(target.moles, target.tempK);
+    const tLiqMl = tLiqL * 1000;
+    if (dpVac <= 0.045 || tLiqMl <= 0.05) return;
+
+    const spec = APPARATUS[v.typeId];
+    const vLiqMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
+    const roomMl = Math.max(0, spec.maxVolumeMl * 0.92 - vLiqMl);
+    if (roomMl <= 0.5) return;
+
+    const rateMlS = Math.min(46.0, 42.0 * Math.sqrt(dpVac));
+    const pullMl = Math.min(tLiqMl - 0.02, roomMl, rateMlS * dt);
+    if (pullMl <= 1e-4) return;
+    const frac = Math.min(1, pullMl / tLiqMl);
+
+    const oldPhen = v.moles.Phenolphthalein_aq || 0;
+    const { movedPhenMol } = moveFluidFraction(target.moles, target.precipitateSettle, frac, v.moles, false);
+    if (movedPhenMol > 0) {
+      const totP = oldPhen + movedPhenMol;
+      v.phenBleachFrac = totP > 1e-14 ? (oldPhen * (v.phenBleachFrac || 0) + movedPhenMol * (target.phenBleachFrac || 0)) / totP : 0;
+    }
+
+    const vLiqAfterL = computeLiquidVolumeL(v.moles, v.tempK);
+    const fountainVis = computeSolutionVisuals(
+      v.moles,
+      Math.max(1e-4, vLiqAfterL),
+      computePH(v.moles, Math.max(1e-4, vLiqAfterL), v.tempK),
+      spec.opticalPathCm,
+      v.phenBleachFrac,
+      v.phenIrrevFrac || 0
+    );
+    v.fountainFlowMlS = pullMl / Math.max(1e-4, dt);
+    v.fountainFlowColor = fountainVis.css;
+    if (!v._fountainLogged) {
+      v._fountainLogged = true;
+      this.addLog({
+        type: 'reaction',
+        equation: 'NH₃(g) + H₂O(l) ⇌ NH₃(aq) (P_bình ≪ P_kq ⇒ Phun trào chân không!)',
+        nameVi: 'Thí nghiệm Phun nước Ammonia (Chân không áp suất khí quyển)',
+        nameEn: 'Ammonia Vacuum Fountain (atmospheric pressure surge)',
+        descVi: 'NH₃ hòa tan mãnh liệt vào nước (~700 L khí / 1 L nước) làm áp suất bình tụt sâu, hút mạnh nước chỉ thị phun trào thành tia.',
+        descEn: 'Ultra-high Ammonia solubility collapses internal pressure, forcing indicator water violently up the fountain tube.',
+        vesselLabel: `${target.label} ⟹ ${v.label}`,
+      });
+      if (this.visualHooks.onAlert) {
+        this.visualHooks.onAlert('ammonia_fountain', v, { liquidColor: fountainVis.css });
+      }
+    }
+  }
+
   /**
    * Main simulation tick called by animation loop (realDeltaSec).
    */
@@ -3000,11 +3386,24 @@ export class LabSimulation {
       if (v.isShattered) {
         v.activeReactions = [];
         v.overflowRateMlS = 0;
+        v.fountainFlowMlS = 0;
+        v.gravitySpillRateMlS = 0;
         for (let s = 0; s < numSteps; s++) {
           stepVesselThermodynamics(v, dt, this.environment, 0, 0);
         }
         continue;
       }
+
+      v.troughOverfillRate = 0;
+
+      // Gravity spill from open inverted vessels held in air (not submerged inside water trough)
+      this.stepInvertedGravitySpill(v, scaledDt);
+
+      // Atmospheric pressure Ammonia Fountain suction when stoppered connected flask is under vacuum
+      this.stepAmmoniaFountainSuction(v, scaledDt);
+
+      // Buoyant retention / gravitational sinking of gases in unstoppered open vessels (relAirDensity)
+      stepOpenGasBuoyancy(v, this.environment, scaledDt);
 
       // Continuous gravity spillover above physical brim
       this.stepVesselOverflow(v, scaledDt);
@@ -3024,7 +3423,7 @@ export class LabSimulation {
       const frameActiveMap = new Map();
 
       for (let s = 0; s < numSteps; s++) {
-        const chemRes = stepVesselChemistry(v, dt);
+        const chemRes = stepVesselChemistry(v, dt, { uvLight: this.environment.uvLight });
         const thermRes = stepVesselThermodynamics(
           v,
           dt,
@@ -3631,6 +4030,8 @@ export class LabSimulation {
           this.visualHooks.onParticlesNeeded(item, { rateMlS: item.distillRateMlS });
         } else if (item.kind === 'electrode' && item.gasBubbleType && (item.gasBubbleRate || 0) > 1e-7) {
           this.visualHooks.onParticlesNeeded(item, { gasId: item.gasBubbleType, rateMolS: item.gasBubbleRate });
+        } else if (item.kind === 'vessel' && (item.troughOverfillRate || 0) > 1e-4) {
+          this.visualHooks.onParticlesNeeded(item, { troughOverfillRate: item.troughOverfillRate, troughOverfillX: item.troughOverfillX });
         }
       }
     }

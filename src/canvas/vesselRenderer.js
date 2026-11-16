@@ -1224,14 +1224,17 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
       }
       ctx.stroke();
 
-      // Animated bright liquid flow slugs surging along filled length when pumping
-      if ((v.tubeLiquidFlowTimer || 0) > 0) {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
-        for (let k = 0; k < 4; k++) {
-          const tFlow = ((timeNow * 1.4 + k * 0.25) % 1) * fillFrac;
+      // Animated bright liquid flow slugs surging along filled length when pumping or sucking (Ammonia Fountain)
+      const isFountainPull = (target.fountainFlowMlS || 0) > 0.5;
+      if ((v.tubeLiquidFlowTimer || 0) > 0 || isFountainPull) {
+        ctx.fillStyle = isFountainPull ? (target.fountainFlowColor || 'rgba(244, 114, 182, 0.85)') : 'rgba(255, 255, 255, 0.72)';
+        const dir = isFountainPull ? -1 : 1;
+        for (let k = 0; k < 5; k++) {
+          const raw = (timeNow * (isFountainPull ? 2.2 : 1.4) * dir + k * 0.2) % 1;
+          const tFlow = ((raw + 1) % 1) * (isFountainPull ? 1.0 : fillFrac);
           const fPt = cubicBezierPoint(tFlow, p0, p1, p2, p3);
           ctx.beginPath();
-          ctx.arc(fPt.x, fPt.y, 1.9, 0, Math.PI * 2);
+          ctx.arc(fPt.x, fPt.y, isFountainPull ? 2.6 : 1.9, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -1512,6 +1515,14 @@ export function renderVessel(ctx, vessel, opts) {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
       ctx.lineWidth = 1.4;
       ctx.stroke();
+
+      // Colored headspace gas tint (Cl2 pale green-yellow / NO2 amber) inside upper dome
+      const hCl2 = vessel.headspaceGasMoles?.Cl2_g || 0;
+      const hNO2 = vessel.headspaceGasMoles?.NO2_g || 0;
+      if (hCl2 > 1e-6 || hNO2 > 1e-6) {
+        ctx.fillStyle = hNO2 >= hCl2 ? 'rgba(217, 119, 6, 0.34)' : 'rgba(190, 242, 100, 0.32)';
+        ctx.fillRect(x - w / 2, divY, w, interiorBottom - divY + 4);
+      }
     } else {
       ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
 
@@ -1528,6 +1539,52 @@ export function renderVessel(ctx, vessel, opts) {
         ctx.stroke();
       }
     }
+  }
+
+  // Phenomenon #2: Ammonia Fountain vertical spraying jet inside vacuum-suction flask
+  if ((vessel.fountainFlowMlS || 0) > 0.5 && !vessel.isShattered) {
+    ctx.save();
+    const fCol = vessel.fountainFlowColor || 'rgba(236, 72, 153, 0.88)';
+    const jetBaseY = top + 6;
+    const jetPeakY = top + (interiorBottom - top) * 0.86;
+    const jetGrad = ctx.createLinearGradient(x, jetBaseY, x, jetPeakY);
+    jetGrad.addColorStop(0, fCol);
+    jetGrad.addColorStop(1, 'rgba(244, 114, 182, 0.45)');
+    ctx.strokeStyle = jetGrad;
+    ctx.lineWidth = 4.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, jetBaseY);
+    ctx.lineTo(x, jetPeakY);
+    ctx.stroke();
+
+    ctx.fillStyle = fCol;
+    for (let k = 0; k < 10; k++) {
+      const ang = (k / 10) * Math.PI + (Math.sin(timeNow * 12 + k) * 0.15);
+      const rad = 10 + ((timeNow * 45 + k * 7) % 24);
+      const sx = x + Math.cos(ang) * rad * 0.85;
+      const sy = jetPeakY - Math.abs(Math.sin(ang)) * rad * 0.55;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // Phenomenon #3: Gleaming metallic Silver Mirror film lining the lower wetted wall
+  if ((vessel.silverMirrorFrac || 0) > 0.02 && !vessel.isShattered) {
+    const mirAlpha = Math.min(0.68, vessel.silverMirrorFrac * 0.68);
+    ctx.save();
+    const mirGrad = ctx.createLinearGradient(x - w / 2, 0, x + w / 2, 0);
+    mirGrad.addColorStop(0, `rgba(148, 163, 184, ${mirAlpha})`);
+    mirGrad.addColorStop(0.28, `rgba(248, 250, 252, ${(mirAlpha * 1.1).toFixed(2)})`);
+    mirGrad.addColorStop(0.55, `rgba(100, 116, 139, ${(mirAlpha * 0.8).toFixed(2)})`);
+    mirGrad.addColorStop(0.82, `rgba(241, 245, 249, ${(mirAlpha * 1.05).toFixed(2)})`);
+    mirGrad.addColorStop(1, `rgba(148, 163, 184, ${mirAlpha})`);
+    ctx.fillStyle = mirGrad;
+    const mirTopY = Math.max(top + 24, interiorBottom - Math.max(26, (interiorBottom - top) * 0.48));
+    ctx.fillRect(x - w / 2, mirTopY, w, interiorBottom - mirTopY + 4);
+    ctx.restore();
   }
 
   // Draw rotating PTFE magnetic stir bar on vessel bottom
@@ -1924,14 +1981,36 @@ export function renderVessel(ctx, vessel, opts) {
 
   ctx.restore();
 
-  // Floating Vessel Status Pill below/above vessel (Temp + pH + Volume)
+  // Gravity falling stream pouring downward from unstoppered unsubmerged inverted mouth
+  if (vessel.isInverted && !vessel.isStoppered && !vessel.submergedInTroughId && (vessel.gravitySpillRateMlS || 0) > 0.2 && !vessel.isShattered) {
+    const gWobble = Math.sin((timeNow || 0) * 20) * 1.6;
+    ctx.save();
+    ctx.strokeStyle = vessel.gravitySpillColor || 'rgba(186, 230, 253, 0.85)';
+    ctx.lineWidth = Math.min(7, 2.8 + Math.sqrt(vessel.gravitySpillRateMlS) * 0.35);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, bottom - 2);
+    ctx.quadraticCurveTo(x + gWobble, Math.min(482, bottom + 65), x - gWobble * 0.5, 482);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Floating Vessel Status Pill below/above vessel (Temp + pH + Volume + Inverted Gas Formula)
   const tempC = kelvinToCelsius(vessel.tempK);
   const tDisp = Math.abs(tempC) < 0.05 ? 0 : tempC;
   const ph = hasWater && !vessel.isFrozenSolid ? computePH(vessel.moles, liqL, vessel.tempK) : null;
   const pillParts = [vessel.isInverted ? `🙃 ${vessel.label}` : vessel.label];
-  if (vessel.isInverted) {
-    const colGasMol = Object.values(vessel.headspaceGasMoles || {}).reduce((s, n) => s + (n || 0), 0);
-    if (colGasMol > 1e-6) pillParts.push(`💨 ${(colGasMol * 1000).toFixed(2)}mmol`);
+  if (vessel.isInverted || Object.values(vessel.headspaceGasMoles || {}).some((n) => (n || 0) > 1e-6)) {
+    const gasEntries = Object.entries(vessel.headspaceGasMoles || {})
+      .filter(([gId, n]) => gId !== 'H2O_g' && (n || 0) > 1e-6)
+      .sort((a, b) => (b[1] || 0) - (a[1] || 0));
+    if (gasEntries.length > 0) {
+      const topGases = gasEntries
+        .slice(0, 2)
+        .map(([gId, n]) => `${SPECIES[gId]?.formula || gId} ${(n * 1000).toFixed(1)}mmol`)
+        .join(' + ');
+      pillParts.push(`💨 ${topGases}`);
+    }
   }
   if (vessel.isFrozenSolid && hasIce) {
     pillParts.push(`❄️ ${iceMl.toFixed(1)}mL`);

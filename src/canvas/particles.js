@@ -25,6 +25,26 @@ export class ParticleSystem {
    * Spawn bubbles, steam, sparks, syringe spray, and overflow droplets.
    */
   emitForVessel(item, metrics, dt) {
+    if (item.kind === 'vessel' && (metrics.troughOverfillRate || 0) > 1e-4) {
+      // Phenomenon #4: Excess gas bubbling out of submerged inverted tube mouth through water trough surface
+      const nBub = Math.random() < Math.min(0.9, metrics.troughOverfillRate * dt * 25) ? 2 : 0;
+      for (let k = 0; k < nBub; k++) {
+        this.particles.push({
+          kind: 'bubble',
+          x: (metrics.troughOverfillX ?? item.x) + (Math.random() - 0.5) * 26,
+          y: item.y + 18,
+          vx: (Math.random() - 0.5) * 18,
+          vy: -(48 + Math.random() * 28),
+          r: 2.0 + Math.random() * 2.2,
+          minY: item.y - 26,
+          life: 0,
+          maxLife: 1.0,
+          color: 'rgba(248, 250, 252, 0.85)',
+        });
+      }
+      return;
+    }
+
     if (item.kind === 'filter_funnel' || item.kind === 'burette' || item.kind === 'condenser') {
       const rate = metrics.rateMlS || 0;
       if (rate > 0.05 && Math.random() < Math.min(0.85, rate * dt * 8)) {
@@ -750,6 +770,70 @@ export class ParticleSystem {
           life: 0,
           maxLife: 1.5 + Math.random() * 0.7,
           color: this.isDark ? 'rgba(241, 245, 249, 0.75)' : 'rgba(148, 163, 184, 0.65)',
+        });
+      }
+      return;
+    }
+
+    if (type === 'oxyhydrogen_detonation') {
+      const scale = Math.max(0.8, Math.min(3.0, meta?.blastScale || 1.2));
+      this.particles.push({
+        kind: 'flash',
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        r: 36 * scale,
+        life: 0,
+        maxLife: 0.34,
+        color: 'rgba(254, 240, 138, 0.96)',
+      });
+      this.particles.push({
+        kind: 'shockwave',
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        r: 12,
+        maxR: 95 * scale,
+        life: 0,
+        maxLife: 0.38,
+        color: '#f97316',
+      });
+      const nSpk = Math.round(18 * scale);
+      for (let i = 0; i < nSpk; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = (75 + Math.random() * 140) * Math.sqrt(scale);
+        this.particles.push({
+          kind: 'spark',
+          x,
+          y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          r: 2.2 + Math.random() * 2.0,
+          life: 0,
+          maxLife: 0.42 + Math.random() * 0.28,
+          color: i % 2 === 0 ? '#fde047' : '#fb923c',
+        });
+      }
+      return;
+    }
+
+    if (type === 'ammonia_fountain') {
+      for (let i = 0; i < 20; i++) {
+        const ang = -Math.PI * (0.15 + Math.random() * 0.70);
+        const spd = 45 + Math.random() * 75;
+        this.particles.push({
+          kind: 'drip',
+          x: x + (Math.random() - 0.5) * 14,
+          y: y + 10,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          r: 2.2 + Math.random() * 2.0,
+          life: 0,
+          maxLife: 0.65,
+          color: meta?.liquidColor || 'rgba(236, 72, 153, 0.88)',
+          splashed: false,
         });
       }
       return;

@@ -58,6 +58,68 @@ function stepFilterFunnel(sim, funnel, dt) {
   funnel.isFiltering = false;
   funnel.filtrateTargetId = null;
 
+  // Phenomenon #7A: Photochemical AgCl(s) -> Ag(s) + 0.5 Cl2(g) on filter paper under UV / bright sunlight
+  const nAgClStart = funnel.moles.AgCl_s || 0;
+  if (nAgClStart > 1e-8 && sim.environment.uvLight) {
+    // Track total Ag pool initially present when UV exposure begins so masking protects exactly half from darkening
+    const curTotalAgPool = nAgClStart + (funnel.moles.Ag_s || 0);
+    if (!funnel.uvExposedPoolRef || funnel.uvExposedPoolRef < curTotalAgPool) {
+      funnel.uvExposedPoolRef = curTotalAgPool;
+    }
+    const exposedLimit = funnel.uvMaskHalf ? funnel.uvExposedPoolRef * 0.5 : funnel.uvExposedPoolRef;
+    const exposedRemain = Math.max(0, exposedLimit - (funnel.moles.Ag_s || 0));
+    const dPhoto = Math.min(nAgClStart, exposedRemain, Math.max(1e-7, nAgClStart * 0.35 * dt));
+    if (dPhoto > 1e-9) {
+      funnel.moles.AgCl_s = nAgClStart - dPhoto;
+      if (funnel.moles.AgCl_s < 1e-12) delete funnel.moles.AgCl_s;
+      funnel.moles.Ag_s = (funnel.moles.Ag_s || 0) + dPhoto;
+      funnel.escapedGasMoles = funnel.escapedGasMoles || {};
+      funnel.escapedGasMoles.Cl2_g = (funnel.escapedGasMoles.Cl2_g || 0) + dPhoto * 0.5;
+      funnel.uvDarkFrac = Math.min(1, (funnel.moles.Ag_s || 0) / Math.max(1e-8, funnel.uvExposedPoolRef));
+      if (!funnel._uvPhotoLogged && (funnel.moles.Ag_s || 0) > 1e-4) {
+        funnel._uvPhotoLogged = true;
+        sim.addLog({
+          type: 'reaction',
+          equation: '2AgCl(s) —(hν)→ 2Ag(s) + Cl₂(g)↑',
+          nameVi: 'Quang phân hủy AgCl(s) trên giấy lọc dưới ánh sáng UV',
+          nameEn: 'Photochemical darkening of AgCl(s) on filter paper under UV',
+          descVi: 'Ánh sáng mạnh khử phần AgCl(s) không bị che thành bạc kim loại Ag(s) xám đen; phần bị che vẫn giữ nguyên AgCl trắng.',
+          descEn: 'Bright UV reduces unmasked AgCl(s) to dark metallic Ag(s), while masked AgCl stays pure white.',
+          vesselLabel: funnel.label,
+        });
+      }
+    }
+  } else {
+    funnel.uvExposedPoolRef = null;
+  }
+
+  // Phenomenon #7B: Rinsing filter paper with NH3(aq) fixes the image: unexposed AgCl dissolves as [Ag(NH3)2]+ while metallic Ag(s) stays fixed!
+  const nAgClNow = funnel.moles.AgCl_s || 0;
+  const nNH3Now = funnel.moles.NH3_aq || 0;
+  if (nAgClNow > 1e-8 && nNH3Now > 1e-6) {
+    const dFix = Math.min(nAgClNow, nNH3Now / 2, Math.max(1e-6, nAgClNow * 1.8 * dt));
+    if (dFix > 1e-9) {
+      funnel.moles.AgCl_s = nAgClNow - dFix;
+      if (funnel.moles.AgCl_s < 1e-12) delete funnel.moles.AgCl_s;
+      funnel.moles.NH3_aq = nNH3Now - 2 * dFix;
+      if (funnel.moles.NH3_aq < 1e-12) delete funnel.moles.NH3_aq;
+      funnel.moles.AgNH3_2_aq = (funnel.moles.AgNH3_2_aq || 0) + dFix;
+      funnel.moles.Cl_aq = (funnel.moles.Cl_aq || 0) + dFix;
+      if (!funnel._uvFixLogged) {
+        funnel._uvFixLogged = true;
+        sim.addLog({
+          type: 'reaction',
+          equation: 'AgCl(s) + 2NH₃(aq) → [Ag(NH₃)₂]⁺(aq) + Cl⁻(aq) (Rửa định hình ảnh Ag)',
+          nameVi: 'Rửa trôi AgCl bằng NH₃ ("Định hình ảnh bạc Ag(s)")',
+          nameEn: 'Photographic fixing: NH₃ rinses away AgCl leaving permanent Ag(s)',
+          descVi: 'Dung dịch NH₃ hòa tan sạch AgCl chưa phơi sáng trôi xuống bình hứng, chỉ giữ lại lớp Ag(s) đen bền vững trên giấy lọc.',
+          descEn: 'NH₃ dissolves unexposed white AgCl through the filter as [Ag(NH₃)₂]⁺ while dark Ag(s) stays permanently fixed.',
+          vesselLabel: funnel.label,
+        });
+      }
+    }
+  }
+
   const liqL = computeLiquidVolumeL(funnel.moles, funnel.tempK);
   const liqMl = liqL * 1000;
   if (liqMl <= 0.005) {
@@ -311,14 +373,55 @@ export function checkSplintInteractions(sim, splint) {
     const h2Pocket = (v.headspaceGasMoles?.H2_g || 0) + (v.lastGasRateMap?.H2_g || 0) * 1.5;
     const o2Pocket = (v.headspaceGasMoles?.O2_g || 0) + (v.lastGasRateMap?.O2_g || 0) * 1.5;
 
-    // Burning splint + H2 -> "Pop!" test
+    // Phenomenon #6: Burning splint + mixed Oxyhydrogen (2H2 : 1O2) scaled detonation OR lean H2 "Pop!" test
     if (splint.mode === 'burning' && h2Pocket > 6e-5) {
       splint.cooldownTimer = 1.6;
+      const headH2 = v.headspaceGasMoles?.H2_g || 0;
+      const headO2 = v.headspaceGasMoles?.O2_g || 0;
+      const nDetO2 = Math.min(headH2 / 2, headO2);
+
+      if (nDetO2 >= 4e-5) {
+        // Scaled Oxyhydrogen 2H2 + O2 -> 2H2O detonation! (483.6 kJ per mol O2)
+        const dO2Burn = Math.min(headO2, nDetO2);
+        const dH2Burn = Math.min(headH2, 2 * dO2Burn);
+        const detEnergyJ = dO2Burn * 483600;
+        const blastScale = Math.max(0.7, Math.min(3.2, Math.sqrt(detEnergyJ / 90)));
+
+        v.headspaceGasMoles.H2_g = Math.max(0, headH2 - dH2Burn);
+        v.headspaceGasMoles.O2_g = Math.max(0, headO2 - dO2Burn);
+        if (v.headspaceGasMoles.H2_g < 1e-10) v.headspaceGasMoles.H2_g = 0;
+        if (v.headspaceGasMoles.O2_g < 1e-10) v.headspaceGasMoles.O2_g = 0;
+        // Trace moisture droplet film formed inside detonated tube
+        v.moles.H2O_l = (v.moles.H2O_l || 0) + dH2Burn;
+
+        splint.lastTestEvent = 'oxyhydrogen_detonation';
+        splint.lastEventTimer = 2.0;
+        sim.addLog({
+          type: 'reaction',
+          equation: `2H₂(g) + O₂(g) → 2H₂O(g) (Nổ Oxyhydrogen · ~${detEnergyJ.toFixed(0)} J)`,
+          nameVi: `Nổ hỗn hợp khí nổ Oxyhydrogen 2H₂:O₂ (Năng lượng ~${detEnergyJ.toFixed(0)} J)`,
+          nameEn: `Oxyhydrogen 2H₂:O₂ Detonation (~${detEnergyJ.toFixed(0)} J shockwave)`,
+          descVi: 'Tỉ lệ H₂ + O₂ trộn sẵn bùng nổ dữ dội kèm sóng xung kích tỉ lệ với lượng khí tích trữ.',
+          descEn: 'Premixed H₂ + O₂ detonates instantaneously with shockwave energy proportional to trapped stoichiometric moles.',
+          vesselLabel: `${splint.label} → ${v.label}`,
+        });
+        if (detEnergyJ >= 1650 && v.typeId === 'test_tube_50' && !v.submergedInTroughId) {
+          sim.shatterVessel(v, 'alertOxyhydrogenDetonation', 'explosion');
+        } else if (sim.visualHooks.onAlert) {
+          sim.visualHooks.onAlert('oxyhydrogen_detonation', { x: tipX, y: tipY }, {
+            vesselId: v.id,
+            blastScale,
+            detEnergyJ,
+          });
+        }
+        return 'oxyhydrogen_detonation';
+      }
+
       splint.lastTestEvent = 'h2_pop';
       splint.lastEventTimer = 1.6;
-      if (v.headspaceGasMoles?.H2_g > 0) {
-        const burnH2 = Math.min(v.headspaceGasMoles.H2_g, 0.004);
-        v.headspaceGasMoles.H2_g = Math.max(0, v.headspaceGasMoles.H2_g - burnH2);
+      if (headH2 > 0) {
+        const burnH2 = Math.min(headH2, 0.004);
+        v.headspaceGasMoles.H2_g = Math.max(0, headH2 - burnH2);
       }
       sim.addLog({
         type: 'reaction',
@@ -451,9 +554,9 @@ export function checkIndicatorStripInteractions(sim, strip) {
   for (const v of sim.items) {
     if (v.kind !== 'vessel' || v.isShattered) continue;
     const spec = APPARATUS[v.typeId];
-    const rimY = v.y - spec.height / 2;
-    const inVesselBody = Math.abs(tipX - v.x) <= spec.width * 0.5 && tipY >= rimY - 10 && tipY <= v.y + spec.height * 0.48;
-    const nearOpenMouth = !v.isStoppered && Math.hypot(tipX - v.x, tipY - rimY) <= 50;
+    const rimY = v.isInverted ? v.y + spec.height / 2 : v.y - spec.height / 2;
+    const inVesselBody = Math.abs(tipX - v.x) <= spec.width * 0.5 && tipY >= v.y - spec.height * 0.52 && tipY <= v.y + spec.height * 0.52;
+    const nearOpenMouth = !v.isStoppered && Math.hypot(tipX - v.x, tipY - rimY) <= 56;
     if (!inVesselBody && !nearOpenMouth) continue;
 
     let detectedPH = null;
@@ -471,16 +574,16 @@ export function checkIndicatorStripInteractions(sim, strip) {
     if (detectedPH === null && nearOpenMouth) {
       const rHCl = v.lastGasRateMap?.HCl_g || 0;
       const rNH3 = v.lastGasRateMap?.NH3_g || 0;
-      const rCl2 = v.lastGasRateMap?.Cl2_g || 0;
+      const rCl2 = (v.lastGasRateMap?.Cl2_g || 0) + (v.headspaceGasMoles?.Cl2_g || 0) * 0.08;
       const concHCl = (v.moles.H_aq || 0) / Math.max(0.01, computeLiquidVolumeL(v.moles, v.tempK) || 0.01);
-      if (rCl2 > 8e-6) {
+      if (rCl2 > 1.2e-6) {
         detectedPH = 2.0;
         bleached = true;
         sourceTag = `Cl₂ (${v.label})`;
       } else if (rHCl > 8e-6 || (concHCl > 6.5 && v.tempK >= 268.15)) {
         detectedPH = 1.5;
         sourceTag = `HCl(g) (${v.label})`;
-      } else if (rNH3 > 8e-6) {
+      } else if (rNH3 > 8e-6 || (v.headspaceGasMoles?.NH3_g || 0) > 5e-5) {
         detectedPH = 11.0;
         sourceTag = `NH₃(g) (${v.label})`;
       }
@@ -557,6 +660,8 @@ export function stepApparatusTools(sim, dt, realDeltaSec) {
 
     if (it.kind === 'filter_funnel') {
       stepFilterFunnel(sim, it, dt);
+    } else if (it.kind === 'diffusion_tube') {
+      stepDiffusionTube(sim, it, dt);
     } else if (it.kind === 'burette') {
       stepBurette(sim, it, dt);
     } else if (it.kind === 'condenser') {
@@ -613,7 +718,54 @@ export function stepApparatusTools(sim, dt, realDeltaSec) {
 }
 
 /**
- * Mortar & Pestle solid comminution: boosts particle count -> jumps reactive surface area A_solid (Noyes-Whitney).
+ * Phenomenon #8: 1D Graham's Law Gas Diffusion Tube solver (NH3(g) vs HCl(g) nucleating NH4Cl(s) ring at ~59.4%).
+ */
+function stepDiffusionTube(sim, tube, dt) {
+  if (!tube.leftGasId && !tube.rightGasId) return;
+  const T = Math.max(200, sim.environment.tempK || CONSTANTS.T_STD_K);
+  const tFactor = Math.pow(T / CONSTANTS.T_STD_K, 0.75);
+  const baseSpeed = 0.34; // ~5-7 s full traverse at room T
+
+  const vLeft = tube.leftGasId && SPECIES[tube.leftGasId]?.molarMass
+    ? (baseSpeed * tFactor) / Math.sqrt(SPECIES[tube.leftGasId].molarMass)
+    : 0;
+  const vRight = tube.rightGasId && SPECIES[tube.rightGasId]?.molarMass
+    ? (baseSpeed * tFactor) / Math.sqrt(SPECIES[tube.rightGasId].molarMass)
+    : 0;
+
+  if (vLeft > 0) tube.leftFront = Math.min(1, (tube.leftFront || 0) + vLeft * dt);
+  if (vRight > 0) tube.rightFront = Math.max(0, (tube.rightFront ?? 1) - vRight * dt);
+
+  const isOppositePair =
+    (tube.leftGasId === 'NH3_g' && tube.rightGasId === 'HCl_g') ||
+    (tube.leftGasId === 'HCl_g' && tube.rightGasId === 'NH3_g');
+
+  if (isOppositePair && vLeft > 0 && vRight > 0) {
+    const xMeet = vLeft / (vLeft + vRight);
+    tube.ringPosFrac = xMeet;
+    if ((tube.leftFront || 0) >= xMeet && (tube.rightFront ?? 1) <= xMeet) {
+      tube.ringGrowth = Math.min(1, (tube.ringGrowth || 0) + dt * 0.55);
+      if (!tube._ringLogged && tube.ringGrowth >= 0.25) {
+        tube._ringLogged = true;
+        const distPctFromNH3 = tube.leftGasId === 'NH3_g' ? xMeet * 100 : (1 - xMeet) * 100;
+        const ratio = Math.sqrt(SPECIES.HCl_g.molarMass / SPECIES.NH3_g.molarMass);
+        sim.addLog({
+          type: 'reaction',
+          equation: `NH₃(g) + HCl(g) → NH₄Cl(s)↓  [Graham: v_NH₃/v_HCl = ${ratio.toFixed(3)} ⇒ ${distPctFromNH3.toFixed(1)}% từ đầu NH₃]`,
+          nameVi: `Định luật khuếch tán Graham: Vòng khói trắng NH₄Cl(s) tại ${distPctFromNH3.toFixed(1)} cm từ đầu NH₃`,
+          nameEn: `Graham's Law Diffusion: White NH₄Cl(s) ring forms at ${distPctFromNH3.toFixed(1)}% from NH₃ end`,
+          descVi: `Do M(NH₃)=17.03 < M(HCl)=36.46, khí NH₃ khuếch tán nhanh hơn ${ratio.toFixed(2)} lần nên gặp HCl lệch rõ về phía HCl.`,
+          descEn: `Lighter NH₃ (17.03 g/mol) diffuses ${ratio.toFixed(2)}× faster than HCl (36.46 g/mol), nucleating a crisp white ring at ${distPctFromNH3.toFixed(1)} cm from NH₃.`,
+          vesselLabel: tube.label,
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Mortar & Pestle solid comminution & Phenomenon #5 Solid-State Mechanochemistry:
+ * Grinding boosts reactive surface area A_solid AND mechanically reacts CuSO4·5H2O(s) + 2NaOH(s) -> Cu(OH)2(s) + Na2SO4(s) + 5H2O(l).
  */
 export function grindMortarSolids(sim, mortarId) {
   const m = sim.getItem(mortarId);
@@ -629,6 +781,38 @@ export function grindMortarSolids(sim, mortarId) {
       names.push(sp.formula || spId);
     }
   }
+
+  // Phenomenon #5: Solid-state mechanochemistry: CuSO4·5H2O(s) + 2 NaOH(s) -> Cu(OH)2(s) + Na2SO4(s) + 5 H2O(l)
+  const nCuHyd = m.moles.CuSO4_5H2O_s || 0;
+  const nNaOH = m.moles.NaOH_s || 0;
+  if (nCuHyd > 1e-6 && nNaOH > 1e-6) {
+    const dXi = Math.min(nCuHyd, nNaOH / 2) * 0.94;
+    if (dXi > 1e-7) {
+      const cTot = computeHeatCapacityJK(m);
+      m.moles.CuSO4_5H2O_s = nCuHyd - dXi;
+      if (m.moles.CuSO4_5H2O_s < 1e-12) delete m.moles.CuSO4_5H2O_s;
+      m.moles.NaOH_s = nNaOH - 2 * dXi;
+      if (m.moles.NaOH_s < 1e-12) delete m.moles.NaOH_s;
+      m.moles.CuOH2_s = (m.moles.CuOH2_s || 0) + dXi;
+      m.moles.Na2SO4_s = (m.moles.Na2SO4_s || 0) + dXi;
+      m.moles.H2O_l = (m.moles.H2O_l || 0) + 5 * dXi;
+      m.particleCounts.CuOH2_s = 1200;
+      m.particleCounts.Na2SO4_s = 1200;
+      // Exothermic lattice metathesis releases crystal water & heats paste noticeably
+      m.tempK = Math.min(395, m.tempK + (dXi * 62000) / Math.max(40, cTot));
+      groundAny = true;
+      sim.addLog({
+        type: 'reaction',
+        equation: 'CuSO₄·5H₂O(s) + 2NaOH(s) —(Nghiền cối chày)→ Cu(OH)₂(s)↓ + Na₂SO₄(s) + 5H₂O(l)',
+        nameVi: 'Phản ứng cơ hóa pha rắn: CuSO₄·5H₂O + NaOH (tạo hỗn hợp sệt xanh lam)',
+        nameEn: 'Solid-state mechanochemistry: CuSO₄·5H₂O + 2NaOH → pale-blue Cu(OH)₂ paste',
+        descVi: 'Nghiền mạnh giải phóng nước kết tinh tại ranh giới hạt tinh thể, chuyển thành bột nhão Cu(OH)₂ xanh nhạt kèm tỏa nhiệt (đổ vào bát sứ đun nóng sẽ phân hủy thành CuO đen).',
+        descEn: 'Mechanical grinding liberates lattice hydration water to form moist pale-blue Cu(OH)₂ + Na₂SO₄ paste; heating in a Porcelain Dish dehydrates it to black CuO.',
+        vesselLabel: m.label,
+      });
+    }
+  }
+
   if (groundAny) {
     m.grindAnimTimer = 1.1;
     sim.addLog({
@@ -640,6 +824,7 @@ export function grindMortarSolids(sim, mortarId) {
       descEn: 'Reducing solid particle radius sharply increases reactive surface area A_solid.',
       vesselLabel: m.label,
     });
+    sim.recomputeScaleReadings();
     sim.emitChange();
   }
   return groundAny;

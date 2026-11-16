@@ -23,6 +23,7 @@ import {
 import {
   renderBurette,
   renderDcPowerAndWires,
+  renderDiffusionTube,
   renderElectrodeRod,
   renderFilterFunnel,
   renderFlameLoop,
@@ -31,6 +32,7 @@ import {
   renderSaltBridge,
   renderSplint,
   renderStirBar,
+  renderVoltAmmeterAndWires,
   renderWashBottle,
 } from './toolRenderer.js';
 
@@ -299,6 +301,21 @@ export class LabWorkbenchCanvas {
     }
 
     if (payloadType === 'reagent' && payloadId) {
+      if (payloadId === 'nh3_25' || payloadId === 'hcl_37') {
+        const diffTube = this.sim.items.find(
+          (t) => t.kind === 'diffusion_tube' && !t.isBroken && Math.abs(pt.x - t.x) <= 145 && Math.abs(pt.y - t.y) <= 48
+        );
+        if (diffTube) {
+          this.sim.dropDiffusionReagent(
+            diffTube.id,
+            pt.x < diffTube.x ? 'left' : 'right',
+            payloadId === 'nh3_25' ? 'NH3_g' : 'HCl_g'
+          );
+          this.sim.selectedId = diffTube.id;
+          this.dropTargetVesselId = null;
+          return diffTube;
+        }
+      }
       let target = this.findVesselAt(pt.x, pt.y, null, true);
       if (!target) {
         // Snap gracefully to nearest open container within 105 px if dropped right next to it
@@ -898,7 +915,14 @@ export class LabWorkbenchCanvas {
     ctx.translate(this.viewOffsetX + shakeX * this.viewScale, this.viewOffsetY + shakeY * this.viewScale);
     ctx.scale(this.viewScale, this.viewScale);
 
-    // 1. Background subtle grid & lab bench surface
+    // 1. Background subtle grid & lab bench surface (plus optional UV Lamp spotlight)
+    if (this.sim.environment.uvLight) {
+      const uvGrad = ctx.createRadialGradient(BENCH_LOGICAL_W * 0.5, 10, 20, BENCH_LOGICAL_W * 0.5, 250, 520);
+      uvGrad.addColorStop(0, this.isDark ? 'rgba(139, 92, 246, 0.24)' : 'rgba(139, 92, 246, 0.14)');
+      uvGrad.addColorStop(1, 'rgba(139, 92, 246, 0)');
+      ctx.fillStyle = uvGrad;
+      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+    }
     const bgGrid = this.isDark ? 'rgba(148, 163, 184, 0.08)' : 'rgba(15, 23, 42, 0.06)';
     ctx.fillStyle = bgGrid;
     for (let gx = 40; gx < BENCH_LOGICAL_W; gx += 40) {
@@ -930,8 +954,8 @@ export class LabWorkbenchCanvas {
     renderTubingConnections(ctx, this.sim.items, this.isDark, timeNow, this.langCode);
 
     const ordered = [
-      ...this.sim.items.filter((i) => i.kind === 'stand' || i.kind === 'dc_power'),
-      ...this.sim.items.filter((i) => i.kind === 'scale' || i.kind === 'burner'),
+      ...this.sim.items.filter((i) => i.kind === 'stand' || i.kind === 'dc_power' || i.kind === 'volt_ammeter'),
+      ...this.sim.items.filter((i) => i.kind === 'scale' || i.kind === 'burner' || i.kind === 'diffusion_tube'),
       ...this.sim.items.filter((i) => i.kind === 'gas_syringe' || i.kind === 'condenser' || i.kind === 'burette'),
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
       ...this.sim.items.filter((i) => i.kind === 'filter_funnel' || i.kind === 'electrode' || i.kind === 'salt_bridge' || i.kind === 'stir_bar'),
@@ -939,6 +963,7 @@ export class LabWorkbenchCanvas {
     ];
 
     renderDcPowerAndWires(ctx, this.sim.items, this.sim.selectedId, this.isDark);
+    renderVoltAmmeterAndWires(ctx, this.sim.items, this.sim.selectedId, this.isDark);
 
     for (const item of ordered) {
       const isSelected = item.id === this.sim.selectedId;
@@ -949,6 +974,8 @@ export class LabWorkbenchCanvas {
         renderScale(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'burner') {
         renderBurner(ctx, item, isSelected, this.isDark, timeNow);
+      } else if (item.kind === 'diffusion_tube') {
+        renderDiffusionTube(ctx, item, isSelected, isDropTgt, this.isDark, this.langCode);
       } else if (item.kind === 'gas_syringe') {
         renderGasSyringe(ctx, item, isSelected, this.isDark, this.sim.environment, this.langCode, timeNow);
       } else if (item.kind === 'vessel') {

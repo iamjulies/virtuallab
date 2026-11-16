@@ -62,7 +62,7 @@ export function computeSolidSurfaceAreaM2(speciesId, moles, particleCount = 4) {
 /**
  * Compute raw reaction velocity v_r (mol of reaction extent / s) at current state.
  */
-function computeReactionRate(rxn, vessel, liquidVolL) {
+function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
   const moles = vessel.moles;
   const T = vessel.tempK;
   const stirBoost = vessel.stirTimer > 0 ? 3.2 : 1.0;
@@ -204,8 +204,14 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
 
     // Effective kinetic order with mild saturation at very high acid molarity
     const concFactor = Math.pow(Math.min(14.0, aqConc), 1.05);
+    // Phenomenon #10: Galvanic micro-cells (Cu trace deposited on Zn lowers H2 overpotential eta -> sharp acceleration)
+    let microCellBoost = 1.0;
+    if (rxn.id === 'zn_acid' && (moles.Cu_s || 0) > 1e-7 && (moles.Zn_s || 0) > 1e-7) {
+      const cuRatio = (moles.Cu_s || 0) / Math.max(1e-5, moles.Zn_s);
+      microCellBoost = 1.0 + Math.min(4.8, 3.6 * Math.sqrt(cuRatio * 20));
+    }
     // Series diffusion ceiling (via getEffectiveRateConstant) handles still vs stirred boundary layer
-    return k * area * concFactor * (rxn.isHeterogeneous ? 1.0 : (vessel.stirTimer > 0 ? 2.6 : 1.0)) * iceMob * 3.5;
+    return k * area * concFactor * microCellBoost * (rxn.isHeterogeneous ? 1.0 : (vessel.stirTimer > 0 ? 2.6 : 1.0)) * iceMob * 3.5;
   }
 
   if (rxn.type === 'thermal_decomposition') {
@@ -328,9 +334,12 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     const nSolid = moles[rxn.solidId] || 0;
     const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
     if (nSolid <= 1e-9 || cH2O2 <= 1e-5) return 0;
-    const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, vessel.particleCounts?.[rxn.solidId] ?? 8);
+    const minMirrorPCount = (vessel.silverMirrorFrac || 0) > 0.02 ? 900 : 8;
+    const pCnt = Math.max(vessel.particleCounts?.[rxn.solidId] ?? 8, minMirrorPCount);
+    const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, pCnt);
     const k = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
-    return Math.min(moles.H2O2_aq / 2, k * area * Math.min(4.0, cH2O2 * 0.6) * 18.0) * iceMob;
+    const autoBoost = (vessel.silverMirrorFrac || 0) > 0.02 ? 1.85 : 1.0;
+    return Math.min(moles.H2O2_aq / 2, k * area * Math.min(4.0, cH2O2 * 0.6) * autoBoost * 24.0) * iceMob;
   }
 
   if (rxn.type === 'peroxide_decomp_base') {
@@ -348,6 +357,10 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
 
   if (rxn.type === 'peroxide_metal_ox') {
     if (!hasWater || iceMob <= 0) return 0;
+    // Phenomenon #10: Sacrificial Cathodic Protection — metallic Zn in direct contact or electrically coupled protects Cu from HCl + H2O2 corrosion!
+    if (rxn.solidId === 'Cu_s' && ((moles.Zn_s || 0) > 1e-6 || vessel.cathodicProtectedByZn)) {
+      return 0;
+    }
     const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
     const cH = (moles.H_aq || 0) / liquidVolL;
     const cCl = rxn.reactants.Cl_aq ? (moles.Cl_aq || 0) / liquidVolL : 1.0;
@@ -359,6 +372,40 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
       Math.min(2.5, cH * 0.45) *
       (rxn.reactants.Cl_aq ? Math.min(2.0, cCl * 0.4) : 1.0);
     return k * area * drive * iceMob * 3.5;
+  }
+
+  if (rxn.type === 'tollens_h2o2' || rxn.type === 'tollens_h2o2_neut') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nAgAmm = moles.AgNH3_2_aq || 0;
+    const nPerox = moles.H2O2_aq || 0;
+    const nOH = moles.OH_aq || 0;
+    if (rxn.type === 'tollens_h2o2' && nOH < 1e-5) return 0;
+    if (rxn.type === 'tollens_h2o2_neut' && nOH >= 1e-5) return 0;
+    if (nAgAmm < 1e-9 || nPerox < 1e-9) return 0;
+    const cAgAmm = nAgAmm / liquidVolL;
+    const cPerox = nPerox / liquidVolL;
+    const minExt = Math.min(nAgAmm / 2, nPerox, rxn.type === 'tollens_h2o2' ? nOH / 2 : Infinity);
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
+    return Math.min(minExt * 4.5, k * minExt * Math.min(3.5, 0.4 + cPerox * 0.6) * Math.min(2.5, 0.5 + cAgAmm * 2.0)) * iceMob;
+  }
+
+  if (rxn.type === 'peroxide_ammoniacal_cu') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nCu = moles.Cu_s || 0;
+    const cNH3 = (moles.NH3_aq || 0) / liquidVolL;
+    const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
+    if (nCu < 1e-9 || cNH3 < 0.05 || cH2O2 < 0.02) return 0;
+    const area = computeSolidSurfaceAreaM2('Cu_s', nCu, vessel.particleCounts?.Cu_s ?? 12);
+    const k = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
+    return k * area * Math.min(4.0, cNH3 * 0.5) * Math.min(3.5, cH2O2 * 0.5) * iceMob * 4.2;
+  }
+
+  if (rxn.type === 'photochemical_agcl') {
+    const nAgCl = moles.AgCl_s || 0;
+    if (nAgCl < 1e-9) return 0;
+    const uvDrive = options.uvLight || vessel.uvExposureActive ? 1.0 : 0;
+    if (uvDrive <= 0) return 0;
+    return nAgCl * 0.5 * rxn.k298 * uvDrive;
   }
 
   if (rxn.type === 'moist_solid_redox') {
@@ -1146,13 +1193,20 @@ export function enforceDryPhaseBoundary(vessel) {
  * Guarantees non-negative moles and exact stoichiometry.
  * Returns { reactionHeatJ, gasProduced, activeReactions, naEvent }
  */
-export function stepVesselChemistry(vessel, dt) {
+export function stepVesselChemistry(vessel, dt, options = {}) {
   const liquidVolL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
+
+  // Track live galvanic micro-cell & sacrificial cathodic protection flags for telemetry / rendering
+  vessel.znCuMicroActive =
+    (vessel.moles.Zn_s || 0) > 1e-7 && (vessel.moles.Cu_s || 0) > 1e-7 && (vessel.moles.H_aq || 0) > 1e-5;
+  vessel.cathodicProtected =
+    ((vessel.moles.Cu_s || 0) > 1e-7 && ((vessel.moles.Zn_s || 0) > 1e-6 || Boolean(vessel.cathodicProtectedByZn))) ||
+    Boolean(vessel.cathodicProtectedByZn);
 
   // 1. Compute raw reaction extents
   const rawExtents = [];
   for (const rxn of REACTIONS) {
-    const rate = computeReactionRate(rxn, vessel, liquidVolL);
+    const rate = computeReactionRate(rxn, vessel, liquidVolL, options);
     if (rate > 1e-13) {
       rawExtents.push({ rxn, rate, rawDxi: rate * dt });
     }
@@ -1206,6 +1260,11 @@ export function stepVesselChemistry(vessel, dt) {
     }
 
     // Separate Sodium reaction enthalpy to drive independent metal droplet temperature T_Na
+    if (item.rxn.type === 'tollens_h2o2' || item.rxn.type === 'tollens_h2o2_neut') {
+      if (!vessel.particleCounts) vessel.particleCounts = {};
+      vessel.particleCounts.Ag_s = Math.max(vessel.particleCounts.Ag_s || 0, 900);
+      vessel.silverMirrorFrac = Math.min(1.0, (vessel.silverMirrorFrac || 0) + dXi * 180);
+    }
     const rxnHeat = -item.rxn.deltaHJ * dXi;
     if (item.rxn.id === 'na_water' || item.rxn.id === 'na_acid' || item.rxn.id === 'na_ice') {
       naHeatGenJ += rxnHeat;

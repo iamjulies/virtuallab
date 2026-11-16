@@ -64,6 +64,14 @@ export class EnvironmentBar {
             <span class="text-xs font-mono">bar <span class="text-muted hidden xl:inline">(bp ${boilC.toFixed(1)}°C)</span></span>
           </div>
 
+          <!-- Strong UV / Sunlight Toggle for AgCl(s) Photolysis -->
+          <button type="button" id="btn-uv-light" title="${t('envUvTip')}"
+            class="px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition ${
+              env.uvLight
+                ? 'border-violet-500/70 bg-violet-500/20 text-violet-300'
+                : 'border-theme bg-surface-alt text-muted hover:text-main'
+            }">${env.uvLight ? t('envUvBright') : `💡 ${t('envUvRoom')}`}</button>
+
           <!-- Speed & Pause -->
           <div class="flex items-center gap-1 p-1 rounded-lg border border-theme bg-surface-alt">
             <button type="button" id="btn-pause" class="px-2 py-1 rounded text-xs font-semibold ${
@@ -86,10 +94,19 @@ export class EnvironmentBar {
         <!-- Right Toolbar: Presets, Device Mode, Theme, Language -->
         <div class="flex flex-wrap items-center gap-1.5">
           <!-- Presets -->
-          <select id="preset-select" style="max-width: 150px;" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium truncate">
+          <select id="preset-select" style="max-width: 175px;" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium truncate">
             <option value="">${t('quickPresets')}</option>
+            <option value="starter">${t('presetStarter')}</option>
             <option value="clean">${t('presetClean')}</option>
             <option value="gas_collect">${t('presetGasCollect')}</option>
+            <option value="trough_collect">${t('presetTroughCollect')}</option>
+            <option value="titration">${t('presetTitration')}</option>
+            <option value="filtration">${t('presetFiltration')}</option>
+            <option value="daniell_cell">${t('presetDaniellCell')}</option>
+            <option value="electrolysis">${t('presetElectrolysis')}</option>
+            <option value="distillation">${t('presetDistillation')}</option>
+            <option value="ammonia_fountain">${t('presetAmmoniaFountain')}</option>
+            <option value="graham_diffusion">${t('presetGrahamDiffusion')}</option>
           </select>
 
           <!-- Device Preview Switcher -->
@@ -127,6 +144,10 @@ export class EnvironmentBar {
     this.container.querySelector('#btn-std-satp')?.addEventListener('click', () => {
       this.sim.environment.pressureBar = CONSTANTS.P_STD_BAR;
       this.sim.setAmbientTempK(CONSTANTS.T_STD_K);
+    });
+
+    this.container.querySelector('#btn-uv-light')?.addEventListener('click', () => {
+      this.sim.setUvLight(!this.sim.environment.uvLight);
     });
 
     this.container.querySelector('#btn-pause')?.addEventListener('click', () => {

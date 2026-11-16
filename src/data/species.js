@@ -1013,6 +1013,20 @@ export const SPECIES = {
  * Automatically derived species groupings & registries from SPECIES.
  * Adding a new species to SPECIES auto-propagates gases, precipitate layers, and inspectors.
  */
+export const AIR_MOLAR_MASS_G_MOL = 28.97;
+
+for (const sp of Object.values(SPECIES)) {
+  if (sp.phase === 'g' && sp.molarMass) {
+    sp.relAirDensity = sp.molarMass / AIR_MOLAR_MASS_G_MOL;
+    sp.densityGPerL298 = sp.molarMass / 24.789;
+  }
+}
+
+export function getGasRelativeAirDensity(gasId) {
+  const sp = SPECIES[gasId];
+  return sp?.relAirDensity ?? (sp?.molarMass ? sp.molarMass / AIR_MOLAR_MASS_G_MOL : 1.0);
+}
+
 export const NON_STEAM_GAS_IDS = Object.values(SPECIES)
   .filter((sp) => sp.phase === 'g' && sp.id !== 'H2O_g')
   .sort((a, b) => (a.gasOrder ?? 999) - (b.gasOrder ?? 999))
@@ -1027,6 +1041,7 @@ export const GAS_DISPLAY_META = Object.values(SPECIES)
     id: sp.id,
     label: sp.formula,
     always: !!sp.gasAlwaysShow,
+    relAirDensity: sp.relAirDensity ?? 1.0,
   }));
 
 export function createZeroGasMap() {
@@ -1048,6 +1063,15 @@ export const SORTED_BOTTOM_SOLID_SPECIES = Object.values(SPECIES)
   )
   .sort((a, b) => (a.renderOrder ?? 999) - (b.renderOrder ?? 999));
 
+export const REAGENT_CATEGORIES = [
+  { id: 'all', i18nKey: 'regCatAll' },
+  { id: 'acid', i18nKey: 'regCatAcid' },
+  { id: 'base', i18nKey: 'regCatBase' },
+  { id: 'salt', i18nKey: 'regCatSalt' },
+  { id: 'metal', i18nKey: 'regCatMetal' },
+  { id: 'solvent_other', i18nKey: 'regCatOther' },
+];
+
 /**
  * Pure starter reagents displayed on the shelf.
  * `bottleStyle` drives bench bottle rendering, shelf SVG icons, and pouring animation with zero per-ID branching.
@@ -1055,6 +1079,7 @@ export const SORTED_BOTTOM_SOLID_SPECIES = Object.values(SPECIES)
 export const STARTER_REAGENTS = [
   {
     id: 'h2o',
+    category: 'solvent_other',
     i18nKey: 'reg_h2o',
     descKey: 'reg_h2o_desc',
     formula: 'H₂O',
@@ -1087,6 +1112,7 @@ export const STARTER_REAGENTS = [
   },
   {
     id: 'na',
+    category: 'metal',
     i18nKey: 'reg_na',
     descKey: 'reg_na_desc',
     formula: 'Na (s)',
@@ -1120,6 +1146,7 @@ export const STARTER_REAGENTS = [
   },
   {
     id: 'zn',
+    category: 'metal',
     i18nKey: 'reg_zn',
     descKey: 'reg_zn_desc',
     formula: 'Zn (s)',
@@ -1148,6 +1175,7 @@ export const STARTER_REAGENTS = [
   },
   {
     id: 'cuso4_5h2o',
+    category: 'salt',
     i18nKey: 'reg_cuso4_5h2o',
     descKey: 'reg_cuso4_5h2o_desc',
     formula: 'CuSO₄·5H₂O (s)',
@@ -1176,6 +1204,7 @@ export const STARTER_REAGENTS = [
   },
   {
     id: 'agno3',
+    category: 'salt',
     i18nKey: 'reg_agno3',
     descKey: 'reg_agno3_desc',
     formula: 'AgNO₃ (s)',
@@ -1205,6 +1234,7 @@ export const STARTER_REAGENTS = [
   },
   {
     id: 'naoh',
+    category: 'base',
     i18nKey: 'reg_naoh',
     descKey: 'reg_naoh_desc',
     formula: 'NaOH (s)',
@@ -1233,6 +1263,7 @@ export const STARTER_REAGENTS = [
   },
   {
     id: 'hcl_37',
+    category: 'acid',
     i18nKey: 'reg_hcl_37',
     descKey: 'reg_hcl_37_desc',
     formula: 'HCl 37% (aq)',
@@ -1272,6 +1303,7 @@ export const STARTER_REAGENTS = [
   },
   {
     id: 'nh3_25',
+    category: 'base',
     i18nKey: 'reg_nh3_25',
     descKey: 'reg_nh3_25_desc',
     formula: 'NH₃ 25% (aq)',
@@ -1310,6 +1342,7 @@ export const STARTER_REAGENTS = [
   },
   {
     id: 'h2o2_30',
+    category: 'solvent_other',
     i18nKey: 'reg_h2o2_30',
     descKey: 'reg_h2o2_30_desc',
     formula: 'H₂O₂ 30% (aq)',
@@ -1346,6 +1379,7 @@ export const STARTER_REAGENTS = [
   },
   {
     id: 'phen',
+    category: 'solvent_other',
     i18nKey: 'reg_phen',
     descKey: 'reg_phen_desc',
     formula: 'Phenolphthalein 1%',

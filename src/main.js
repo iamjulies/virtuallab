@@ -235,6 +235,11 @@ sim.visualHooks.onAlert = (type, vessel, meta) => {
     showToast(`💧 ${t('alertSyringeOverflow')}`);
   } else if (type === 'h2_pop') {
     showToast(`💥 ${t('alertH2Pop')}`);
+  } else if (type === 'oxyhydrogen_detonation') {
+    workbench.triggerShake(10 * Math.min(2.2, meta?.blastScale || 1.1), 0.38);
+    showToast(`💥 ${t('alertOxyhydrogenDetonation')}`);
+  } else if (type === 'ammonia_fountain') {
+    showToast(`⛲ ${t('alertAmmoniaFountain')}`);
   } else if (type === 'o2_relight') {
     showToast(`🔥 ${t('alertO2Relight')}`);
   } else if (type === 'o2_flare') {
@@ -248,7 +253,7 @@ sim.subscribe(() => {
 
 // Initial boot
 applyThemeAndDevice();
-sim.setupPreset('clean');
+sim.setupPreset('starter');
 setMobileTab('bench');
 refreshChrome(true);
 
