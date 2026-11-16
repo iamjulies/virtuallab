@@ -429,6 +429,75 @@ export function renderTubingConnections(ctx, items, isDark) {
   }
 }
 
+function renderShatteredWreckage(ctx, vessel, spec, pal, isSelected) {
+  const { x, y } = vessel;
+  const w = spec.width;
+  const h = spec.height;
+  const bottom = y + h / 2;
+
+  ctx.save();
+  // Spilled wet chemical puddle on the bench / scale pan / burner
+  if (vessel.spilledPuddleColor) {
+    ctx.save();
+    ctx.fillStyle = vessel.spilledPuddleColor;
+    ctx.globalAlpha = 0.72;
+    ctx.beginPath();
+    ctx.ellipse(x - 4, bottom - 1, w * 0.85, 6.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(x + w * 0.55, bottom - 1, w * 0.28, 3.8, 0.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(x - w * 0.65, bottom - 1, w * 0.24, 3.2, -0.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Jagged shattered base stump (glass broke completely open)
+  const stumpHalf = w * 0.42;
+  ctx.fillStyle = pal.glassFill;
+  ctx.strokeStyle = isSelected ? '#3b82f6' : '#ef4444';
+  ctx.lineWidth = isSelected ? 2.2 : 1.7;
+  ctx.beginPath();
+  ctx.moveTo(x - stumpHalf, bottom - 12);
+  ctx.lineTo(x - stumpHalf * 0.65, bottom - 5);
+  ctx.lineTo(x - stumpHalf * 0.25, bottom - 14);
+  ctx.lineTo(x + stumpHalf * 0.15, bottom - 4);
+  ctx.lineTo(x + stumpHalf * 0.58, bottom - 11);
+  ctx.lineTo(x + stumpHalf, bottom - 6);
+  ctx.lineTo(x + stumpHalf * 0.92, bottom);
+  ctx.lineTo(x - stumpHalf * 0.92, bottom);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Pile of 15 scattered angular Borosilicate glass shards around wreckage
+  for (let i = 0; i < 15; i++) {
+    const seed = Math.sin((i + 1) * 91.7 + vessel.label.charCodeAt(vessel.label.length - 1) * 13.3);
+    const seed2 = Math.cos((i + 1) * 47.3);
+    const sx = x + seed * (w * 0.68);
+    const sy = bottom - 2 - Math.abs(seed2) * 8;
+    const size = 5.5 + (i % 4) * 2.4;
+    const rot = seed * Math.PI;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(rot);
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.8, size * 0.35);
+    ctx.lineTo(size * 0.7, -size * 0.4);
+    ctx.lineTo(size * 0.15, size * 0.55);
+    ctx.closePath();
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(224, 242, 254, 0.78)' : 'rgba(148, 163, 184, 0.62)';
+    ctx.fill();
+    ctx.strokeStyle = isSelected ? '#3b82f6' : 'rgba(255, 255, 255, 0.85)';
+    ctx.lineWidth = 0.85;
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 export function renderVessel(ctx, vessel, opts) {
   const { isSelected, isDropTarget, isDark, timeNow } = opts;
   const spec = APPARATUS[vessel.typeId];
@@ -438,6 +507,29 @@ export function renderVessel(ctx, vessel, opts) {
   const h = spec.height;
   const top = y - h / 2;
   const bottom = y + h / 2;
+
+  if (vessel.isShattered) {
+    renderShatteredWreckage(ctx, vessel, spec, pal, isSelected);
+    const tempC = kelvinToCelsius(vessel.tempK);
+    const pillText = `${vessel.label} · 💥 0.0mL · ${tempC.toFixed(0)}°C`;
+    ctx.save();
+    ctx.font = '600 11px system-ui, sans-serif';
+    const textW = ctx.measureText(pillText).width + 14;
+    const py = bottom - 42;
+    ctx.fillStyle = pal.badgeBg;
+    ctx.strokeStyle = isSelected ? '#3b82f6' : '#ef4444';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x - textW / 2, py, textW, 20, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = pal.textPrimary;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(pillText, x, py + 10.5);
+    ctx.restore();
+    return;
+  }
 
   ctx.save();
 
@@ -678,17 +770,36 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.stroke();
   }
 
-  // Shatter cracks overlay
-  if (vessel.isShattered) {
-    ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 1.6;
+  // Gradual rim overflow waterfall stream when filled past vessel mouth
+  if ((vessel.overflowRateMlS || 0) > 0.5 && !vessel.isShattered) {
+    const { pts } = mapProfileToCanvas(spec, x, y, 0);
+    const rimPt = pts[pts.length - 1];
+    const spoutExtra = spec.shape === 'beaker' || spec.shape === 'cylinder' ? 3.5 : 0;
+    const rimX = x - rimPt.rx - spoutExtra;
+    const rimY = rimPt.cy + 2;
+    const streamW = Math.min(6.5, 2.2 + Math.sqrt(vessel.overflowRateMlS) * 0.35);
+    const wobble = Math.sin((timeNow || 0) * 18) * 1.6;
+
+    ctx.save();
+    ctx.strokeStyle = vessel.overflowColor || 'rgba(186, 230, 253, 0.85)';
+    ctx.lineWidth = streamW;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(x - 15, y - 10);
-    ctx.lineTo(x + 2, y + 6);
-    ctx.lineTo(x - 10, y + 28);
-    ctx.moveTo(x + 2, y + 6);
-    ctx.lineTo(x + 18, y - 4);
+    ctx.moveTo(rimX, rimY);
+    ctx.quadraticCurveTo(rimX - 10 + wobble, rimY + h * 0.25, rimX - 12 - wobble * 0.5, bottom - 2);
     ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.lineWidth = Math.max(1, streamW * 0.3);
+    ctx.stroke();
+
+    // Wet overflow puddle pooling beside the base
+    ctx.fillStyle = vessel.overflowColor || 'rgba(186, 230, 253, 0.65)';
+    ctx.globalAlpha = 0.62;
+    ctx.beginPath();
+    ctx.ellipse(rimX - 10, bottom - 1, 14 + Math.min(18, vessel.overflowRateMlS * 0.12), 4.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   ctx.restore();

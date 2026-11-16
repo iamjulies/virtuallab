@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.10',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v1+build.11',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envPress: 'Áp suất',
@@ -111,6 +111,7 @@ export const I18N = {
     metricPH: 'Độ pH',
     metricTemp: 'Nhiệt độ',
     metricVol: 'Thể tích lỏng',
+    brimLabel: 'Tràn miệng',
     metricMass: 'Khối lượng chất',
     grossMassNote: 'Cả vỏ bình',
     tarePrefix: 'vỏ',
@@ -159,7 +160,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.10',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v1+build.11',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envPress: 'Pressure',
@@ -258,6 +259,7 @@ export const I18N = {
     metricPH: 'pH',
     metricTemp: 'Temperature',
     metricVol: 'Liquid Volume',
+    brimLabel: 'Physical brim',
     metricMass: 'Contents Mass',
     grossMassNote: 'Total incl. vessel',
     tarePrefix: 'tare',

@@ -28,9 +28,19 @@ export class LabWorkbenchCanvas {
     this.scaleY = 1;
     this.offsetX = 0;
     this.offsetY = 0;
+    this.shakeTimer = 0;
+    this.shakeDuration = 0;
+    this.shakeMagnitude = 0;
+    this.lastRenderMs = performance.now();
 
     this.bindEvents();
     this.resize();
+  }
+
+  triggerShake(magnitude = 9, duration = 0.36) {
+    this.shakeMagnitude = Math.max(this.shakeMagnitude, magnitude);
+    this.shakeDuration = Math.max(this.shakeDuration, duration);
+    this.shakeTimer = Math.max(this.shakeTimer, duration);
   }
 
   setTheme(isDark) {
@@ -268,9 +278,26 @@ export class LabWorkbenchCanvas {
     ctx.save();
     ctx.clearRect(0, 0, w, h);
 
-    // Apply DPR + responsive aspect-fit transform
+    // Apply DPR + responsive aspect-fit transform + damped shockwave shake
+    const nowMs = performance.now();
+    const realDt = Math.min(0.05, Math.max(0.001, (nowMs - this.lastRenderMs) / 1000));
+    this.lastRenderMs = nowMs;
+    let shakeX = 0;
+    let shakeY = 0;
+    if (this.shakeTimer > 0) {
+      this.shakeTimer = Math.max(0, this.shakeTimer - realDt);
+      const decay = this.shakeDuration > 0 ? this.shakeTimer / this.shakeDuration : 0;
+      const amp = this.shakeMagnitude * decay * decay;
+      shakeX = (Math.random() - 0.5) * 2 * amp;
+      shakeY = (Math.random() - 0.5) * 2 * amp;
+      if (this.shakeTimer === 0) {
+        this.shakeMagnitude = 0;
+        this.shakeDuration = 0;
+      }
+    }
+
     ctx.scale(this.dpr, this.dpr);
-    ctx.translate(this.viewOffsetX, this.viewOffsetY);
+    ctx.translate(this.viewOffsetX + shakeX * this.viewScale, this.viewOffsetY + shakeY * this.viewScale);
     ctx.scale(this.viewScale, this.viewScale);
 
     // 1. Background subtle grid & lab bench surface

@@ -508,6 +508,33 @@
       );
     }
 
+    // TEST 18: True physical brim overflow (past 250 mL stays inside glass until ~353 mL rim, then spills gradually)
+    {
+      const sim = new LabSimulation();
+      const b = sim.createApparatus('beaker_250', 300, 350);
+      sim.addReagentToVessel(b.id, 'h2o', 250);
+      sim.addReagentToVessel(b.id, 'h2o', 50); // 300 mL > 250 mL mark, < 353 mL physical brim!
+      stepSeconds(sim, 0.5, 0.02);
+      const vol300 = computeLiquidVolumeL(b.moles, b.tempK) * 1000;
+      const noEarlyOverflow = Math.abs(vol300 - 300) < 1.5 && (b.overflowRateMlS || 0) === 0;
+
+      // Now exceed physical brim (~353 mL) -> gradual cascading overflow instead of instant snap!
+      sim.addReagentToVessel(b.id, 'h2o', 120); // 420 mL -> ~67 mL over rim!
+      sim.step(0.05);
+      const midOverflowRate = b.overflowRateMlS || 0;
+      const midVol = computeLiquidVolumeL(b.moles, b.tempK) * 1000;
+
+      stepSeconds(sim, 3.0, 0.02);
+      const endVol = computeLiquidVolumeL(b.moles, b.tempK) * 1000;
+      const brimMl = APPARATUS.beaker_250.geometry.maxVolumeMl * 0.96;
+
+      assert(
+        '300 mL stays below physical rim (~353 mL); exceeding rim cascades gradually down to brim rather than snapping instantly',
+        noEarlyOverflow && midOverflowRate > 20 && midVol > brimMl + 10 && Math.abs(endVol - brimMl) < 1.5 && (b.overflowRateMlS || 0) === 0,
+        `vol(300)=${vol300.toFixed(1)}mL, midRate=${midOverflowRate.toFixed(1)}mL/s (midV=${midVol.toFixed(1)}), settled=${endVol.toFixed(1)}mL (brim=${brimMl.toFixed(1)})`
+      );
+    }
+
     // Render test report
     const passed = results.filter(r => r.pass).length;
     document.getElementById('summary').innerHTML = `<span class="${passed === results.length ? 'pass' : 'fail'}">${passed} / ${results.length} tests passed</span>`;

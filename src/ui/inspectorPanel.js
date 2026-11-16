@@ -209,7 +209,10 @@ export class InspectorPanel {
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
           </div>
 
-          <div class="flex flex-wrap gap-1.5">
+          ${
+            item.isShattered
+              ? ''
+              : `<div class="flex flex-wrap gap-1.5">
             <button type="button" id="ins-pour" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionPourTo')}</button>
             <button type="button" id="ins-stir" title="${t('actionStirTip')}" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionStir')}</button>
             ${
@@ -227,7 +230,8 @@ export class InspectorPanel {
                 : ''
             }
             <button type="button" id="ins-rinse" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium text-muted hover:text-main">${t('actionRinse')}</button>
-          </div>
+          </div>`
+          }
         </div>
 
         <!-- Telemetry Grid -->
@@ -243,6 +247,9 @@ export class InspectorPanel {
           <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
             <div class="text-xs text-muted">${t('metricVol')}</div>
             <div class="text-sm font-bold font-mono" id="live-vol">${(liqL * 1000).toFixed(2)} / ${spec.maxVolumeMl} mL</div>
+            <div class="text-[11px] text-muted font-mono" id="live-brim">${t('brimLabel')}: ~${(
+        spec.geometry ? spec.geometry.maxVolumeMl * 0.96 : spec.maxVolumeMl
+      ).toFixed(0)} mL</div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
             <div class="text-xs text-muted">${t('metricMass')} / P</div>

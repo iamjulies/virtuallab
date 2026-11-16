@@ -24,6 +24,10 @@ function createEmptyGasMap() {
   return obj;
 }
 
+function getVesselBrimVolumeMl(spec) {
+  return spec.geometry ? spec.geometry.maxVolumeMl * 0.96 : spec.maxVolumeMl * 1.15;
+}
+
 export class LabSimulation {
   constructor() {
     this.timeSec = 0;
@@ -108,6 +112,10 @@ export class LabSimulation {
         history: [], // [{ t, moles: {...}, tempK, ph }]
         precipitateSettle: {}, // speciesId -> 0..1 settled fraction
         phenBleachFrac: 0, // 0..1 fraction converted to colorless carbinol In(OH)^3-
+        overflowRateMlS: 0,
+        overflowColor: null,
+        wasOverflowing: false,
+        spilledPuddleColor: null,
         naVisualPhase: Math.random() * 6.28,
         naPosRatio: 0.5,
         naVel: 0.9,
@@ -367,6 +375,10 @@ export class LabSimulation {
     v.history = [];
     v.precipitateSettle = {};
     v.phenBleachFrac = 0;
+    v.overflowRateMlS = 0;
+    v.overflowColor = null;
+    v.wasOverflowing = false;
+    v.spilledPuddleColor = null;
     v.wasBoiling = false;
     this.recomputeScaleReadings();
     this.emitChange();
@@ -626,25 +638,80 @@ export class LabSimulation {
 
   checkOverflow(vessel) {
     const spec = APPARATUS[vessel.typeId];
-    const liqMl = computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000;
+    const brimMl = getVesselBrimVolumeMl(spec);
+    const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
+    const liqMl = liqL * 1000;
     const solMl = computeSolidVolumeMl(vessel.moles);
     const totalMl = liqMl + solMl;
 
-    if (totalMl > spec.maxVolumeMl * 1.02 && liqMl > 0.1) {
-      const targetLiqMl = Math.max(0, spec.maxVolumeMl - solMl);
-      const keepFrac = Math.max(0, Math.min(1, targetLiqMl / liqMl));
-      for (const [spId, n] of Object.entries(vessel.moles)) {
-        const sp = SPECIES[spId];
-        if (sp && (sp.phase === 'l' || sp.phase === 'aq')) {
-          vessel.moles[spId] = n * keepFrac;
-          if (vessel.moles[spId] < 1e-13) delete vessel.moles[spId];
+    if (totalMl > brimMl + 0.05 && liqMl > 0.05) {
+      const excessMl = totalMl - brimMl;
+      const vis = computeSolutionVisuals(
+        vessel.moles,
+        liqL,
+        computePH(vessel.moles, liqL, vessel.tempK),
+        spec.opticalPathCm,
+        vessel.phenBleachFrac
+      );
+      vessel.overflowRateMlS = 36 + excessMl * 4.2;
+      vessel.overflowColor = vis.css;
+      vessel.spilledPuddleColor = vis.css;
+      if (!vessel.wasOverflowing) {
+        vessel.wasOverflowing = true;
+        this.addLog({
+          type: 'alert',
+          key: 'alertOverflow',
+          vesselLabel: `${spec.id} ${vessel.label}`,
+        });
+        if (this.visualHooks.onAlert) {
+          this.visualHooks.onAlert('overflow', vessel, { liquidColor: vis.css });
         }
       }
-      this.addLog({
-        type: 'alert',
-        key: 'alertOverflow',
-        vesselLabel: `${spec.id} ${vessel.label}`,
-      });
+    }
+  }
+
+  /**
+   * Gradually cascade excess liquid over the physical vessel rim rather than teleporting it away.
+   */
+  stepVesselOverflow(vessel, dt) {
+    const spec = APPARATUS[vessel.typeId];
+    const brimMl = getVesselBrimVolumeMl(spec);
+    const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
+    const liqMl = liqL * 1000;
+    const solMl = computeSolidVolumeMl(vessel.moles);
+    const totalMl = liqMl + solMl;
+
+    if (totalMl <= brimMl + 0.02 || liqMl <= 0.02) {
+      vessel.overflowRateMlS = 0;
+      vessel.wasOverflowing = false;
+      return;
+    }
+
+    const excessMl = totalMl - brimMl;
+    const rateMlS = 36 + excessMl * 4.2;
+    const drainMl = Math.min(liqMl, excessMl, rateMlS * dt);
+    const fracRemove = Math.min(1, drainMl / liqMl);
+
+    const vis = computeSolutionVisuals(
+      vessel.moles,
+      liqL,
+      computePH(vessel.moles, liqL, vessel.tempK),
+      spec.opticalPathCm,
+      vessel.phenBleachFrac
+    );
+    vessel.overflowRateMlS = drainMl / Math.max(1e-4, dt);
+    vessel.overflowColor = vis.css;
+    vessel.spilledPuddleColor = vis.css;
+
+    for (const [spId, n] of Object.entries(vessel.moles)) {
+      const sp = SPECIES[spId];
+      if (!sp) continue;
+      if (sp.phase === 'l' || sp.phase === 'aq') {
+        vessel.moles[spId] = n * (1 - fracRemove);
+      } else if (sp.isPrecipitate && (vessel.precipitateSettle[spId] ?? 0.5) < 0.7) {
+        vessel.moles[spId] = n * (1 - fracRemove * 0.25);
+      }
+      if (vessel.moles[spId] < 1e-13) delete vessel.moles[spId];
     }
   }
 
@@ -688,15 +755,24 @@ export class LabSimulation {
    * Shatter a vessel from overpressure or thermal/H2 explosion and spill all contents.
    */
   shatterVessel(vessel, logKey, alertKind) {
+    const spec = APPARATUS[vessel.typeId];
     const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
     const hadLiquid = liqL > 1e-6;
     const vis = hadLiquid
-      ? computeSolutionVisuals(vessel.moles, liqL, computePH(vessel.moles, liqL, vessel.tempK))
+      ? computeSolutionVisuals(
+          vessel.moles,
+          liqL,
+          computePH(vessel.moles, liqL, vessel.tempK),
+          spec.opticalPathCm,
+          vessel.phenBleachFrac
+        )
       : null;
     const burstMeta = {
       hadLiquid,
       liquidColor: vis ? vis.css : null,
       liquidMl: liqL * 1000,
+      vesselWidth: spec.width,
+      vesselHeight: spec.height,
     };
 
     for (const [gId, n] of Object.entries(vessel.headspaceGasMoles || {})) {
@@ -712,6 +788,10 @@ export class LabSimulation {
     vessel.headspaceGasMoles = {};
     vessel.precipitateSettle = {};
     vessel.phenBleachFrac = 0;
+    vessel.overflowRateMlS = 0;
+    vessel.overflowColor = null;
+    vessel.wasOverflowing = false;
+    vessel.spilledPuddleColor = vis ? vis.css : null;
     vessel.activeReactions = [];
     vessel.wasBoiling = false;
     vessel.internalPressureBar = this.environment.pressureBar;
@@ -752,11 +832,15 @@ export class LabSimulation {
 
       if (v.isShattered) {
         v.activeReactions = [];
+        v.overflowRateMlS = 0;
         for (let s = 0; s < numSteps; s++) {
           stepVesselThermodynamics(v, dt, this.environment, 0, 0);
         }
         continue;
       }
+
+      // Continuous gravity spillover above physical brim
+      this.stepVesselOverflow(v, scaledDt);
 
       // Check burner power & flame level if resting on an active burner
       let burnerPowerW = 0;
@@ -935,6 +1019,8 @@ export class LabSimulation {
           gasRateHCl: frameGasHCl / Math.max(1e-4, scaledDt),
           gasRateCl2: frameGasCl2 / Math.max(1e-4, scaledDt),
           steamRate: frameSteam / Math.max(1e-4, scaledDt),
+          overflowRateMlS: v.overflowRateMlS || 0,
+          overflowColor: v.overflowColor || null,
           isBoiling: frameBoiling,
           naActive,
           naRate:
