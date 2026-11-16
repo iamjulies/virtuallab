@@ -113,6 +113,7 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
 
 const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
   onOpenTransfer: (sourceId) => dosingModal.openTransfer(sourceId),
+  onOpenTubeTarget: (sourceId) => dosingModal.openTubeTarget(sourceId),
   onNotify: (msg) => showToast(msg),
 });
 
@@ -189,10 +190,12 @@ sim.visualHooks.onAlert = (type, vessel, meta) => {
     workbench.triggerShake(8, 0.34);
     showToast(`💥 ${t('alertOverpressureShatter')}`);
   } else if (type === 'pop') {
-    workbench.triggerShake(3, 0.16);
-    showToast(`⚠️ ${t('alertOverpressurePop')}`);
+    workbench.triggerShake(5.5, 0.24);
+    showToast(`⚠️ ${meta?.hydraulic ? t('alertHydroOverflowPop') : t('alertOverpressurePop')}`);
   } else if (type === 'overflow') {
     showToast(`💧 ${t('alertOverflow')}`);
+  } else if (type === 'syringe_overflow') {
+    showToast(`💧 ${t('alertSyringeOverflow')}`);
   }
 };
 

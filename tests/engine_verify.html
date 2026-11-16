@@ -29,7 +29,12 @@
       computePhenolphthaleinAlpha,
       computeSolutionVisuals,
     } from '../src/engine/equilibrium.js';
-    import { computeSyringeGasVolumeMl } from '../src/engine/gasNetwork.js';
+    import {
+      computeSyringeGasVolumeMl,
+      computeSyringeLiquidVolumeMl,
+      computeSyringeTotalVolumeMl,
+      computeTubingGeometry,
+    } from '../src/engine/gasNetwork.js';
 
     const results = [];
     const details = [];
@@ -627,6 +632,90 @@
         'Boiling water streams hot steam into Gas Syringe (plunger expands, barrel heats up, water condenses inside & plunger retracts when cooled)',
         peakVolMl > 40 && hotSyrTempK > 330 && condMl > 0.25 && coolVolMl < peakVolMl,
         `peak=${peakVolMl.toFixed(1)}mL->cool=${coolVolMl.toFixed(1)}mL, Tsyr=${(hotSyrTempK-273.15).toFixed(1)}°C, condensed=${condMl.toFixed(2)}mL`
+      );
+    }
+
+    // TEST 21: Hard stopper without tubing NEVER spills outside rim while closed; exceeding brim pops stopper via hydraulic pressure
+    {
+      const sim = new LabSimulation();
+      const flask = sim.createApparatus('erlenmeyer_250', 300, 380);
+      let popFired = false;
+      sim.visualHooks.onAlert = (type) => {
+        if (type === 'pop') popFired = true;
+      };
+      sim.addReagentToVessel(flask.id, 'h2o', 250);
+      sim.toggleStopper(flask.id);
+      const stillClosed = flask.isStoppered === true && (flask.overflowRateMlS || 0) === 0;
+
+      // Exceed physical brim (~275 mL) with hard cork in place -> must pop stopper cleanly & then spill!
+      sim.addReagentToVessel(flask.id, 'h2o', 60);
+      stepSeconds(sim, 2.5, 0.02);
+
+      assert(
+        'Hard stopper blocks premature rim overflow; exceeding brim hydraulically pops stopper then spills',
+        stillClosed && popFired && flask.isStoppered === false && sim.logs.some(l => l.key === 'alertHydroOverflowPop'),
+        `initiallyStoppered=${stillClosed}, popFired=${popFired}, finalStoppered=${flask.isStoppered}`
+      );
+    }
+
+    // TEST 22: Stopper with Ø6.0 mm calibrated tubing fills tube volume by measured arc length first, then streams into next Vessel & Gas Syringe
+    {
+      // Part A: Tubing length-dependent hold-up volume + Vessel A -> Vessel B transfer
+      const simV = new LabSimulation();
+      const src = simV.createApparatus('erlenmeyer_250', 220, 380);
+      const dstClose = simV.createApparatus('beaker_250', 420, 410);
+      const dstFar = simV.createApparatus('beaker_250', 760, 410);
+      const gClose = computeTubingGeometry(src, dstClose);
+      const gFar = computeTubingGeometry(src, dstFar);
+
+      simV.connectTube(src.id, dstClose.id);
+      const brimMl = APPARATUS.erlenmeyer_250.geometry.maxVolumeMl * 0.96;
+      const smallExcess = Math.max(1.5, gClose.capacityMl * 0.45);
+      simV.addReagentToVessel(src.id, 'h2o', brimMl + smallExcess);
+      stepSeconds(simV, 1.5, 0.02);
+      const tubeHeldOnlyMl = computeLiquidVolumeL(src.tubeMoles, src.tubeTempK) * 1000;
+      const dstBeforeFull = computeLiquidVolumeL(dstClose.moles, dstClose.tempK) * 1000;
+
+      // Push well past tube capacity -> spills into dstClose
+      simV.addReagentToVessel(src.id, 'h2o', 40);
+      stepSeconds(simV, 3.0, 0.02);
+      const tubeFullMl = computeLiquidVolumeL(src.tubeMoles, src.tubeTempK) * 1000;
+      const dstAfterFull = computeLiquidVolumeL(dstClose.moles, dstClose.tempK) * 1000;
+
+      // Part B: Vessel -> Gas Syringe overflow, plunger expansion & >250 mL syringe rear overflow
+      const simS = new LabSimulation();
+      const f2 = simS.createApparatus('erlenmeyer_250', 240, 380);
+      const syr = simS.createApparatus('gas_syringe', 600, 340);
+      const gSyr = computeTubingGeometry(f2, syr);
+      simS.connectTube(f2.id, syr.id);
+      simS.addReagentToVessel(f2.id, 'h2o', brimMl + gSyr.capacityMl + 85);
+      stepSeconds(simS, 4.0, 0.02);
+      const syrLiqMl = computeSyringeLiquidVolumeMl(syr, simS.environment);
+      const syrTotMl = computeSyringeTotalVolumeMl(syr, simS.environment);
+
+      // Push huge volume past 250 mL syringe max -> rear overflow triggered & clamped cleanly near 250 mL
+      let syrOverflowFired = false;
+      simS.visualHooks.onAlert = (type) => {
+        if (type === 'syringe_overflow') syrOverflowFired = true;
+      };
+      simS.addReagentToVessel(f2.id, 'h2o', 230);
+      stepSeconds(simS, 4.0, 0.02);
+      const syrEndTotMl = computeSyringeTotalVolumeMl(syr, simS.environment);
+
+      assert(
+        'Calibrated Ø6mm tubing measures length capacity accurately, holds small excess before spilling to Vessel B & floods Gas Syringe up to 250 mL overflow',
+        gFar.arcLengthCm > gClose.arcLengthCm + 20 &&
+          gFar.capacityMl > gClose.capacityMl + 5 &&
+          Math.abs(tubeHeldOnlyMl - smallExcess) < 0.8 &&
+          dstBeforeFull < 0.1 &&
+          Math.abs(tubeFullMl - gClose.capacityMl) < 0.5 &&
+          dstAfterFull > 25 &&
+          (src.overflowRateMlS || 0) === 0 &&
+          Math.abs(syrLiqMl - 85) < 3.5 &&
+          Math.abs(syrTotMl - syrLiqMl) < 0.2 &&
+          syrOverflowFired &&
+          syrEndTotMl <= 251.5,
+        `TubeClose=${gClose.arcLengthCm.toFixed(1)}cm(${gClose.capacityMl.toFixed(1)}mL) vs Far=${gFar.arcLengthCm.toFixed(1)}cm(${gFar.capacityMl.toFixed(1)}mL), Held=${tubeHeldOnlyMl.toFixed(1)}mL(dst=${dstBeforeFull.toFixed(1)}), dstAfter=${dstAfterFull.toFixed(1)}mL, Syr=${syrLiqMl.toFixed(1)}mL->End=${syrEndTotMl.toFixed(1)}mL`
       );
     }
 

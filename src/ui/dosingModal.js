@@ -1,6 +1,7 @@
 import { APPARATUS } from '../data/apparatus.js';
 import { SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { computeLiquidVolumeL } from '../engine/equilibrium.js';
+import { computeTubingGeometry } from '../engine/gasNetwork.js';
 
 export class DosingModal {
   constructor(container, sim, getLang) {
@@ -47,6 +48,20 @@ export class DosingModal {
       rateMlS: 10,
       includePpt: true,
       pouredLive: 0,
+    };
+    this.render();
+  }
+
+  openTubeTarget(sourceVesselId) {
+    const src = this.sim.getItem(sourceVesselId);
+    if (!src || src.kind !== 'vessel') return;
+    const targets = this.sim.getTubeTargetsForVessel(sourceVesselId);
+    if (targets.length === 0) return;
+
+    this.state = {
+      mode: 'tube_target',
+      sourceVesselId,
+      targetVesselId: targets[0].id,
     };
     this.render();
   }
@@ -285,6 +300,40 @@ export class DosingModal {
           </div>
         </div>
       `;
+    } else if (st.mode === 'tube_target') {
+      const src = this.sim.getItem(st.sourceVesselId);
+      const targets = this.sim.getTubeTargetsForVessel(st.sourceVesselId);
+      this.container.innerHTML = `
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="dosing-backdrop">
+          <div class="w-full max-w-md rounded-2xl border border-theme bg-surface p-5 shadow-2xl flex flex-col gap-3.5 text-main">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <h3 class="text-sm font-bold">${t('tubeTargetTitle')}</h3>
+                <p class="text-xs text-muted mt-0.5">${t('tubeTargetHint')}</p>
+              </div>
+              <button type="button" id="dosing-close-x" class="px-2 py-1 rounded text-xs text-muted hover:text-main border border-theme">✕</button>
+            </div>
+            <div class="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
+              ${targets
+                .map((tgt) => {
+                  const tSpec = APPARATUS[tgt.typeId];
+                  const geom = computeTubingGeometry(src, tgt);
+                  const icon = tgt.kind === 'gas_syringe' ? '💉' : '🧪';
+                  return `
+                    <button type="button" class="tube-pick-btn w-full p-2.5 rounded-xl border border-theme bg-surface-alt hover:border-accent flex items-center justify-between text-left transition" data-tid="${tgt.id}">
+                      <span class="text-xs font-semibold">${icon} ${t(tSpec.i18nKey)} ${tgt.label}</span>
+                      <span class="text-[11px] font-mono text-sky-400">Ø6mm · ${geom.arcLengthCm.toFixed(1)} cm (${geom.capacityMl.toFixed(1)} mL)</span>
+                    </button>
+                  `;
+                })
+                .join('')}
+            </div>
+            <div class="flex justify-end">
+              <button type="button" id="dosing-cancel" class="px-3 py-1.5 rounded-lg border border-theme text-xs font-medium text-muted hover:text-main">${t('btnClose')}</button>
+            </div>
+          </div>
+        </div>
+      `;
     }
 
     this.bindModalEvents();
@@ -389,6 +438,13 @@ export class DosingModal {
     this.container.querySelector('#btn-draw-pipette')?.addEventListener('click', () => {
       this.sim.pipetteDrawFromReagent(this.state.reagentId, 2.0);
       this.close();
+    });
+
+    this.container.querySelectorAll('.tube-pick-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.sim.connectTube(this.state.sourceVesselId, btn.dataset.tid);
+        this.close();
+      });
     });
 
     this.container.querySelector('#dosing-confirm')?.addEventListener('click', () => {

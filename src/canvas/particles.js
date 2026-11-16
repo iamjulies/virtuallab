@@ -19,9 +19,35 @@ export class ParticleSystem {
   }
 
   /**
-   * Spawn bubbles, steam, sparks, and fuming wisps for a vessel.
+   * Spawn bubbles, steam, sparks, syringe spray, and overflow droplets.
    */
-  emitForVessel(vessel, metrics, dt) {
+  emitForVessel(item, metrics, dt) {
+    if (item.kind === 'gas_syringe') {
+      if ((metrics.overflowOutRateMlS || 0) > 0.5) {
+        const sSpec = APPARATUS.gas_syringe;
+        const rate = Math.min(60, 14 + metrics.overflowOutRateMlS * 0.45);
+        const dropCount = Math.floor(rate * dt) + (Math.random() < (rate * dt) % 1 ? 1 : 0);
+        const rearX = item.x - sSpec.width / 2 + 16 + 136;
+        const col = metrics.overflowOutColor || 'rgba(186, 230, 253, 0.85)';
+        for (let i = 0; i < dropCount; i++) {
+          this.particles.push({
+            kind: 'drip',
+            x: rearX + (Math.random() - 0.5) * 4,
+            y: item.y + (Math.random() - 0.5) * 16,
+            vx: 45 + Math.random() * 75,
+            vy: -15 + Math.random() * 35,
+            r: 2.3 + Math.random() * 2.2,
+            life: 0,
+            maxLife: 1.15 + Math.random() * 0.4,
+            color: col,
+            splashed: false,
+          });
+        }
+      }
+      return;
+    }
+
+    const vessel = item;
     if (vessel.isShattered) return;
     const spec = APPARATUS[vessel.typeId];
     if (!spec) return;
@@ -198,8 +224,8 @@ export class ParticleSystem {
       }
     }
 
-    // 5. Gradual continuous rim overflow droplets cascading down onto the bench
-    if ((metrics.overflowRateMlS || 0) > 0.5) {
+    // 5. Gradual continuous rim overflow droplets cascading down onto the bench (open vessels only!)
+    if (!vessel.isStoppered && (metrics.overflowRateMlS || 0) > 0.5) {
       const rate = Math.min(75, 18 + metrics.overflowRateMlS * 0.45);
       const dropCount = Math.floor(rate * dt) + (Math.random() < (rate * dt) % 1 ? 1 : 0);
       const topY = vessel.y - spec.height / 2 + 2;
@@ -226,7 +252,26 @@ export class ParticleSystem {
   }
 
   emitBurst(type, x, y, meta = null) {
-    if (type === 'overflow') return;
+    if (type === 'overflow' || type === 'syringe_overflow') return;
+
+    if (type === 'tube_drip') {
+      const count = Math.min(20, Math.max(6, Math.round((meta?.liquidMl || 4) * 1.4)));
+      for (let i = 0; i < count; i++) {
+        this.particles.push({
+          kind: 'drip',
+          x: (meta?.x ?? x) + (Math.random() - 0.5) * 18,
+          y: (meta?.y ?? y) + (Math.random() - 0.5) * 10,
+          vx: (Math.random() - 0.5) * 55,
+          vy: 15 + Math.random() * 45,
+          r: 2.4 + Math.random() * 2.2,
+          life: 0,
+          maxLife: 1.1 + Math.random() * 0.4,
+          color: meta?.liquidColor || 'rgba(186, 230, 253, 0.85)',
+          splashed: false,
+        });
+      }
+      return;
+    }
 
     const isExpl = type === 'explosion';
     const isShatter = type === 'shatter' || isExpl;
@@ -348,21 +393,71 @@ export class ParticleSystem {
       return;
     }
 
-    // Stopper pop puff
-    for (let i = 0; i < 18; i++) {
-      const angle = -Math.PI * (0.15 + Math.random() * 0.7);
-      const spd = 60 + Math.random() * 120;
+    // Flying Rubber Stopper POP burst!
+    const neckTopY = y - (meta?.vesselHeight || 150) / 2;
+    const stopTopW = Math.max(15, (meta?.neckRadius || 18) + 1.5);
+    const stopBotW = Math.max(11, (meta?.neckRadius || 18) - 3);
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    this.particles.push({
+      kind: 'stopper_fly',
+      x,
+      y: neckTopY,
+      vx: dir * (55 + Math.random() * 55),
+      vy: -(330 + Math.random() * 75),
+      angle: 0,
+      spin: dir * (9 + Math.random() * 6),
+      stopTopW,
+      stopBotW,
+      life: 0,
+      maxLife: 1.75,
+    });
+    this.particles.push({
+      kind: 'shockwave',
+      x,
+      y: neckTopY,
+      vx: 0,
+      vy: 0,
+      r: 8,
+      maxR: meta?.hydraulic ? 78 : 64,
+      life: 0,
+      maxLife: 0.24,
+      color: meta?.hydraulic ? '#38bdf8' : '#cbd5e1',
+    });
+
+    for (let i = 0; i < 22; i++) {
+      const angle = -Math.PI * (0.12 + Math.random() * 0.76);
+      const spd = 75 + Math.random() * 145;
       this.particles.push({
         kind: 'mist',
         x,
-        y,
+        y: neckTopY,
         vx: Math.cos(angle) * spd,
         vy: Math.sin(angle) * spd - 35,
         r: 6 + Math.random() * 6,
         life: 0,
-        maxLife: 0.75 + Math.random() * 0.45,
-        color: 'rgba(241, 245, 249, 0.52)',
+        maxLife: 0.78 + Math.random() * 0.45,
+        color: 'rgba(241, 245, 249, 0.56)',
       });
+    }
+
+    if (meta?.hadLiquid) {
+      const jetCount = meta.hydraulic ? 26 : 14;
+      for (let i = 0; i < jetCount; i++) {
+        const angle = -Math.PI * (0.28 + Math.random() * 0.44);
+        const spd = 135 + Math.random() * 175;
+        this.particles.push({
+          kind: 'drip',
+          x: x + (Math.random() - 0.5) * 14,
+          y: neckTopY + 4,
+          vx: Math.cos(angle) * spd,
+          vy: Math.sin(angle) * spd,
+          r: 2.6 + Math.random() * 2.8,
+          life: 0,
+          maxLife: 1.2 + Math.random() * 0.5,
+          color: meta.liquidColor || 'rgba(186, 230, 253, 0.85)',
+          splashed: false,
+        });
+      }
     }
   }
 
@@ -410,6 +505,15 @@ export class ParticleSystem {
             p.vy = 0;
             p.vx *= 0.85;
           }
+        }
+      } else if (p.kind === 'stopper_fly') {
+        p.vy += 470 * dt;
+        p.angle += p.spin * dt;
+        if (p.y >= BENCH_FLOOR_Y - 7) {
+          p.y = BENCH_FLOOR_Y - 7;
+          p.vy = -Math.abs(p.vy) * 0.36;
+          p.vx *= 0.72;
+          p.spin *= 0.65;
         }
       } else if (p.kind === 'spark' || p.kind === 'shard') {
         p.vy += 210 * dt;
@@ -486,6 +590,20 @@ export class ParticleSystem {
         ctx.fill();
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
         ctx.lineWidth = 0.8;
+        ctx.stroke();
+      } else if (p.kind === 'stopper_fly') {
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+        ctx.fillStyle = '#334155';
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.moveTo(-p.stopTopW, -8);
+        ctx.lineTo(p.stopTopW, -8);
+        ctx.lineTo(p.stopBotW, 9);
+        ctx.lineTo(-p.stopBotW, 9);
+        ctx.closePath();
+        ctx.fill();
         ctx.stroke();
       } else if (p.kind === 'shard') {
         ctx.translate(p.x, p.y);

@@ -15,6 +15,10 @@ import {
   ALL_GASES,
   NON_STEAM_GASES,
   computeSyringeGasVolumeMl,
+  computeSyringeHeatCapacityJK,
+  computeSyringeLiquidVolumeMl,
+  computeSyringeTotalVolumeMl,
+  computeTubingGeometry,
   stepSyringeThermodynamics,
   stepVesselGasAndPressure,
 } from './gasNetwork.js';
@@ -27,6 +31,34 @@ function createEmptyGasMap() {
 
 function getVesselBrimVolumeMl(spec) {
   return spec.geometry ? spec.geometry.maxVolumeMl * 0.96 : spec.maxVolumeMl * 1.15;
+}
+
+/**
+ * Shared stoichiometric fraction transfer of liquid/aqueous species (and optionally suspended precipitate).
+ */
+function moveFluidFraction(srcMoles, srcSettleMap, fracRemove, dstMoles = null, includeSuspendedPpt = true) {
+  let movedHeatCapJK = 0;
+  let movedPhenMol = 0;
+  for (const [spId, n] of Object.entries(srcMoles)) {
+    if (n <= 0) continue;
+    const sp = SPECIES[spId];
+    if (!sp) continue;
+    const isLiquid = sp.phase === 'l' || sp.phase === 'aq';
+    const isSuspended = includeSuspendedPpt && sp.isPrecipitate && (srcSettleMap?.[spId] ?? 0.5) < 0.7;
+    if (!isLiquid && !isSuspended) continue;
+
+    const factor = isSuspended && srcSettleMap ? 0.25 : 1.0;
+    const moveMol = n * Math.min(1, fracRemove * factor);
+    if (moveMol <= 0) continue;
+    srcMoles[spId] = n - moveMol;
+    if (srcMoles[spId] < 1e-13) delete srcMoles[spId];
+    if (dstMoles) {
+      dstMoles[spId] = (dstMoles[spId] || 0) + moveMol;
+    }
+    if (spId === 'Phenolphthalein_aq') movedPhenMol += moveMol;
+    movedHeatCapJK += moveMol * Math.max(0, sp.cp || 0);
+  }
+  return { movedHeatCapJK, movedPhenMol };
 }
 
 export class LabSimulation {
@@ -102,6 +134,15 @@ export class LabSimulation {
         internalPressureBar: this.environment.pressureBar,
         isStoppered: false,
         connectedSyringeId: null,
+        connectedTargetId: null,
+        tubeMoles: {},
+        tubeTempK: this.environment.tempK,
+        tubePhenBleachFrac: 0,
+        tubeLiquidFlowRateMlS: 0,
+        tubeLiquidFlowTimer: 0,
+        tubeLiquidSpillRateMlS: 0,
+        tubeLiquidSpillColor: null,
+        tubeColor: null,
         sealedAirMoles: null,
         headspaceGasMoles: createEmptyGasMap(),
         escapedGasMoles: createEmptyGasMap(),
@@ -145,9 +186,17 @@ export class LabSimulation {
       Object.assign(base, {
         gasMoles: createEmptyGasMap(),
         condensedWaterMol: 0,
+        overflowMoles: {},
+        overflowBleachFrac: 0,
         tempK: this.environment.tempK,
         inflowTempK: this.environment.tempK,
         lastCondenseRateMolS: 0,
+        inflowLiquidRateMlS: 0,
+        inflowLiquidTimer: 0,
+        inflowLiquidColor: null,
+        overflowOutRateMlS: 0,
+        overflowOutColor: null,
+        wasOverflowing: false,
         connectedFromId: null,
         isBroken: false,
       });
@@ -163,10 +212,13 @@ export class LabSimulation {
   removeApparatus(id) {
     const item = this.getItem(id);
     if (!item) return;
-    // Clean up connections
+    if (item.kind === 'vessel' && (item.connectedTargetId || item.connectedSyringeId)) {
+      this.disconnectSyringe(item.id);
+    }
+    // Clean up connections referencing removed apparatus
     for (const other of this.items) {
-      if (other.connectedSyringeId === id) {
-        other.connectedSyringeId = null;
+      if (other.connectedSyringeId === id || other.connectedTargetId === id) {
+        this.disconnectSyringe(other.id);
       }
       if (other.connectedFromId === id) {
         other.connectedFromId = null;
@@ -284,6 +336,59 @@ export class LabSimulation {
     this.emitChange();
   }
 
+  getTubeTargetsForVessel(vesselId) {
+    const v = this.getItem(vesselId);
+    if (!v || v.kind !== 'vessel') return [];
+    const syringes = this.items.filter((it) => it.kind === 'gas_syringe' && !it.isBroken);
+    const otherVessels = this.items.filter(
+      (it) =>
+        it.kind === 'vessel' &&
+        it.id !== vesselId &&
+        !it.isShattered &&
+        it.connectedTargetId !== vesselId &&
+        it.connectedSyringeId !== vesselId
+    );
+    return [...syringes, ...otherVessels];
+  }
+
+  popStopper(vessel, logKey = 'alertOverpressurePop', meta = {}) {
+    const spec = APPARATUS[vessel.typeId] || APPARATUS.erlenmeyer_250;
+    const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
+    const hadLiquid = liqL > 1e-6;
+    const vis = hadLiquid
+      ? computeSolutionVisuals(
+          vessel.moles,
+          liqL,
+          computePH(vessel.moles, liqL, vessel.tempK),
+          spec.opticalPathCm,
+          vessel.phenBleachFrac
+        )
+      : null;
+
+    const prevTargetId = vessel.connectedTargetId || vessel.connectedSyringeId;
+    vessel.isStoppered = false;
+    if (prevTargetId) {
+      this.disconnectSyringe(vessel.id);
+    }
+    for (const g of ALL_GASES) {
+      vessel.escapedGasMoles[g] = (vessel.escapedGasMoles[g] || 0) + (vessel.headspaceGasMoles[g] || 0);
+      vessel.headspaceGasMoles[g] = 0;
+    }
+    vessel.sealedAirMoles = null;
+    vessel.internalPressureBar = this.environment.pressureBar;
+
+    this.addLog({ type: 'alert', key: logKey, vesselLabel: vessel.label });
+    if (this.visualHooks.onAlert) {
+      this.visualHooks.onAlert('pop', vessel, {
+        hadLiquid,
+        liquidColor: meta.liquidColor || (vis ? vis.css : null),
+        neckRadius: spec.neckRadius || 18,
+        vesselHeight: spec.height,
+        hydraulic: !!meta.hydraulic,
+      });
+    }
+  }
+
   toggleStopper(vesselId) {
     const v = this.getItem(vesselId);
     if (!v || v.kind !== 'vessel' || v.isShattered) return false;
@@ -301,56 +406,104 @@ export class LabSimulation {
       v.internalPressureBar = this.environment.pressureBar;
     } else {
       v.isStoppered = true;
+      v.overflowRateMlS = 0;
+      v.wasOverflowing = false;
       v.sealedAirMoles = null;
+      this.checkOverflow(v);
     }
     this.emitChange();
     return true;
   }
 
-  connectSyringe(vesselId, syringeId = null) {
+  connectTube(vesselId, targetId = null) {
     const v = this.getItem(vesselId);
     if (!v || v.kind !== 'vessel' || v.isShattered) return { ok: false, reason: 'invalid' };
     const spec = APPARATUS[v.typeId];
     if (!spec.stopperable) return { ok: false, reason: 'not_stopperable' };
 
-    let syr = syringeId ? this.getItem(syringeId) : null;
-    if (!syr) {
-      syr = this.items.find((it) => it.kind === 'gas_syringe' && !it.connectedFromId);
-      if (!syr) syr = this.items.find((it) => it.kind === 'gas_syringe');
+    const targets = this.getTubeTargetsForVessel(vesselId);
+    let target = targetId ? targets.find((t) => t.id === targetId) : null;
+    if (!target) {
+      target =
+        targets.find((it) => it.kind === 'gas_syringe' && !it.connectedFromId) ||
+        targets.find((it) => it.kind === 'gas_syringe') ||
+        targets.find((it) => it.kind === 'vessel' && !it.connectedFromId) ||
+        targets[0];
     }
-    if (!syr) return { ok: false, reason: 'no_syringe' };
+    if (!target) return { ok: false, reason: 'no_target' };
 
-    // Disconnect old link on syringe if any
-    if (syr.connectedFromId && syr.connectedFromId !== v.id) {
-      const prev = this.getItem(syr.connectedFromId);
-      if (prev) prev.connectedSyringeId = null;
+    // Disconnect previous source feeding into target if any
+    if (target.connectedFromId && target.connectedFromId !== v.id) {
+      const prev = this.getItem(target.connectedFromId);
+      if (prev) this.disconnectSyringe(prev.id);
+    }
+    if (v.connectedTargetId && v.connectedTargetId !== target.id) {
+      this.disconnectSyringe(v.id);
     }
 
     v.isStoppered = true;
-    v.connectedSyringeId = syr.id;
-    syr.connectedFromId = v.id;
-    // Vent sealed headspace equilibrium when opened into syringe
-    for (const g of NON_STEAM_GASES) {
-      if (v.headspaceGasMoles[g] > 0) {
-        syr.gasMoles[g] = (syr.gasMoles[g] || 0) + v.headspaceGasMoles[g];
-        v.headspaceGasMoles[g] = 0;
+    v.overflowRateMlS = 0;
+    v.wasOverflowing = false;
+    v.connectedTargetId = target.id;
+    v.connectedSyringeId = target.kind === 'gas_syringe' ? target.id : null;
+    target.connectedFromId = v.id;
+
+    // Vent non-steam headspace equilibrium into syringe
+    if (target.kind === 'gas_syringe') {
+      for (const g of NON_STEAM_GASES) {
+        if (v.headspaceGasMoles[g] > 0) {
+          target.gasMoles[g] = (target.gasMoles[g] || 0) + v.headspaceGasMoles[g];
+          v.headspaceGasMoles[g] = 0;
+        }
       }
     }
     v.internalPressureBar = this.environment.pressureBar;
+    this.checkOverflow(v);
     this.emitChange();
-    return { ok: true };
+    return { ok: true, targetId: target.id };
+  }
+
+  connectSyringe(vesselId, syringeId = null) {
+    const targets = this.getTubeTargetsForVessel(vesselId);
+    const syr = syringeId
+      ? targets.find((t) => t.id === syringeId && t.kind === 'gas_syringe')
+      : targets.find((it) => it.kind === 'gas_syringe' && !it.connectedFromId) ||
+        targets.find((it) => it.kind === 'gas_syringe');
+    if (!syr) return { ok: false, reason: 'no_syringe' };
+    return this.connectTube(vesselId, syr.id);
   }
 
   disconnectSyringe(vesselId) {
     const v = this.getItem(vesselId);
     if (!v) return;
-    if (v.connectedSyringeId) {
-      const syr = this.getItem(v.connectedSyringeId);
-      if (syr && syr.connectedFromId === v.id) {
-        syr.connectedFromId = null;
+    const tid = v.connectedTargetId || v.connectedSyringeId;
+    if (tid) {
+      const target = this.getItem(tid);
+      if (target && target.connectedFromId === v.id) {
+        target.connectedFromId = null;
+      }
+      // Any liquid trapped in disconnected rubber tubing drains out visually
+      const tubeVolMl = computeLiquidVolumeL(v.tubeMoles || {}, v.tubeTempK || v.tempK) * 1000;
+      if (tubeVolMl > 0.05 && this.visualHooks.onAlert && target) {
+        const tubeGeom = computeTubingGeometry(v, target);
+        const midPt = tubeGeom.points[Math.floor(tubeGeom.points.length * 0.5)] || { x: v.x, y: v.y - 60 };
+        this.visualHooks.onAlert('tube_drip', v, {
+          x: midPt.x,
+          y: midPt.y,
+          liquidMl: tubeVolMl,
+          liquidColor: v.tubeColor || 'rgba(186, 230, 253, 0.85)',
+        });
       }
       v.connectedSyringeId = null;
+      v.connectedTargetId = null;
     }
+    v.tubeMoles = {};
+    v.tubePhenBleachFrac = 0;
+    v.tubeLiquidFlowRateMlS = 0;
+    v.tubeLiquidFlowTimer = 0;
+    v.tubeLiquidSpillRateMlS = 0;
+    v.tubeLiquidSpillColor = null;
+    v.tubeColor = null;
     this.emitChange();
   }
 
@@ -359,7 +512,15 @@ export class LabSimulation {
     if (!syr || syr.kind !== 'gas_syringe') return;
     syr.gasMoles = createEmptyGasMap();
     syr.condensedWaterMol = 0;
+    syr.overflowMoles = {};
+    syr.overflowBleachFrac = 0;
     syr.lastCondenseRateMolS = 0;
+    syr.inflowLiquidRateMlS = 0;
+    syr.inflowLiquidTimer = 0;
+    syr.inflowLiquidColor = null;
+    syr.overflowOutRateMlS = 0;
+    syr.overflowOutColor = null;
+    syr.wasOverflowing = false;
     this.emitChange();
   }
 
@@ -664,6 +825,7 @@ export class LabSimulation {
   }
 
   checkOverflow(vessel) {
+    if (!vessel || vessel.isShattered) return;
     const spec = APPARATUS[vessel.typeId];
     const brimMl = getVesselBrimVolumeMl(spec);
     const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
@@ -671,36 +833,59 @@ export class LabSimulation {
     const solMl = computeSolidVolumeMl(vessel.moles);
     const totalMl = liqMl + solMl;
 
-    if (totalMl > brimMl + 0.05 && liqMl > 0.05) {
-      const excessMl = totalMl - brimMl;
-      const vis = computeSolutionVisuals(
-        vessel.moles,
-        liqL,
-        computePH(vessel.moles, liqL, vessel.tempK),
-        spec.opticalPathCm,
-        vessel.phenBleachFrac
-      );
-      vessel.overflowRateMlS = 36 + excessMl * 4.2;
-      vessel.overflowColor = vis.css;
-      vessel.spilledPuddleColor = vis.css;
-      if (!vessel.wasOverflowing) {
-        vessel.wasOverflowing = true;
-        this.addLog({
-          type: 'alert',
-          key: 'alertOverflow',
-          vesselLabel: `${spec.id} ${vessel.label}`,
+    if (totalMl <= brimMl + 0.05 || liqMl <= 0.05) return;
+
+    const excessMl = totalMl - brimMl;
+    const vis = computeSolutionVisuals(
+      vessel.moles,
+      liqL,
+      computePH(vessel.moles, liqL, vessel.tempK),
+      spec.opticalPathCm,
+      vessel.phenBleachFrac
+    );
+
+    if (vessel.isStoppered) {
+      vessel.overflowRateMlS = 0;
+      const targetId = vessel.connectedTargetId || vessel.connectedSyringeId;
+      const target = targetId ? this.getItem(targetId) : null;
+      if (!target) {
+        // Hard rubber stopper without tubing: hydraulic excess pops the stopper!
+        this.popStopper(vessel, 'alertHydroOverflowPop', {
+          hydraulic: true,
+          liquidColor: vis.css,
         });
-        if (this.visualHooks.onAlert) {
-          this.visualHooks.onAlert('overflow', vessel, { liquidColor: vis.css });
-        }
+        vessel.overflowRateMlS = 36 + excessMl * 4.2;
+        vessel.overflowColor = vis.css;
+        vessel.spilledPuddleColor = vis.css;
+      }
+      return;
+    }
+
+    vessel.overflowRateMlS = 36 + excessMl * 4.2;
+    vessel.overflowColor = vis.css;
+    vessel.spilledPuddleColor = vis.css;
+    if (!vessel.wasOverflowing) {
+      vessel.wasOverflowing = true;
+      this.addLog({
+        type: 'alert',
+        key: 'alertOverflow',
+        vesselLabel: `${spec.id} ${vessel.label}`,
+      });
+      if (this.visualHooks.onAlert) {
+        this.visualHooks.onAlert('overflow', vessel, { liquidColor: vis.css });
       }
     }
   }
 
   /**
-   * Gradually cascade excess liquid over the physical vessel rim rather than teleporting it away.
+   * Handle excess liquid past physical vessel brim depending on stopper boundary:
+   * - Open: gradual waterfall spill over rim
+   * - Hard stopper (no tube): pops stopper off via hydraulic pressure, then spills
+   * - Stopper + rubber tubing: fills calibrated tube volume (length * fixed Ø6mm bore) first,
+   *   then streams into the connected vessel or Gas Syringe barrel.
    */
   stepVesselOverflow(vessel, dt) {
+    if (vessel.isShattered) return;
     const spec = APPARATUS[vessel.typeId];
     const brimMl = getVesselBrimVolumeMl(spec);
     const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
@@ -708,6 +893,140 @@ export class LabSimulation {
     const solMl = computeSolidVolumeMl(vessel.moles);
     const totalMl = liqMl + solMl;
 
+    vessel.tubeLiquidSpillRateMlS = 0;
+    vessel.tubeLiquidSpillColor = null;
+
+    if (vessel.isStoppered) {
+      vessel.overflowRateMlS = 0;
+      vessel.wasOverflowing = false;
+      const targetId = vessel.connectedTargetId || vessel.connectedSyringeId;
+      const target = targetId ? this.getItem(targetId) : null;
+
+      // Case 2: Hard stopper without tubing -> hydraulic pop when volume exceeds brim
+      if (!target) {
+        if (totalMl > brimMl + 0.12 && liqMl > 0.05) {
+          this.popStopper(vessel, 'alertHydroOverflowPop', { hydraulic: true });
+        }
+        return;
+      }
+
+      // Case 3: Stopper with tubing -> push excess into vessel.tubeMoles, then into target
+      let pushedMlThisFrame = 0;
+      if (totalMl > brimMl + 0.02 && liqMl > 0.02) {
+        const excessMl = totalMl - brimMl;
+        const rateMlS = 40 + excessMl * 4.5;
+        const pushMl = Math.min(liqMl, excessMl, rateMlS * dt);
+        const fracRemove = Math.min(1, pushMl / liqMl);
+        const oldTubeCap = computeHeatCapacityJK({ typeId: vessel.typeId, moles: vessel.tubeMoles || {} }) - (spec.glassHeatCapacityJK || 80);
+        const oldTubePhen = vessel.tubeMoles?.Phenolphthalein_aq || 0;
+        const { movedHeatCapJK, movedPhenMol } = moveFluidFraction(
+          vessel.moles,
+          vessel.precipitateSettle,
+          fracRemove,
+          vessel.tubeMoles,
+          true
+        );
+        const totalCap = Math.max(1e-6, oldTubeCap + movedHeatCapJK);
+        vessel.tubeTempK =
+          (Math.max(0, oldTubeCap) * (vessel.tubeTempK || vessel.tempK) + movedHeatCapJK * vessel.tempK) / totalCap;
+        if (movedPhenMol > 0) {
+          const totP = oldTubePhen + movedPhenMol;
+          vessel.tubePhenBleachFrac =
+            totP > 1e-14 ? (oldTubePhen * (vessel.tubePhenBleachFrac || 0) + movedPhenMol * (vessel.phenBleachFrac || 0)) / totP : 0;
+        }
+        pushedMlThisFrame = pushMl;
+      }
+
+      const tubeLiqL = computeLiquidVolumeL(vessel.tubeMoles || {}, vessel.tubeTempK || vessel.tempK);
+      const tubeVolMl = tubeLiqL * 1000;
+      if (tubeVolMl > 0.005) {
+        const tVis = computeSolutionVisuals(
+          vessel.tubeMoles,
+          tubeLiqL,
+          computePH(vessel.tubeMoles, tubeLiqL, vessel.tubeTempK || vessel.tempK),
+          0.6, // 6 mm tube optical path
+          vessel.tubePhenBleachFrac || 0
+        );
+        vessel.tubeColor = tVis.css;
+      } else {
+        vessel.tubeColor = null;
+      }
+
+      if (pushedMlThisFrame > 1e-4) {
+        vessel.tubeLiquidFlowRateMlS = pushedMlThisFrame / Math.max(1e-4, dt);
+        vessel.tubeLiquidFlowTimer = 0.45;
+      } else {
+        vessel.tubeLiquidFlowRateMlS = 0;
+      }
+
+      const tubeGeom = computeTubingGeometry(vessel, target);
+      if (tubeVolMl > tubeGeom.capacityMl + 0.01) {
+        const spillMl = tubeVolMl - tubeGeom.capacityMl;
+        const fracSpill = Math.min(1, spillMl / tubeVolMl);
+
+        if (target.kind === 'vessel' && !target.isShattered) {
+          const tSpec = APPARATUS[target.typeId];
+          const cDstBefore = computeHeatCapacityJK(target);
+          const oldDstPhen = target.moles.Phenolphthalein_aq || 0;
+          const oldDstBleach = target.phenBleachFrac || 0;
+          const { movedHeatCapJK, movedPhenMol } = moveFluidFraction(
+            vessel.tubeMoles,
+            null,
+            fracSpill,
+            target.moles,
+            true
+          );
+          if (cDstBefore + movedHeatCapJK > 0) {
+            target.tempK =
+              (cDstBefore * target.tempK + movedHeatCapJK * (vessel.tubeTempK || vessel.tempK)) /
+              (cDstBefore + movedHeatCapJK);
+          }
+          if (movedPhenMol > 0) {
+            const totP = oldDstPhen + movedPhenMol;
+            target.phenBleachFrac =
+              totP > 1e-14 ? (oldDstPhen * oldDstBleach + movedPhenMol * (vessel.tubePhenBleachFrac || 0)) / totP : 0;
+          }
+          vessel.tubeLiquidSpillRateMlS = spillMl / Math.max(1e-4, dt);
+          vessel.tubeLiquidSpillColor = vessel.tubeColor;
+          vessel.tubeLiquidFlowTimer = 0.55;
+          if (!target.wasTubeReceiving) {
+            target.wasTubeReceiving = true;
+            this.addLog({ type: 'alert', key: 'alertTubeLiquidTransfer', vesselLabel: `${spec.id} ${vessel.label} → ${tSpec.id} ${target.label}` });
+          }
+          this.checkOverflow(target);
+        } else if (target.kind === 'gas_syringe' && !target.isBroken) {
+          if (!target.overflowMoles) target.overflowMoles = {};
+          const cSyrBefore = computeSyringeHeatCapacityJK(target);
+          const oldSyrPhen = target.overflowMoles.Phenolphthalein_aq || 0;
+          const oldSyrBleach = target.overflowBleachFrac || 0;
+          const { movedHeatCapJK, movedPhenMol } = moveFluidFraction(
+            vessel.tubeMoles,
+            null,
+            fracSpill,
+            target.overflowMoles,
+            true
+          );
+          target.tempK =
+            (cSyrBefore * (target.tempK ?? this.environment.tempK) +
+              movedHeatCapJK * (vessel.tubeTempK || vessel.tempK)) /
+            Math.max(1e-4, cSyrBefore + movedHeatCapJK);
+          if (movedPhenMol > 0) {
+            const totP = oldSyrPhen + movedPhenMol;
+            target.overflowBleachFrac =
+              totP > 1e-14 ? (oldSyrPhen * oldSyrBleach + movedPhenMol * (vessel.tubePhenBleachFrac || 0)) / totP : 0;
+          }
+          target.inflowLiquidRateMlS = spillMl / Math.max(1e-4, dt);
+          target.inflowLiquidTimer = 0.5;
+          target.inflowLiquidColor = vessel.tubeColor;
+          vessel.tubeLiquidSpillRateMlS = target.inflowLiquidRateMlS;
+          vessel.tubeLiquidSpillColor = vessel.tubeColor;
+          vessel.tubeLiquidFlowTimer = 0.55;
+        }
+      }
+      return;
+    }
+
+    // Case 1: Open vessel rim overflow waterfall
     if (totalMl <= brimMl + 0.02 || liqMl <= 0.02) {
       vessel.overflowRateMlS = 0;
       vessel.wasOverflowing = false;
@@ -730,15 +1049,59 @@ export class LabSimulation {
     vessel.overflowColor = vis.css;
     vessel.spilledPuddleColor = vis.css;
 
-    for (const [spId, n] of Object.entries(vessel.moles)) {
-      const sp = SPECIES[spId];
-      if (!sp) continue;
-      if (sp.phase === 'l' || sp.phase === 'aq') {
-        vessel.moles[spId] = n * (1 - fracRemove);
-      } else if (sp.isPrecipitate && (vessel.precipitateSettle[spId] ?? 0.5) < 0.7) {
-        vessel.moles[spId] = n * (1 - fracRemove * 0.25);
+    moveFluidFraction(vessel.moles, vessel.precipitateSettle, fracRemove, null, true);
+  }
+
+  /**
+   * Drain excess liquid from a maxed-out 250 mL Gas Syringe with rear collar spray.
+   */
+  stepSyringeOverflow(syringe, dt) {
+    if (!syringe || syringe.isBroken) return;
+    const syrSpec = APPARATUS[syringe.typeId];
+    const totalVolMl = computeSyringeTotalVolumeMl(syringe, this.environment);
+    const liqVolMl = computeSyringeLiquidVolumeMl(syringe, this.environment);
+
+    if (totalVolMl <= syrSpec.maxVolumeMl + 0.05 || liqVolMl <= 0.02) {
+      syringe.overflowOutRateMlS = 0;
+      syringe.wasOverflowing = false;
+      return;
+    }
+
+    const excessMl = totalVolMl - syrSpec.maxVolumeMl;
+    const drainMl = Math.min(liqVolMl, excessMl, (36 + excessMl * 4.5) * dt);
+    const ovL = computeLiquidVolumeL(syringe.overflowMoles || {}, syringe.tempK ?? this.environment.tempK);
+    const ovMl = ovL * 1000;
+
+    let spillColor = 'rgba(186, 230, 253, 0.85)';
+    if (ovMl > 0.01) {
+      const vis = computeSolutionVisuals(
+        syringe.overflowMoles,
+        ovL,
+        computePH(syringe.overflowMoles, ovL, syringe.tempK ?? this.environment.tempK),
+        2.5,
+        syringe.overflowBleachFrac || 0
+      );
+      spillColor = vis.css;
+      const takeFromOv = Math.min(ovMl, drainMl);
+      moveFluidFraction(syringe.overflowMoles, null, Math.min(1, takeFromOv / ovMl), null, true);
+      const leftover = drainMl - takeFromOv;
+      if (leftover > 1e-4 && (syringe.condensedWaterMol || 0) > 0) {
+        const dropMol = (leftover * 0.997) / SPECIES.H2O_l.molarMass;
+        syringe.condensedWaterMol = Math.max(0, syringe.condensedWaterMol - dropMol);
       }
-      if (vessel.moles[spId] < 1e-13) delete vessel.moles[spId];
+    } else if ((syringe.condensedWaterMol || 0) > 0) {
+      const dropMol = (drainMl * 0.997) / SPECIES.H2O_l.molarMass;
+      syringe.condensedWaterMol = Math.max(0, syringe.condensedWaterMol - dropMol);
+    }
+
+    syringe.overflowOutRateMlS = drainMl / Math.max(1e-4, dt);
+    syringe.overflowOutColor = spillColor;
+    if (!syringe.wasOverflowing) {
+      syringe.wasOverflowing = true;
+      this.addLog({ type: 'alert', key: 'alertSyringeOverflow', vesselLabel: syringe.label });
+      if (this.visualHooks.onAlert) {
+        this.visualHooks.onAlert('syringe_overflow', syringe, { liquidColor: spillColor });
+      }
     }
   }
 
@@ -958,8 +1321,7 @@ export class LabSimulation {
 
         for (const ev of gasEvents) {
           if (ev.type === 'stopper_pop') {
-            this.addLog({ type: 'alert', key: 'alertOverpressurePop', vesselLabel: v.label });
-            if (this.visualHooks.onAlert) this.visualHooks.onAlert('pop', v);
+            this.popStopper(v, 'alertOverpressurePop');
           } else if (ev.type === 'shatter') {
             this.shatterVessel(v, 'alertOverpressureShatter', 'shatter');
             break;
@@ -1090,6 +1452,11 @@ export class LabSimulation {
         if (v.tubeFlowBannerTimer === 0) v.tubeFlowRateMolS = 0;
       }
 
+      // Decay visual timers for tube liquid flow
+      if ((v.tubeLiquidFlowTimer || 0) > 0 && v.tubeLiquidFlowRateMlS <= 1e-4) {
+        v.tubeLiquidFlowTimer = Math.max(0, v.tubeLiquidFlowTimer - realDeltaSec);
+      }
+
       // Emit visual particle request
       if (this.visualHooks.onParticlesNeeded) {
         this.visualHooks.onParticlesNeeded(v, {
@@ -1112,11 +1479,24 @@ export class LabSimulation {
       this.recordHistorySnapshot(v, false);
     }
 
-    // Advance thermal exchange & Antoine condensation inside all Gas Syringes
+    // Advance thermal exchange, Antoine condensation, & liquid overflow inside all Gas Syringes
     for (const item of this.items) {
       if (item.kind !== 'gas_syringe') continue;
       for (let s = 0; s < numSteps; s++) {
         stepSyringeThermodynamics(item, dt, this.environment);
+      }
+      if ((item.inflowLiquidTimer || 0) > 0) {
+        item.inflowLiquidTimer = Math.max(0, item.inflowLiquidTimer - realDeltaSec);
+        if (item.inflowLiquidTimer === 0) item.inflowLiquidRateMlS = 0;
+      }
+      this.stepSyringeOverflow(item, scaledDt);
+      if (this.visualHooks.onParticlesNeeded && ((item.inflowLiquidTimer || 0) > 0 || (item.overflowOutRateMlS || 0) > 0.5)) {
+        this.visualHooks.onParticlesNeeded(item, {
+          inflowLiquidRateMlS: item.inflowLiquidRateMlS || 0,
+          inflowLiquidColor: item.inflowLiquidColor || null,
+          overflowOutRateMlS: item.overflowOutRateMlS || 0,
+          overflowOutColor: item.overflowOutColor || null,
+        });
       }
     }
 

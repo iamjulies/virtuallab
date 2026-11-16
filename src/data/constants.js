@@ -41,6 +41,10 @@ export const CONSTANTS = {
   PHEN_SOL_DENSITY_G_ML: 0.85,
   PHEN_SOL_MOL_PER_ML: 0.0000267, // ~0.85 g / 100 mL -> ~0.0267 M
 
+  // Physical workbench geometry & tubing bore constants
+  PX_PER_MM: 1.15,                   // 1.15 px/mm across all ISO apparatus
+  TUBING_INNER_DIAMETER_MM: 6.0,     // Fixed 6.0 mm inner bore silicone/rubber delivery tubing
+
   // Numerical integration limits
   SUBSTEP_MAX_DT: 0.01, // 10 ms max physics/chem substep
 };

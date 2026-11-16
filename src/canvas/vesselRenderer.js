@@ -7,7 +7,14 @@ import {
   computeSolidVolumeMl,
   computeSolutionVisuals,
 } from '../engine/equilibrium.js';
-import { ALL_GASES, computeSyringeGasVolumeMl } from '../engine/gasNetwork.js';
+import {
+  ALL_GASES,
+  computeSyringeGasVolumeMl,
+  computeSyringeLiquidVolumeMl,
+  computeSyringeTotalVolumeMl,
+  computeTubingGeometry,
+  cubicBezierPoint,
+} from '../engine/gasNetwork.js';
 import { renderVesselSolids } from './chemicalVisuals.js';
 
 function getThemePalette(isDark) {
@@ -137,18 +144,6 @@ function drawLabelPill(ctx, cx, cy, text, opts = {}) {
   ctx.textBaseline = 'middle';
   ctx.fillText(text, cx, cy + height / 2 + 0.5);
   ctx.restore();
-}
-
-function cubicBezierPoint(t, p0, p1, p2, p3) {
-  const u = 1 - t;
-  const tt = t * t;
-  const uu = u * u;
-  const uuu = uu * u;
-  const ttt = tt * t;
-  return {
-    x: uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
-    y: uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y,
-  };
 }
 
 function getDominantSyringeGasFormula(syringe, langCode) {
@@ -368,19 +363,26 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   const pal = getThemePalette(isDark);
   const { x, y } = item;
   const w = spec.width;
-  const h = spec.height;
   const barrelW = 136;
   const barrelH = 38;
   const barrelLeft = x - w / 2 + 16;
   const barrelTop = y - barrelH / 2;
 
-  const volMl = computeSyringeGasVolumeMl(item, env);
-  const ratio = Math.max(0, Math.min(1, volMl / spec.maxVolumeMl));
-  const plungerX = barrelLeft + 10 + ratio * (barrelW - 22);
+  const gasVolMl = computeSyringeGasVolumeMl(item, env);
+  const syrTempK = item.tempK ?? env.tempK;
+  const overflowL = computeLiquidVolumeL(item.overflowMoles || {}, syrTempK);
+  const overflowMl = overflowL * 1000;
   const condensedMl = ((item.condensedWaterMol || 0) * SPECIES.H2O_l.molarMass) / 0.997;
+  const totalLiqMl = overflowMl + condensedMl;
+  const totalVolMl = computeSyringeTotalVolumeMl(item, env);
+
+  const ratio = Math.max(0, Math.min(1, totalVolMl / spec.maxVolumeMl));
+  const liqRatio = Math.max(0, Math.min(ratio, totalLiqMl / spec.maxVolumeMl));
+  const plungerX = barrelLeft + 10 + ratio * (barrelW - 22);
+  const liqEndX = barrelLeft + 10 + liqRatio * (barrelW - 22);
   const hasSteam = (item.gasMoles?.H2O_g || 0) > 1e-6;
   const hasCl2 = (item.gasMoles?.Cl2_g || 0) > 1e-6;
-  const syrTempC = kelvinToCelsius(item.tempK ?? env.tempK);
+  const syrTempC = kelvinToCelsius(syrTempK);
 
   ctx.save();
   if (isSelected) {
@@ -404,7 +406,8 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   ctx.shadowBlur = 0;
 
   // Gas tint inside chamber (foggy vapor, greenish Cl2, or clean sky tint)
-  if (ratio > 0.005) {
+  if (ratio > liqRatio + 0.004) {
+    const gStart = overflowMl > 0.2 ? liqEndX : barrelLeft + 2;
     ctx.fillStyle = hasCl2
       ? 'rgba(217, 249, 157, 0.30)'
       : hasSteam
@@ -412,7 +415,51 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
         ? 'rgba(226, 232, 240, 0.28)'
         : 'rgba(148, 163, 184, 0.28)'
       : 'rgba(186, 230, 253, 0.16)';
-    ctx.fillRect(barrelLeft + 2, barrelTop + 2, plungerX - barrelLeft - 2, barrelH - 4);
+    ctx.fillRect(gStart, barrelTop + 2, Math.max(0, plungerX - gStart), barrelH - 4);
+  }
+
+  // Overflowed solution entering syringe nozzle & pushing barrel column
+  if (overflowMl > 0.05) {
+    const ovVis = computeSolutionVisuals(
+      item.overflowMoles,
+      overflowL,
+      computePH(item.overflowMoles, overflowL, syrTempK),
+      2.6,
+      item.overflowBleachFrac || 0
+    );
+    ctx.save();
+    ctx.fillStyle = ovVis.css;
+    ctx.fillRect(barrelLeft + 2, barrelTop + 2, Math.max(4, liqEndX - barrelLeft - 2), barrelH - 4);
+    // Vertical meniscus edge where liquid meets gas/plunger
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(liqEndX, barrelTop + 2);
+    ctx.lineTo(liqEndX, barrelTop + barrelH - 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Active inflow jet ripples spraying through nozzle into barrel
+  if ((item.inflowLiquidTimer || 0) > 0 && (item.inflowLiquidRateMlS || 0) > 0.05) {
+    const jetCol = item.inflowLiquidColor || 'rgba(186, 230, 253, 0.9)';
+    const pulse = (timeNow * 14) % 1;
+    ctx.save();
+    ctx.strokeStyle = jetCol;
+    ctx.lineWidth = 3.6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(barrelLeft - 12, y);
+    ctx.lineTo(barrelLeft + 8 + pulse * 18, y);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+    for (let k = 0; k < 3; k++) {
+      const rOff = ((pulse + k * 0.33) % 1) * 16;
+      ctx.beginPath();
+      ctx.arc(barrelLeft + 4 + rOff, y + Math.sin(k * 2.1 + timeNow * 18) * 6, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   // Condensed H2O(l) water pool + micro-droplets inside glass syringe barrel
@@ -443,6 +490,21 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
     }
   }
 
+  // Rear collar spill stream when full 250 mL syringe overflows
+  if ((item.overflowOutRateMlS || 0) > 0.5) {
+    const rearX = barrelLeft + barrelW + 1;
+    const wobble = Math.sin((timeNow || 0) * 18) * 1.8;
+    ctx.save();
+    ctx.strokeStyle = item.overflowOutColor || 'rgba(186, 230, 253, 0.88)';
+    ctx.lineWidth = Math.min(6, 2.4 + Math.sqrt(item.overflowOutRateMlS) * 0.3);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(rearX, y + 6);
+    ctx.quadraticCurveTo(rearX + 18 + wobble, y + 26, rearX + 24, y + 60);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // Plunger rubber head + rod
   ctx.fillStyle = '#334155';
   ctx.fillRect(plungerX - 5, barrelTop + 3, 10, barrelH - 6);
@@ -462,9 +524,19 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
     ctx.stroke();
   }
 
-  // Live Gas Volume + Gas Temperature Badge below syringe
+  // Live Gas + Liquid + Temperature Badge below syringe
   const gasTag = getDominantSyringeGasFormula(item, langCode);
-  const labelText = `${gasTag}: ${volMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
+  let labelText;
+  if (totalLiqMl > 0.2 && gasVolMl > 0.5) {
+    labelText = `💨 ${gasVolMl.toFixed(1)} + 💧 ${totalLiqMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
+  } else if (overflowMl > 0.2) {
+    labelText =
+      langCode === 'vi'
+        ? `💧 Tràn vào: ${totalLiqMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`
+        : `💧 Liquid: ${totalLiqMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
+  } else {
+    labelText = `${gasTag}: ${gasVolMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
+  }
   drawLabelPill(ctx, x, barrelTop + barrelH + 8, labelText, {
     pal,
     borderColor: isSelected ? '#3b82f6' : syrTempC >= 55 ? '#f59e0b' : pal.badgeBorder,
@@ -472,9 +544,21 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
     height: 22,
   });
 
-  // Live Condensation Label directly below if steam condensed or is condensing
+  // Condensation or Syringe 250mL-Overflow secondary status badge
   const isCondensing = (item.lastCondenseRateMolS || 0) > 1e-6;
-  if (condensedMl > 0.0005 || isCondensing) {
+  const isSpillingOut = (item.overflowOutRateMlS || 0) > 0.5;
+  if (isSpillingOut) {
+    const ovText =
+      langCode === 'vi'
+        ? '💧 Đầy 250 mL — Nước tràn khỏi xilanh!'
+        : '💧 250 mL Full — Syringe overflowing!';
+    drawLabelPill(ctx, x, barrelTop + barrelH + 34, ovText, {
+      pal,
+      borderColor: '#ef4444',
+      font: '600 10.5px system-ui, sans-serif',
+      height: 20,
+    });
+  } else if (condensedMl > 0.0005 || isCondensing) {
     const condText =
       langCode === 'vi'
         ? `💧 Ngưng tụ: ${condensedMl.toFixed(2)} mL H₂O${isCondensing ? ' · Đang ngưng!' : ''}`
@@ -494,33 +578,93 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
 export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCode = 'vi') {
   const pal = getThemePalette(isDark);
   for (const v of items) {
-    if (v.kind !== 'vessel' || !v.connectedSyringeId) continue;
-    const syr = items.find((it) => it.id === v.connectedSyringeId);
-    if (!syr) continue;
+    const tid = v.connectedTargetId || v.connectedSyringeId;
+    if (v.kind !== 'vessel' || !tid) continue;
+    const target = items.find((it) => it.id === tid);
+    if (!target) continue;
 
-    const vSpec = APPARATUS[v.typeId];
-    const syrSpec = APPARATUS.gas_syringe;
-    const p0 = { x: v.x, y: v.y - vSpec.height / 2 - 8 };
-    const p3 = { x: syr.x - syrSpec.width / 2 + 2, y: syr.y };
-    const p1 = { x: p0.x, y: Math.min(p0.y, p3.y) - 70 };
-    const p2 = { x: (p0.x + p3.x) * 0.5, y: Math.min(p0.y, p3.y) - 45 };
+    const geom = computeTubingGeometry(v, target);
+    const { p0, p1, p2, p3, points, arcLengthCm, capacityMl } = geom;
 
     ctx.save();
-    ctx.strokeStyle = pal.tubeColor;
-    ctx.lineWidth = 6;
+    // Outer translucent silicone/rubber tubing jacket
+    ctx.strokeStyle = isDark ? 'rgba(71, 85, 105, 0.72)' : 'rgba(51, 65, 85, 0.62)';
+    ctx.lineWidth = 7;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(p0.x, p0.y);
     ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
     ctx.stroke();
 
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.lineWidth = 1.8;
+    // Inner bore dark contrast channel
+    ctx.strokeStyle = isDark ? 'rgba(15, 23, 42, 0.62)' : 'rgba(241, 245, 249, 0.45)';
+    ctx.lineWidth = 4.2;
     ctx.stroke();
 
-    // Animated steam/gas flow pulses & tubing temperature label when flowing to syringe
-    const isFlowing = (v.tubeFlowBannerTimer || 0) > 0 && v.tubeFlowFormula;
-    if (isFlowing) {
+    // Specular tubing highlight
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // Liquid column physically filling and moving inside the tube up to fillFraction
+    const tubeVolMl = computeLiquidVolumeL(v.tubeMoles || {}, v.tubeTempK || v.tempK) * 1000;
+    const fillFrac = Math.max(0, Math.min(1, tubeVolMl / Math.max(0.1, capacityMl)));
+    if (fillFrac > 0.004 && points.length >= 2) {
+      const exactIdx = fillFrac * (points.length - 1);
+      const maxIdx = Math.min(points.length - 1, Math.floor(exactIdx));
+      const fracTail = exactIdx - maxIdx;
+
+      ctx.save();
+      ctx.strokeStyle = v.tubeColor || 'rgba(186, 230, 253, 0.9)';
+      ctx.lineWidth = 4.2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i <= maxIdx; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      if (maxIdx < points.length - 1 && fracTail > 0.01) {
+        const a = points[maxIdx];
+        const b = points[maxIdx + 1];
+        ctx.lineTo(a.x + (b.x - a.x) * fracTail, a.y + (b.y - a.y) * fracTail);
+      }
+      ctx.stroke();
+
+      // Animated bright liquid flow slugs surging along filled length when pumping
+      if ((v.tubeLiquidFlowTimer || 0) > 0) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
+        for (let k = 0; k < 4; k++) {
+          const tFlow = ((timeNow * 1.4 + k * 0.25) % 1) * fillFrac;
+          const fPt = cubicBezierPoint(tFlow, p0, p1, p2, p3);
+          ctx.beginPath();
+          ctx.arc(fPt.x, fPt.y, 1.9, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    // Pouring stream from tubing outlet into receiving Vessel B
+    if ((v.tubeLiquidSpillRateMlS || 0) > 0.2 && target.kind === 'vessel' && !target.isShattered) {
+      const tSpec = APPARATUS[target.typeId];
+      const dstLiqMl = computeLiquidVolumeL(target.moles, target.tempK) * 1000;
+      const dstGeom = computeVesselFluidGeometry(tSpec, target.y, dstLiqMl + computeSolidVolumeMl(target.moles));
+      const wobble = Math.sin((timeNow || 0) * 18) * 1.8;
+      ctx.save();
+      ctx.strokeStyle = v.tubeLiquidSpillColor || v.tubeColor || 'rgba(186, 230, 253, 0.88)';
+      ctx.lineWidth = Math.min(5, 2.2 + Math.sqrt(v.tubeLiquidSpillRateMlS) * 0.3);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(p3.x, p3.y);
+      ctx.quadraticCurveTo(p3.x + wobble, (p3.y + dstGeom.surfaceY) * 0.5, p3.x, Math.max(p3.y + 8, dstGeom.surfaceY + 2));
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Animated steam/gas flow pulses & tubing geometry/temperature label
+    const isGasFlowing = (v.tubeFlowBannerTimer || 0) > 0 && v.tubeFlowFormula;
+    if (isGasFlowing) {
       const alpha = Math.min(1, v.tubeFlowBannerTimer / 0.45);
       const isSteamTube = v.tubeFlowFormula.includes('H₂O');
       const pulseCol = v.tubeFlowFormula.includes('Cl₂')
@@ -538,14 +682,21 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
         ctx.fill();
       }
       ctx.globalAlpha = 1;
+    }
 
+    const midPt = cubicBezierPoint(0.48, p0, p1, p2, p3);
+    if (tubeVolMl > 0.04 || (v.tubeLiquidFlowTimer || 0) > 0) {
+      const liqText = `💧 Ø6mm·${arcLengthCm.toFixed(0)}cm: ${Math.min(tubeVolMl, capacityMl).toFixed(1)}/${capacityMl.toFixed(1)} mL`;
+      drawLabelPill(ctx, midPt.x, midPt.y - 28, liqText, {
+        pal,
+        borderColor: '#38bdf8',
+        font: '600 10.5px system-ui, sans-serif',
+        height: 19,
+      });
+    } else if (isGasFlowing) {
       const tFlowC = kelvinToCelsius(v.tubeFlowTempK ?? v.tempK);
-      const midPt = cubicBezierPoint(0.46, p0, p1, p2, p3);
-      const tubeLabel =
-        langCode === 'vi'
-          ? `→ ${v.tubeFlowFormula} · ${tFlowC.toFixed(0)}°C`
-          : `→ ${v.tubeFlowFormula} · ${tFlowC.toFixed(0)}°C`;
-      drawLabelPill(ctx, midPt.x, midPt.y - 26, tubeLabel, {
+      const alpha = Math.min(1, v.tubeFlowBannerTimer / 0.45);
+      drawLabelPill(ctx, midPt.x, midPt.y - 26, `→ ${v.tubeFlowFormula} · ${tFlowC.toFixed(0)}°C`, {
         pal,
         borderColor: tFlowC >= 95 ? '#f59e0b' : '#38bdf8',
         font: '600 10.5px system-ui, sans-serif',
@@ -927,8 +1078,8 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.stroke();
   }
 
-  // Gradual rim overflow waterfall stream when filled past vessel mouth
-  if ((vessel.overflowRateMlS || 0) > 0.5 && !vessel.isShattered) {
+  // Gradual rim overflow waterfall stream when filled past vessel mouth (open vessels only)
+  if (!vessel.isStoppered && (vessel.overflowRateMlS || 0) > 0.5 && !vessel.isShattered) {
     const { pts } = mapProfileToCanvas(spec, x, y, 0);
     const rimPt = pts[pts.length - 1];
     const spoutExtra = spec.shape === 'beaker' || spec.shape === 'cylinder' ? 3.5 : 0;

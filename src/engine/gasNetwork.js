@@ -6,9 +6,80 @@ import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
 export const NON_STEAM_GASES = ['H2_g', 'O2_g', 'HCl_g', 'Cl2_g', 'HNO3_g'];
 export const ALL_GASES = [...NON_STEAM_GASES, 'H2O_g'];
 
+export function cubicBezierPoint(t, p0, p1, p2, p3) {
+  const u = 1 - t;
+  const tt = t * t;
+  const uu = u * u;
+  const uuu = uu * u;
+  const ttt = tt * t;
+  return {
+    x: uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
+    y: uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y,
+  };
+}
+
+/**
+ * Measure exact geometric rubber tubing length along its live cubic Bezier path
+ * (1.15 px/mm calibrated to ISO glassware scale) with fixed inner bore diameter (6.0 mm)
+ * to compute exact liquid hold-up volume capacity in mL (cm^3).
+ */
+export function computeTubingGeometry(vessel, target) {
+  const vSpec = APPARATUS[vessel.typeId] || APPARATUS.erlenmeyer_250;
+  const tSpec = APPARATUS[target.typeId] || APPARATUS.gas_syringe;
+  const p0 = { x: vessel.x, y: vessel.y - vSpec.height / 2 - 8 };
+  const p3 =
+    target.kind === 'gas_syringe'
+      ? { x: target.x - tSpec.width / 2 + 2, y: target.y }
+      : { x: target.x, y: target.y - tSpec.height / 2 + (target.isStoppered ? -8 : 12) };
+
+  const archTopY = Math.min(p0.y, p3.y) - 66;
+  const p1 = { x: p0.x, y: archTopY };
+  const p2 =
+    target.kind === 'gas_syringe'
+      ? { x: (p0.x + p3.x) * 0.5, y: Math.min(p0.y, p3.y) - 45 }
+      : { x: p3.x, y: archTopY };
+
+  const steps = 28;
+  const points = [];
+  let arcLengthPx = 0;
+  let prev = cubicBezierPoint(0, p0, p1, p2, p3);
+  points.push(prev);
+  for (let i = 1; i <= steps; i++) {
+    const pt = cubicBezierPoint(i / steps, p0, p1, p2, p3);
+    arcLengthPx += Math.hypot(pt.x - prev.x, pt.y - prev.y);
+    points.push(pt);
+    prev = pt;
+  }
+
+  const pxPerCm = (CONSTANTS.PX_PER_MM || 1.15) * 10;
+  const arcLengthCm = Math.max(5.0, arcLengthPx / pxPerCm);
+  const innerDiameterMm = CONSTANTS.TUBING_INNER_DIAMETER_MM || 6.0;
+  const radiusCm = innerDiameterMm / 20; // mm -> cm radius
+  const crossSectionCm2 = Math.PI * radiusCm * radiusCm;
+  const capacityMl = arcLengthCm * crossSectionCm2;
+
+  return {
+    p0,
+    p1,
+    p2,
+    p3,
+    points,
+    arcLengthPx,
+    arcLengthCm,
+    innerDiameterMm,
+    crossSectionCm2,
+    capacityMl,
+  };
+}
+
 export function computeSyringeHeatCapacityJK(syringe) {
   let cpTotal = 34.0; // Borosilicate syringe barrel & glass plunger thermal mass
   cpTotal += (syringe.condensedWaterMol || 0) * CONSTANTS.CP_H2O_J_MOL_K;
+  for (const [spId, n] of Object.entries(syringe.overflowMoles || {})) {
+    if (n > 0 && SPECIES[spId]?.cp) {
+      cpTotal += n * SPECIES[spId].cp;
+    }
+  }
   for (const g of ALL_GASES) {
     const n = syringe.gasMoles[g] || 0;
     if (n > 0 && SPECIES[g]?.cp) {
@@ -32,6 +103,20 @@ export function computeSyringeGasVolumeMl(syringe, env) {
   const gasTempK = Math.max(200, syringe.tempK ?? env.tempK);
   const volL = (totalMol * CONSTANTS.R_L_BAR_MOL_K * gasTempK) / Math.max(0.05, env.pressureBar);
   return volL * 1000;
+}
+
+/**
+ * Compute liquid water + overflowed solution volume inside Gas Syringe barrel (mL).
+ */
+export function computeSyringeLiquidVolumeMl(syringe, env) {
+  const syrT = syringe.tempK ?? env.tempK;
+  const condMl = ((syringe.condensedWaterMol || 0) * SPECIES.H2O_l.molarMass) / 0.997;
+  const overflowMl = computeLiquidVolumeL(syringe.overflowMoles || {}, syrT) * 1000;
+  return condMl + overflowMl;
+}
+
+export function computeSyringeTotalVolumeMl(syringe, env) {
+  return computeSyringeGasVolumeMl(syringe, env) + computeSyringeLiquidVolumeMl(syringe, env);
 }
 
 /**
@@ -147,39 +232,76 @@ export function stepVesselGasAndPressure(
   const solMl = computeSolidVolumeMl(vessel.moles);
   const headspaceL = Math.max(0.015, (spec.maxVolumeMl - Math.min(spec.maxVolumeMl * 0.94, liqMl + solMl)) / 1000);
 
-  // Connected to a Gas Syringe via rubber tubing
-  if (vessel.connectedSyringeId) {
-    const syringe = getApparatusById(vessel.connectedSyringeId);
-    if (syringe && !syringe.isBroken) {
-      const syringeSpec = APPARATUS[syringe.typeId];
-      const currentVolMl = computeSyringeGasVolumeMl(syringe, env);
+  // Connected to another apparatus (Gas Syringe OR receiving Vessel) via rubber tubing
+  const targetId = vessel.connectedTargetId || vessel.connectedSyringeId;
+  if (targetId) {
+    const target = getApparatusById(targetId);
+    if (target && target.kind === 'gas_syringe' && !target.isBroken) {
+      const syringeSpec = APPARATUS[target.typeId];
+      const currentVolMl = computeSyringeTotalVolumeMl(target, env);
 
       if (currentVolMl < syringeSpec.maxVolumeMl * 0.995) {
-        if (syringe.tempK == null) syringe.tempK = env.tempK;
+        if (target.tempK == null) target.tempK = env.tempK;
 
         let incomingHeatCapJK = 0;
         for (const g of NON_STEAM_GASES) {
           if (produced[g] > 0) {
-            syringe.gasMoles[g] = (syringe.gasMoles[g] || 0) + produced[g];
+            target.gasMoles[g] = (target.gasMoles[g] || 0) + produced[g];
             incomingHeatCapJK += produced[g] * (SPECIES[g]?.cp || 30);
           }
         }
         if (totalSteam > 0) {
-          syringe.gasMoles.H2O_g = (syringe.gasMoles.H2O_g || 0) + totalSteam;
+          target.gasMoles.H2O_g = (target.gasMoles.H2O_g || 0) + totalSteam;
           incomingHeatCapJK += totalSteam * (SPECIES.H2O_g?.cp || 33.58);
         }
 
         if (totalPerm + totalSteam > 1e-11) {
-          syringe.inflowTempK = vessel.tempK;
-          const cSyr = computeSyringeHeatCapacityJK(syringe);
-          const dT = (incomingHeatCapJK * (vessel.tempK - syringe.tempK)) / cSyr;
-          syringe.tempK = Math.max(220, Math.min(600, syringe.tempK + dT));
+          target.inflowTempK = vessel.tempK;
+          const cSyr = computeSyringeHeatCapacityJK(target);
+          const dT = (incomingHeatCapJK * (vessel.tempK - target.tempK)) / cSyr;
+          target.tempK = Math.max(220, Math.min(600, target.tempK + dT));
         }
 
         vessel.internalPressureBar = env.pressureBar;
         return events;
       }
       // Syringe maxed out -> remaining gas pressurizes vessel!
+    } else if (target && target.kind === 'vessel' && !target.isShattered && !target.isStoppered) {
+      // Condense steam & dissolve soluble acid gases into open receiving vessel; vent permanent gases
+      let heatAddedJ = 0;
+      let addedCapJK = 0;
+      if (totalSteam > 0) {
+        if (target.tempK < waterBoilingPointK(env.pressureBar)) {
+          target.moles.H2O_l = (target.moles.H2O_l || 0) + totalSteam;
+          heatAddedJ += totalSteam * CONSTANTS.DELTA_H_VAP_WATER_J;
+          addedCapJK += totalSteam * CONSTANTS.CP_H2O_J_MOL_K;
+        } else {
+          target.escapedGasMoles.H2O_g = (target.escapedGasMoles.H2O_g || 0) + totalSteam;
+        }
+      }
+      if ((produced.HCl_g || 0) > 0 && (target.moles.H2O_l || 0) > 1e-4) {
+        const dHCl = produced.HCl_g;
+        target.moles.H_aq = (target.moles.H_aq || 0) + dHCl;
+        target.moles.Cl_aq = (target.moles.Cl_aq || 0) + dHCl;
+        heatAddedJ += dHCl * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
+      } else if ((produced.HCl_g || 0) > 0) {
+        target.escapedGasMoles.HCl_g = (target.escapedGasMoles.HCl_g || 0) + produced.HCl_g;
+      }
+      for (const g of NON_STEAM_GASES) {
+        if (g !== 'HCl_g' && produced[g] > 0) {
+          target.escapedGasMoles[g] = (target.escapedGasMoles[g] || 0) + produced[g];
+        }
+      }
+      if (heatAddedJ > 0) {
+        const tSpec = APPARATUS[target.typeId] || APPARATUS.beaker_250;
+        let cTarget = tSpec.glassHeatCapacityJK || 80.0;
+        for (const [id, n] of Object.entries(target.moles)) {
+          if (n > 0 && SPECIES[id]?.cp) cTarget += n * SPECIES[id].cp;
+        }
+        target.tempK = Math.min(waterBoilingPointK(env.pressureBar), target.tempK + heatAddedJ / Math.max(40, cTarget + addedCapJK));
+      }
+      vessel.internalPressureBar = env.pressureBar;
+      return events;
     }
   }
 
@@ -224,10 +346,12 @@ export function stepVesselGasAndPressure(
     vessel.isShattered = true;
     vessel.isStoppered = false;
     vessel.connectedSyringeId = null;
+    vessel.connectedTargetId = null;
     events.push({ type: 'shatter', vesselId: vessel.id });
   } else if (spec.popPressureBar && vessel.internalPressureBar >= spec.popPressureBar) {
     vessel.isStoppered = false;
     vessel.connectedSyringeId = null;
+    vessel.connectedTargetId = null;
     for (const g of ALL_GASES) {
       vessel.escapedGasMoles[g] = (vessel.escapedGasMoles[g] || 0) + (vessel.headspaceGasMoles[g] || 0);
       vessel.headspaceGasMoles[g] = 0;
