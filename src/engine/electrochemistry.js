@@ -16,6 +16,7 @@ function addMolSafe(moles, id, delta) {
 
 function getElectrodeLiquidInfo(items, elec) {
   if (!elec || !elec.dockedVesselId) return null;
+  if (elec.immersedFrac !== undefined && elec.immersedFrac <= 0.01) return null;
   const v = items.find((i) => i.id === elec.dockedVesselId && i.kind === 'vessel' && !i.isShattered);
   if (!v || v.isFrozenSolid) return null;
   const liqL = computeLiquidVolumeL(v.moles, v.tempK);

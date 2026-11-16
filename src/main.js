@@ -1,7 +1,6 @@
 import { I18N } from './data/i18n.js';
 import { APPARATUS } from './data/apparatus.js';
-import { LabSimulation } from './engine/simulation.js';
-import { ParticleSystem } from './canvas/particles.js';
+import { LabManager } from './engine/labManager.js';
 import { LabWorkbenchCanvas, BENCH_FLOOR_Y } from './canvas/workbench.js';
 import { EnvironmentBar } from './ui/environmentBar.js';
 import { ShelfPanel } from './ui/shelfPanel.js';
@@ -24,11 +23,9 @@ function getTranslator() {
   return (key) => dict[key] ?? key;
 }
 
-const sim = new LabSimulation();
-const particles = new ParticleSystem();
-
 const rootWrap = document.getElementById('device-frame-wrap');
 const headerEl = document.getElementById('env-bar');
+const labTabsEl = document.getElementById('lab-tabs-bar');
 const shelfEl = document.getElementById('shelf-panel');
 const inspectorEl = document.getElementById('inspector-panel');
 const modalEl = document.getElementById('dosing-modal-root');
@@ -48,10 +45,102 @@ function showToast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     toastEl.classList.add('hidden');
-  }, 3200);
+  }, 3400);
 }
 
 let workbench = null;
+let lastFrameDt = 1 / 60;
+const subscribedSims = new WeakSet();
+
+const labManager = new LabManager({
+  onActiveParticlesNeeded: (vessel, metrics) => {
+    const activeLab = labManager.getActiveLab();
+    activeLab.particles.emitForVessel(vessel, metrics, lastFrameDt * activeLab.sim.environment.speed);
+  },
+  onAlert: (_idx, type, vessel, meta) => {
+    handleVisualAlert(type, vessel, meta);
+  },
+  onBackgroundAlert: () => {
+    renderLabTabs(getTranslator());
+  },
+  onChange: () => {
+    syncActiveLabRefs();
+    refreshChrome(true);
+  },
+});
+
+let sim = labManager.getActiveSim();
+let particles = labManager.getActiveParticles();
+
+function ensureLabSubscribed(lab) {
+  if (!lab || subscribedSims.has(lab.sim)) return;
+  subscribedSims.add(lab.sim);
+  lab.sim.subscribe(() => {
+    if (lab.sim === sim) refreshChrome();
+  });
+}
+ensureLabSubscribed(labManager.getActiveLab());
+
+function handleVisualAlert(type, vessel, meta) {
+  const t = getTranslator();
+  const burstType =
+    type === 'thermal_shock'
+      ? 'shatter'
+      : type === 'solvent_ignition' || type === 'zn_burn_o2'
+      ? 'o2_flare'
+      : type === 'unpurged_h2'
+      ? 'h2_pop'
+      : type;
+  particles.emitBurst(burstType, vessel.x, vessel.y, meta);
+  if (type === 'explosion') {
+    workbench.triggerShake(13, 0.45);
+    const latest = sim.logs[0];
+    showToast(`💥 ${t(latest?.key || 'alertNaExplosion')}`);
+  } else if (type === 'shatter') {
+    workbench.triggerShake(8, 0.34);
+    const latest = sim.logs[0];
+    const msgKey = latest?.key || 'alertOverpressureShatter';
+    showToast(`💥 ${t(msgKey)}`);
+  } else if (type === 'thermal_shock') {
+    workbench.triggerShake(9.5, 0.38);
+    showToast(`💥 ${t('alertThermalShock')}`);
+  } else if (type === 'solvent_ignition') {
+    workbench.triggerShake(4.8, 0.22);
+    showToast(`🔥 ${t('alertSolventIgnition')}`);
+  } else if (type === 'unpurged_h2') {
+    workbench.triggerShake(6.5, 0.26);
+    showToast(t('alertUnpurgedH2O2'));
+  } else if (type === 'zn_burn_o2') {
+    workbench.triggerShake(4.0, 0.2);
+    showToast(t('alertZnCombustionO2'));
+  } else if (type === 'drop_spill') {
+    workbench.triggerShake(4.2, 0.20);
+    showToast(`💧 ${t('alertDropSpill')}`);
+  } else if (type === 'syringe_plunger_pop') {
+    workbench.triggerShake(6.0, 0.26);
+    showToast(`⚠️ ${t('alertSyringePlungerPop')}`);
+  } else if (type === 'pop') {
+    workbench.triggerShake(5.5, 0.24);
+    showToast(`⚠️ ${meta?.hydraulic ? t('alertHydroOverflowPop') : t('alertOverpressurePop')}`);
+  } else if (type === 'overflow') {
+    showToast(`💧 ${t('alertOverflow')}`);
+  } else if (type === 'syringe_overflow') {
+    showToast(`💧 ${t('alertSyringeOverflow')}`);
+  } else if (type === 'h2_pop') {
+    showToast(`💥 ${t('alertH2Pop')}`);
+  } else if (type === 'oxyhydrogen_detonation') {
+    workbench.triggerShake(10 * Math.min(2.2, meta?.blastScale || 1.1), 0.38);
+    showToast(`💥 ${t('alertOxyhydrogenDetonation')}`);
+  } else if (type === 'ammonia_fountain') {
+    showToast(`⛲ ${t('alertAmmoniaFountain')}`);
+  } else if (type === 'o2_relight') {
+    showToast(`🔥 ${t('alertO2Relight')}`);
+  } else if (type === 'o2_flare') {
+    showToast(`🔥 ${t('alertO2Flare')}`);
+  } else if (type === 'cl2_extinguish') {
+    showToast(`🌫️ ${t('alertCl2Extinguish')}`);
+  }
+}
 function startBenchPick(opts = {}) {
   if (!workbench) return;
   const prevMobileTab = isMobileViewActive() ? appState.mobileTab : null;
@@ -83,12 +172,51 @@ benchPickCancelEl?.addEventListener('click', () => {
 
 const dosingModal = new DosingModal(modalEl, sim, getTranslator, (opts) => startBenchPick(opts));
 
+function findDropLabTab(clientX, clientY) {
+  if (!labTabsEl || (!clientX && !clientY)) return null;
+  const els = document.elementsFromPoint(clientX, clientY);
+  for (const el of els) {
+    const btn = el.closest?.('.lab-tab-btn');
+    if (btn && btn.dataset.labIndex !== undefined) {
+      const idx = Number(btn.dataset.labIndex);
+      if (idx !== labManager.activeIndex && idx >= 0 && idx < labManager.labs.length) {
+        return { btn, idx };
+      }
+    }
+  }
+  return null;
+}
+
+function clearLabDropHighlights() {
+  labTabsEl?.querySelectorAll('.lab-tab-drop-target').forEach((el) => {
+    el.classList.remove('lab-tab-drop-target');
+  });
+}
+
 workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
   onSelect: () => {
     refreshChrome();
   },
   onRequestDosing: (reagentId, vesselId) => {
     dosingModal.openReagent(reagentId, vesselId);
+  },
+  onExternalTabDragHover: (clientX, clientY, item) => {
+    clearLabDropHighlights();
+    if (!item) return;
+    const hit = findDropLabTab(clientX, clientY);
+    if (hit) hit.btn.classList.add('lab-tab-drop-target');
+  },
+  onDropToLabTab: (clientX, clientY, item) => {
+    clearLabDropHighlights();
+    const hit = item ? findDropLabTab(clientX, clientY) : null;
+    if (!hit) return false;
+    const moved = labManager.moveItemBetweenLabs(item.id, labManager.activeIndex, hit.idx);
+    if (moved) {
+      const t = getTranslator();
+      showToast(`📤 ${t('labMovedToast').replace('{lab}', `${t('labTabPrefix')} ${moved.dstLab.number}`)}`);
+      return true;
+    }
+    return false;
   },
   onPickStateChange: (pickSt) => {
     if (!benchPickBannerEl) return;
@@ -188,7 +316,88 @@ const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
   onOpenSyringeTransfer: (syringeId) => dosingModal.openSyringeTransfer(syringeId),
   onStartBenchPick: (opts) => startBenchPick(opts),
   onNotify: (msg) => showToast(msg),
+  getLabsMeta: () => ({ labs: labManager.labs, activeIndex: labManager.activeIndex }),
+  onMoveToLab: (itemId, dstIdx) => {
+    const moved = labManager.moveItemBetweenLabs(itemId, labManager.activeIndex, dstIdx);
+    if (moved) {
+      const t = getTranslator();
+      showToast(`📤 ${t('labMovedToast').replace('{lab}', `${t('labTabPrefix')} ${moved.dstLab.number}`)}`);
+    }
+  },
 });
+
+function syncActiveLabRefs() {
+  const activeLab = labManager.getActiveLab();
+  ensureLabSubscribed(activeLab);
+  sim = activeLab.sim;
+  particles = activeLab.particles;
+  const isDark = appState.theme === 'dark';
+  particles.setTheme(isDark);
+  workbench.setSim(sim, particles);
+  envBar.setSim(sim);
+  shelfPanel.setSim(sim);
+  inspectorPanel.setSim(sim);
+  dosingModal.setSim(sim);
+}
+
+let lastLabTabSig = '';
+function renderLabTabs(t) {
+  if (!labTabsEl) return;
+  const sig = `${appState.lang}|${labManager.activeIndex}|${labManager.labs
+    .map((lb) => `${lb.id}:${lb.sim.items.length}:${lb.sim.environment.atmosphereMode}:${lb.unreadAlerts || 0}`)
+    .join(',')}`;
+  if (sig === lastLabTabSig) return;
+  lastLabTabSig = sig;
+
+  const canClose = labManager.labs.length > 1;
+  const atMax = labManager.labs.length >= labManager.maxLabs;
+  const tabsHtml = labManager.labs
+    .map((lb, idx) => {
+      const isActive = idx === labManager.activeIndex;
+      const atmIcon = lb.sim.environment.atmosphereMode === 'inert' ? '🛡️' : '🌬️';
+      const dotHtml = !isActive && (lb.unreadAlerts || 0) > 0
+        ? `<span class="w-2 h-2 rounded-full bg-amber-400" title="${lb.unreadAlerts}"></span>`
+        : '';
+      const closeBtn = canClose
+        ? `<span class="lab-tab-close" data-close-lab="${idx}" title="${t('labCloseTip')}">×</span>`
+        : '';
+      return `<button type="button" class="lab-tab-btn ${isActive ? 'active' : ''}" data-lab-index="${idx}" title="${t('labDropMoveHint')}">
+        <span>${atmIcon} ${t('labTabPrefix')} ${lb.number}</span>
+        <span class="text-[10px] opacity-80 font-mono">(${lb.sim.items.length})</span>
+        ${dotHtml}
+        ${closeBtn}
+      </button>`;
+    })
+    .join('');
+
+  labTabsEl.innerHTML = `
+    ${tabsHtml}
+    <button type="button" id="btn-add-lab" class="lab-add-btn" ${atMax ? 'disabled' : ''} title="${atMax ? t('labMaxLimit') : ''}">
+      ${t('labAddBtn')} (${labManager.labs.length}/${labManager.maxLabs})
+    </button>
+  `;
+
+  labTabsEl.querySelectorAll('.lab-tab-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      const closeEl = e.target.closest?.('[data-close-lab]');
+      if (closeEl) {
+        e.stopPropagation();
+        labManager.removeLab(Number(closeEl.dataset.closeLab));
+        return;
+      }
+      labManager.switchLab(Number(btn.dataset.labIndex));
+    });
+  });
+
+  labTabsEl.querySelector('#btn-add-lab')?.addEventListener('click', () => {
+    const res = labManager.addLab('starter');
+    if (!res.ok) {
+      showToast(`⚠️ ${t('labMaxLimit')}`);
+    } else {
+      ensureLabSubscribed(res.lab);
+    }
+  });
+}
 
 function isMobileViewActive() {
   return appState.deviceMode === 'mobile' || (appState.deviceMode === 'auto' && window.innerWidth <= 820);
@@ -223,6 +432,7 @@ function refreshChrome(forceInspector = false) {
   const t = getTranslator();
   workbench.setLang(appState.lang);
   envBar.render(t);
+  renderLabTabs(t);
   shelfPanel.render(t);
   inspectorPanel.update(appState.lang, forceInspector);
 
@@ -247,71 +457,17 @@ resetBtnEl?.addEventListener('click', () => {
   refreshChrome(true);
 });
 
-// Wire simulation particle & alert hooks
-let lastFrameDt = 1 / 60;
-sim.visualHooks.onParticlesNeeded = (vessel, metrics) => {
-  particles.emitForVessel(vessel, metrics, lastFrameDt * sim.environment.speed);
-};
-
-sim.visualHooks.onAlert = (type, vessel, meta) => {
-  const t = getTranslator();
-  const burstType = type === 'thermal_shock' ? 'shatter' : type === 'solvent_ignition' ? 'o2_flare' : type;
-  particles.emitBurst(burstType, vessel.x, vessel.y, meta);
-  if (type === 'explosion') {
-    workbench.triggerShake(13, 0.45);
-    const latest = sim.logs[0];
-    showToast(`💥 ${t(latest?.key || 'alertNaExplosion')}`);
-  } else if (type === 'shatter') {
-    workbench.triggerShake(8, 0.34);
-    const latest = sim.logs[0];
-    const msgKey = latest?.key || 'alertOverpressureShatter';
-    showToast(`💥 ${t(msgKey)}`);
-  } else if (type === 'thermal_shock') {
-    workbench.triggerShake(9.5, 0.38);
-    showToast(`💥 ${t('alertThermalShock')}`);
-  } else if (type === 'solvent_ignition') {
-    workbench.triggerShake(4.8, 0.22);
-    showToast(`🔥 ${t('alertSolventIgnition')}`);
-  } else if (type === 'drop_spill') {
-    workbench.triggerShake(4.2, 0.20);
-    showToast(`💧 ${t('alertDropSpill')}`);
-  } else if (type === 'syringe_plunger_pop') {
-    workbench.triggerShake(6.0, 0.26);
-    showToast(`⚠️ ${t('alertSyringePlungerPop')}`);
-  } else if (type === 'pop') {
-    workbench.triggerShake(5.5, 0.24);
-    showToast(`⚠️ ${meta?.hydraulic ? t('alertHydroOverflowPop') : t('alertOverpressurePop')}`);
-  } else if (type === 'overflow') {
-    showToast(`💧 ${t('alertOverflow')}`);
-  } else if (type === 'syringe_overflow') {
-    showToast(`💧 ${t('alertSyringeOverflow')}`);
-  } else if (type === 'h2_pop') {
-    showToast(`💥 ${t('alertH2Pop')}`);
-  } else if (type === 'oxyhydrogen_detonation') {
-    workbench.triggerShake(10 * Math.min(2.2, meta?.blastScale || 1.1), 0.38);
-    showToast(`💥 ${t('alertOxyhydrogenDetonation')}`);
-  } else if (type === 'ammonia_fountain') {
-    showToast(`⛲ ${t('alertAmmoniaFountain')}`);
-  } else if (type === 'o2_relight') {
-    showToast(`🔥 ${t('alertO2Relight')}`);
-  } else if (type === 'o2_flare') {
-    showToast(`🔥 ${t('alertO2Flare')}`);
-  } else if (type === 'cl2_extinguish') {
-    showToast(`🌫️ ${t('alertCl2Extinguish')}`);
-  }
-};
-
-sim.subscribe(() => {
-  refreshChrome();
-});
+// Expose LabManager hook for automation / diagnostics
+if (typeof window !== 'undefined') {
+  window.__LAB_MANAGER__ = labManager;
+}
 
 // Initial boot
 applyThemeAndDevice();
-sim.setupPreset('starter');
 setMobileTab('bench');
 refreshChrome(true);
 
-// 60 FPS Animation & Physics Loop
+// 60 FPS Animation & Physics Loop (active lab 60 FPS, background labs ~15 Hz batched)
 let prevMs = performance.now();
 let uiSyncAccum = 0;
 
@@ -321,8 +477,7 @@ function frame(nowMs) {
   lastFrameDt = dt;
 
   workbench.tickInteractivePour(dt);
-  sim.step(dt);
-  particles.update(dt * (sim.environment.paused ? 0 : sim.environment.speed));
+  labManager.stepAllLabs(dt, () => renderLabTabs(getTranslator()));
   workbench.render(nowMs / 1000);
 
   // Sync live telemetry numbers at ~15 Hz so UI is snappy without over-rendering

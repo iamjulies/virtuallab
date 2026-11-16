@@ -93,6 +93,17 @@ export class LabWorkbenchCanvas {
     this.langCode = langCode || 'vi';
   }
 
+  setSim(sim, particles = null) {
+    this.sim = sim;
+    if (particles) this.particles = particles;
+    this.dragState = null;
+    this.portDragState = null;
+    this.pickState = null;
+    this.hoverItemId = null;
+    this.dropTargetVesselId = null;
+    this.callbacks.onPickStateChange?.(null);
+  }
+
   startItemPick({ candidateIds = [], promptText = '', onPick = null, onCancel = null } = {}) {
     const idSet = candidateIds instanceof Set ? candidateIds : new Set(candidateIds);
     this.dragState = null;
@@ -196,7 +207,7 @@ export class LabWorkbenchCanvas {
       }
       const padX = it.kind === 'electrode' && it.dockedVesselId ? 4 : 8;
       const hw = spec.width / 2 + padX;
-      const hh = spec.height / 2 + 10;
+      const hh = (it.renderHeight || spec.height) / 2 + 10;
       return lx >= it.x - hw && lx <= it.x + hw && ly >= it.y - hh && ly <= it.y + hh;
     };
 
@@ -727,10 +738,12 @@ export class LabWorkbenchCanvas {
         }
       }
 
+      this.callbacks.onExternalTabDragHover?.(e.clientX, e.clientY, item);
       this.sim.recomputeScaleReadings();
     });
 
     const endDrag = (e) => {
+      this.callbacks.onExternalTabDragHover?.(0, 0, null);
       if (this.portDragState) {
         const pd = this.portDragState;
         this.portDragState = null;
@@ -764,6 +777,11 @@ export class LabWorkbenchCanvas {
       try {
         const item = this.sim.getItem(this.dragState.itemId);
         const pipTargetId = this.dragState.pipetteTargetId;
+        if (item && this.callbacks.onDropToLabTab?.(e.clientX, e.clientY, item)) {
+          item.isDragging = false;
+          if (item.tiltAngle !== undefined) item.tiltAngle = 0;
+          return;
+        }
         if (item) {
           item.isDragging = false;
           if (item.kind === 'stir_bar') {

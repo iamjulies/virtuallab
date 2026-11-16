@@ -8,6 +8,10 @@ export class EnvironmentBar {
     this.callbacks = callbacks; // { onLangChange, onThemeChange, onDeviceChange, onPreset }
   }
 
+  setSim(sim) {
+    this.sim = sim;
+  }
+
   render(t) {
     const env = this.sim.environment;
     const tempC = kelvinToCelsius(env.tempK);
@@ -72,6 +76,14 @@ export class EnvironmentBar {
                 : 'border-theme bg-surface-alt text-muted hover:text-main'
             }">${env.uvLight ? t('envUvBright') : `💡 ${t('envUvRoom')}`}</button>
 
+          <!-- Atmosphere Mode Toggle: Standard Air (78% N2, 21% O2) vs Inert Glovebox (N2/Ar) -->
+          <button type="button" id="btn-atm-mode" title="${t('envAtmTip')}"
+            class="px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition ${
+              env.atmosphereMode === 'inert'
+                ? 'border-cyan-500/70 bg-cyan-500/20 text-cyan-300'
+                : 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400 hover:opacity-90'
+            }">${env.atmosphereMode === 'inert' ? `🛡️ ${t('envAtmInert')}` : `🌬️ ${t('envAtmAir')}`}</button>
+
           <!-- Speed & Pause -->
           <div class="flex items-center gap-1 p-1 rounded-lg border border-theme bg-surface-alt">
             <button type="button" id="btn-pause" class="px-2 py-1 rounded text-xs font-semibold ${
@@ -94,10 +106,16 @@ export class EnvironmentBar {
         <!-- Right Toolbar: Presets, Device Mode, Theme, Language -->
         <div class="flex flex-wrap items-center gap-1.5">
           <!-- Presets -->
-          <select id="preset-select" style="max-width: 175px;" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium truncate">
+          <select id="preset-select" style="max-width: 195px;" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium truncate">
             <option value="">${t('quickPresets')}</option>
             <option value="starter">${t('presetStarter')}</option>
             <option value="clean">${t('presetClean')}</option>
+            <option value="cuo_h2_reduction">${t('presetCuoH2Reduction')}</option>
+            <option value="zn_burn_o2">${t('presetZnBurnO2')}</option>
+            <option value="air_tarnish_deliquesce">${t('presetAirTarnish')}</option>
+            <option value="na_water_phen">${t('presetNaWaterPhen')}</option>
+            <option value="copper_hydroxide_series">${t('presetCuSeries')}</option>
+            <option value="amphoteric_zn_cu">${t('presetAmphotericZnCu')}</option>
             <option value="gas_collect">${t('presetGasCollect')}</option>
             <option value="trough_collect">${t('presetTroughCollect')}</option>
             <option value="titration">${t('presetTitration')}</option>
@@ -148,6 +166,11 @@ export class EnvironmentBar {
 
     this.container.querySelector('#btn-uv-light')?.addEventListener('click', () => {
       this.sim.setUvLight(!this.sim.environment.uvLight);
+    });
+
+    this.container.querySelector('#btn-atm-mode')?.addEventListener('click', () => {
+      const next = this.sim.environment.atmosphereMode === 'inert' ? 'air' : 'inert';
+      this.sim.setAtmosphereMode(next);
     });
 
     this.container.querySelector('#btn-pause')?.addEventListener('click', () => {

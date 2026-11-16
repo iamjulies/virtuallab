@@ -109,7 +109,11 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       const isNeutralWhite =
         (vType === 'white_powder' || isGroundPowder) &&
         (sp.color === '#e2e8f0' || sp.color === '#f8fafc' || sp.color === '#f1f5f9');
-      const fillCol = isNeutralWhite ? '#f1f5f9' : sp.color || '#f1f5f9';
+      let fillCol = isNeutralWhite ? '#f1f5f9' : sp.color || '#f1f5f9';
+      if (sp.hotColor && vessel.tempK > 460) {
+        const hotFrac = Math.min(1, (vessel.tempK - 460) / 140);
+        if (hotFrac > 0.25) fillCol = sp.hotColor;
+      }
       const strokeCol =
         isNeutralWhite && sp.highlightColor === '#ffffff' ? '#cbd5e1' : sp.highlightColor || '#cbd5e1';
 
@@ -158,9 +162,15 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       if (isFlattenedMetal) ctx.scale(1.38, 0.52);
 
       if (vType === 'white_pellet' || vType === 'pellet') {
+        if (sp.id === 'NaOH_s' && (vessel.naohDeliquesceFrac || 0) > 0.08) {
+          ctx.beginPath();
+          ctx.arc(0, 0, r * (1.1 + vessel.naohDeliquesceFrac * 0.45), 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(186, 230, 253, ${(0.38 * vessel.naohDeliquesceFrac).toFixed(2)})`;
+          ctx.fill();
+        }
         ctx.beginPath();
         ctx.arc(0, 0, r * 0.85, 0, Math.PI * 2);
-        ctx.fillStyle = sp.color || '#f8fafc';
+        ctx.fillStyle = sp.id === 'NaOH_s' && (vessel.naohDeliquesceFrac || 0) > 0.35 ? '#e0f2fe' : sp.color || '#f8fafc';
         ctx.fill();
         ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 0.7;
@@ -223,6 +233,17 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
           : '#475569';
         ctx.lineWidth = znPassiv > 0.25 ? 1.5 : 0.9;
         ctx.stroke();
+        if (sp.id === 'Zn_s' && (vessel.znCombustionTimer || 0) > 0.02) {
+          const flareR = r * (2.6 + Math.min(1.8, vessel.znCombustionTimer * 1.4));
+          const flareGrad = ctx.createRadialGradient(0, -r * 0.3, r * 0.3, 0, -r * 0.3, flareR);
+          flareGrad.addColorStop(0, 'rgba(255, 255, 255, 0.96)');
+          flareGrad.addColorStop(0.45, 'rgba(186, 230, 253, 0.72)');
+          flareGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+          ctx.fillStyle = flareGrad;
+          ctx.beginPath();
+          ctx.arc(0, -r * 0.3, flareR, 0, Math.PI * 2);
+          ctx.fill();
+        }
       } else {
         // Fallback polygon crystal/grain for any future solid visualType
         ctx.beginPath();
@@ -359,19 +380,24 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       ctx.lineWidth = 0.8;
       ctx.stroke();
     } else {
-      // Dry cut Sodium block sitting on vessel bottom (flattened smeared ribbon if pressed in Mortar)
+      // Dry cut Sodium block sitting on vessel bottom (tarnishes dull oxide matte grey in Standard Air; mirror-bright in Inert Glovebox)
       const nx = left + width * 0.5;
       const flatNa = Boolean(vessel.flattenedMetalMap?.Na_s);
+      const tarnish = vessel.naTarnishFrac || 0;
       const rectW = flatNa ? radius * 2.75 : radius * 2;
       const rectH = flatNa ? radius * 0.72 : radius * 1.5;
       const ny = bottom - rectH * 0.5 - 1;
-      ctx.fillStyle = '#cbd5e1';
-      ctx.strokeStyle = '#64748b';
+      ctx.fillStyle = tarnish > 0.55 ? '#94a3b8' : tarnish > 0.2 ? '#b6c2cf' : '#e2e8f0';
+      ctx.strokeStyle = tarnish > 0.3 ? '#475569' : '#94a3b8';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.roundRect(nx - rectW * 0.5, ny - rectH * 0.5, rectW, rectH, flatNa ? 3 : 1);
       ctx.fill();
       ctx.stroke();
+      if (tarnish > 0.25) {
+        ctx.fillStyle = `rgba(71, 85, 105, ${(0.35 * tarnish).toFixed(2)})`;
+        ctx.fillRect(nx - rectW * 0.44, ny - rectH * 0.44, rectW * 0.88, rectH * 0.32);
+      }
     }
     ctx.restore();
   }

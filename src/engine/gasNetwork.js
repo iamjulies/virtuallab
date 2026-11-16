@@ -622,6 +622,7 @@ export function stepVesselGasAndPressure(
   const totalSteam = (gasProduced.H2O_g || 0) + (steamProducedMol || 0);
 
   const ventToRoom = () => {
+    vessel._stepGasOutMol = (vessel._stepGasOutMol || 0) + totalPerm + totalSteam;
     for (const g of NON_STEAM_GASES) {
       if (produced[g] > 0) {
         vessel.escapedGasMoles[g] = (vessel.escapedGasMoles[g] || 0) + produced[g];
@@ -726,9 +727,11 @@ export function stepVesselGasAndPressure(
           target.escapedGasMoles.C2H5OH_g = (target.escapedGasMoles.C2H5OH_g || 0) + dEt;
         }
       }
+      target.headspaceGasMoles = target.headspaceGasMoles || createEmptyGasMap();
       for (const g of NON_STEAM_GASES) {
         if (g !== 'HCl_g' && g !== 'NH3_g' && g !== 'C2H5OH_g' && produced[g] > 0) {
-          target.escapedGasMoles[g] = (target.escapedGasMoles[g] || 0) + produced[g];
+          target.headspaceGasMoles[g] = (target.headspaceGasMoles[g] || 0) + produced[g];
+          target.gasFlushInMol = (target.gasFlushInMol || 0) + produced[g];
         }
       }
       if (heatAddedJ > 0) {
@@ -759,6 +762,10 @@ export function stepVesselGasAndPressure(
     }
     // Pre-collected gases (e.g. NH3(g) or H2(g) displaced air before stoppering) reduce initial trapped air
     vessel.sealedAirMoles = Math.max(nHead1Bar * 0.04, nHead1Bar - preCollectedGas);
+    vessel.sealedAirO2Moles =
+      (env?.atmosphereMode || 'air') === 'air'
+        ? vessel.sealedAirMoles * CONSTANTS.AIR_O2_FRAC * (vessel.airO2PurgeFrac ?? 1.0)
+        : 0;
   }
 
   let extraGasMol = 0;
@@ -898,11 +905,38 @@ export function stepVesselGasAndPressure(
  * using each gas's air-relative molar mass density (M_gas / 28.97).
  */
 export function stepOpenGasBuoyancy(vessel, env, dt) {
-  if (!vessel || vessel.isShattered || vessel.isStoppered || (vessel.isInverted && vessel.submergedInTroughId)) {
+  if (!vessel || vessel.isShattered) return;
+
+  // Track ambient air O2 flushing vs slow room diffusion inside vessel headspace
+  const atmMode = env?.atmosphereMode || 'air';
+  if (atmMode === 'inert') {
+    vessel.airO2PurgeFrac = 0;
+    vessel.gasFlushInMol = 0;
+  } else {
+    const flushMol = (vessel.gasFlushInMol || 0) + (vessel._stepGasOutMol || 0);
+    vessel.gasFlushInMol = 0;
+    vessel._stepGasOutMol = 0;
+    if (flushMol > 1e-8) {
+      const purgeK = Math.min(3.5, (flushMol / Math.max(1e-4, dt)) * 1150);
+      vessel.airO2PurgeFrac = Math.max(0, (vessel.airO2PurgeFrac ?? 1.0) * Math.exp(-purgeK * dt));
+    } else if (!vessel.isStoppered) {
+      // Passive air diffusion gently restores ~21% O2 when gas flow ceases in open air
+      const prevF = vessel.airO2PurgeFrac ?? 1.0;
+      vessel.airO2PurgeFrac = Math.min(1.0, prevF + (1.0 - prevF) * (1 - Math.exp(-0.12 * dt)));
+    }
+  }
+
+  if (vessel.isStoppered || (vessel.isInverted && vessel.submergedInTroughId)) {
     return;
   }
   const head = vessel.headspaceGasMoles;
   if (!head) return;
+
+  // Condense water droplets on upper cool mouth when H2O(g) evolves gently from CuO + H2 reduction
+  if (vessel._cuoReductionCondenseTimer > 0) {
+    vessel._cuoReductionCondenseTimer = Math.max(0, vessel._cuoReductionCondenseTimer - dt);
+    vessel.wallCondenseLevel = Math.min(1.0, (vessel.wallCondenseLevel || 0) + 0.55 * dt);
+  }
 
   for (const gId of ALL_GASES) {
     const n = head[gId] || 0;

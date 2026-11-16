@@ -12,6 +12,14 @@ export const CONSTANTS = {
   KELVIN_OFFSET: 273.15,
   RELATIVE_HUMIDITY: 0.60, // 60% RH in ambient lab room air
 
+  // Standard Dry Air Composition (STP/SATP mole fractions & mean molar mass)
+  AIR_O2_FRAC: 0.2095,
+  AIR_N2_FRAC: 0.7808,
+  AIR_CO2_FRAC: 0.0004,
+  AIR_AR_FRAC: 0.0093,
+  AIR_MEAN_MOLAR_MASS: 28.97,
+  MAX_LABS: 10,
+
   // Water properties & auto-ionization
   KW_298: 1.0e-14,
   DELTA_H_WATER_IONIZATION_J: 55800, // J/mol

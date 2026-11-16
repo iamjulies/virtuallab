@@ -799,8 +799,10 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
   const mat = ELECTRODE_MATERIALS[item.material] || ELECTRODE_MATERIALS.C;
   const { x, y } = item;
   const spec = APPARATUS.electrode_rod;
-  const topY = y - spec.height / 2;
-  const botY = y + spec.height / 2;
+  const rodH = item.renderHeight || spec.height;
+  const topY = y - rodH / 2;
+  const botY = y + rodH / 2;
+  const maxCoatH = Math.max(12, Math.min(rodH - 22, item.immersedHeightPx ?? (rodH - 20) * 0.56));
 
   ctx.save();
   drawSelectionGlow(ctx, isSelected, false);
@@ -810,14 +812,14 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
   ctx.strokeStyle = isSelected ? '#3b82f6' : item.cathodicProtectedActive ? '#10b981' : mat.stroke;
   ctx.lineWidth = isSelected || item.cathodicProtectedActive ? 2.1 : 1.4;
   ctx.beginPath();
-  ctx.roundRect(x - 4.5, topY + 12, 9, spec.height - 16, 2);
+  ctx.roundRect(x - 4.5, topY + 12, 9, rodH - 16, 2);
   ctx.fill();
   ctx.stroke();
 
   // Phenomenon #9A: Electroplated Cu(s) layer along immersed lower half (salmon-pink smooth vs dark burned)
   if (item.platedMaterial === 'Cu' && (item.platedCuMol || 0) > 1e-7) {
     const isBurned = item.platedQuality === 'burned';
-    const coatH = (spec.height - 20) * 0.56;
+    const coatH = maxCoatH;
     const coatTop = botY - 4 - coatH;
     ctx.save();
     if (isBurned) {
@@ -844,7 +846,7 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
   if (item.platedMaterial === 'Ag' && (item.platedAgMol || 0) > 1e-7) {
     const growFrac = Math.min(1.0, Math.sqrt((item.platedAgMol || 0) / 0.0012));
     const dir = item.dendriteSide === -1 ? -1 : 1;
-    const coatH = (spec.height - 20) * 0.52;
+    const coatH = maxCoatH * 0.92;
     const baseTipY = botY - 6;
     ctx.save();
     // Bright specular metallic Silver coating sleeve
@@ -890,7 +892,7 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
     ctx.strokeStyle = 'rgba(16, 185, 129, 0.8)';
     ctx.lineWidth = 1.6;
     ctx.setLineDash([3, 3]);
-    ctx.strokeRect(x - 7, y, 14, spec.height / 2);
+    ctx.strokeRect(x - 7, botY - maxCoatH, 14, maxCoatH);
     ctx.restore();
   }
 
@@ -901,13 +903,14 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
   ctx.fill();
   ctx.shadowBlur = 0;
 
-  // Gas micro-bubbles along immersed lower surface during electrolysis
-  if (item.gasBubbleType && (item.gasBubbleRate || 0) > 1e-7) {
+  // Gas micro-bubbles restricted to the submerged liquid zone during electrolysis
+  if (item.gasBubbleType && (item.gasBubbleRate || 0) > 1e-7 && (!item.dockedVesselId || (item.immersedFrac ?? 1) > 0.01)) {
+    const riseSpan = Math.max(10, Math.min(48, maxCoatH - 4));
     ctx.fillStyle = item.gasBubbleType === 'Cl2_g' ? 'rgba(163, 230, 53, 0.72)' : 'rgba(241, 245, 249, 0.85)';
     for (let i = 0; i < 6; i++) {
-      const rise = (timeNow * 42 + i * 9) % 46;
+      const rise = (timeNow * 42 + i * 9) % riseSpan;
       const bx = x + ((i % 2 === 0 ? -1 : 1) * 5.5);
-      const by = botY - 8 - rise;
+      const by = botY - 6 - rise;
       ctx.beginPath();
       ctx.arc(bx, by, 1.8, 0, Math.PI * 2);
       ctx.fill();
@@ -932,8 +935,9 @@ export function renderElectrodeCollectorTubes(ctx, items, isDark, timeNow = 0) {
     if (target.mountedOverElectrodeId === el.id) continue;
 
     const eSpec = APPARATUS.electrode_rod;
+    const eH = el.renderHeight || eSpec.height;
     const tSpec = APPARATUS[target.typeId] || APPARATUS.gas_syringe;
-    const p0 = { x: el.x, y: el.y - eSpec.height / 2 + 8 };
+    const p0 = { x: el.x, y: el.y - eH / 2 + 8 };
     const p3 =
       target.kind === 'gas_syringe'
         ? (() => {
@@ -952,7 +956,7 @@ export function renderElectrodeCollectorTubes(ctx, items, isDark, timeNow = 0) {
     // Small bell hood cap over electrode + translucent silicone delivery tubing
     ctx.fillStyle = isDark ? 'rgba(148, 163, 184, 0.38)' : 'rgba(100, 116, 139, 0.34)';
     ctx.beginPath();
-    ctx.roundRect(el.x - 8, el.y - eSpec.height / 2 + 6, 16, 12, 3);
+    ctx.roundRect(el.x - 8, el.y - eH / 2 + 6, 16, 12, 3);
     ctx.fill();
 
     ctx.strokeStyle = isDark ? 'rgba(71, 85, 105, 0.78)' : 'rgba(51, 65, 85, 0.65)';
@@ -1004,7 +1008,8 @@ export function renderDcPowerAndWires(ctx, items, selectedId, isDark) {
     const drawWire = (from, el, color) => {
       if (!el) return;
       const eSpec = APPARATUS.electrode_rod;
-      const to = { x: el.x, y: el.y - eSpec.height / 2 + 5 };
+      const eH = el.renderHeight || eSpec.height;
+      const to = { x: el.x, y: el.y - eH / 2 + 5 };
       ctx.save();
       ctx.strokeStyle = color;
       ctx.lineWidth = 2.6;
@@ -1102,7 +1107,8 @@ export function renderVoltAmmeterAndWires(ctx, items, selectedId, isDark) {
     const drawLead = (from, el, color) => {
       if (!el) return;
       const eSpec = APPARATUS.electrode_rod;
-      const to = { x: el.x, y: el.y - eSpec.height / 2 + 5 };
+      const eH = el.renderHeight || eSpec.height;
+      const to = { x: el.x, y: el.y - eH / 2 + 5 };
       ctx.save();
       ctx.strokeStyle = color;
       ctx.lineWidth = 2.5;

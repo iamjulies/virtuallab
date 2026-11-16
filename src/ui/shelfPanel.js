@@ -222,6 +222,11 @@ export class ShelfPanel {
     window.addEventListener('blur', cleanup);
   }
 
+  setSim(sim) {
+    this.sim = sim;
+    this.lastShelfSig = '';
+  }
+
   getShelfSignature(t) {
     const pipSig = this.sim.items
       .filter((i) => i.kind === 'pipette')

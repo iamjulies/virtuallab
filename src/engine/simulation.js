@@ -18,7 +18,12 @@ import {
   computeSolidVolumeMl,
   computeSolutionVisuals,
 } from './equilibrium.js';
-import { enforceDryPhaseBoundary, stepVesselChemistry, validateVesselInvariants } from './chemistry.js';
+import {
+  enforceDryPhaseBoundary,
+  getVesselEffectiveO2Bar,
+  stepVesselChemistry,
+  validateVesselInvariants,
+} from './chemistry.js';
 import { ELECTRODE_MATERIALS, stepElectrochemistry } from './electrochemistry.js';
 import {
   computeWashBottleStreamArc,
@@ -46,7 +51,7 @@ import {
   stepVesselGasAndPressure,
 } from './gasNetwork.js';
 
-const SIM_BENCH_FLOOR_Y = 482;
+export const SIM_BENCH_FLOOR_Y = 482;
 const createEmptyGasMap = createZeroGasMap;
 
 function getVesselBrimVolumeMl(spec) {
@@ -129,6 +134,7 @@ export class LabSimulation {
       speed: 1.0,
       paused: false,
       uvLight: false,
+      atmosphereMode: 'air',        // 'air' (78% N2, 21% O2, 60% RH) | 'inert' (dry N2/Ar glovebox)
     };
     this.items = [];
     this.selectedId = null;
@@ -215,6 +221,12 @@ export class LabSimulation {
         tubeLiquidSpillColor: null,
         tubeColor: null,
         sealedAirMoles: null,
+        sealedAirO2Moles: null,
+        airO2PurgeFrac: this.environment.atmosphereMode === 'air' ? 1.0 : 0.0,
+        naTarnishFrac: 0,
+        naohAirExposeSec: 0,
+        naohDeliquesceFrac: 0,
+        znCombustionTimer: 0,
         headspaceGasMoles: createEmptyGasMap(),
         escapedGasMoles: createEmptyGasMap(),
         isShattered: false,
@@ -488,11 +500,15 @@ export class LabSimulation {
     return base;
   }
 
-  removeApparatus(id) {
-    const item = this.getItem(id);
+  /**
+   * Detach an apparatus from every tubing, clamp, dock, stir-bar, and wiring link cleanly.
+   * Reused both by removeApparatus and cross-bench moveBetweenLabs.
+   */
+  detachItemRelations(item) {
     if (!item) return;
+    const id = item.id;
     if (item.kind === 'vessel' && (item.connectedTargetId || item.connectedSyringeId)) {
-      this.disconnectSyringe(item.id);
+      this.disconnectSyringe(id);
     }
     if (item.kind === 'stir_bar' && item.inVesselId) {
       const host = this.getItem(item.inVesselId);
@@ -500,35 +516,50 @@ export class LabSimulation {
         host.hasStirBar = false;
         host.magStirRpm = 0;
       }
+      item.inVesselId = null;
     }
-    // Clean up connections referencing removed apparatus
+    if (item.kind === 'electrode') {
+      item.dockedVesselId = null;
+      item.renderHeight = null;
+      item.immersedHeightPx = null;
+      item.immersedFrac = undefined;
+      item.gasTargetId = null;
+    }
+    if (item.kind === 'filter_funnel') {
+      item.mountedOnVesselId = null;
+    }
+    if (item.kind === 'salt_bridge') {
+      item.vesselAId = null;
+      item.vesselBId = null;
+    }
+    if (item.kind === 'dc_power' || item.kind === 'volt_ammeter') {
+      item.posElectrodeId = null;
+      item.negElectrodeId = null;
+    }
+    item.clampedToId = null;
+    item.restingOnId = null;
+
     for (const other of this.items) {
+      if (other.id === id) continue;
       if (other.connectedSyringeId === id || other.connectedTargetId === id) {
         this.disconnectSyringe(other.id);
       }
-      if (other.connectedFromId === id) {
-        other.connectedFromId = null;
-      }
-      if (other.outletTargetId === id) {
-        other.outletTargetId = null;
-      }
+      if (other.connectedFromId === id) other.connectedFromId = null;
+      if (other.outletTargetId === id) other.outletTargetId = null;
       if (other.dockedVesselId === id) {
         other.dockedVesselId = null;
+        other.renderHeight = null;
+        other.immersedHeightPx = null;
+        other.immersedFrac = undefined;
       }
-      if (other.inVesselId === id) {
-        other.inVesselId = null;
-      }
-      if (other.mountedOnVesselId === id) {
-        other.mountedOnVesselId = null;
-      }
-      if (other.gasTargetId === id) {
-        other.gasTargetId = null;
-      }
-      if (other.mountedOverElectrodeId === id) {
-        other.mountedOverElectrodeId = null;
-      }
+      if (other.inVesselId === id) other.inVesselId = null;
+      if (other.mountedOnVesselId === id) other.mountedOnVesselId = null;
+      if (other.gasTargetId === id) other.gasTargetId = null;
+      if (other.mountedOverElectrodeId === id) other.mountedOverElectrodeId = null;
       if (other.posElectrodeId === id) other.posElectrodeId = null;
       if (other.negElectrodeId === id) other.negElectrodeId = null;
+      if (other.vesselAId === id) other.vesselAId = null;
+      if (other.vesselBId === id) other.vesselBId = null;
       if (other.restingOnId === id) {
         other.restingOnId = null;
         if (!other.clampedToId) other.fallStartY = other.y;
@@ -538,6 +569,18 @@ export class LabSimulation {
         other.fallStartY = other.y;
       }
     }
+    if (item.kind === 'vessel') {
+      item.hasStirBar = false;
+      item.magStirRpm = 0;
+      item.mountedOverElectrodeId = null;
+      item.submergedInTroughId = null;
+    }
+  }
+
+  removeApparatus(id) {
+    const item = this.getItem(id);
+    if (!item) return;
+    this.detachItemRelations(item);
     this.items = this.items.filter((it) => it.id !== id);
     if (this.selectedId === id) {
       this.selectedId = this.items[0]?.id || null;
@@ -693,6 +736,73 @@ export class LabSimulation {
     } else if (presetName === 'graham_diffusion') {
       const tube = this.createApparatus('diffusion_tube', 430, SIM_BENCH_FLOOR_Y - APPARATUS.diffusion_tube.height / 2 + 2);
       this.selectedId = tube.id;
+    } else if (presetName === 'cuo_h2_reduction') {
+      // Textbook CuO + H2 reduction: diluted ~5.5M HCl + mossy Zn granules (steady 25s H2 stream) -> rubber tube -> clamped test tube containing black CuO(s) over alcohol burner
+      const flask = this.createApparatus('erlenmeyer_250', 220, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      this.addReagentToVessel(flask.id, 'h2o', 40, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(flask.id, 'hcl_37', 30, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(flask.id, 'zn', 12.0, { fine: false, silentAnim: true, silentEmit: true });
+      flask.particleCounts.Zn_s = 2; // Large mossy Zinc chunks give sustained H2 stream over ~25s!
+      flask.tempK = this.environment.tempK;
+      flask.isStoppered = true;
+
+      const burner = this.createApparatus('burner', 530, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
+      this.setBurnerFlame(burner.id, 0);
+      const stand = this.createApparatus('retort_stand', 585, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
+      const tube = this.createApparatus('test_tube_50', 530, 326);
+      tube.moles = { CuO_s: 0.04 };
+      tube.particleCounts = { CuO_s: 260 };
+      this.attachToStand(tube.id, stand.id);
+      this.connectTube(flask.id, tube.id);
+      this.addLog({ type: 'info', key: 'guideCuoH2', vesselLabel: tube.label });
+      this.selectedId = burner.id;
+    } else if (presetName === 'zn_burn_o2') {
+      // Textbook O2 prep (H2O2 + CuO catalyst) -> O2 jar + Zn porcelain dish over burner
+      const flaskA = this.createApparatus('erlenmeyer_250', 200, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      flaskA.moles = { CuO_s: 0.02 };
+      this.addReagentToVessel(flaskA.id, 'h2o2_30', 35, { silentAnim: true, silentEmit: true });
+      flaskA.isStoppered = true;
+      const flaskO2 = this.createApparatus('erlenmeyer_250', 430, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      flaskO2.headspaceGasMoles.O2_g = 0.008;
+      flaskO2.moles = { Zn_s: 0.03 };
+      flaskO2.particleCounts = { Zn_s: 12 };
+      this.connectTube(flaskA.id, flaskO2.id);
+      const burner = this.createApparatus('burner', 690, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
+      this.setBurnerFlame(burner.id, 3);
+      const dish = this.createApparatus('porcelain_dish', 690, burner.y - APPARATUS.burner.height / 2 + 10 - APPARATUS.porcelain_dish.height / 2);
+      this.addReagentToVessel(dish.id, 'zn', 2.0, { fine: true, silentAnim: true, silentEmit: true });
+      this.createApparatus('splint', 820, SIM_BENCH_FLOOR_Y - 12);
+      this.addLog({ type: 'info', key: 'guideZnBurnO2', vesselLabel: flaskO2.label });
+      this.selectedId = flaskO2.id;
+    } else if (presetName === 'air_tarnish_deliquesce') {
+      const dish = this.createApparatus('porcelain_dish', 290, SIM_BENCH_FLOOR_Y - APPARATUS.porcelain_dish.height / 2 + 2);
+      this.addReagentToVessel(dish.id, 'na', 1.2, { silentAnim: true, silentEmit: true });
+      const beaker = this.createApparatus('beaker_250', 550, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      this.addReagentToVessel(beaker.id, 'naoh', 4.5, { silentAnim: true, silentEmit: true });
+      this.addLog({ type: 'info', key: 'guideAirTarnish', vesselLabel: dish.label });
+      this.selectedId = dish.id;
+    } else if (presetName === 'na_water_phen') {
+      const beaker = this.createApparatus('beaker_250', 360, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      this.addReagentToVessel(beaker.id, 'h2o', 90, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(beaker.id, 'phen', 2, { silentAnim: true, silentEmit: true });
+      const dish = this.createApparatus('porcelain_dish', 580, SIM_BENCH_FLOOR_Y - APPARATUS.porcelain_dish.height / 2 + 2);
+      this.addReagentToVessel(dish.id, 'na', 0.45, { silentAnim: true, silentEmit: true });
+      this.selectedId = beaker.id;
+    } else if (presetName === 'copper_hydroxide_series') {
+      this.createApparatus('scale', 210, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height / 2 + 2);
+      const beaker = this.createApparatus('beaker_250', 210, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height - APPARATUS.beaker_250.height / 2 + 2);
+      this.addReagentToVessel(beaker.id, 'h2o', 60, { silentAnim: true, silentEmit: true });
+      this.addReagentToVessel(beaker.id, 'cuso4_5h2o', 6.0, { silentAnim: true, silentEmit: true });
+      this.createApparatus('burner', 530, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
+      this.createApparatus('erlenmeyer_250', 720, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
+      this.selectedId = beaker.id;
+    } else if (presetName === 'amphoteric_zn_cu') {
+      const bZn = this.createApparatus('beaker_250', 270, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      bZn.moles = { H2O_l: 3.5, ZnOH2_s: 0.03 };
+      const bCu = this.createApparatus('beaker_250', 510, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
+      bCu.moles = { H2O_l: 3.5, CuOH2_s: 0.03 };
+      this.createApparatus('burner', 740, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
+      this.selectedId = bZn.id;
     } else {
       // 'starter' default bench: Scale + Beaker 250 mL + Burner + Erlenmeyer 250 mL
       this.createApparatus('scale', 220, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height / 2 + 2);
@@ -3435,6 +3545,25 @@ export class LabSimulation {
   }
 
   /**
+   * Toggle global lab atmosphere between Standard Air (20.95% O2, 60% RH)
+   * and Pure Dry Inert Glovebox (100% N2/Ar, 0% O2, 0% RH).
+   */
+  setAtmosphereMode(mode) {
+    const nextMode = mode === 'inert' ? 'inert' : 'air';
+    this.environment.atmosphereMode = nextMode;
+    for (const v of this.items) {
+      if (v.kind !== 'vessel') continue;
+      if (nextMode === 'inert') {
+        v.airO2PurgeFrac = 0;
+        v.naohAirExposeSec = 0;
+      } else if (!v.isStoppered) {
+        v.airO2PurgeFrac = 1.0;
+      }
+    }
+    this.emitChange();
+  }
+
+  /**
    * Pour liquid and loose solids downward under gravity whenever an open inverted vessel is held in air
    * (unstoppered and not submerged inside a pneumatic water trough).
    */
@@ -3667,6 +3796,29 @@ export class LabSimulation {
       let frameNaEvent = null;
       const frameActiveMap = new Map();
 
+      // Safety Check: Heating unpurged H2 + O2 mixture inside vessel over open flame triggers oxyhydrogen pop
+      if (
+        this.environment.atmosphereMode === 'air' &&
+        burnerPowerW > 0 &&
+        v.tempK >= 425 &&
+        (v.headspaceGasMoles?.H2_g || 0) > 2.5e-5 &&
+        ((v.airO2PurgeFrac ?? 1.0) > 0.14 || (v.headspaceGasMoles?.O2_g || 0) > 2.5e-5) &&
+        (this.timeSec - (v.seenReactions.unpurged_h2_pop ?? -99)) > 4.0
+      ) {
+        v.seenReactions.unpurged_h2_pop = this.timeSec;
+        v.headspaceGasMoles.H2_g *= 0.15;
+        v.airO2PurgeFrac = 0.06;
+        v.tempK = Math.min(720, v.tempK + 35);
+        this.addLog({
+          type: 'alert',
+          key: 'alertUnpurgedH2O2',
+          vesselLabel: v.label,
+        });
+        if (this.visualHooks.onAlert) {
+          this.visualHooks.onAlert('unpurged_h2', v, { liquidColor: '#f59e0b' });
+        }
+      }
+
       // Data-driven flammable volatile solvent auto-ignition check prior to latent boiling clamp
       if (!v.isStoppered && !v.isFrozenSolid) {
         for (const [spId, n] of Object.entries(v.moles)) {
@@ -3697,7 +3849,10 @@ export class LabSimulation {
       }
 
       for (let s = 0; s < numSteps; s++) {
-        const chemRes = stepVesselChemistry(v, dt, { uvLight: this.environment.uvLight });
+        const chemRes = stepVesselChemistry(v, dt, {
+          uvLight: this.environment.uvLight,
+          environment: this.environment,
+        });
         const thermRes = stepVesselThermodynamics(
           v,
           dt,
@@ -3989,6 +4144,19 @@ export class LabSimulation {
 
       v.activeReactions = Array.from(frameActiveMap.values());
 
+      // Dazzling Zinc combustion notification in concentrated O2 / hot air
+      if (
+        frameActiveMap.has('zn_o2_burn') &&
+        (this.timeSec - (v.seenReactions.zn_burn_o2_alert ?? -99)) > 5.0 &&
+        getVesselEffectiveO2Bar(v, this.environment) >= 0.45
+      ) {
+        v.seenReactions.zn_burn_o2_alert = this.timeSec;
+        this.addLog({ type: 'alert', key: 'alertZnCombustionO2', vesselLabel: v.label });
+        if (this.visualHooks.onAlert) {
+          this.visualHooks.onAlert('zn_burn_o2', v, {});
+        }
+      }
+
       // Two-temperature coupled Sodium Coulomb explosion / ignition shatter
       if (!v.isShattered && frameNaEvent === 'explosion') {
         const maxStress = APPARATUS[v.typeId]?.maxThermalStressK || 550;
@@ -4106,9 +4274,13 @@ export class LabSimulation {
 
       if (
         v.tempK >= CONSTANTS.T_FREEZE_WATER_K &&
-        ((rateSteam > 4e-5 && curSteamOpacity > 0.12) || frameBoiling || (v.headspaceGasMoles?.H2O_g || 0) > 1e-5)
+        ((rateSteam > 4e-5 && curSteamOpacity > 0.12) ||
+          frameBoiling ||
+          (v.headspaceGasMoles?.H2O_g || 0) > 1e-5 ||
+          (v._cuoReductionCondenseTimer || 0) > 0)
       ) {
-        const targetCond = Math.min(1, 0.25 + curSteamOpacity * 0.65);
+        const baseCond = (v._cuoReductionCondenseTimer || 0) > 0 ? 0.52 : 0.25;
+        const targetCond = Math.min(1, baseCond + curSteamOpacity * 0.65);
         v.wallCondenseLevel = Math.min(1, (v.wallCondenseLevel || 0) + (targetCond - (v.wallCondenseLevel || 0)) * Math.min(1, realDeltaSec * 2.5));
       } else {
         const decayRate = v.tempK < CONSTANTS.T_FREEZE_WATER_K ? 0.45 : 0.14;

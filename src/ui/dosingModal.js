@@ -36,6 +36,11 @@ export class DosingModal {
     this.pourInterval = null;
   }
 
+  setSim(sim) {
+    this.sim = sim;
+    if (this.state) this.close?.();
+  }
+
   renderTargetPickRow(targetItem, candidateIds, t) {
     const targetName = targetItem
       ? `${t(APPARATUS[targetItem.typeId].i18nKey)} ${targetItem.label}`

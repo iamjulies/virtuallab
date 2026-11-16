@@ -449,6 +449,98 @@ button:disabled {
   box-shadow: var(--shadow);
 }
 
+/* Multi-Bench Workspace Tab Strip (up to 10 active labs + drop target) */
+.lab-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-surface-alt);
+  overflow-x: auto;
+  scrollbar-width: thin;
+  flex-shrink: 0;
+}
+
+.lab-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.lab-tab-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-main);
+}
+
+.lab-tab-btn.active {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.lab-tab-btn.lab-tab-drop-target {
+  border-color: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.45);
+  background-color: rgba(16, 185, 129, 0.16);
+  color: var(--text-main);
+  transform: translateY(-1px);
+}
+
+.lab-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  line-height: 1;
+  opacity: 0.72;
+}
+
+.lab-tab-close:hover {
+  background-color: rgba(239, 68, 68, 0.25);
+  color: #ef4444;
+  opacity: 1;
+}
+
+.lab-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 0.5rem;
+  border: 1px dashed var(--border-color);
+  background-color: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.lab-add-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.lab-add-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 table {
   border-collapse: collapse;
 }

@@ -127,11 +127,19 @@ export class InspectorPanel {
     this.isDark = isDark;
   }
 
+  setSim(sim) {
+    this.sim = sim;
+    this.lastStructureSig = '';
+  }
+
   getStructureSignature(t, langCode) {
     const item = this.sim.getItem(this.sim.selectedId);
     const logLen = this.sim.logs.length;
     const standCount = this.sim.items.filter((i) => i.kind === 'stand').length;
-    if (!item) return `none|${langCode}|${logLen}`;
+    const labsInfo = this.callbacks.getLabsMeta?.();
+    const labSig = labsInfo ? `${labsInfo.labs.length}:${labsInfo.activeIndex}` : '';
+    const atmMode = this.sim.environment?.atmosphereMode || 'air';
+    if (!item) return `none|${atmMode}|${labSig}|${langCode}|${logLen}`;
 
     if (item.kind === 'vessel') {
       const spKeys = Object.keys(item.moles)
@@ -140,8 +148,12 @@ export class InspectorPanel {
         .join(',');
       const rxnKeys = item.activeReactions.map((r) => r.id).join(',');
       const hasFrost = (item.escapedFrostH2OMol || 0) > 1e-6 ? 1 : 0;
+      const purgedFlag = (item.headspaceGasMoles?.H2_g || 0) > 1e-5 || (item.moles.CuO_s || 0) > 1e-7
+        ? ((item.airO2PurgeFrac ?? 1) <= 0.14 ? 'P' : 'U')
+        : 'N';
+      const airFlags = `${(item.naTarnishFrac || 0) > 0.25 ? 1 : 0}${(item.naohDeliquesceFrac || 0) > 0.15 ? 1 : 0}${(item.znCombustionTimer || 0) > 0.05 ? 1 : 0}${purgedFlag}`;
       const phenFlags = `${item.isSupersaturated ? 1 : 0}${(item.znPassivationFrac || 0) > 0.35 ? 1 : 0}${(item.pickeringFoamMl || 0) > 0.5 ? 1 : 0}${(item.langmuirCoverage || 0) > 0.55 ? 1 : 0}`;
-      return `v|${item.id}|${item.isStoppered}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
+      return `v|${atmMode}|${labSig}|${airFlags}|${item.id}|${item.isStoppered}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'burner') {
       return `b|${item.id}|${langCode}|${logLen}`;
@@ -959,6 +971,16 @@ export class InspectorPanel {
           ${(item.znPassivationFrac || 0) > 0.35 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-medium">${t('badgeZnPassivated')} (${Math.round((item.znPassivationFrac || 0) * 100)}%)</div>` : ''}
           ${(item.pickeringFoamMl || 0) > 0.5 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-pink-500/40 bg-pink-500/10 text-pink-400 text-xs font-medium">${t('badgePickeringFoam')}: +${(item.pickeringFoamMl || 0).toFixed(1)} mL</div>` : ''}
           ${(item.langmuirCoverage || 0) > 0.55 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs font-medium">${t('badgeLangmuirSat')} (θ=${Math.round((item.langmuirCoverage || 0) * 100)}%, n≈${(item.langmuirOrder ?? 0).toFixed(2)})</div>` : ''}
+          ${(item.naTarnishFrac || 0) > 0.25 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-slate-500/40 bg-slate-500/10 text-muted text-xs font-medium">${t('badgeAirTarnished')}</div>` : ''}
+          ${(item.naohDeliquesceFrac || 0) > 0.15 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs font-medium">${t('badgeNaohDeliquesced')}</div>` : ''}
+          ${(item.znCombustionTimer || 0) > 0.05 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-amber-400/60 bg-amber-400/15 text-amber-300 text-xs font-semibold">${t('badgeZnBurnO2')}</div>` : ''}
+          ${
+            ((item.headspaceGasMoles?.H2_g || 0) > 1e-5 || (item.moles.CuO_s || 0) > 1e-7) && !item.isShattered
+              ? this.sim.environment?.atmosphereMode === 'inert' || (item.airO2PurgeFrac ?? 1) <= 0.14
+                ? `<div class="p-1.5 px-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs font-medium">${t('badgePurgedH2')}</div>`
+                : `<div class="p-1.5 px-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-medium">${t('badgeUnpurgedAir')}</div>`
+              : ''
+          }
 
           ${
             item.isShattered
@@ -1209,6 +1231,11 @@ export class InspectorPanel {
                         <span class="font-mono text-muted">[${log.timeSec.toFixed(1)}s]</span> ⚠️ ${t(log.key)}
                       </div>`;
                     }
+                    if (log.type === 'info') {
+                      return `<div class="p-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-xs leading-relaxed">
+                        ${t(log.key)}
+                      </div>`;
+                    }
                     return `<div class="p-2 rounded-lg border border-theme bg-surface text-xs">
                       <div class="flex items-center justify-between gap-1">
                         <span class="font-mono font-bold text-accent">${log.equation}</span>
@@ -1223,12 +1250,40 @@ export class InspectorPanel {
       </div>
     `;
 
-    this.container.innerHTML = `<div class="flex flex-col gap-3">${topSection}${logsHtml}</div>`;
+    const labsMeta = this.callbacks.getLabsMeta?.();
+    const crossLabHtml =
+      item && labsMeta && labsMeta.labs.length > 1
+        ? `<div class="p-2.5 rounded-xl border border-theme bg-surface-alt flex items-center justify-between gap-2">
+            <span class="text-xs font-medium text-muted">📤 ${t('actionMoveToLab')}</span>
+            <div class="flex items-center gap-1.5">
+              <select id="ins-move-lab-select" class="px-2 py-1 rounded-lg border border-theme bg-surface text-xs font-semibold">
+                ${labsMeta.labs
+                  .map((lb, idx) =>
+                    idx === labsMeta.activeIndex
+                      ? ''
+                      : `<option value="${idx}">${t('labTabPrefix')} ${lb.number}</option>`
+                  )
+                  .join('')}
+              </select>
+              <button type="button" id="ins-move-lab-btn" class="px-2.5 py-1 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">${t('actionMoveToLabBtn')}</button>
+            </div>
+          </div>`
+        : '';
+
+    this.container.innerHTML = `<div class="flex flex-col gap-3">${topSection}${crossLabHtml}${logsHtml}</div>`;
     this.bindInspectorEvents(item, t);
   }
 
   bindInspectorEvents(item, t) {
     if (!item) return;
+
+    this.container.querySelector('#ins-move-lab-btn')?.addEventListener('click', () => {
+      const sel = this.container.querySelector('#ins-move-lab-select');
+      const targetIdx = sel ? Number(sel.value) : -1;
+      if (targetIdx >= 0) {
+        this.callbacks.onMoveToLab?.(item.id, targetIdx);
+      }
+    });
 
     this.container.querySelector('#ins-delete')?.addEventListener('click', () => {
       this.sim.removeApparatus(item.id);

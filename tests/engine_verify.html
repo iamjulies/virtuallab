@@ -54,14 +54,16 @@
     import {
       enforceDryPhaseBoundary,
       getEffectiveRateConstant,
+      getVesselEffectiveO2Bar,
       stepLiquidLiquidPartition,
       stepVesselChemistry,
       validateVesselInvariants,
       DRY_COMPLEX_DISSOCIATIONS,
       DRY_SALT_PAIRINGS,
     } from '../src/engine/chemistry.js';
+    import { LabManager } from '../src/engine/labManager.js';
     import { LabSimulation } from '../src/engine/simulation.js';
-    import { computeWashBottleStreamArc } from '../src/engine/apparatusTools.js';
+    import { computeWashBottleStreamArc, syncDockedToolPositions } from '../src/engine/apparatusTools.js';
     import { calcEvaporationRateMol, computeSteamOpacity } from '../src/engine/thermodynamics.js';
     import {
       computeAqueousVolumeL,
@@ -2415,13 +2417,13 @@
       );
     }
 
-    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.9 Sync
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.10 Sync
     {
       const allTranslated = APPARATUS_ORDER.every((id) => {
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_v2+build.9';
+      const expectedBuild = 'virlab_v2+build.10';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2432,9 +2434,16 @@
         Boolean(I18N.vi.badgeLangmuirSat && I18N.en.badgeLangmuirSat) &&
         Boolean(I18N.vi.alertThermalShock && I18N.en.alertThermalShock) &&
         Boolean(I18N.vi.alertSolventIgnition && I18N.en.alertSolventIgnition) &&
-        Boolean(I18N.vi.phaseInterfaceLabel && I18N.en.phaseInterfaceLabel);
+        Boolean(I18N.vi.phaseInterfaceLabel && I18N.en.phaseInterfaceLabel) &&
+        Boolean(I18N.vi.labAddBtn && I18N.en.labAddBtn) &&
+        Boolean(I18N.vi.envAtmAir && I18N.en.envAtmAir) &&
+        Boolean(I18N.vi.envAtmInert && I18N.en.envAtmInert) &&
+        Boolean(I18N.vi.alertUnpurgedH2O2 && I18N.en.alertUnpurgedH2O2) &&
+        Boolean(I18N.vi.alertZnCombustionO2 && I18N.en.alertZnCombustionO2) &&
+        Boolean(I18N.vi.presetCuoH2Reduction && I18N.en.presetCuoH2Reduction) &&
+        Boolean(I18N.vi.presetZnBurnO2 && I18N.en.presetZnBurnO2);
       assert(
-        'Build virlab_v2+build.9 parity: All 27 apparatus translated in VI/EN, all Prompt 18/19 keys present, IUPAC spellings enforced',
+        'Build virlab_v2+build.10 parity: All 27 apparatus translated in VI/EN, all Prompt 18/19/20 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 27 &&
           allTranslated &&
           newKeysPresent &&
@@ -3894,6 +3903,273 @@
         'ISO thermal stress shatter, cold-splash thermal shock shatter, Ethanol auto-ignition alert & 100% IUPAC REACTIONS strings verified',
         hotShattered && splashShattered && shockAlertSeen && ethIgnited && rxnIupacClean,
         `hotShat=${hotShattered}, splashShat=${splashShattered}, shockAlert=${shockAlertSeen}, ethIgn=${ethIgnited}, rxnIUPAC=${rxnIupacClean}`
+      );
+    }
+
+    // TEST 86: Multi-Lab Workspace (up to 10 Concurrent Active Labs) + Background Step + Atomic Cross-Lab Move
+    {
+      const mgr = new LabManager();
+      for (let i = 0; i < 9; i++) {
+        mgr.addLab(i === 1 ? 'clean' : 'starter');
+      }
+      const cap10 = mgr.labs.length === 10;
+      const blocked11 = mgr.addLab('starter');
+
+      // Start H2 reaction in Lab 1 (index 0) while active lab is switched to Lab 6 (index 5)
+      const sim1 = mgr.labs[0].sim;
+      const beaker1 = sim1.items.find(it => it.kind === 'vessel');
+      sim1.addReagentToVessel(beaker1.id, 'hcl_37', 35, { silentAnim: true, silentEmit: true });
+      sim1.addReagentToVessel(beaker1.id, 'zn', 3.0, { silentAnim: true, silentEmit: true });
+      mgr.switchLab(5);
+      for (let t = 0; t < 45; t++) {
+        mgr.stepAllLabs(0.05);
+      }
+      const bgH2Evolved = beaker1.escapedGasMoles.H2_g || 0;
+
+      // Prepare beaker in Lab 1 with CuSO4 solution + unique chemistry state, then move it to Lab 3 (index 2)
+      const srcVessel = sim1.createApparatus('beaker_250', 420, 427);
+      srcVessel.moles = { H2O_l: 4.0, Cu2_aq: 0.05, SO4_2_aq: 0.05 };
+      const sim3 = mgr.labs[2].sim;
+      const sim3CountBefore = sim3.items.length;
+      const moved = mgr.moveItemBetweenLabs(srcVessel.id, 0, 2);
+      const stillInLab1 = Boolean(sim1.getItem(srcVessel.id));
+      const inLab3 = Boolean(moved && sim3.getItem(moved.item.id));
+      const cuPreserved = inLab3 && Math.abs((moved.item.moles.Cu2_aq || 0) - 0.05) < 1e-9;
+
+      // Close down to 1 lab safely and check removeLab rejects removing last bench
+      while (mgr.labs.length > 1) mgr.removeLab(mgr.labs.length - 1);
+      const cannotRemoveLast = !mgr.removeLab(0);
+
+      assert(
+        'LabManager supports 10 concurrent labs, steps background labs live (~15Hz), atomically relocates vessels between labs preserving moles, & protects last lab',
+        cap10 &&
+          !blocked11.ok &&
+          blocked11.reason === 'max_labs' &&
+          bgH2Evolved > 0.002 &&
+          !stillInLab1 &&
+          inLab3 &&
+          sim3.items.length === sim3CountBefore + 1 &&
+          cuPreserved &&
+          cannotRemoveLast,
+        `max10=${cap10}, blk11=${!blocked11.ok}, bgH2=${(bgH2Evolved * 1000).toFixed(2)}mmol, moved=${inLab3}, cuOK=${cuPreserved}`
+      );
+    }
+
+    // TEST 87: Dynamic Electrode Length & Tip Immersion Geometry Fix (Tall Beaker Bottom Contact + Shallow Trough No-Pierce)
+    {
+      const sim = new LabSimulation();
+      // A: Tall beaker 250 mL with 55 mL electrolyte at bottom -> electrode shaft extends down near glass floor & immerses cleanly
+      const bTall = sim.createApparatus('beaker_tall_250', 240, 482 - APPARATUS.beaker_tall_250.height / 2 + 2);
+      bTall.moles = { H2O_l: 3.0, Cu2_aq: 0.04, SO4_2_aq: 0.04 };
+      const elTall = sim.createApparatus('electrode_rod', bTall.x - 16, bTall.y - 20);
+      elTall.dockedVesselId = bTall.id;
+      elTall.dockSide = 'left';
+
+      // Dry tall beaker check: 0 mL liquid -> immersedFrac === 0 so air doesn't falsely conduct
+      const bTallDry = sim.createApparatus('beaker_tall_250', 380, bTall.y);
+      const elDry = sim.createApparatus('electrode_rod', bTallDry.x - 16, bTallDry.y - 20);
+      elDry.dockedVesselId = bTallDry.id;
+      elDry.dockSide = 'left';
+
+      // B: Shallow water trough -> electrode shaft shortens so tip stays STRICTLY above glass bottom (never pokes through)
+      const trough = sim.createApparatus('water_trough', 650, 482 - APPARATUS.water_trough.height / 2 + 2);
+      trough.moles = { H2O_l: 22.0, H_aq: 0.1, Cl_aq: 0.1 };
+      const elTrough = sim.createApparatus('electrode_rod', trough.x - 20, trough.y - 10);
+      elTrough.dockedVesselId = trough.id;
+      elTrough.dockSide = 'left';
+
+      syncDockedToolPositions(sim);
+
+      const tallSpec = APPARATUS.beaker_tall_250;
+      const tallBotY = elTall.y + (elTall.renderHeight || 118) / 2;
+      const tallGlassBot = bTall.y + tallSpec.height / 2;
+
+      const trSpec = APPARATUS.water_trough;
+      const trBotY = elTrough.y + (elTrough.renderHeight || 118) / 2;
+      const trGlassBot = trough.y + trSpec.height / 2;
+
+      const cvs = document.createElement('canvas');
+      cvs.width = 400; cvs.height = 300;
+      const ctx = cvs.getContext('2d');
+      let err = null;
+      try {
+        renderElectrodeRod(ctx, elTall, false, true, 1.0);
+        renderElectrodeRod(ctx, elTrough, true, false, 1.0);
+      } catch (e) {
+        err = e?.message || String(e);
+      }
+
+      assert(
+        'Electrode rod dynamically reaches near bottom of Beaker Tall 250 mL, shortens inside shallow Water Trough without piercing floor, and gates dry mid-air immersion',
+        (elTall.renderHeight || 0) > 135 &&
+          tallBotY > tallGlassBot - 15 &&
+          tallBotY < tallGlassBot &&
+          (elTall.immersedFrac || 0) > 0.05 &&
+          elDry.immersedFrac === 0 &&
+          (elTrough.renderHeight || 999) < 95 &&
+          trBotY < trGlassBot - 2 &&
+          (elTrough.immersedFrac || 0) > 0.25 &&
+          err === null,
+        `tallH=${elTall.renderHeight?.toFixed(1)}, tallGap=${(tallGlassBot - tallBotY).toFixed(1)}px, tallImm=${elTall.immersedFrac?.toFixed(2)}, dryImm=${elDry.immersedFrac}, trH=${elTrough.renderHeight?.toFixed(1)}, trGap=${(trGlassBot - trBotY).toFixed(1)}px, err=${err}`
+      );
+    }
+
+    // TEST 88: Standard Air ('air') vs Inert ('inert') Modes — Unpurged H2+O2 Safety Pop, Gas Stream Air Purge & Clean CuO + H2 -> Cu + H2O Reduction
+    {
+      // A: Heating unpurged CuO tube already holding H2 + air O2 triggers educational oxyhydrogen warning alert
+      const simWarn = new LabSimulation();
+      const bnW = simWarn.createApparatus('burner', 400, 482 - APPARATUS.burner.height / 2 + 2);
+      simWarn.setBurnerFlame(bnW.id, 3);
+      const standW = simWarn.createApparatus('retort_stand', 455, 482 - APPARATUS.retort_stand.height / 2 + 2);
+      const tubeW = simWarn.createApparatus('test_tube_50', 400, 326);
+      tubeW.moles = { CuO_s: 0.03 };
+      tubeW.headspaceGasMoles.H2_g = 0.002;
+      tubeW.tempK = 460;
+      simWarn.attachToStand(tubeW.id, standW.id);
+      let unpurgedPopSeen = false;
+      simWarn.visualHooks.onAlert = (tp) => { if (tp === 'unpurged_h2') unpurgedPopSeen = true; };
+      simWarn.step(0.05);
+
+      // B: Textbook workflow: run H2 generator (Zn + HCl -> CuO tube) for 4s first so air O2 flushes < 0.14, then light burner -> smooth CuO -> Cu + H2O condensation
+      const simRed = new LabSimulation();
+      simRed.setupPreset('cuo_h2_reduction');
+      let falsePop = false;
+      simRed.visualHooks.onAlert = (tp) => { if (tp === 'unpurged_h2') falsePop = true; };
+      stepSeconds(simRed, 4.2, 0.05);
+      const tubeRed = simRed.items.find(it => it.typeId === 'test_tube_50');
+      const burnerRed = simRed.items.find(it => it.kind === 'burner');
+      const purgedFrac = tubeRed.airO2PurgeFrac;
+
+      simRed.setBurnerFlame(burnerRed.id, 3);
+      stepSeconds(simRed, 14.0, 0.05);
+      const cuFormed = tubeRed.moles.Cu_s || 0;
+      const cuoLeft = tubeRed.moles.CuO_s || 0;
+      const mouthMist = tubeRed.wallCondenseLevel || 0;
+
+      // C: Inert Glovebox mode prevents unpurged O2 safety pop completely
+      const simInert = new LabSimulation();
+      simInert.setAtmosphereMode('inert');
+      const bnI = simInert.createApparatus('burner', 400, 482 - APPARATUS.burner.height / 2 + 2);
+      simInert.setBurnerFlame(bnI.id, 3);
+      const tubeI = simInert.createApparatus('test_tube_50', 400, 326);
+      tubeI.moles = { CuO_s: 0.03 };
+      tubeI.headspaceGasMoles.H2_g = 0.002;
+      tubeI.tempK = 460;
+      let inertPop = false;
+      simInert.visualHooks.onAlert = (tp) => { if (tp === 'unpurged_h2') inertPop = true; };
+      simInert.step(0.05);
+
+      assert(
+        'Default Standard Air triggers alertUnpurgedH2O2 if heated without purging; 4s H2 stream purges air cleanly allowing smooth CuO -> Cu(s) brick-red + droplets; Inert mode has zero O2 pop',
+        simWarn.environment.atmosphereMode === 'air' &&
+          unpurgedPopSeen &&
+          purgedFrac < 0.14 &&
+          !falsePop &&
+          cuFormed > 0.002 &&
+          cuoLeft < 0.04 &&
+          mouthMist > 0.25 &&
+          !inertPop,
+        `warnPop=${unpurgedPopSeen}, purgeFrac=${purgedFrac?.toFixed(3)}, falsePop=${falsePop}, Cu=${(cuFormed * 1000).toFixed(2)}mmol, mist=${mouthMist.toFixed(2)}, inertPop=${inertPop}`
+      );
+    }
+
+    // TEST 89: Ambient Air Na Tarnishing, Humid NaOH Deliquescence, Hot Zn Combustion in O2 (Pressure Drop) & CuO Catalyzing H2O2
+    {
+      // A: Standard Air vs Inert Glovebox contrast for dry Na tarnishing & humid-air NaOH deliquescence
+      const simAir = new LabSimulation();
+      const vNaAir = simAir.createApparatus('porcelain_dish', 220, 427);
+      vNaAir.moles = { Na_s: 0.05 };
+      const vNaohAir = simAir.createApparatus('beaker_250', 380, 427);
+      vNaohAir.moles = { NaOH_s: 0.1 };
+      stepSeconds(simAir, 6.5, 0.1);
+
+      const simGlove = new LabSimulation();
+      simGlove.setAtmosphereMode('inert');
+      const vNaGlv = simGlove.createApparatus('porcelain_dish', 220, 427);
+      vNaGlv.moles = { Na_s: 0.05 };
+      const vNaohGlv = simGlove.createApparatus('beaker_250', 380, 427);
+      vNaohGlv.moles = { NaOH_s: 0.1 };
+      stepSeconds(simGlove, 6.5, 0.1);
+
+      // B: Room-temp Zn does NOT burn in air; heated Zn in O2 burns into white ZnO(s) consuming trapped O2 pressure
+      const simZn = new LabSimulation();
+      const vColdZn = simZn.createApparatus('beaker_250', 180, 427);
+      vColdZn.moles = { Zn_s: 0.03 };
+      stepSeconds(simZn, 1.5, 0.05);
+
+      const vBurnO2 = simZn.createApparatus('erlenmeyer_250', 420, 427);
+      vBurnO2.isStoppered = true;
+      vBurnO2.sealedAirMoles = 0.0005;
+      vBurnO2.sealedAirO2Moles = 0;
+      vBurnO2.headspaceGasMoles.O2_g = 0.0055;
+      vBurnO2.moles = { Zn_s: 0.05 };
+      vBurnO2.particleCounts = { Zn_s: 20 };
+      vBurnO2.tempK = 628;
+      const o2Before = vBurnO2.headspaceGasMoles.O2_g;
+      stepSeconds(simZn, 1.0, 0.05);
+      const znoFormed = vBurnO2.moles.ZnO_s || 0;
+      const o2After = vBurnO2.headspaceGasMoles.O2_g || 0;
+
+      // Inert atmosphere with zero O2 at 700 K cannot burn Zn
+      const simZnInert = new LabSimulation();
+      simZnInert.setAtmosphereMode('inert');
+      const vInertHotZn = simZnInert.createApparatus('erlenmeyer_250', 600, 427);
+      vInertHotZn.moles = { Zn_s: 0.05 };
+      vInertHotZn.tempK = 700;
+      stepSeconds(simZnInert, 1.5, 0.05);
+
+      // C: CuO(s) catalyzes H2O2 decomposition rapidly evolving O2
+      const vCat = simZn.createApparatus('beaker_250', 780, 427);
+      vCat.moles = { CuO_s: 0.015, H2O_l: 2.0, H2O2_aq: 0.08 };
+      stepSeconds(simZn, 3.0, 0.05);
+      const catO2 = vCat.escapedGasMoles.O2_g || 0;
+
+      assert(
+        'Standard Air tarnishes dry Na & deliquesces open NaOH while Inert protects both; hot Zn burns only with O2 producing ZnO(s) & consuming O2; CuO catalyzes H2O2 -> O2',
+        (vNaAir.naTarnishFrac || 0) > 0.5 &&
+          (vNaAir.moles.Na2O_s || 0) > 0 &&
+          (vNaohAir.naohDeliquesceFrac || 0) > 0.15 &&
+          (vNaGlv.naTarnishFrac || 0) === 0 &&
+          (vNaohGlv.naohDeliquesceFrac || 0) === 0 &&
+          (vColdZn.moles.ZnO_s || 0) === 0 &&
+          znoFormed > 0.005 &&
+          o2After < o2Before * 0.9 &&
+          (vInertHotZn.moles.ZnO_s || 0) === 0 &&
+          catO2 > 0.008,
+        `naTarn=${vNaAir.naTarnishFrac?.toFixed(2)}, naohDeliq=${vNaohAir.naohDeliquesceFrac?.toFixed(2)}, glv=${vNaGlv.naTarnishFrac}/${vNaohGlv.naohDeliquesceFrac}, ZnO=${(znoFormed * 1000).toFixed(2)}mmol(inert=${vInertHotZn.moles.ZnO_s || 0}), catO2=${(catO2 * 1000).toFixed(2)}mmol`
+      );
+    }
+
+    // TEST 90: Complete SGK Presets Integrity & Strict IUPAC Bilingual Audit (Prompt 20)
+    {
+      const newPresets = [
+        'cuo_h2_reduction',
+        'zn_burn_o2',
+        'air_tarnish_deliquesce',
+        'na_water_phen',
+        'copper_hydroxide_series',
+        'amphoteric_zn_cu',
+      ];
+      let allPresetsOk = true;
+      for (const pk of newPresets) {
+        const s = new LabSimulation();
+        s.setupPreset(pk);
+        if (s.items.length < 2) allPresetsOk = false;
+        for (const it of s.items) {
+          if (it.kind === 'vessel' && !validateVesselInvariants(it).valid) allPresetsOk = false;
+        }
+      }
+
+      const viTexts = [...Object.values(I18N.vi), ...REACTIONS.map(r => `${r.nameVi || ''} ${r.descVi || ''}`)];
+      const forbiddenChemRegex = /\b(kẽm|natri|hiđro|nitơ|agon)\b|\bkhí oxi\b|\boxi\b(?!\s*hóa)|kim loại (đồng|bạc)|bạc (xốp|kim loại)/i;
+      const badHits = viTexts.filter(txt => forbiddenChemRegex.test(txt));
+
+      assert(
+        'All 6 new Textbook Presets (Gr 8-12) initialize cleanly with valid vessel invariants & 100% IUPAC English nomenclature in VI texts',
+        allPresetsOk &&
+          badHits.length === 0 &&
+          Boolean(SPECIES.ZnO_s && SPECIES.ZnO_s.hotColor),
+        `presetsOK=${allPresetsOk}, badIUPAC=${badHits.length}${badHits[0] ? `(${badHits[0].slice(0, 40)})` : ''}, ZnO_hot=${SPECIES.ZnO_s?.hotColor}`
       );
     }
 

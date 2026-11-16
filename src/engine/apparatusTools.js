@@ -798,20 +798,62 @@ export function checkIndicatorStripInteractions(sim, strip) {
  */
 export function syncDockedToolPositions(sim) {
   for (const it of sim.items) {
-    if (it.kind === 'electrode' && it.dockedVesselId) {
-      const v = sim.getItem(it.dockedVesselId);
-      if (!v || v.isShattered) {
-        it.dockedVesselId = null;
-        continue;
+    if (it.kind === 'electrode') {
+      if (it.dockedVesselId) {
+        const v = sim.getItem(it.dockedVesselId);
+        if (!v || v.isShattered) {
+          it.dockedVesselId = null;
+          it.renderHeight = null;
+          it.immersedHeightPx = null;
+          it.immersedFrac = undefined;
+          continue;
+        }
+        const vSpec = APPARATUS[v.typeId];
+        const eSpec = APPARATUS[it.typeId];
+        const neckHalfPx = vSpec.neckRadius ? vSpec.neckRadius * 0.65 : vSpec.width * 0.31;
+        const maxDx = Math.min(26, vSpec.width * 0.31, neckHalfPx);
+        const dxOff = it.dockSide === 'right' ? maxDx : -maxDx;
+
+        const rimY = v.y - vSpec.height / 2;
+        const vInteriorBottomY = v.y + vSpec.height / 2 - 7;
+        const targetTopY = rimY - 18;
+        const targetBotY = vInteriorBottomY - 3;
+        const effHeight = Math.max(44, targetBotY - targetTopY);
+
+        it.x = v.x + dxOff;
+        it.y = 0.5 * (targetTopY + targetBotY);
+        it.renderHeight = effHeight;
+        it.vy = 0;
+        it.fallStartY = null;
+        if (eSpec) it.restingOnId = null;
+
+        // Exact tip immersion vs current liquid surface level inside parent vessel
+        const liqMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
+        const solMl = computeSolidVolumeMl(v.moles);
+        if (liqMl <= 0.15) {
+          it.immersedHeightPx = 0;
+          it.immersedFrac = 0;
+        } else if (vSpec.geometry) {
+          const footH = vSpec.shape === 'cylinder' ? 9 : 3.5;
+          const baseBottom = v.y + vSpec.height / 2 - footH;
+          const topGlass = rimY + 4;
+          const spanH = Math.max(10, baseBottom - topGlass);
+          const st = vSpec.geometry.getLiquidState(liqMl + solMl);
+          const surfaceY = baseBottom - st.fillRatio * spanH;
+          const immPx = Math.max(0, Math.min(effHeight - 14, targetBotY - surfaceY));
+          it.immersedHeightPx = immPx;
+          it.immersedFrac = immPx <= 1.0 ? 0 : Math.min(1, immPx / Math.max(20, effHeight - 14));
+        } else {
+          const fillFrac = Math.max(0, Math.min(1, (liqMl + solMl) / Math.max(1, vSpec.maxVolumeMl)));
+          const liqH = fillFrac * (vSpec.height - 14);
+          it.immersedHeightPx = liqH;
+          it.immersedFrac = liqH <= 1.0 ? 0 : Math.min(1, liqH / Math.max(20, effHeight - 14));
+        }
+      } else {
+        it.renderHeight = null;
+        it.immersedHeightPx = null;
+        it.immersedFrac = undefined;
       }
-      const vSpec = APPARATUS[v.typeId];
-      const eSpec = APPARATUS[it.typeId];
-      const dxOff = it.dockSide === 'right' ? Math.min(26, vSpec.width * 0.31) : -Math.min(26, vSpec.width * 0.31);
-      it.x = v.x + dxOff;
-      it.y = v.y - vSpec.height * 0.14;
-      it.vy = 0;
-      it.fallStartY = null;
-      if (eSpec) it.restingOnId = null;
     } else if (it.kind === 'vessel' && it.isInverted && it.mountedOverElectrodeId && !it.isDragging) {
       const el = sim.getItem(it.mountedOverElectrodeId);
       const parentV = el?.dockedVesselId ? sim.getItem(el.dockedVesselId) : null;
