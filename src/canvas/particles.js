@@ -234,7 +234,7 @@ export class ParticleSystem {
       const rateMin = p.rateMin ?? 2e-5;
       const active =
         gId === 'HCl_g'
-          ? !vessel.isStoppered && (hConc > 6.5 || (rateMap.HCl_g || 0) > rateMin)
+          ? !vessel.isStoppered && ((hConc > 6.5 && vessel.tempK >= 268.15) || (rateMap[gId] || 0) > rateMin)
           : (rateMap[gId] || 0) > rateMin;
       if (active) {
         plumeSignalSum += p.signal || 0.25;
@@ -245,7 +245,8 @@ export class ParticleSystem {
     }
 
     const steamSignal =
-      (steamRate > 1.5e-6 && steamVis > 0.03) || metrics.isBoiling || metrics.isDehydrating
+      !vessel.isFrozenSolid &&
+      ((steamRate > 1.5e-6 && steamVis > 0.03) || metrics.isBoiling || metrics.isDehydrating)
         ? Math.min(2.2, (0.28 + steamVis * 1.45) * (metrics.isBoiling ? 1.25 : 1.0))
         : 0;
     const naMistSignal = metrics.naIgnited ? 0.85 : (metrics.naTempK || 298) >= 540 ? 0.25 : 0;

@@ -1,7 +1,7 @@
 import { CONSTANTS, ethanolVaporPressureBar, waterBoilingPointK, waterVaporPressureBar } from '../data/constants.js';
 import { ALL_GAS_IDS, NON_STEAM_GAS_IDS, SPECIES } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
-import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
+import { computeLiquidVolumeL, computeSolidVolumeMl, solutionFreezingPointK } from './equilibrium.js';
 
 export const NON_STEAM_GASES = NON_STEAM_GAS_IDS;
 export const ALL_GASES = ALL_GAS_IDS;
@@ -150,6 +150,7 @@ export function computeTubingGeometry(vessel, target) {
 export function computeSyringeHeatCapacityJK(syringe) {
   let cpTotal = 34.0; // Borosilicate syringe barrel & glass plunger thermal mass
   cpTotal += (syringe.condensedWaterMol || 0) * CONSTANTS.CP_H2O_J_MOL_K;
+  cpTotal += (syringe.frozenWaterMol || 0) * CONSTANTS.CP_ICE_J_MOL_K;
   for (const [spId, n] of Object.entries(syringe.overflowMoles || {})) {
     if (n > 0 && SPECIES[spId]?.cp) {
       cpTotal += n * SPECIES[spId].cp;
@@ -192,6 +193,26 @@ export function buildCombinedSyringeLiquidMoles(syringe) {
 }
 
 /**
+ * Compute total condensed + frozen moles inside Gas Syringe (for accurate balance weighing).
+ */
+export function buildCombinedSyringeTotalMoles(syringe) {
+  const moles = buildCombinedSyringeLiquidMoles(syringe);
+  if ((syringe?.frozenWaterMol || 0) > 1e-12) {
+    moles.H2O_s = (moles.H2O_s || 0) + syringe.frozenWaterMol;
+  }
+  return moles;
+}
+
+/**
+ * Compute frozen solid/ice volume inside Gas Syringe barrel (mL).
+ */
+export function computeSyringeFrozenVolumeMl(syringe) {
+  const iceMl = ((syringe?.frozenWaterMol || 0) * SPECIES.H2O_s.molarMass) / CONSTANTS.ICE_DENSITY_G_ML;
+  const ovSolidMl = computeSolidVolumeMl(syringe?.overflowMoles || {});
+  return iceMl + ovSolidMl;
+}
+
+/**
  * Compute liquid water + overflowed solution volume inside Gas Syringe barrel (mL).
  */
 export function computeSyringeLiquidVolumeMl(syringe, env) {
@@ -202,18 +223,27 @@ export function computeSyringeLiquidVolumeMl(syringe, env) {
 }
 
 export function computeSyringeTotalVolumeMl(syringe, env) {
-  return computeSyringeGasVolumeMl(syringe, env) + computeSyringeLiquidVolumeMl(syringe, env);
+  return (
+    computeSyringeGasVolumeMl(syringe, env) +
+    computeSyringeLiquidVolumeMl(syringe, env) +
+    computeSyringeFrozenVolumeMl(syringe)
+  );
 }
 
 /**
- * Advance thermal exchange and Antoine saturation condensation/re-evaporation inside a Gas Syringe.
+ * Advance thermal exchange, Antoine/ice saturation condensation/sublimation, and freeze/melt inside a Gas Syringe.
  */
 export function stepSyringeThermodynamics(syringe, dt, env) {
   if (!syringe || syringe.kind !== 'gas_syringe' || syringe.isBroken) return;
   if (syringe.tempK == null) syringe.tempK = env.tempK;
 
   const cTotal = computeSyringeHeatCapacityJK(syringe);
-  const hLossWK = 0.65;
+  const isCryoCool = env.tempK < CONSTANTS.T_FREEZE_WATER_K && syringe.tempK > env.tempK;
+  const isCryoThaw =
+    syringe.tempK < CONSTANTS.T_FREEZE_WATER_K &&
+    env.tempK >= CONSTANTS.T_FREEZE_WATER_K &&
+    syringe.tempK < env.tempK;
+  const hLossWK = isCryoCool ? 8.5 : isCryoThaw ? 6.0 : 0.65;
   const ambientCoolingJ = -hLossWK * (syringe.tempK - env.tempK) * dt;
 
   let nPerm = 0;
@@ -224,6 +254,7 @@ export function stepSyringeThermodynamics(syringe, dt, env) {
   }
   const nVapor = syringe.gasMoles.H2O_g || 0;
   const nCond = syringe.condensedWaterMol || 0;
+  const nFrozen = syringe.frozenWaterMol || 0;
   const nEtVapor = syringe.gasMoles.C2H5OH_g || 0;
 
   const pExtBar = Math.max(0.05, env.pressureBar);
@@ -256,7 +287,7 @@ export function stepSyringeThermodynamics(syringe, dt, env) {
   }
 
   if (nVapor > 1e-9 && nVapor > nVaporEq) {
-    // Supersaturated water vapor condenses into H2O(l) droplets, releasing ΔH_vap to the syringe barrel
+    // Supersaturated water vapor condenses (or freezes/deposits directly below 0 C)
     const excessVapor = nVapor - nVaporEq;
     const subcoolFrac = Math.max(0.08, 1 - pSatBar / pExtBar);
     const kCond = 0.55 + 2.8 * subcoolFrac;
@@ -264,8 +295,13 @@ export function stepSyringeThermodynamics(syringe, dt, env) {
     if (dCond > 1e-13) {
       syringe.gasMoles.H2O_g = Math.max(0, nVapor - dCond);
       if (syringe.gasMoles.H2O_g < 1e-13) syringe.gasMoles.H2O_g = 0;
-      syringe.condensedWaterMol = nCond + dCond;
-      latentHeatJ = dCond * CONSTANTS.DELTA_H_VAP_WATER_J;
+      if (syringe.tempK < CONSTANTS.T_FREEZE_WATER_K) {
+        syringe.frozenWaterMol = nFrozen + dCond;
+        latentHeatJ += dCond * (CONSTANTS.DELTA_H_VAP_WATER_J + CONSTANTS.DELTA_H_FUS_WATER_J);
+      } else {
+        syringe.condensedWaterMol = nCond + dCond;
+        latentHeatJ += dCond * CONSTANTS.DELTA_H_VAP_WATER_J;
+      }
       condenseRate = dCond / Math.max(1e-5, dt);
     }
   } else if (nCond > 1e-9 && (isAboveBoil || nVapor < nVaporEq * 0.99)) {
@@ -282,23 +318,73 @@ export function stepSyringeThermodynamics(syringe, dt, env) {
       syringe.condensedWaterMol = Math.max(0, nCond - dEvap);
       if (syringe.condensedWaterMol < 1e-13) syringe.condensedWaterMol = 0;
       syringe.gasMoles.H2O_g = nVapor + dEvap;
-      latentHeatJ = -dEvap * CONSTANTS.DELTA_H_VAP_WATER_J;
+      latentHeatJ -= dEvap * CONSTANTS.DELTA_H_VAP_WATER_J;
     }
   }
 
   let newTempK = syringe.tempK + (ambientCoolingJ + latentHeatJ) / cTotal;
   if (latentHeatJ > 0 && newTempK > tBoilK) {
-    // Condensation latent heat alone cannot warm barrel above steam's dew/boiling temperature
     newTempK = Math.max(syringe.tempK, Math.min(newTempK, tBoilK));
   }
-  syringe.tempK = Math.max(220, Math.min(600, newTempK));
+  newTempK = Math.max(200, Math.min(600, newTempK));
+
+  // Freeze / melt condensed pure water inside syringe barrel
+  const curCond = syringe.condensedWaterMol || 0;
+  const curFrozen = syringe.frozenWaterMol || 0;
+  if (newTempK < CONSTANTS.T_FREEZE_WATER_K && curCond > 1e-12) {
+    const defJ = cTotal * (CONSTANTS.T_FREEZE_WATER_K - newTempK);
+    const dFreeze = Math.min(curCond, defJ / CONSTANTS.DELTA_H_FUS_WATER_J);
+    if (dFreeze > 1e-12) {
+      syringe.condensedWaterMol = Math.max(0, curCond - dFreeze);
+      if (syringe.condensedWaterMol < 1e-12) syringe.condensedWaterMol = 0;
+      syringe.frozenWaterMol = curFrozen + dFreeze;
+      newTempK += (dFreeze * CONSTANTS.DELTA_H_FUS_WATER_J) / cTotal;
+    }
+  } else if (newTempK > CONSTANTS.T_FREEZE_WATER_K && curFrozen > 1e-12) {
+    const excJ = cTotal * (newTempK - CONSTANTS.T_FREEZE_WATER_K);
+    const dMelt = Math.min(curFrozen, excJ / CONSTANTS.DELTA_H_FUS_WATER_J);
+    if (dMelt > 1e-12) {
+      syringe.frozenWaterMol = Math.max(0, curFrozen - dMelt);
+      if (syringe.frozenWaterMol < 1e-12) syringe.frozenWaterMol = 0;
+      syringe.condensedWaterMol = (syringe.condensedWaterMol || 0) + dMelt;
+      newTempK -= (dMelt * CONSTANTS.DELTA_H_FUS_WATER_J) / cTotal;
+    }
+  }
+
+  // Freeze / melt overflowed aqueous solution inside syringe barrel if any
+  const ov = syringe.overflowMoles;
+  if (ov && ((ov.H2O_l || 0) > 1e-12 || (ov.H2O_s || 0) > 1e-12)) {
+    const ovWater = ov.H2O_l || 0;
+    const ovIce = ov.H2O_s || 0;
+    const tOvFreeze = solutionFreezingPointK(ov, ovWater < 1e-4 && ovIce > 0);
+    if (newTempK < tOvFreeze && ovWater > 1e-12) {
+      const dF = Math.min(ovWater, (cTotal * (tOvFreeze - newTempK)) / CONSTANTS.DELTA_H_FUS_WATER_J);
+      if (dF > 1e-12) {
+        ov.H2O_l = Math.max(0, ovWater - dF);
+        if (ov.H2O_l < 1e-12) delete ov.H2O_l;
+        ov.H2O_s = ovIce + dF;
+        newTempK += (dF * CONSTANTS.DELTA_H_FUS_WATER_J) / cTotal;
+      }
+    } else if (newTempK > tOvFreeze && ovIce > 1e-12) {
+      const dM = Math.min(ovIce, (cTotal * (newTempK - tOvFreeze)) / CONSTANTS.DELTA_H_FUS_WATER_J);
+      if (dM > 1e-12) {
+        ov.H2O_s = Math.max(0, ovIce - dM);
+        if (ov.H2O_s < 1e-12) delete ov.H2O_s;
+        ov.H2O_l = ovWater + dM;
+        newTempK -= (dM * CONSTANTS.DELTA_H_FUS_WATER_J) / cTotal;
+      }
+    }
+  }
+
+  syringe.tempK = Math.max(200, Math.min(600, newTempK));
   syringe.lastCondenseRateMolS = condenseRate;
 
   // Track internal syringe pressure when piston hits 250 mL mechanical collar stop
   const gasMl = computeSyringeGasVolumeMl(syringe, env);
   const liqMl = computeSyringeLiquidVolumeMl(syringe, env);
+  const frozenMl = computeSyringeFrozenVolumeMl(syringe);
   const syrSpec = APPARATUS[syringe.typeId] || APPARATUS.gas_syringe;
-  const maxGasCapMl = Math.max(2.0, syrSpec.maxVolumeMl - liqMl);
+  const maxGasCapMl = Math.max(2.0, syrSpec.maxVolumeMl - liqMl - frozenMl);
   if (gasMl > maxGasCapMl) {
     syringe.internalPressureBar = pExtBar * (gasMl / maxGasCapMl);
   } else {
@@ -337,7 +423,12 @@ export function stepVesselGasAndPressure(
       }
     }
     if (totalSteam > 0) {
-      vessel.escapedGasMoles.H2O_g = (vessel.escapedGasMoles.H2O_g || 0) + totalSteam;
+      if (env.tempK < CONSTANTS.T_FREEZE_WATER_K) {
+        // Subzero room air immediately condenses/freezes escaping steam as frost rather than free H2O(g)
+        vessel.escapedFrostH2OMol = (vessel.escapedFrostH2OMol || 0) + totalSteam;
+      } else {
+        vessel.escapedGasMoles.H2O_g = (vessel.escapedGasMoles.H2O_g || 0) + totalSteam;
+      }
     }
     vessel.internalPressureBar = env.pressureBar;
   };
@@ -380,7 +471,7 @@ export function stepVesselGasAndPressure(
           target.inflowTempK = vessel.tempK;
           const cSyr = computeSyringeHeatCapacityJK(target);
           const dT = (incomingHeatCapJK * (vessel.tempK - target.tempK)) / cSyr;
-          target.tempK = Math.max(220, Math.min(600, target.tempK + dT));
+          target.tempK = Math.max(200, Math.min(600, target.tempK + dT));
         }
 
         vessel.internalPressureBar = env.pressureBar;
@@ -476,17 +567,22 @@ export function stepVesselGasAndPressure(
   }
   vessel.headspaceGasMoles.H2O_g = (vessel.headspaceGasMoles.H2O_g || 0) + totalSteam;
 
-  // Condense excess headspace steam back to droplets when a sealed vessel cools below dew point
+  // Condense/deposit excess headspace steam when a sealed vessel cools below dew/frost point
   const headSteam = vessel.headspaceGasMoles.H2O_g || 0;
   if (headSteam > 1e-8 && vessel.tempK < waterBoilingPointK(env.pressureBar)) {
     const pHeadSteam = (headSteam * CONSTANTS.R_L_BAR_MOL_K * vessel.tempK) / headspaceL;
     const pSatV = waterVaporPressureBar(vessel.tempK);
     if (pHeadSteam > pSatV * 1.02) {
       const nSteamEq = (pSatV * headspaceL) / (CONSTANTS.R_L_BAR_MOL_K * vessel.tempK);
-      const dCond = Math.min(headSteam - nSteamEq, (headSteam - nSteamEq) * 0.08);
+      const relaxRate = vessel.tempK < CONSTANTS.T_FREEZE_WATER_K ? 0.35 : 0.08;
+      const dCond = Math.min(headSteam - nSteamEq, (headSteam - nSteamEq) * relaxRate);
       if (dCond > 1e-12) {
         vessel.headspaceGasMoles.H2O_g = Math.max(0, headSteam - dCond);
-        vessel.moles.H2O_l = (vessel.moles.H2O_l || 0) + dCond;
+        if (vessel.tempK < CONSTANTS.T_FREEZE_WATER_K) {
+          vessel.moles.H2O_s = (vessel.moles.H2O_s || 0) + dCond;
+        } else {
+          vessel.moles.H2O_l = (vessel.moles.H2O_l || 0) + dCond;
+        }
       }
     }
   }

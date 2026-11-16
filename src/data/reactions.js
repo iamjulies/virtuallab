@@ -39,7 +39,7 @@ export const REACTIONS = [
     solidId: 'CuSO4_5H2O_s',
     ionCheckId: 'Cu2_aq',
     solubilityMolPerKg298: 1.43,
-    solubilityTempCoeff: 0.016,
+    solubilityTempCoeff: 0.019,
     k298: 0.14,
     eaJ: 24000,
     deltaHJ: +11700, // Slightly endothermic
@@ -57,7 +57,7 @@ export const REACTIONS = [
     solidId: 'CuSO4_s',
     ionCheckId: 'Cu2_aq',
     solubilityMolPerKg298: 1.43,
-    solubilityTempCoeff: 0.016,
+    solubilityTempCoeff: 0.019,
     k298: 0.06,
     eaJ: 18000,
     deltaHJ: -66500, // Strongly exothermic hydration!
@@ -380,6 +380,22 @@ export const REACTIONS = [
     k298: 12.0, // Scales with surface area (mol / (m^2 * s))
     eaJ: 4200,  // Driven by separate droplet surface temp T_Na
     deltaHJ: -368000, // -184 kJ per mol Na!
+    vigorousGas: true,
+  },
+  {
+    id: 'na_ice',
+    equation: '2Na(s) + 2H₂O(s) → 2Na⁺(aq) + 2OH⁻(aq) + H₂(g)↑',
+    type: 'heterogeneous_ice',
+    nameVi: 'Sodium phản ứng bề mặt với nước đá H₂O(s)',
+    nameEn: 'Surface reaction of Sodium with ice H₂O(s)',
+    descVi: 'Na tiếp xúc mặt băng ở nhiệt độ âm ban đầu phản ứng rất chậm, nhiệt tỏa ra làm tan chảy cục bộ lớp nước lỏng mỏng khiến phản ứng nhanh dần lên.',
+    descEn: 'Sodium reacts slowly upon contacting solid ice; exothermic heat locally melts a thin liquid film beneath the bead, accelerating the reaction.',
+    reactants: { Na_s: 2, H2O_s: 2 },
+    products: { Na_aq: 2, OH_aq: 2, H2_g: 1 },
+    solidId: 'Na_s',
+    k298: 0.55,
+    eaJ: 18500,
+    deltaHJ: -355980, // -368000 + 2*6010 (accounts for ice fusion enthalpy)
     vigorousGas: true,
   },
   {

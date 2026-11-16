@@ -89,6 +89,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     if (n <= 1e-7) continue;
     const massG = n * sp.molarMass;
     const vType = sp.visualType || 'white_powder';
+    if (vType === 'water_ice') continue; // Rendered as translucent crystalline ice matrix in vesselRenderer.js
 
     if (
       vType === 'white_powder' ||
@@ -242,25 +243,28 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     ctx.restore();
   }
 
-  // 3. Sodium (Na) — floats & melts into glowing silvery sphere on water meniscus!
+  // 3. Sodium (Na) — floats on water meniscus or rests atop frozen H2O(s) ice with melting film
   const nNa = moles.Na_s || 0;
   if (nNa > 1e-7) {
     const massNa = nNa * SPECIES.Na_s.molarMass;
     const radius = Math.min(12, Math.max(3.8, 3.2 + Math.cbrt(massNa) * 5.2));
+    const hasIceSurface = (moles.H2O_s || 0) > 1e-6;
     ctx.save();
 
-    if (hasWater && surfaceY < bottom - 4) {
+    if ((hasWater || hasIceSurface) && surfaceY < bottom - 4) {
       const nx = left + 8 + vessel.naPosRatio * Math.max(10, width - 16);
-      const ny = surfaceY + 1;
+      const ny = surfaceY + (hasWater ? 1 : -radius * 0.35);
 
-      // Turbulent white reaction collar around Na
-      ctx.beginPath();
-      ctx.ellipse(nx, ny + 1, radius * 1.85, radius * 0.55, 0, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.48)';
-      ctx.fill();
+      const tNa = vessel.naTempK ?? vessel.tempK;
+      if (hasWater || tNa > 273.15) {
+        // Turbulent white / local melt-film reaction collar around Na
+        ctx.beginPath();
+        ctx.ellipse(nx, ny + 1, radius * 1.85, radius * 0.55, 0, 0, Math.PI * 2);
+        ctx.fillStyle = hasWater ? 'rgba(255, 255, 255, 0.48)' : 'rgba(186, 230, 253, 0.62)';
+        ctx.fill();
+      }
 
       // Thermal sodium halo when molten -> incandescent -> ignited (>= 680 K)
-      const tNa = vessel.naTempK ?? vessel.tempK;
       if (tNa >= 520 || vessel.naIgnited) {
         const heatFrac = Math.min(1, (tNa - 500) / 220);
         const haloGrad = ctx.createRadialGradient(nx, ny, radius * 0.4, nx, ny, radius * (2.2 + heatFrac * 1.5));

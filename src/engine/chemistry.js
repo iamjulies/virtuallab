@@ -8,9 +8,25 @@ import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
  * Arrhenius factor relative to 298.15 K: exp((-Ea / R) * (1/T - 1/298.15)).
  */
 function arrheniusFactor(eaJ, tempK) {
-  const T = Math.max(240, Math.min(1200, tempK));
+  const T = Math.max(200, Math.min(1200, tempK));
   const expo = (-eaJ / CONSTANTS.R_J_MOL_K) * (1 / T - 1 / CONSTANTS.T_STD_K);
   return Math.exp(Math.max(-40, Math.min(25, expo)));
+}
+
+/**
+ * Bulk aqueous ion/diffusion mobility factor [0..1].
+ * Drops to 0 when water is completely frozen solid (or >=90% solid ice matrix),
+ * locking bulk aqueous dissolution, ionic, neutralization & Zn/Cu redox reactions.
+ */
+function computeIceMobilityFactor(vessel) {
+  if (vessel.isFrozenSolid) return 0;
+  const nWater = vessel.moles.H2O_l || 0;
+  const nIce = vessel.moles.H2O_s || 0;
+  if (nIce <= 1e-7) return 1.0;
+  if (nWater < 1e-4) return 0;
+  const iceFrac = nIce / (nWater + nIce);
+  if (iceFrac >= 0.90) return 0;
+  return Math.pow(Math.max(0, 1 - iceFrac), 2.0);
 }
 
 /**
@@ -58,9 +74,10 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
 
   // Ensure aqueous environment exists for non-dry reactions
   const hasWater = (moles.H2O_l || 0) > 1e-7 && liquidVolL > 1e-6;
+  const iceMob = computeIceMobilityFactor(vessel);
 
   if (rxn.type === 'dissolution') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     const nSolid = moles[rxn.solidId] || 0;
     const waterMassKg = (moles.H2O_l * SPECIES.H2O_l.molarMass) / 1000;
     const etohMassKg = ((moles.C2H5OH_l || 0) * SPECIES.C2H5OH_l.molarMass) / 1000;
@@ -91,11 +108,11 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     const pCount = vessel.particleCounts?.[rxn.solidId] ?? 12;
     const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, pCount);
     const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
-    return k * area * undersaturation * stirBoost * gardenSlow * 80;
+    return k * area * undersaturation * stirBoost * gardenSlow * iceMob * 80;
   }
 
   if (rxn.type === 'ionic_fast') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     if (rxn.id === 'dissolve_cuso4_2hcl' && liquidVolL < 0.0004) return 0;
     if (rxn.maxOhConc !== undefined) {
       const ohConc = (moles.OH_aq || 0) / liquidVolL;
@@ -110,21 +127,21 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
 
     // Homogeneous ionic reactions are activation/collision controlled -> unaffected by stirring
     const kRelax = getEffectiveRateConstant(rxn, T, false);
-    return minExtent * kRelax;
+    return minExtent * kRelax * iceMob;
   }
 
   if (rxn.type === 'amphoteric_base') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     const ohConc = (moles.OH_aq || 0) / liquidVolL;
     if (ohConc < rxn.minOhConc) return 0;
     const nSolid = moles.ZnOH2_s || 0;
     const excessFactor = Math.min(4.0, (ohConc - rxn.minOhConc) * 1.6);
     const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T) * stirBoost;
-    return Math.min(nSolid, (moles.OH_aq || 0) / 2) * k * excessFactor;
+    return Math.min(nSolid, (moles.OH_aq || 0) / 2) * k * excessFactor * iceMob;
   }
 
   if (rxn.type === 'acid_dissolve_precipitate') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     const hConc = (moles.H_aq || 0) / liquidVolL;
     if (hConc < 1e-5) return 0;
     let minExtent = Infinity;
@@ -132,7 +149,18 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
       minExtent = Math.min(minExtent, (moles[spId] || 0) / stoich);
     }
     const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T) * stirBoost;
-    return minExtent * k * Math.min(2.5, 0.35 + hConc);
+    return minExtent * k * Math.min(2.5, 0.35 + hConc) * iceMob;
+  }
+
+  if (rxn.type === 'heterogeneous_ice') {
+    const nNa = moles.Na_s || 0;
+    const nIce = moles.H2O_s || 0;
+    if (nNa <= 1e-12 || nIce <= 1e-6) return 0;
+    const tNa = vessel.naTempK ?? T;
+    const pCount = vessel.particleCounts?.Na_s ?? 1;
+    const area = computeSolidSurfaceAreaM2('Na_s', nNa, pCount);
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, tNa);
+    return k * area;
   }
 
   if (rxn.type === 'heterogeneous_metal') {
@@ -162,12 +190,14 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
         const waterFrac = Math.min(1.0, (moles.H2O_l || 0) / 0.1);
         return k * area * waterFrac;
       }
+      if (iceMob <= 0) return 0;
       const aqConc = (moles[rxn.aqueousId] || 0) / liquidVolL;
       if (rxn.minAqConc && aqConc < rxn.minAqConc) return 0;
       const concFactor = Math.pow(Math.min(14.0, aqConc), 1.05);
-      return k * area * concFactor * (vessel.stirTimer > 0 ? 2.4 : 1.0) * 3.5;
+      return k * area * concFactor * (vessel.stirTimer > 0 ? 2.4 : 1.0) * iceMob * 3.5;
     }
 
+    if (iceMob <= 0) return 0;
     const k = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
     const aqConc = (moles[rxn.aqueousId] || 0) / liquidVolL;
     if (rxn.minAqConc && aqConc < rxn.minAqConc) return 0;
@@ -175,11 +205,11 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     // Effective kinetic order with mild saturation at very high acid molarity
     const concFactor = Math.pow(Math.min(14.0, aqConc), 1.05);
     // Series diffusion ceiling (via getEffectiveRateConstant) handles still vs stirred boundary layer
-    return k * area * concFactor * (rxn.isHeterogeneous ? 1.0 : (vessel.stirTimer > 0 ? 2.6 : 1.0)) * 3.5;
+    return k * area * concFactor * (rxn.isHeterogeneous ? 1.0 : (vessel.stirTimer > 0 ? 2.6 : 1.0)) * iceMob * 3.5;
   }
 
   if (rxn.type === 'thermal_decomposition') {
-    if (rxn.requiresDry && hasWater && (moles.H2O_l || 0) > 1e-4) return 0;
+    if (rxn.requiresDry && ((hasWater && (moles.H2O_l || 0) > 1e-4) || (moles.H2O_s || 0) > 1e-4)) return 0;
     if (T < rxn.minTempK) return 0;
     let minExtent = Infinity;
     for (const [spId, stoich] of Object.entries(rxn.reactants)) {
@@ -190,7 +220,7 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
   }
 
   if (rxn.type === 'solid_state') {
-    if ((moles.H2O_l || 0) >= 0.01 || (moles.C2H5OH_l || 0) >= 0.01) return 0;
+    if ((moles.H2O_l || 0) >= 0.01 || (moles.H2O_s || 0) >= 0.01 || (moles.C2H5OH_l || 0) >= 0.01) return 0;
     const nNa = moles.Na_s || 0;
     const area = computeSolidSurfaceAreaM2('Na_s', nNa, vessel.particleCounts?.Na_s ?? 1);
     const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
@@ -199,23 +229,23 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
   }
 
   if (rxn.type === 'heterogeneous_rapid') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     let minExtent = Infinity;
     for (const [spId, stoich] of Object.entries(rxn.reactants)) {
       minExtent = Math.min(minExtent, (moles[spId] || 0) / stoich);
     }
-    return minExtent * rxn.kRelax298 * arrheniusFactor(rxn.eaJ, T);
+    return minExtent * rxn.kRelax298 * arrheniusFactor(rxn.eaJ, T) * iceMob;
   }
 
   if (rxn.type === 'lucas_sn2') {
-    if (!hasWater || T < rxn.minTempK) return 0;
+    if (!hasWater || iceMob <= 0 || T < rxn.minTempK) return 0;
     const cZn = (moles.Zn2_aq || 0) / liquidVolL;
     const cCl = (moles.Cl_aq || 0) / liquidVolL;
     const cH = (moles.H_aq || 0) / liquidVolL;
     if (cZn < rxn.minZnConc || cCl < rxn.minClConc || cH < rxn.minHConc) return 0;
     const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
     const catBoost = Math.min(3.5, cZn / rxn.minZnConc) * Math.min(2.5, cCl / rxn.minClConc);
-    return (moles.C2H5OH_l || 0) * k * catBoost;
+    return (moles.C2H5OH_l || 0) * k * catBoost * iceMob;
   }
 
   if (rxn.type === 'na_alcohol') {
@@ -231,7 +261,7 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
   }
 
   if (rxn.type === 'alkoxide_hydrolysis') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     const nW = moles.H2O_l || 0;
     const nE = moles.C2H5OH_l || 0;
     const nEtho = moles.C2H5O_aq || 0;
@@ -241,42 +271,42 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     const maxEthoKeepFrac = Math.min(0.65, 1.35 * xEtOH);
     const excessEtho = nEtho - nTotBase * maxEthoKeepFrac;
     if (excessEtho <= 1e-11) return 0;
-    return Math.min(excessEtho, nW) * rxn.kRelax298 * arrheniusFactor(rxn.eaJ, T);
+    return Math.min(excessEtho, nW) * rxn.kRelax298 * arrheniusFactor(rxn.eaJ, T) * iceMob;
   }
 
   if (rxn.type === 'cu_comprop_complex' || rxn.type === 'cu_comprop_free') {
-    if (!hasWater || T < rxn.minTempK) return 0;
+    if (!hasWater || iceMob <= 0 || T < rxn.minTempK) return 0;
     const cCl = (moles.Cl_aq || 0) / liquidVolL;
     if (cCl < rxn.minClConc) return 0;
     const area = computeSolidSurfaceAreaM2('Cu_s', moles.Cu_s || 0, vessel.particleCounts?.Cu_s ?? 8);
     const cuSrc = rxn.type === 'cu_comprop_complex' ? moles.CuCl4_2_aq || 0 : moles.Cu2_aq || 0;
     const cCuSrc = cuSrc / liquidVolL;
-    return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * area * Math.min(3.0, cCuSrc * 4.0) * stirBoost * 4.0;
+    return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * area * Math.min(3.0, cCuSrc * 4.0) * stirBoost * iceMob * 4.0;
   }
 
   if (rxn.type === 'brass_plating') {
-    if (!hasWater || T < rxn.minTempK) return 0;
+    if (!hasWater || iceMob <= 0 || T < rxn.minTempK) return 0;
     if ((moles.ZnOH4_2_aq || 0) < 1e-5) return 0;
     const cOH = (moles.OH_aq || 0) / liquidVolL;
     if (cOH < rxn.minOhConc) return 0;
     const areaCu = computeSolidSurfaceAreaM2('Cu_s', moles.Cu_s || 0, 8);
     const cZincate = (moles.ZnOH4_2_aq || 0) / liquidVolL;
-    return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * Math.max(1e-5, areaCu) * Math.min(3.5, 0.8 + cZincate * 8) * 18.0;
+    return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * Math.max(1e-5, areaCu) * Math.min(3.5, 0.8 + cZincate * 8) * iceMob * 18.0;
   }
 
   if (rxn.type === 'alkali_nitrate_red') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     const cOH = (moles.OH_aq || 0) / liquidVolL;
     const cNO3 = (moles.NO3_aq || 0) / liquidVolL;
     if (cOH < rxn.minOhConc || cNO3 < 0.005) return 0;
     const area = computeSolidSurfaceAreaM2('Zn_s', moles.Zn_s || 0, vessel.particleCounts?.Zn_s ?? 8);
     const kEff = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
     const stirFactor = rxn.isHeterogeneous ? 1.0 : stirBoost;
-    return kEff * area * Math.min(4.0, cNO3 * 3.0) * Math.min(3.0, cOH / 2.5) * stirFactor * 8.0;
+    return kEff * area * Math.min(4.0, cNO3 * 3.0) * Math.min(3.0, cOH / 2.5) * stirFactor * iceMob * 8.0;
   }
 
   if (rxn.type === 'peroxide_decomp_cat') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
     const cH = (moles.H_aq || 0) / liquidVolL;
     const nCuCat =
@@ -290,21 +320,21 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     // Free H+ stabilizes H2O2 against Cu(II)-aqua disproportionation; neutral/ammoniacal Cu(II) catalyzes vigorously
     const acidSuppress = cH > 0.25 ? 0.04 : 1.0;
     const k = getEffectiveRateConstant(rxn, T);
-    return (moles.H2O2_aq / 2) * k * acidSuppress * Math.min(3.5, cCuCat * 12.0) * Math.min(2.0, 0.4 + cH2O2 * 0.2);
+    return (moles.H2O2_aq / 2) * k * acidSuppress * Math.min(3.5, cCuCat * 12.0) * Math.min(2.0, 0.4 + cH2O2 * 0.2) * iceMob;
   }
 
   if (rxn.type === 'peroxide_decomp_metal') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     const nSolid = moles[rxn.solidId] || 0;
     const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
     if (nSolid <= 1e-9 || cH2O2 <= 1e-5) return 0;
     const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, vessel.particleCounts?.[rxn.solidId] ?? 8);
     const k = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
-    return Math.min(moles.H2O2_aq / 2, k * area * Math.min(4.0, cH2O2 * 0.6) * 18.0);
+    return Math.min(moles.H2O2_aq / 2, k * area * Math.min(4.0, cH2O2 * 0.6) * 18.0) * iceMob;
   }
 
   if (rxn.type === 'peroxide_decomp_base') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
     if (cH2O2 <= 1e-5) return 0;
     const cBase = ((moles.OH_aq || 0) + 0.15 * (moles.NH3_aq || 0)) / liquidVolL;
@@ -313,11 +343,11 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
       cBase > 1e-3
         ? (rxn.kBase298 || 0.025) * arrheniusFactor(rxn.eaBaseJ || 42000, T) * Math.min(4.0, cBase * 1.5)
         : 0;
-    return (moles.H2O2_aq / 2) * (kThermal + kBase);
+    return (moles.H2O2_aq / 2) * (kThermal + kBase) * iceMob;
   }
 
   if (rxn.type === 'peroxide_metal_ox') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
     const cH = (moles.H_aq || 0) / liquidVolL;
     const cCl = rxn.reactants.Cl_aq ? (moles.Cl_aq || 0) / liquidVolL : 1.0;
@@ -328,10 +358,11 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
       Math.min(3.5, cH2O2 * 0.45) *
       Math.min(2.5, cH * 0.45) *
       (rxn.reactants.Cl_aq ? Math.min(2.0, cCl * 0.4) : 1.0);
-    return k * area * drive * 3.5;
+    return k * area * drive * iceMob * 3.5;
   }
 
   if (rxn.type === 'moist_solid_redox') {
+    if (vessel.isFrozenSolid) return 0;
     const nW = moles.H2O_l || 0;
     const initiated = nW >= 5e-4 || ((moles.ZnNO3_2_s || 0) > 1e-4 && T >= 325.0);
     // Completely bone dry -> inert; tiny drop (>= 0.01 mL) initiates self-propagating molten-salt solid redox!
@@ -344,7 +375,7 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
   }
 
   if (rxn.type === 'aqua_regia_metal') {
-    if (!hasWater) return 0;
+    if (!hasWater || iceMob <= 0) return 0;
     const cH = (moles.H_aq || 0) / liquidVolL;
     const cCl = (moles.Cl_aq || 0) / liquidVolL;
     const cNO3 = (moles.NO3_aq || 0) / liquidVolL;
@@ -352,7 +383,7 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
     const solidId = rxn.reactants.Cu_s ? 'Cu_s' : 'Ag_s';
     const area = computeSolidSurfaceAreaM2(solidId, moles[solidId] || 0, 8);
     const oxDrive = Math.min(4.0, (cH / 5.0) * (cCl / 5.0) * (cNO3 / 0.3));
-    return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * Math.max(1e-5, area) * oxDrive * stirBoost * 12.0;
+    return rxn.k298 * arrheniusFactor(rxn.eaJ, T) * Math.max(1e-5, area) * oxDrive * stirBoost * iceMob * 12.0;
   }
 
   return 0;
@@ -360,61 +391,22 @@ function computeReactionRate(rxn, vessel, liquidVolL) {
 
 /**
  * Crystallization of dissolved salts when solution becomes supersaturated
- * (e.g., during boiling/evaporation or cooling).
+ * (e.g., during boiling/evaporation, ethanol salting-out, or cryo-cooling).
  */
-function applySupersaturationCrystallization(vessel, dt) {
+function applySupersaturationCrystallization(vessel, dt, activeReactions = null) {
   const moles = vessel.moles;
   const nH2O = moles.H2O_l || 0;
+  const iceMob = computeIceMobilityFactor(vessel);
+  if (nH2O <= 1e-7 || vessel.isFrozenSolid || iceMob <= 0) return 0;
+
   const waterMassKg = (nH2O * SPECIES.H2O_l.molarMass) / 1000;
   const etohMassKg = ((moles.C2H5OH_l || 0) * SPECIES.C2H5OH_l.molarMass) / 1000;
   const T = vessel.tempK;
 
-  const crystallizePairs = [
-    {
-      cat: 'Ag_aq',
-      an: 'NO3_aq',
-      solid: 'AgNO3_s',
-      sol298: 15.0,
-      coeff: 0.018,
-      etohRel: 0.05,
-      deltaHJ: -22600,
-    },
-    {
-      cat: 'Na_aq',
-      an: 'OH_aq',
-      solid: 'NaOH_s',
-      sol298: 27.5,
-      coeff: 0.012,
-      etohRel: 0.12,
-      // Differential enthalpy of crystallization from saturated liquor is modest (~8 kJ/mol)
-      deltaHJ: +8000,
-    },
-  ];
-
   let heatJ = 0;
 
-  for (const pair of crystallizePairs) {
-    const nPair = Math.min(moles[pair.cat] || 0, moles[pair.an] || 0);
-    if (nPair <= 1e-11) continue;
-    const effectiveSolventKg = waterMassKg + (pair.etohRel || 0) * etohMassKg;
-    const maxSol =
-      effectiveSolventKg > 1e-8
-        ? pair.sol298 * Math.exp(pair.coeff * (T - CONSTANTS.T_STD_K)) * effectiveSolventKg
-        : 0;
-    if (nPair > maxSol) {
-      const excess = nPair - maxSol;
-      const dXi = Math.min(excess, excess * Math.min(1, 2.0 * dt));
-      if (dXi > 1e-12) {
-        moles[pair.cat] -= dXi;
-        moles[pair.an] -= dXi;
-        moles[pair.solid] = (moles[pair.solid] || 0) + dXi;
-        heatJ += -pair.deltaHJ * dXi;
-      }
-    }
-  }
-
-  // CuSO4 crystallization: forms pentahydrate if enough H2O, otherwise anhydrous white CuSO4
-  // Also strongly salted out by Ethanol cosolvent (e.g. pouring Phenolphthalein 1%)
+  // 1. CuSO4 crystallization (lowest solubility ~1.43 -> 0.89 mol/kg at 0 C):
+  // Forms pentahydrate CuSO4·5H2O below 110 C, anhydrous white CuSO4 above 110 C; salted out by Ethanol.
   const nCuPair = Math.min(moles.Cu2_aq || 0, moles.SO4_2_aq || 0);
   if (nCuPair > 1e-11) {
     const totalSolvKg = waterMassKg + etohMassKg;
@@ -422,23 +414,100 @@ function applySupersaturationCrystallization(vessel, dt) {
     const saltingFactor = etohWtFrac > 0.05 ? Math.exp(-4.8 * etohWtFrac) : 1.0;
     const maxSolCu =
       waterMassKg > 1e-8
-        ? 1.43 * saltingFactor * Math.exp(0.016 * (T - CONSTANTS.T_STD_K)) * waterMassKg
+        ? 1.43 * saltingFactor * Math.exp(0.019 * (T - CONSTANTS.T_STD_K)) * waterMassKg
         : 0;
     if (nCuPair > maxSolCu) {
       const excess = nCuPair - maxSolCu;
-      const dXi = Math.min(excess, excess * Math.min(1, 5.0 * dt));
-      if (dXi > 1e-12) {
-        if ((moles.H2O_l || 0) >= 5 * dXi && T < 383.15) {
+      const rateScale = (waterMassKg < 0.01 ? 10.0 : 5.0) * iceMob;
+      let dXi = Math.min(excess, excess * Math.min(1, rateScale * dt));
+      if (T < 383.15) {
+        dXi = Math.min(dXi, (moles.H2O_l || 0) / 5.001);
+        if (dXi > 1e-12) {
           moles.Cu2_aq -= dXi;
           moles.SO4_2_aq -= dXi;
           moles.H2O_l -= 5 * dXi;
+          if (moles.Cu2_aq < 1e-13) delete moles.Cu2_aq;
+          if (moles.SO4_2_aq < 1e-13) delete moles.SO4_2_aq;
+          if (moles.H2O_l < 1e-13) delete moles.H2O_l;
           moles.CuSO4_5H2O_s = (moles.CuSO4_5H2O_s || 0) + dXi;
           heatJ += 11700 * dXi;
-        } else {
-          moles.Cu2_aq -= dXi;
-          moles.SO4_2_aq -= dXi;
-          moles.CuSO4_s = (moles.CuSO4_s || 0) + dXi;
-          heatJ += -66500 * dXi;
+          if (activeReactions && dXi / Math.max(1e-4, dt) > 1e-4) {
+            activeReactions.push({
+              id: 'crystallize_cuso4_5h2o',
+              equation: 'Cu²⁺(aq) + SO₄²⁻(aq) + 5H₂O(l) → CuSO₄·5H₂O(s)↓',
+              nameVi: 'Kết tinh Copper(II) sulfate pentahydrate',
+              nameEn: 'Crystallization of Copper(II) sulfate pentahydrate',
+              descVi: 'Dung dịch quá bão hòa khi làm lạnh hoặc cô đặc tách tinh thể xanh lam CuSO₄·5H₂O.',
+              descEn: 'Cooling or concentrating past saturation precipitates blue CuSO₄·5H₂O crystals.',
+              rateMolS: dXi / Math.max(1e-4, dt),
+              vigorousGas: false,
+              dXi,
+            });
+          }
+        }
+      } else if (dXi > 1e-12) {
+        moles.Cu2_aq -= dXi;
+        moles.SO4_2_aq -= dXi;
+        if (moles.Cu2_aq < 1e-13) delete moles.Cu2_aq;
+        if (moles.SO4_2_aq < 1e-13) delete moles.SO4_2_aq;
+        moles.CuSO4_s = (moles.CuSO4_s || 0) + dXi;
+        heatJ += -66500 * dXi;
+      }
+    }
+  }
+
+  // 2. Remaining soluble salts ordered from least soluble to most soluble
+  const crystallizePairs = [
+    { cat: 'Na_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'Na2SO4_s', formula: 'Na₂SO₄', sol298: 1.98, coeff: 0.032, etohRel: 0.02, crystHeatJ: 8000 },
+    { cat: 'Zn2_aq', cCat: 1, an: 'SO4_2_aq', cAn: 1, solid: 'ZnSO4_s', formula: 'ZnSO₄', sol298: 3.57, coeff: 0.012, etohRel: 0.02, crystHeatJ: 8000 },
+    { cat: 'Cu2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'CuCl2_s', formula: 'CuCl₂', sol298: 5.6, coeff: 0.010, etohRel: 0.35, crystHeatJ: 8000 },
+    { cat: 'NH4_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'NH4_2_SO4_s', formula: '(NH₄)₂SO₄', sol298: 5.7, coeff: 0.008, etohRel: 0.01, crystHeatJ: 6600 },
+    { cat: 'Na_aq', cCat: 1, an: 'Cl_aq', cAn: 1, solid: 'NaCl_s', formula: 'NaCl', sol298: 6.15, coeff: 0.0014, etohRel: 0.01, crystHeatJ: 3900 },
+    { cat: 'NH4_aq', cCat: 1, an: 'Cl_aq', cAn: 1, solid: 'NH4Cl_s', formula: 'NH₄Cl', sol298: 7.4, coeff: 0.018, etohRel: 0.02, crystHeatJ: 14800 },
+    { cat: 'Zn2_aq', cCat: 1, an: 'NO3_aq', cAn: 2, solid: 'ZnNO3_2_s', formula: 'Zn(NO₃)₂', sol298: 9.8, coeff: 0.015, etohRel: 0.05, crystHeatJ: 8000 },
+    { cat: 'Na_aq', cCat: 1, an: 'NO3_aq', cAn: 1, solid: 'NaNO3_s', formula: 'NaNO₃', sol298: 10.8, coeff: 0.014, etohRel: 0.03, crystHeatJ: 20500 },
+    { cat: 'Ag_aq', cCat: 1, an: 'NO3_aq', cAn: 1, solid: 'AgNO3_s', formula: 'AgNO₃', sol298: 15.0, coeff: 0.022, etohRel: 0.05, crystHeatJ: 22600 },
+    { cat: 'NH4_aq', cCat: 1, an: 'NO3_aq', cAn: 1, solid: 'NH4NO3_s', formula: 'NH₄NO₃', sol298: 23.0, coeff: 0.028, etohRel: 0.04, crystHeatJ: 25700 },
+    { cat: 'Na_aq', cCat: 1, an: 'OH_aq', cAn: 1, solid: 'NaOH_s', formula: 'NaOH', sol298: 27.5, coeff: 0.032, etohRel: 0.12, crystHeatJ: -8000 },
+    { cat: 'Zn2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'ZnCl2_s', formula: 'ZnCl₂', sol298: 31.7, coeff: 0.008, etohRel: 0.25, crystHeatJ: -8000 },
+  ];
+
+  const curWaterKg = ((moles.H2O_l || 0) * SPECIES.H2O_l.molarMass) / 1000;
+  for (const pair of crystallizePairs) {
+    // Do not strand free H+ + SO4^2- by precipitating volatile HCl/HNO3 anions with Cu2+/Zn2+
+    if ((pair.an === 'Cl_aq' || pair.an === 'NO3_aq') && (moles.H_aq || 0) > 1e-6 && (moles.SO4_2_aq || 0) > 1e-6) {
+      continue;
+    }
+    const nPair = Math.min((moles[pair.cat] || 0) / pair.cCat, (moles[pair.an] || 0) / pair.cAn);
+    if (nPair <= 1e-11) continue;
+    const effectiveSolventKg = curWaterKg + (pair.etohRel || 0) * etohMassKg;
+    const maxSol =
+      effectiveSolventKg > 1e-8
+        ? pair.sol298 * Math.exp(pair.coeff * (T - CONSTANTS.T_STD_K)) * effectiveSolventKg
+        : 0;
+    if (nPair > maxSol) {
+      const excess = nPair - maxSol;
+      const rateScale = (curWaterKg < 0.01 ? 8.0 : 2.5) * iceMob;
+      const dXi = Math.min(excess, excess * Math.min(1, rateScale * dt));
+      if (dXi > 1e-12) {
+        moles[pair.cat] -= pair.cCat * dXi;
+        moles[pair.an] -= pair.cAn * dXi;
+        if (moles[pair.cat] < 1e-13) delete moles[pair.cat];
+        if (moles[pair.an] < 1e-13) delete moles[pair.an];
+        moles[pair.solid] = (moles[pair.solid] || 0) + dXi;
+        heatJ += pair.crystHeatJ * dXi;
+        if (activeReactions && dXi / Math.max(1e-4, dt) > 1e-4) {
+          activeReactions.push({
+            id: `crystallize_${pair.solid}`,
+            equation: `${SPECIES[pair.cat].formula} + ${SPECIES[pair.an].formula} → ${pair.formula}(s)↓`,
+            nameVi: `Kết tinh ${SPECIES[pair.solid]?.name || pair.formula}`,
+            nameEn: `Crystallization of ${SPECIES[pair.solid]?.name || pair.formula}`,
+            descVi: `Muối ${pair.formula} vượt độ tan khi hạ nhiệt độ nên kết tinh ngược thành pha rắn.`,
+            descEn: `${pair.formula} exceeds cold solubility and crystallizes back into solid phase.`,
+            rateMolS: dXi / Math.max(1e-4, dt),
+            vigorousGas: false,
+            dXi,
+          });
         }
       }
     }
@@ -685,7 +754,7 @@ function stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions) {
       vessel.gardenActive = false;
       vessel.gardenGrowth = Math.max(0, (vessel.gardenGrowth || 0) - dt * 1.5);
     }
-  } else {
+  } else if (!vessel.isFrozenSolid) {
     vessel.gardenActive = false;
     vessel.gardenGrowth = 0;
   }
@@ -980,7 +1049,7 @@ export const DRY_SALT_PAIRINGS = [
 export function enforceDryPhaseBoundary(vessel) {
   const moles = vessel.moles;
   const gasProduced = createZeroGasMap();
-  if ((moles.H2O_l || 0) > 1e-7 || (moles.C2H5OH_l || 0) > 1e-7) {
+  if ((moles.H2O_l || 0) > 1e-7 || (moles.C2H5OH_l || 0) > 1e-7 || (moles.H2O_s || 0) > 1e-7) {
     return { gasProduced };
   }
 
@@ -1138,7 +1207,7 @@ export function stepVesselChemistry(vessel, dt) {
 
     // Separate Sodium reaction enthalpy to drive independent metal droplet temperature T_Na
     const rxnHeat = -item.rxn.deltaHJ * dXi;
-    if (item.rxn.id === 'na_water' || item.rxn.id === 'na_acid') {
+    if (item.rxn.id === 'na_water' || item.rxn.id === 'na_acid' || item.rxn.id === 'na_ice') {
       naHeatGenJ += rxnHeat;
       naH2ProducedMol += (item.rxn.products.H2_g || 0) * dXi;
     } else if (item.rxn.id === 'na_ethanol') {
@@ -1162,10 +1231,11 @@ export function stepVesselChemistry(vessel, dt) {
     });
   }
 
-  // 3b. Two-temperature coupled Sodium droplet thermal balance & Coulomb/H2 blast trigger
+  // 3b. Two-temperature coupled Sodium droplet thermal balance, local ice melting & Coulomb/H2 blast trigger
   let naEvent = null;
   const nNaLeft = vessel.moles.Na_s || 0;
-  if (nNaLeft > 1e-10 && liquidVolL > 1e-6) {
+  const hasIceForNa = (vessel.moles.H2O_s || 0) > 1e-6;
+  if (nNaLeft > 1e-10 && (liquidVolL > 1e-6 || hasIceForNa)) {
     const tNaPrev = vessel.naTempK ?? vessel.tempK;
     const pCount = vessel.particleCounts?.Na_s ?? 1;
     const aNaCm2 = Math.max(0.04, computeSolidSurfaceAreaM2('Na_s', nNaLeft, pCount) * 1e4);
@@ -1175,19 +1245,23 @@ export function stepVesselChemistry(vessel, dt) {
       ? Math.max(0.5, spec.geometry.getLiquidState(totMl).surfaceAreaCm2)
       : spec?.surfaceAreaCm2 || 25.0;
 
-    const cNaOH = (vessel.moles.OH_aq || 0) / Math.max(1e-5, liquidVolL);
-    const cH = (vessel.moles.H_aq || 0) / Math.max(1e-5, liquidVolL);
-    const cAg = (vessel.moles.Ag_aq || 0) / Math.max(1e-5, liquidVolL);
+    const effLiqL = Math.max(1e-5, liquidVolL);
+    const cNaOH = (vessel.moles.OH_aq || 0) / effLiqL;
+    const cH = (vessel.moles.H_aq || 0) / effLiqL;
+    const cAg = (vessel.moles.Ag_aq || 0) / effLiqL;
     const nW = vessel.moles.H2O_l || 0;
     const nE = vessel.moles.C2H5OH_l || 0;
     const xEtOH = nE / Math.max(1e-9, nW + nE);
-    const isDirectHazard = (cH >= 6.0 || cAg >= 1.5) && nNaLeft * SPECIES.Na_s.molarMass >= 0.08;
+    const isDirectHazard = liquidVolL > 1e-5 && (cH >= 6.0 || cAg >= 1.5) && nNaLeft * SPECIES.Na_s.molarMass >= 0.08;
 
     const effNaFootprint = Math.min(Math.max(aNaCm2, 0.08), 6.0);
     const mobilityFactor = 0.28 + 0.72 * (1 - Math.exp(-0.14 * (areaSurfCm2 / effNaFootprint)));
     const pinHeatLoss = areaSurfCm2 < 15.0 ? 0.42 : 1.0;
     const viscosityDamping = 1 / (1 + 0.55 * cNaOH + 0.35 * cNaOH * cNaOH);
-    const hEff = 11.5 * mobilityFactor * pinHeatLoss * viscosityDamping; // W / (cm^2 * K)
+    const hLiquid = 11.5 * mobilityFactor * pinHeatLoss * viscosityDamping;
+    // Blend from slow solid-ice contact conductance (~0.08) to full liquid convective coupling as local film melts
+    const iceWetBlend = hasIceForNa ? Math.min(1, nW / 0.04) : 1.0;
+    const hEff = 0.08 * (1 - iceWetBlend) + hLiquid * iceWetBlend; // W / (cm^2 * K)
     const condWK = Math.max(1e-4, hEff * aNaCm2);
 
     const mNaG = Math.max(1e-4, nNaLeft * SPECIES.Na_s.molarMass);
@@ -1195,12 +1269,32 @@ export function stepVesselChemistry(vessel, dt) {
     const qGenW = naHeatGenJ / Math.max(1e-6, dt);
     const tEq = Math.min(1350, vessel.tempK + qGenW / condWK);
     const alpha = condWK / cNa;
-    let newTNa = Math.max(250, Math.min(1250, tEq + (tNaPrev - tEq) * Math.exp(-alpha * dt)));
+    let newTNa = Math.max(200, Math.min(1250, tEq + (tNaPrev - tEq) * Math.exp(-alpha * dt)));
     if (xEtOH > 0.35) {
       newTNa = Math.min(newTNa, 360.0);
     }
 
-    const transferJ = Math.max(0, naHeatGenJ - cNa * (newTNa - tNaPrev));
+    // Local melting beneath hot Na droplet on ice: converts part of reaction heat into thin liquid water film
+    let localMeltHeatUsedJ = 0;
+    if (hasIceForNa && newTNa > CONSTANTS.T_FREEZE_WATER_K && naHeatGenJ > 0) {
+      const maxMeltFilm = Math.min(vessel.moles.H2O_s || 0, Math.max(0.015, nNaLeft * 6.0));
+      if (nW < maxMeltFilm) {
+        const availMeltJ = naHeatGenJ * 0.55;
+        const dMelt = Math.min(
+          vessel.moles.H2O_s || 0,
+          maxMeltFilm - nW,
+          availMeltJ / CONSTANTS.DELTA_H_FUS_WATER_J
+        );
+        if (dMelt > 1e-10) {
+          vessel.moles.H2O_s -= dMelt;
+          if (vessel.moles.H2O_s < 1e-12) delete vessel.moles.H2O_s;
+          vessel.moles.H2O_l = nW + dMelt;
+          localMeltHeatUsedJ = dMelt * CONSTANTS.DELTA_H_FUS_WATER_J;
+        }
+      }
+    }
+
+    const transferJ = Math.max(0, naHeatGenJ - localMeltHeatUsedJ - cNa * (newTNa - tNaPrev));
     reactionHeatJ += transferJ;
 
     const kEsc = 0.08;
@@ -1237,14 +1331,19 @@ export function stepVesselChemistry(vessel, dt) {
   }
 
   // 4. Reversible [CuCl4]2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, ammine complexes & chemisorption/garden equilibria
-  reactionHeatJ += stepChlorocuprateEquilibrium(vessel, liquidVolL, dt, activeReactions);
-  reactionHeatJ += stepAmphotericHydroxideEquilibria(vessel, liquidVolL, dt, activeReactions);
-  reactionHeatJ += stepChloroSilverAndCuprousEquilibria(vessel, liquidVolL, dt, activeReactions);
-  reactionHeatJ += stepAmmineComplexEquilibria(vessel, liquidVolL, dt, activeReactions);
-  reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
+  if (computeIceMobilityFactor(vessel) > 0) {
+    reactionHeatJ += stepChlorocuprateEquilibrium(vessel, liquidVolL, dt, activeReactions);
+    reactionHeatJ += stepAmphotericHydroxideEquilibria(vessel, liquidVolL, dt, activeReactions);
+    reactionHeatJ += stepChloroSilverAndCuprousEquilibria(vessel, liquidVolL, dt, activeReactions);
+    reactionHeatJ += stepAmmineComplexEquilibria(vessel, liquidVolL, dt, activeReactions);
+    reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
+  } else {
+    // Only allow dry chemisorption when no aqueous transport exists
+    reactionHeatJ += stepChemisorptionAndGarden(vessel, 0, dt, activeReactions);
+  }
 
-  // 5. Supersaturation crystallization (including ethanol salting-out)
-  reactionHeatJ += applySupersaturationCrystallization(vessel, dt);
+  // 5. Supersaturation & cryo-cooling crystallization (including ethanol salting-out)
+  reactionHeatJ += applySupersaturationCrystallization(vessel, dt, activeReactions);
 
   return {
     reactionHeatJ,

@@ -2,11 +2,17 @@ import {
   CONSTANTS,
   computeEthanolWaterVLE,
   solutionBoilingPointK,
+  waterVaporPressureBar,
   waterVaporPressureMmHg,
 } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
-import { computeLiquidVolumeL, computeSolidVolumeMl } from './equilibrium.js';
+import {
+  calcEffectiveSoluteMoles,
+  computeLiquidVolumeL,
+  computeSolidVolumeMl,
+  solutionFreezingPointK,
+} from './equilibrium.js';
 
 /**
  * Compute total heat capacity C_total (J/K) of vessel + contents.
@@ -94,13 +100,104 @@ export function calcEvaporationRateMol(
 
 /**
  * Optical water-vapor mist visibility [0..1] determined by mixing dew-point condensation
- * above surface: 0 at 25 C in 60% RH room air, thin wisps at 45-55 C, dense plume near boiling.
+ * above surface: 0 when T_solution <= T_room + 15 K (at 60% RH), thin wisps above, dense plume near boiling.
  */
 export function computeSteamOpacity(waterTempK, envTempK = CONSTANTS.T_STD_K, rh = CONSTANTS.RELATIVE_HUMIDITY) {
   const tWaterC = waterTempK - CONSTANTS.KELVIN_OFFSET;
   const tRoomC = envTempK - CONSTANTS.KELVIN_OFFSET;
-  const raw = (tWaterC - (tRoomC + 22 - 15 * rh)) / 45;
+  const raw = (tWaterC - (tRoomC + 24 - 15 * rh)) / 32;
   return Math.max(0, Math.min(1, raw));
+}
+
+/**
+ * Advance solid-liquid water freezing / melting phase transition (H2O(l) <-> H2O(s))
+ * with Raoult cryoscopy freezing-point depression and latent heat clamping (6010 J/mol).
+ * Returns { updatedTempK, freezeMeltRateMolS, freezePointK }
+ */
+export function updateFreezeMeltPhase(vessel, dt, candidateTempK = null, heatCapacityJK = null) {
+  const Tf_pure = CONSTANTS.T_FREEZE_WATER_K;
+  const Kf = CONSTANTS.CRYOSCOPY_KF_WATER;
+  const dH_fus = CONSTANTS.DELTA_H_FUS_WATER_J;
+  const moles = vessel.moles;
+
+  const liquidWaterMol = moles.H2O_l || 0;
+  const iceMol = moles.H2O_s || 0;
+  let T = candidateTempK ?? vessel.tempK;
+
+  if (liquidWaterMol <= 1e-12 && iceMol <= 1e-12) {
+    vessel.isFrozenSolid = false;
+    vessel.freezePointK = solutionFreezingPointK(moles);
+    vessel.lastFreezeMeltRateMolS = 0;
+    return { updatedTempK: T, freezeMeltRateMolS: 0, freezePointK: vessel.freezePointK };
+  }
+
+  const effectiveSoluteMol = calcEffectiveSoluteMoles(moles);
+  const T_freeze_bulk = solutionFreezingPointK(moles, true);
+  const T_freeze_inst = solutionFreezingPointK(moles, liquidWaterMol < 1e-4 && iceMol > 0);
+  const T_eutectic_complete = Math.max(CONSTANTS.EUTECTIC_FLOOR_K, Math.min(258.0, T_freeze_bulk - 14.0));
+  const belowEutecticComplete = T_freeze_bulk > CONSTANTS.EUTECTIC_FLOOR_K + 2.0 && T <= T_eutectic_complete;
+  const T_freeze = belowEutecticComplete ? Math.max(T_freeze_inst, T_eutectic_complete) : T_freeze_inst;
+  const T_melt =
+    iceMol > 1e-7 && liquidWaterMol <= Math.max(0.05, (vessel.moles.Na_s || 0) * 6.0)
+      ? T_freeze_bulk
+      : T_freeze_inst;
+  const heatCapacity = Math.max(heatCapacityJK ?? computeHeatCapacityJK(vessel), 20.0);
+
+  // Protect only the localized thin melt pocket right under an actively hot Sodium droplet on ice
+  const nNa = moles.Na_s || 0;
+  const protectedMeltMol =
+    nNa > 1e-8 && (vessel.naTempK ?? T) > Tf_pure
+      ? Math.min(liquidWaterMol, Math.max(0.012, nNa * 6.0))
+      : 0;
+  const freezableWaterMol = Math.max(0, liquidWaterMol - protectedMeltMol);
+
+  let netFreezeMol = 0;
+
+  if (T < T_freeze && freezableWaterMol > 1e-12) {
+    const deficitEnergyJ = heatCapacity * (T_freeze - T);
+    let molToFreeze = Math.min(freezableWaterMol, deficitEnergyJ / dH_fus);
+
+    if (!belowEutecticComplete && effectiveSoluteMol > 1e-9 && T < Tf_pure - 1e-4 && T_freeze_inst > CONSTANTS.EUTECTIC_FLOOR_K) {
+      const mH2OKgPerMol = CONSTANTS.M_H2O / 1000;
+      const nWEq = (Kf * effectiveSoluteMol) / (Math.max(1e-4, Tf_pure - T) * mH2OKgPerMol);
+      if (liquidWaterMol > nWEq) {
+        molToFreeze = Math.min(molToFreeze, Math.max(0, liquidWaterMol - nWEq));
+      }
+    }
+
+    if (molToFreeze > 1e-12) {
+      moles.H2O_l = Math.max(0, liquidWaterMol - molToFreeze);
+      if (moles.H2O_l < 1e-12) delete moles.H2O_l;
+      moles.H2O_s = iceMol + molToFreeze;
+      T += (molToFreeze * dH_fus) / heatCapacity;
+      netFreezeMol = molToFreeze;
+    }
+  } else if (T > T_melt && iceMol > 1e-12) {
+    const excessEnergyJ = heatCapacity * (T - T_melt);
+    const molToMelt = Math.min(iceMol, excessEnergyJ / dH_fus);
+    if (molToMelt > 1e-12) {
+      moles.H2O_s = Math.max(0, iceMol - molToMelt);
+      if (moles.H2O_s < 1e-12) delete moles.H2O_s;
+      moles.H2O_l = liquidWaterMol + molToMelt;
+      T -= (molToMelt * dH_fus) / heatCapacity;
+      netFreezeMol = -molToMelt;
+    }
+  }
+
+  const remWater = moles.H2O_l || 0;
+  const remIce = moles.H2O_s || 0;
+  vessel.isFrozenSolid = remWater < 1e-4 && remIce > 1e-7;
+  vessel.freezePointK = solutionFreezingPointK(moles, vessel.isFrozenSolid);
+  vessel.lastFreezeMeltRateMolS = netFreezeMol / Math.max(1e-5, dt);
+  if (candidateTempK === null) {
+    vessel.tempK = T;
+  }
+
+  return {
+    updatedTempK: T,
+    freezeMeltRateMolS: vessel.lastFreezeMeltRateMolS,
+    freezePointK: vessel.freezePointK,
+  };
 }
 
 /**
@@ -119,20 +216,27 @@ export function stepVesselThermodynamics(
   const cTotal = computeHeatCapacityJK(vessel);
 
   // Convective + Stefan-Boltzmann radiative heat loss to ambient room
-  const hLoss = spec.heatLossCoeffWK || 0.35;
-  const radCoeff = hLoss * 4.0e-9;
-  const tEnv = Math.max(200, env.tempK);
-  const ambientExchangeJ =
-    (-hLoss * (vessel.tempK - env.tempK) -
-      radCoeff * (Math.pow(vessel.tempK, 4) - Math.pow(tEnv, 4))) *
-    dt;
-
+  const baseHLoss = spec.heatLossCoeffWK || 0.35;
   const effectiveBurnerW = computeEffectiveBurnerPowerW(
     spec,
     vessel.tempK,
     burnerPowerW,
     flameLevel
   );
+  const isCryoCool =
+    effectiveBurnerW <= 0 && env.tempK < CONSTANTS.T_FREEZE_WATER_K && vessel.tempK > env.tempK;
+  const isCryoThaw =
+    effectiveBurnerW <= 0 &&
+    vessel.tempK < CONSTANTS.T_FREEZE_WATER_K &&
+    env.tempK >= CONSTANTS.T_FREEZE_WATER_K &&
+    vessel.tempK < env.tempK;
+  const hLoss = isCryoCool ? baseHLoss * 75.0 : isCryoThaw ? baseHLoss * 40.0 : baseHLoss;
+  const radCoeff = baseHLoss * 4.0e-9;
+  const tEnv = Math.max(180, env.tempK);
+  const ambientExchangeJ =
+    (-hLoss * (vessel.tempK - env.tempK) -
+      radCoeff * (Math.pow(vessel.tempK, 4) - Math.pow(tEnv, 4))) *
+    dt;
 
   // Sub-boiling surface evaporation & concentrated HCl(g) / NH3(g) outgassing
   let steamProducedMol = 0;
@@ -169,13 +273,10 @@ export function stepVesselThermodynamics(
     const effAreaCm2 = areaCm2 * tubingScale;
     const isStirred = (vessel.stirTimer || 0) > 0;
 
-    // 1a) Water sub-boiling evaporation (against ambient 60% RH water vapor pressure)
-    const pAmbH2OPa =
-      CONSTANTS.RELATIVE_HUMIDITY *
-      101325 *
-      Math.exp((SPECIES.H2O_l.dHVapJ / CONSTANTS.R_J_MOL_K) * (1 / SPECIES.H2O_l.boilTempK - 1 / env.tempK));
+    // 1a) Water sub-boiling evaporation (against ambient 60% RH water/ice vapor pressure)
+    const pAmbH2OPa = CONSTANTS.RELATIVE_HUMIDITY * waterVaporPressureBar(env.tempK) * 100000;
     const evapH2OMolS =
-      nWater > 1e-7 && canSubBoilVent
+      nWater > 1e-7 && canSubBoilVent && !vessel.isFrozenSolid
         ? calcEvaporationRateMol(SPECIES.H2O_l, vle.xW0 * vle.fIon, vessel.tempK, effAreaCm2, pAmbH2OPa, isStirred, vle.gammaW)
         : 0;
     const subBoilEvap = Math.min(nWater, evapH2OMolS * dt);
@@ -193,7 +294,7 @@ export function stepVesselThermodynamics(
     const rVap = computeHClVaporRatio(nHCl, nWater);
 
     let subBoilHCl = 0;
-    if (nHCl > 1e-12) {
+    if (!vessel.isFrozenSolid && nWater > 1e-7 && nHCl > 1e-12) {
       const mHCl = nHCl * CONSTANTS.M_HCL;
       const mH2O = nWater * CONSTANTS.M_H2O;
       const wHCl = mHCl / Math.max(1e-9, mHCl + mH2O);
@@ -231,7 +332,7 @@ export function stepVesselThermodynamics(
     }
 
     // 1d) Group 4 volatile reactant outgassing: NH3(aq) -> NH3(g)
-    if (nAmmonia > 1e-10) {
+    if (!vessel.isFrozenSolid && nWater > 1e-7 && nAmmonia > 1e-10) {
       const liqVolL = Math.max(1e-5, volMl / 1000);
       const cNH3 = nAmmonia / liqVolL;
       const outgasNH3MolS =
@@ -259,7 +360,7 @@ export function stepVesselThermodynamics(
   // Update temperature
   const netHeatJ = reactionHeatJ + effectiveBurnerW * dt + ambientExchangeJ + evapCoolingJ;
   let newTempK = vessel.tempK + netHeatJ / cTotal;
-  newTempK = Math.max(220, Math.min(1100, newTempK));
+  newTempK = Math.max(200, Math.min(1100, newTempK));
 
   // Regime 2: Co-distillation boiling clamp for Water + Ethanol (including pure EtOH at 78.3 C!)
   let isBoiling = false;
@@ -346,11 +447,16 @@ export function stepVesselThermodynamics(
     }
   }
 
+  // Regime 3: Freezing / melting solid-liquid phase clamp with cryoscopy & latent heat
+  const phaseRes = updateFreezeMeltPhase(vessel, dt, newTempK, cTotal);
+  newTempK = phaseRes.updatedTempK;
+
   vessel.tempK = newTempK;
   const hasAnyLiquid = (vessel.moles.H2O_l || 0) > 1e-7 || (vessel.moles.C2H5OH_l || 0) > 1e-7;
-  const steamOpacity = hasAnyLiquid
-    ? computeSteamOpacity(newTempK, env.tempK, CONSTANTS.RELATIVE_HUMIDITY)
-    : 0;
+  const steamOpacity =
+    hasAnyLiquid && !vessel.isFrozenSolid
+      ? computeSteamOpacity(newTempK, env.tempK, CONSTANTS.RELATIVE_HUMIDITY)
+      : 0;
 
   return {
     steamProducedMol,
@@ -360,5 +466,7 @@ export function stepVesselThermodynamics(
     isBoiling,
     boilingPointK,
     steamOpacity,
+    freezeMeltRateMolS: phaseRes.freezeMeltRateMolS,
+    freezePointK: phaseRes.freezePointK,
   };
 }

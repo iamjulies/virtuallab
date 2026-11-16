@@ -44,8 +44,12 @@
       computeLiquidVolumeL,
       computePH,
       computePhenolphthaleinAlpha,
+      computeSolidVolumeMl,
       computeSolutionVisuals,
+      solutionFreezingPointK,
     } from '../src/engine/equilibrium.js';
+    import { EnvironmentBar } from '../src/ui/environmentBar.js';
+    import { I18N } from '../src/data/i18n.js';
     import {
       NON_STEAM_GASES,
       computeSyringeDischargeArc,
@@ -1826,6 +1830,254 @@
           Math.abs((dryOut.gasProduced.O2_g || 0) - 0.05) < 1e-9 &&
           Math.abs((dryOut.gasProduced.NH3_g || 0) - 0.20) < 1e-9,
         `reagents=${STARTER_REAGENTS.length}, nvSolute=${nvTest.toFixed(2)}, aqLeft=${aqLeft.length}, NH4Cl_s=${(dryCheck.NH4Cl_s||0).toFixed(2)}, O2_dry=${(dryOut.gasProduced.O2_g||0).toFixed(3)}`
+      );
+    }
+
+    // TEST 51: Cryoscopy (0.1 m CuSO4 ~ -0.26°C), Eutectic Ethanol/HCl37 Staying Liquid at -33°C, Ice 9% Expansion & Frozen Ion Preservation
+    {
+      const tfCu = solutionFreezingPointK({ H2O_l: 55.508, Cu2_aq: 0.1, SO4_2_aq: 0.1 });
+      const tfNaCl = solutionFreezingPointK({ H2O_l: 55.508, Na_aq: 0.1, Cl_aq: 0.1 });
+      const sim = new LabSimulation();
+      sim.setAmbientTempK(240.15); // -33°C
+      sim.environment.speed = 4;
+
+      const bCu = sim.createApparatus('beaker_250', 180, 429);
+      bCu.moles = { H2O_l: 5.5508, Cu2_aq: 0.01, SO4_2_aq: 0.01 }; // ~100 mL 0.1 M CuSO4
+      const initLiqMl = computeLiquidVolumeL(bCu.moles, 298.15) * 1000;
+
+      const bPhen = sim.createApparatus('beaker_250', 340, 429);
+      sim.addReagentToVessel(bPhen.id, 'phen', 25);
+
+      const bHCl = sim.createApparatus('beaker_250', 500, 429);
+      sim.addReagentToVessel(bHCl.id, 'hcl_37', 25);
+
+      let plateauSampleK = null;
+      for (let i = 0; i < 650; i++) {
+        sim.step(0.025);
+        if (plateauSampleK === null && (bCu.moles.H2O_s || 0) > 1.0 && (bCu.moles.H2O_l || 0) > 1.0) {
+          plateauSampleK = bCu.tempK;
+        }
+      }
+      const iceMl = computeSolidVolumeMl(bCu.moles);
+      const expansionRatio = iceMl / Math.max(1, initLiqMl);
+      const phenLiqMl = computeLiquidVolumeL(bPhen.moles, bPhen.tempK) * 1000;
+      const hclLiqMl = computeLiquidVolumeL(bHCl.moles, bHCl.tempK) * 1000;
+
+      assert(
+        'Cryoscopy & phase lock: 0.1 m CuSO4 Tf~-0.26°C, dil CuSO4 freezes solidly at -33°C (~9% expansion + trapped ions intact), Phen/HCl37 remain liquid',
+        Math.abs((tfCu - 273.15) - (-0.26)) < 0.03 &&
+          Math.abs((tfNaCl - 273.15) - (-0.37)) < 0.03 &&
+          plateauSampleK !== null &&
+          Math.abs(plateauSampleK - 273.15) < 1.2 &&
+          bCu.isFrozenSolid === true &&
+          (bCu.moles.H2O_s || 0) > 5.4 &&
+          (bCu.moles.H2O_l || 0) < 1e-6 &&
+          (bCu.moles.Cu2_aq || 0) > 0.0099 &&
+          expansionRatio > 1.07 &&
+          expansionRatio < 1.11 &&
+          phenLiqMl > 20 &&
+          (bPhen.moles.H2O_s || 0) < 1e-4 &&
+          hclLiqMl > 18 &&
+          (bHCl.moles.H2O_s || 0) < 1e-4,
+        `tfCu=${(tfCu-273.15).toFixed(2)}°C, plateau=${plateauSampleK ? (plateauSampleK-273.15).toFixed(2) : 'n/a'}°C, exp=${expansionRatio.toFixed(3)}, Cu_s_frozen=${bCu.isFrozenSolid}, Cu2+=${(bCu.moles.Cu2_aq||0).toFixed(4)}, phenLiq=${phenLiqMl.toFixed(1)}mL, hclLiq=${hclLiqMl.toFixed(1)}mL`
+      );
+    }
+
+    // TEST 52: Kinetic Locking (Zn + HCl & CuSO4·5H2O Dissolution in Ice) vs Exothermic Na on Ice Melt Film
+    {
+      const sim = new LabSimulation();
+      sim.setAmbientTempK(240.15); // -33°C
+      sim.environment.speed = 1;
+
+      const bZn = sim.createApparatus('beaker_250', 180, 300);
+      bZn.moles = { H2O_s: 5.55, H_aq: 0.2, Cl_aq: 0.2, Zn_s: 0.05 };
+      bZn.tempK = 240.15;
+      bZn.isFrozenSolid = true;
+
+      const bDiss = sim.createApparatus('beaker_250', 340, 300);
+      bDiss.moles = { H2O_s: 5.55, CuSO4_5H2O_s: 0.02 };
+      bDiss.tempK = 240.15;
+      bDiss.isFrozenSolid = true;
+
+      const bNaIce = sim.createApparatus('beaker_250', 500, 300);
+      bNaIce.moles = { H2O_s: 5.55, Na_s: 0.045 };
+      bNaIce.tempK = 240.15;
+      bNaIce.naTempK = 240.15;
+      bNaIce.isFrozenSolid = true;
+
+      stepSeconds(sim, 2.0, 0.02);
+      const earlyH2 = (bNaIce.escapedGasMoles.H2_g || 0) + (bNaIce.moles.NaOH_aq || 0) * 0;
+      const earlyNaRate = bNaIce.lastGasRateMap?.H2_g || 0;
+
+      stepSeconds(sim, 10.0, 0.02);
+      const lateH2 = bNaIce.escapedGasMoles.H2_g || 0;
+      const lateNaRate = bNaIce.lastGasRateMap?.H2_g || 0;
+
+      assert(
+        'Kinetic freeze vs Na-ice: Zn+HCl & CuSO4·5H2O remain locked at 0 in ice; Na on -33°C ice starts slow then accelerates via exothermic melt film',
+        (bZn.moles.Zn_s || 0) > 0.04999 &&
+          (bZn.escapedGasMoles.H2_g || 0) === 0 &&
+          (bDiss.moles.Cu2_aq || 0) === 0 &&
+          lateH2 > 0.005 &&
+          lateH2 > earlyH2 * 4 &&
+          (lateNaRate > earlyNaRate || bNaIce.naTempK > 273.15),
+        `ZnLeft=${(bZn.moles.Zn_s||0).toFixed(5)}, CuDiss=${(bDiss.moles.Cu2_aq||0).toFixed(5)}, H2_early=${(earlyH2*1000).toFixed(2)}mmol, H2_late=${(lateH2*1000).toFixed(2)}mmol, TNa=${bNaIce.naTempK.toFixed(1)}K`
+      );
+    }
+
+    // TEST 53: Cold Cryo-Crystallization of Cooling Salt & Burner Latent-Heat Melting Plateau
+    {
+      const sim = new LabSimulation();
+      sim.setAmbientTempK(274.2); // +1.05°C cold liquid, just above freezing
+      sim.environment.speed = 4;
+
+      const bCryst = sim.createApparatus('beaker_250', 220, 300);
+      // 0.095 mol CuSO4 in 36 g H2O (~2.64 mol/kg) — soluble at 45°C, supersaturated at 1°C (~0.93 mol/kg)!
+      bCryst.moles = { H2O_l: 2.0, Cu2_aq: 0.095, SO4_2_aq: 0.095 };
+      bCryst.tempK = 318.15;
+
+      stepSeconds(sim, 8.0, 0.025);
+      const crystAmt = bCryst.moles.CuSO4_5H2O_s || 0;
+
+      // Burner latent-heat melting plateau
+      const simMelt = new LabSimulation();
+      simMelt.setAmbientTempK(240.15);
+      simMelt.environment.speed = 4;
+      const burner = simMelt.createApparatus('burner', 360, 428);
+      simMelt.setBurnerFlame(burner.id, 3);
+      burner.powerW = 650;
+      const bIce = simMelt.createApparatus('beaker_250', 360, 310);
+      simMelt.updateSupportAttachments();
+      bIce.moles = { H2O_s: 5.55 }; // 100 g solid ice
+      bIce.tempK = 240.15;
+      bIce.isFrozenSolid = true;
+
+      let meltPlateauT = null;
+      for (let i = 0; i < 1000; i++) {
+        simMelt.step(0.025);
+        if (meltPlateauT === null && (bIce.moles.H2O_l || 0) > 1.5 && (bIce.moles.H2O_s || 0) > 1.5) {
+          meltPlateauT = bIce.tempK;
+        }
+      }
+
+      assert(
+        'Cryo-crystallization & melt plateau: Hot CuSO4 crystallizes CuSO4·5H2O on cooling; 650W burner holds 0°C plateau during melting then heats above 285 K',
+        crystAmt > 0.025 &&
+          meltPlateauT !== null &&
+          Math.abs(meltPlateauT - 273.15) < 1.2 &&
+          (bIce.moles.H2O_s || 0) < 1e-4 &&
+          bIce.tempK > 285,
+        `crystCuSO4=${crystAmt.toFixed(4)}mol, meltPlateau=${meltPlateauT ? (meltPlateauT-273.15).toFixed(2) : 'n/a'}°C, finalT=${(bIce.tempK-273.15).toFixed(1)}°C, iceLeft=${(bIce.moles.H2O_s||0).toFixed(4)}`
+      );
+    }
+
+    // TEST 54: 3 Cryo Bugfixes (No Subzero Mist / HCl Fume + Frost Rime, Syringe Charles Contraction & Ice Condensation, Escaped H2O(g) -> Frost)
+    {
+      const mistNeg43 = computeSteamOpacity(230.15, 240.15, 0.60);
+      const mistNeg33 = computeSteamOpacity(240.15, 240.15, 0.60);
+      const mistThresh = computeSteamOpacity(255.15, 240.15, 0.60);
+
+      const sim = new LabSimulation();
+      sim.setAmbientTempK(240.15);
+      const bFrost = sim.createApparatus('beaker_250', 180, 300);
+      bFrost.moles = { H2O_s: 5.55 };
+      bFrost.tempK = 240.15;
+      bFrost.isFrozenSolid = true;
+      bFrost.escapedGasMoles.H2O_g = 0.05; // Pre-existing escaping H2O(g)
+      sim.condenseEscapedVaporInCryo();
+
+      const bColdHCl = sim.createApparatus('beaker_250', 320, 300);
+      sim.addReagentToVessel(bColdHCl.id, 'hcl_37', 25);
+      bColdHCl.tempK = 240.15;
+
+      // Gas Syringe Charles's Law contraction: 298.15 K -> 240.15 K (~19.45%) + steam freezing inside syringe
+      const simSyr = new LabSimulation();
+      simSyr.setAmbientTempK(298.15);
+      const syr = simSyr.createApparatus('gas_syringe', 450, 260);
+      syr.gasMoles.H2_g = 0.004;
+      syr.tempK = 298.15;
+      const v298 = computeSyringeGasVolumeMl(syr, simSyr.environment);
+
+      simSyr.setAmbientTempK(240.15);
+      stepSeconds(simSyr, 15.0, 0.025);
+      const v240 = computeSyringeGasVolumeMl(syr, simSyr.environment);
+      const charlesRatio = v240 / v298;
+
+      const syrSteam = simSyr.createApparatus('gas_syringe', 560, 260);
+      syrSteam.gasMoles.H2O_g = 0.003;
+      syrSteam.gasMoles.H2_g = 0.002;
+      syrSteam.tempK = 360;
+      stepSeconds(simSyr, 12.0, 0.025);
+
+      sim.step(0.05);
+      sim.step(0.05);
+
+      const ps = new ParticleSystem();
+      ps.emitForVessel(
+        bColdHCl,
+        {
+          gasRates: { HCl_g: 0, H2_g: 0, O2_g: 0, Cl2_g: 0, NH3_g: 0, NO2_g: 0, NO_g: 0, C2H5Cl_g: 0, C2H5OH_g: 0 },
+          steamRate: 0,
+          steamOpacity: 0,
+          overflowRateMlS: 0,
+          isBoiling: false,
+        },
+        0.5
+      );
+
+      assert(
+        '3 Cryo fixes: 0 subzero mist/HCl fog, frostOpacity > 0.3, Charles ~19.5% syringe contraction, steam->ice inside syringe, escaped H2O(g)->frost',
+        mistNeg43 === 0 &&
+          mistNeg33 === 0 &&
+          mistThresh === 0 &&
+          ps.particles.length === 0 &&
+          bFrost.frostOpacity > 0.12 &&
+          (bFrost.escapedGasMoles.H2O_g || 0) === 0 &&
+          Math.abs(bFrost.escapedFrostH2OMol - 0.05) < 1e-6 &&
+          Math.abs(charlesRatio - 240.15 / 298.15) < 0.015 &&
+          (syrSteam.frozenWaterMol || 0) > 0.002 &&
+          (syrSteam.gasMoles.H2O_g || 0) < 1e-5,
+        `mist=${mistNeg43}/${mistNeg33}/${mistThresh}, frostOp=${bFrost.frostOpacity.toFixed(2)}, escH2O=${bFrost.escapedGasMoles.H2O_g}, escFrost=${bFrost.escapedFrostH2OMol}, charles=${charlesRatio.toFixed(3)}, syrIce=${(syrSteam.frozenWaterMol||0).toFixed(4)}`
+      );
+    }
+
+    // TEST 55: UI Env Badge (SATP / Non-standard / Cryo), Light+Dark Contrast & Build virlab_v2+build.2 Parity
+    {
+      const host = document.createElement('div');
+      const sim = new LabSimulation();
+      const state = { lang: 'en', theme: 'dark', deviceMode: 'desktop' };
+      const bar = new EnvironmentBar(host, sim, state, {});
+      const tEn = (k) => I18N.en[k] || k;
+      const tVi = (k) => I18N.vi[k] || k;
+
+      bar.render(tEn);
+      const minAttr = host.querySelector('#env-temp-input')?.getAttribute('min');
+      const badgeSatp = host.querySelector('#btn-std-satp')?.textContent?.trim();
+
+      sim.setAmbientTempK(310.15);
+      bar.render(tEn);
+      const badgeCustomEn = host.querySelector('#btn-std-satp')?.textContent?.trim();
+
+      sim.setAmbientTempK(240.15);
+      bar.render(tEn);
+      const badgeCryoEn = host.querySelector('#btn-std-satp')?.textContent?.trim();
+
+      state.lang = 'vi';
+      state.theme = 'light';
+      bar.render(tVi);
+      const badgeCryoVi = host.querySelector('#btn-std-satp')?.textContent?.trim();
+
+      assert(
+        'UI Cryo badge & IUPAC/build parity: min=200K, SATP/Non-standard/Cryo states work in EN+VI, Light+Dark, virlab_v2+build.2 synced',
+        minAttr === '200' &&
+          badgeSatp === 'SATP' &&
+          badgeCustomEn === 'Non-standard' &&
+          badgeCryoEn === '❄️ Cryo' &&
+          badgeCryoVi === '❄️ Cryo' &&
+          I18N.vi.appSubtitle.includes('virlab_v2+build.2') &&
+          I18N.en.appSubtitle.includes('virlab_v2+build.2') &&
+          I18N.vi.reg_cuso4_5h2o.includes('Copper(II)'),
+        `min=${minAttr}, badges=${badgeSatp}|${badgeCustomEn}|${badgeCryoEn}|${badgeCryoVi}, subVi=${I18N.vi.appSubtitle}`
       );
     }
 

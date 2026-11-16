@@ -22,7 +22,9 @@ import {
   ALL_GASES,
   NON_STEAM_GASES,
   buildCombinedSyringeLiquidMoles,
+  buildCombinedSyringeTotalMoles,
   computeSyringeDischargeArc,
+  computeSyringeFrozenVolumeMl,
   computeSyringeGasVolumeMl,
   computeSyringeHeatCapacityJK,
   computeSyringeLiquidVolumeMl,
@@ -228,6 +230,11 @@ export class LabSimulation {
         tubeFlowFormula: '',
         tubeFlowBannerTimer: 0,
         wallCondenseLevel: 0,
+        isFrozenSolid: false,
+        frostOpacity: 0,
+        freezePointK: CONSTANTS.T_FREEZE_WATER_K,
+        lastFreezeMeltRateMolS: 0,
+        escapedFrostH2OMol: 0,
       });
     } else if (spec.kind === 'scale') {
       Object.assign(base, {
@@ -263,6 +270,8 @@ export class LabSimulation {
       Object.assign(base, {
         gasMoles: createEmptyGasMap(),
         condensedWaterMol: 0,
+        frozenWaterMol: 0,
+        frostOpacity: this.environment.tempK < CONSTANTS.T_FREEZE_WATER_K ? 0.35 : 0,
         overflowMoles: {},
         overflowBleachFrac: 0,
         tempK: this.environment.tempK,
@@ -470,7 +479,7 @@ export class LabSimulation {
         if (it.kind === 'vessel') {
           loadG += (spec.tareMassG || 0) + computeContentsMassG(it.moles);
         } else if (it.kind === 'gas_syringe') {
-          const syrMoles = buildCombinedSyringeLiquidMoles(it);
+          const syrMoles = buildCombinedSyringeTotalMoles(it);
           loadG += 185.0 + computeContentsMassG(syrMoles);
         } else if (it.kind === 'pipette') {
           loadG += 18.0 + computeContentsMassG(it.moles || {});
@@ -713,6 +722,7 @@ export class LabSimulation {
     if (immediate) {
       syr.gasMoles = createEmptyGasMap();
       syr.condensedWaterMol = 0;
+      syr.frozenWaterMol = 0;
       syr.overflowMoles = {};
       syr.overflowBleachFrac = 0;
       syr.lastCondenseRateMolS = 0;
@@ -997,7 +1007,7 @@ export class LabSimulation {
 
   stirVessel(vesselId) {
     const v = this.getItem(vesselId);
-    if (!v || v.kind !== 'vessel' || v.isShattered) return;
+    if (!v || v.kind !== 'vessel' || v.isShattered || v.isFrozenSolid) return;
     v.stirTimer = 3.0;
     v.suspensionLevel = 1.0;
     // Re-suspend precipitates when stirred (decays back toward 0 over ~13s of standing still)
@@ -1052,6 +1062,11 @@ export class LabSimulation {
     v.tubeFlowFormula = '';
     v.tubeFlowBannerTimer = 0;
     v.wallCondenseLevel = 0;
+    v.isFrozenSolid = false;
+    v.frostOpacity = 0;
+    v.freezePointK = CONSTANTS.T_FREEZE_WATER_K;
+    v.lastFreezeMeltRateMolS = 0;
+    v.escapedFrostH2OMol = 0;
     this.recomputeScaleReadings();
     this.emitChange();
   }
@@ -2072,6 +2087,7 @@ export class LabSimulation {
     syringe.dischargeLiquidRateMlS = 0;
     syringe.gasMoles = createEmptyGasMap();
     syringe.condensedWaterMol = 0;
+    syringe.frozenWaterMol = 0;
     syringe.overflowMoles = {};
     syringe.overflowBleachFrac = 0;
     syringe.internalPressureBar = this.environment.pressureBar;
@@ -2111,6 +2127,7 @@ export class LabSimulation {
     }
     syringe.gasMoles = createEmptyGasMap();
     syringe.condensedWaterMol = 0;
+    syringe.frozenWaterMol = 0;
     syringe.overflowMoles = {};
     syringe.overflowBleachFrac = 0;
     syringe.internalPressureBar = this.environment.pressureBar;
@@ -2412,6 +2429,31 @@ export class LabSimulation {
   }
 
   /**
+   * Condense/freeze ambient escaped H2O(g) into surface frost whenever ambient T < 273.15 K.
+   */
+  condenseEscapedVaporInCryo() {
+    if (this.environment.tempK >= CONSTANTS.T_FREEZE_WATER_K) return;
+    for (const v of this.items) {
+      if (v.kind !== 'vessel' || v.isShattered || !v.escapedGasMoles) continue;
+      const nH2O = v.escapedGasMoles.H2O_g || 0;
+      if (nH2O > 0) {
+        v.escapedFrostH2OMol = (v.escapedFrostH2OMol || 0) + nH2O;
+        v.escapedGasMoles.H2O_g = 0;
+      }
+    }
+  }
+
+  /**
+   * Update ambient laboratory temperature (K) and immediately deposit cold escaped steam into frost.
+   */
+  setAmbientTempK(tempK) {
+    const val = Math.max(200, Math.min(450, Number(tempK) || CONSTANTS.T_STD_K));
+    this.environment.tempK = val;
+    this.condenseEscapedVaporInCryo();
+    this.emitChange();
+  }
+
+  /**
    * Main simulation tick called by animation loop (realDeltaSec).
    */
   step(realDeltaSec) {
@@ -2427,6 +2469,8 @@ export class LabSimulation {
     }
 
     if (this.environment.paused) return;
+
+    this.condenseEscapedVaporInCryo();
 
     const scaledDt = Math.min(0.25, realDeltaSec * this.environment.speed);
     this.timeSec += scaledDt;
@@ -2485,6 +2529,8 @@ export class LabSimulation {
 
       const frameGas = createZeroGasMap();
       let frameSteam = 0;
+      let frameFreezeMeltMol = 0;
+      let lastFreezePointK = v.freezePointK ?? CONSTANTS.T_FREEZE_WATER_K;
       let frameBoiling = false;
       let frameSteamOpacity = 0;
       let frameNaEvent = null;
@@ -2500,6 +2546,10 @@ export class LabSimulation {
           burnerPowerW,
           burnerFlameLevel
         );
+        frameFreezeMeltMol += (thermRes.freezeMeltRateMolS || 0) * dt;
+        if (Number.isFinite(thermRes.freezePointK)) {
+          lastFreezePointK = thermRes.freezePointK;
+        }
         const dryRes = enforceDryPhaseBoundary(v);
 
         const combinedGas = createZeroGasMap();
@@ -2578,67 +2628,69 @@ export class LabSimulation {
 
       if (v.isShattered) continue;
 
-      // Advance reversible phenolphthalein carbinol fading & high-temp irreversible C-C cleavage
+      // Advance reversible phenolphthalein carbinol fading & high-temp irreversible C-C cleavage (locked while frozen solid)
       if ((v.moles.Phenolphthalein_aq || 0) > 1e-12) {
-        const liqL = computeLiquidVolumeL(v.moles, v.tempK);
-        if (liqL > 1e-7) {
-          const cOH = (v.moles.OH_aq || 0) / liqL;
-          const cEthoxide = (v.moles.C2H5O_aq || 0) / liqL;
-          const cH = (v.moles.H_aq || 0) / liqL;
-          const eqBleach = computePhenolphthaleinBleachEq(cOH, cEthoxide);
-          const curBleach = v.phenBleachFrac || 0;
-          const tempFactor = Math.exp(Math.max(-1.5, Math.min(1.5, 0.025 * (v.tempK - CONSTANTS.T_STD_K))));
-          const rate =
-            curBleach < eqBleach
-              ? 0.28 * Math.max(0.2, cOH + 2.2 * cEthoxide) * tempFactor
-              : (0.55 + Math.min(3.0, cH * 1.5)) * tempFactor;
-          v.phenBleachFrac = eqBleach + (curBleach - eqBleach) * Math.exp(-rate * scaledDt);
+        if (!v.isFrozenSolid) {
+          const liqL = computeLiquidVolumeL(v.moles, v.tempK);
+          if (liqL > 1e-7) {
+            const cOH = (v.moles.OH_aq || 0) / liqL;
+            const cEthoxide = (v.moles.C2H5O_aq || 0) / liqL;
+            const cH = (v.moles.H_aq || 0) / liqL;
+            const eqBleach = computePhenolphthaleinBleachEq(cOH, cEthoxide);
+            const curBleach = v.phenBleachFrac || 0;
+            const tempFactor = Math.exp(Math.max(-1.5, Math.min(1.5, 0.025 * (v.tempK - CONSTANTS.T_STD_K))));
+            const rate =
+              curBleach < eqBleach
+                ? 0.28 * Math.max(0.2, cOH + 2.2 * cEthoxide) * tempFactor
+                : (0.55 + Math.min(3.0, cH * 1.5)) * tempFactor;
+            v.phenBleachFrac = eqBleach + (curBleach - eqBleach) * Math.exp(-rate * scaledDt);
 
-          // Irreversible Friedel-Crafts-reverse C-C cleavage in hot super-concentrated alkali (>=4.5 M OH-, >=65 °C)
-          if (cOH >= 4.5 && v.tempK >= 338.15) {
-            const kCleav =
-              0.015 *
-              Math.min(4.0, (cOH - 4.0) * 0.5) *
-              Math.exp(Math.max(-2.0, Math.min(3.0, 0.045 * (v.tempK - 340.0))));
-            const prevIrrev = v.phenIrrevFrac || 0;
-            v.phenIrrevFrac = Math.min(1.0, prevIrrev + (1 - prevIrrev) * (1 - Math.exp(-kCleav * scaledDt)));
-            if (prevIrrev < 0.25 && v.phenIrrevFrac >= 0.25 && (this.timeSec - (v.seenReactions.phen_cc_cleavage ?? -99)) > 6.0) {
-              v.seenReactions.phen_cc_cleavage = this.timeSec;
-              this.addLog({
-                type: 'reaction',
-                equation: 'In(OH)³⁻ (đỏ/không màu) —(NaOH đặc, t°)→ Phenol + 2-(4-hydroxybenzoyl)benzoate',
-                nameVi: 'Cắt mạch C–C bất thuận nghịch Phenolphthalein',
-                nameEn: 'Irreversible C–C cleavage of Phenolphthalein',
-                descVi: 'Kiềm siêu đặc nóng phá vỡ khung triphenylmethane; pha loãng hay thêm acid màu hồng vĩnh viễn không quay lại.',
-                descEn: 'Hot super-concentrated OH⁻ destroys the triphenylmethane skeleton; pink never recovers.',
-                vesselLabel: v.label,
-              });
-            }
-          }
-
-          // Irreversible alkaline peroxide quinonoid cleavage of Phenolphthalein (H2O2 + OH-/NH3)
-          const cH2O2 = (v.moles.H2O2_aq || 0) / liqL;
-          if (cH2O2 >= 0.05) {
-            const phNow = computePH(v.moles, liqL, v.tempK) ?? 7.0;
-            if (phNow >= 8.3) {
-              const kBleachOx =
-                0.28 *
-                Math.min(4.0, cH2O2 * 0.45) *
-                Math.min(3.0, Math.pow(10, Math.min(2, phNow - 9.0))) *
-                tempFactor;
-              const prevIrrevOx = v.phenIrrevFrac || 0;
-              v.phenIrrevFrac = Math.min(1.0, prevIrrevOx + (1 - prevIrrevOx) * (1 - Math.exp(-kBleachOx * scaledDt)));
-              if (prevIrrevOx < 0.35 && v.phenIrrevFrac >= 0.35 && (this.timeSec - (v.seenReactions.phen_h2o2_bleach ?? -99)) > 6.0) {
-                v.seenReactions.phen_h2o2_bleach = this.timeSec;
+            // Irreversible Friedel-Crafts-reverse C-C cleavage in hot super-concentrated alkali (>=4.5 M OH-, >=65 °C)
+            if (cOH >= 4.5 && v.tempK >= 338.15) {
+              const kCleav =
+                0.015 *
+                Math.min(4.0, (cOH - 4.0) * 0.5) *
+                Math.exp(Math.max(-2.0, Math.min(3.0, 0.045 * (v.tempK - 340.0))));
+              const prevIrrev = v.phenIrrevFrac || 0;
+              v.phenIrrevFrac = Math.min(1.0, prevIrrev + (1 - prevIrrev) * (1 - Math.exp(-kCleav * scaledDt)));
+              if (prevIrrev < 0.25 && v.phenIrrevFrac >= 0.25 && (this.timeSec - (v.seenReactions.phen_cc_cleavage ?? -99)) > 6.0) {
+                v.seenReactions.phen_cc_cleavage = this.timeSec;
                 this.addLog({
                   type: 'reaction',
-                  equation: 'Phenolphthalein (In²⁻ hồng) + H₂O₂ —(OH⁻/NH₃)→ Sản phẩm oxi hóa không màu',
-                  nameVi: 'H₂O₂ kiềm tẩy màu bất thuận nghịch Phenolphthalein',
-                  nameEn: 'Irreversible alkaline H₂O₂ bleaching of Phenolphthalein',
-                  descVi: 'Trong môi trường kiềm, H₂O₂ oxi hóa cắt vòng quinonoid làm phai mất màu hồng chỉ thị vĩnh viễn.',
-                  descEn: 'In alkaline solution, Hydrogen peroxide oxidatively cleaves the pink quinonoid dianion permanently.',
+                  equation: 'In(OH)³⁻ (đỏ/không màu) —(NaOH đặc, t°)→ Phenol + 2-(4-hydroxybenzoyl)benzoate',
+                  nameVi: 'Cắt mạch C–C bất thuận nghịch Phenolphthalein',
+                  nameEn: 'Irreversible C–C cleavage of Phenolphthalein',
+                  descVi: 'Kiềm siêu đặc nóng phá vỡ khung triphenylmethane; pha loãng hay thêm acid màu hồng vĩnh viễn không quay lại.',
+                  descEn: 'Hot super-concentrated OH⁻ destroys the triphenylmethane skeleton; pink never recovers.',
                   vesselLabel: v.label,
                 });
+              }
+            }
+
+            // Irreversible alkaline peroxide quinonoid cleavage of Phenolphthalein (H2O2 + OH-/NH3)
+            const cH2O2 = (v.moles.H2O2_aq || 0) / liqL;
+            if (cH2O2 >= 0.05) {
+              const phNow = computePH(v.moles, liqL, v.tempK) ?? 7.0;
+              if (phNow >= 8.3) {
+                const kBleachOx =
+                  0.28 *
+                  Math.min(4.0, cH2O2 * 0.45) *
+                  Math.min(3.0, Math.pow(10, Math.min(2, phNow - 9.0))) *
+                  tempFactor;
+                const prevIrrevOx = v.phenIrrevFrac || 0;
+                v.phenIrrevFrac = Math.min(1.0, prevIrrevOx + (1 - prevIrrevOx) * (1 - Math.exp(-kBleachOx * scaledDt)));
+                if (prevIrrevOx < 0.35 && v.phenIrrevFrac >= 0.35 && (this.timeSec - (v.seenReactions.phen_h2o2_bleach ?? -99)) > 6.0) {
+                  v.seenReactions.phen_h2o2_bleach = this.timeSec;
+                  this.addLog({
+                    type: 'reaction',
+                    equation: 'Phenolphthalein (In²⁻ hồng) + H₂O₂ —(OH⁻/NH₃)→ Sản phẩm oxi hóa không màu',
+                    nameVi: 'H₂O₂ kiềm tẩy màu bất thuận nghịch Phenolphthalein',
+                    nameEn: 'Irreversible alkaline H₂O₂ bleaching of Phenolphthalein',
+                    descVi: 'Trong môi trường kiềm, H₂O₂ oxi hóa cắt vòng quinonoid làm phai mất màu hồng chỉ thị vĩnh viễn.',
+                    descEn: 'In alkaline solution, Hydrogen peroxide oxidatively cleaves the pink quinonoid dianion permanently.',
+                    vesselLabel: v.label,
+                  });
+                }
               }
             }
           }
@@ -2716,6 +2768,42 @@ export class LabSimulation {
         }
       }
 
+      v.freezePointK = lastFreezePointK;
+      const netFreezeRate = frameFreezeMeltMol / Math.max(1e-4, scaledDt);
+      v.lastFreezeMeltRateMolS = netFreezeRate;
+      if (netFreezeRate > 1e-4 && !frameActiveMap.has('water_freeze')) {
+        frameActiveMap.set('water_freeze', {
+          id: 'water_freeze',
+          equation: 'H₂O(l) → H₂O(s) (đông đặc, ΔH_fus = -6.01 kJ/mol)',
+          nameVi: 'Đóng băng nước tạo tinh thể băng H₂O(s)',
+          nameEn: 'Freezing of liquid water into crystalline ice H₂O(s)',
+          descVi: 'Nhiệt độ hạ xuống dưới điểm đóng băng khiến pha lỏng kết tinh thành băng rắn, giữ nhiệt độ tại plateau T_f.',
+          descEn: 'Liquid water freezes into solid ice below T_f, holding temperature on the freezing plateau.',
+          rateMolS: netFreezeRate,
+          vigorousGas: false,
+          dXi: frameFreezeMeltMol,
+        });
+      } else if (netFreezeRate < -1e-4 && !frameActiveMap.has('water_melt')) {
+        frameActiveMap.set('water_melt', {
+          id: 'water_melt',
+          equation: 'H₂O(s) → H₂O(l) (nóng chảy, ΔH_fus = +6.01 kJ/mol)',
+          nameVi: 'Nóng chảy băng H₂O(s) thành nước lỏng',
+          nameEn: 'Melting of crystalline ice H₂O(s) into liquid water',
+          descVi: 'Thu ẩn nhiệt nóng chảy để chuyển tinh thể băng thành pha lỏng, giữ nhiệt độ tại plateau T_melt.',
+          descEn: 'Absorbs latent heat of fusion to melt solid ice back into liquid water at T_melt.',
+          rateMolS: Math.abs(netFreezeRate),
+          vigorousGas: false,
+          dXi: Math.abs(frameFreezeMeltMol),
+        });
+      }
+
+      if (this.environment.tempK >= CONSTANTS.T_FREEZE_WATER_K && (v.escapedFrostH2OMol || 0) > 0) {
+        const dSubl = Math.min(v.escapedFrostH2OMol, 0.02 * scaledDt);
+        v.escapedFrostH2OMol -= dSubl;
+        if (v.escapedFrostH2OMol < 1e-9) v.escapedFrostH2OMol = 0;
+        v.escapedGasMoles.H2O_g = (v.escapedGasMoles.H2O_g || 0) + dSubl;
+      }
+
       v.activeReactions = Array.from(frameActiveMap.values());
 
       // Two-temperature coupled Sodium Coulomb explosion / ignition shatter
@@ -2731,21 +2819,23 @@ export class LabSimulation {
       }
       v.wasBoiling = frameBoiling;
 
-      // Update precipitate settling (~12-15s undisturbed rest) & suspension decay
-      const vigAgitation = v.stirTimer > 0 || frameGas.H2_g > 1e-5 || frameBoiling;
-      if (vigAgitation) {
-        v.suspensionLevel = Math.min(1.0, (v.suspensionLevel || 0) + 0.65 * realDeltaSec);
-      } else {
-        v.suspensionLevel = Math.max(0, (v.suspensionLevel || 0) - 0.078 * realDeltaSec);
-      }
-      for (const [spId, n] of Object.entries(v.moles)) {
-        const sp = SPECIES[spId];
-        if (sp && sp.isPrecipitate && n > 1e-8) {
-          const prev = v.precipitateSettle[spId] ?? 0.0;
-          // Precipitates settle gradually over ~12.5s unless stirred, boiling, or vigorously bubbling
-          const isDenseMetal = Boolean(sp.isDenseMetal);
-          const settleSpeed = vigAgitation ? (isDenseMetal ? -0.25 : -0.45) : (isDenseMetal ? 0.55 : 0.08);
-          v.precipitateSettle[spId] = Math.max(0.0, Math.min(1.0, prev + settleSpeed * realDeltaSec));
+      // Update precipitate settling (~12-15s undisturbed rest) & suspension decay (locked in frozen matrix)
+      const vigAgitation = !v.isFrozenSolid && (v.stirTimer > 0 || frameGas.H2_g > 1e-5 || frameBoiling);
+      if (!v.isFrozenSolid) {
+        if (vigAgitation) {
+          v.suspensionLevel = Math.min(1.0, (v.suspensionLevel || 0) + 0.65 * realDeltaSec);
+        } else {
+          v.suspensionLevel = Math.max(0, (v.suspensionLevel || 0) - 0.078 * realDeltaSec);
+        }
+        for (const [spId, n] of Object.entries(v.moles)) {
+          const sp = SPECIES[spId];
+          if (sp && sp.isPrecipitate && n > 1e-8) {
+            const prev = v.precipitateSettle[spId] ?? 0.0;
+            // Precipitates settle gradually over ~12.5s unless stirred, boiling, or vigorously bubbling
+            const isDenseMetal = Boolean(sp.isDenseMetal);
+            const settleSpeed = vigAgitation ? (isDenseMetal ? -0.25 : -0.45) : (isDenseMetal ? 0.55 : 0.08);
+            v.precipitateSettle[spId] = Math.max(0.0, Math.min(1.0, prev + settleSpeed * realDeltaSec));
+          }
         }
       }
       for (const spId of Object.keys(v.precipitateSettle)) {
@@ -2754,17 +2844,22 @@ export class LabSimulation {
         }
       }
 
-      // Sodium motion on meniscus (wide surface skitters freely; narrow surface pins against glass wall)
-      const naActive = frameActiveMap.has('na_water') || frameActiveMap.has('na_acid') || frameActiveMap.has('na_ethanol');
+      // Sodium motion on meniscus (wide surface skitters freely; narrow surface pins against glass wall; muted on bare ice)
+      const naActive =
+        frameActiveMap.has('na_water') ||
+        frameActiveMap.has('na_acid') ||
+        frameActiveMap.has('na_ethanol') ||
+        frameActiveMap.has('na_ice');
       const isDehydrating = frameActiveMap.has('dehydrate_cuso4_5h2o');
       if (naActive && (v.moles.Na_s || 0) > 1e-7) {
+        const naMotionScale = (v.moles.H2O_l || 0) > 5e-4 ? 1.0 : 0.2;
         if (v.naPinned) {
           // Wall-pinned Sodium clings violently near glass wall edge
           const pinTarget = v.naPosRatio >= 0.5 ? 0.88 : 0.12;
-          v.naPosRatio += (pinTarget - v.naPosRatio) * Math.min(1, realDeltaSec * 8);
+          v.naPosRatio += (pinTarget - v.naPosRatio) * Math.min(1, realDeltaSec * 8 * naMotionScale);
         } else {
-          v.naVisualPhase += realDeltaSec * 8.5;
-          v.naPosRatio += v.naVel * realDeltaSec * (0.8 + Math.sin(v.naVisualPhase) * 0.6);
+          v.naVisualPhase += realDeltaSec * 8.5 * naMotionScale;
+          v.naPosRatio += v.naVel * realDeltaSec * (0.8 + Math.sin(v.naVisualPhase) * 0.6) * naMotionScale;
           if (v.naPosRatio > 0.84) {
             v.naPosRatio = 0.84;
             v.naVel = -Math.abs(v.naVel);
@@ -2792,13 +2887,16 @@ export class LabSimulation {
       totalGasRate += rateSteam;
 
       const curSteamOpacity =
-        frameBoiling
+        v.isFrozenSolid && !isDehydrating
+          ? 0
+          : frameBoiling
           ? 1.0
           : isDehydrating
           ? Math.max(0.65, computeSteamOpacity(v.tempK, this.environment.tempK, CONSTANTS.RELATIVE_HUMIDITY))
           : Math.max(frameSteamOpacity, computeSteamOpacity(v.tempK, this.environment.tempK, CONSTANTS.RELATIVE_HUMIDITY));
       const steamVisible =
-        (rateSteam > 3e-5 && curSteamOpacity > 0.04) || (frameBoiling && rateSteam > 1e-6) || isDehydrating;
+        !v.isFrozenSolid &&
+        ((rateSteam > 3e-5 && curSteamOpacity > 0.04) || (frameBoiling && rateSteam > 1e-6) || isDehydrating);
 
       const labelOrder = ['C2H5Cl_g', 'NH3_g', 'NO2_g', 'NO_g', 'H2_g', 'O2_g', 'Cl2_g', 'HCl_g', 'C2H5OH_g'];
       const extraLabelIds = ALL_GAS_IDS.filter(
@@ -2815,12 +2913,30 @@ export class LabSimulation {
       if (steamVisible) labels.push('H₂O(g)');
       const formulaSummary = labels.slice(0, 2).join(' + ');
 
-      if ((rateSteam > 4e-5 && curSteamOpacity > 0.12) || frameBoiling || (v.headspaceGasMoles?.H2O_g || 0) > 1e-5) {
+      if (
+        v.tempK >= CONSTANTS.T_FREEZE_WATER_K &&
+        ((rateSteam > 4e-5 && curSteamOpacity > 0.12) || frameBoiling || (v.headspaceGasMoles?.H2O_g || 0) > 1e-5)
+      ) {
         const targetCond = Math.min(1, 0.25 + curSteamOpacity * 0.65);
         v.wallCondenseLevel = Math.min(1, (v.wallCondenseLevel || 0) + (targetCond - (v.wallCondenseLevel || 0)) * Math.min(1, realDeltaSec * 2.5));
       } else {
-        v.wallCondenseLevel = Math.max(0, (v.wallCondenseLevel || 0) - realDeltaSec * 0.14);
+        const decayRate = v.tempK < CONSTANTS.T_FREEZE_WATER_K ? 0.45 : 0.14;
+        v.wallCondenseLevel = Math.max(0, (v.wallCondenseLevel || 0) - realDeltaSec * decayRate);
       }
+
+      const tempSubzeroK = Math.max(0, CONSTANTS.T_FREEZE_WATER_K - v.tempK);
+      const envSubzeroK = Math.max(0, CONSTANTS.T_FREEZE_WATER_K - this.environment.tempK);
+      let targetFrost = 0;
+      if (v.tempK < CONSTANTS.T_FREEZE_WATER_K + 1.5 && (tempSubzeroK > 0.3 || envSubzeroK > 1.0)) {
+        const vesselFrost = Math.min(0.85, (tempSubzeroK / 22) * 0.72 + ((v.moles.H2O_s || 0) > 1e-4 ? 0.25 : 0));
+        const ambientFrost = Math.min(0.55, envSubzeroK / 40);
+        targetFrost = Math.min(1.0, Math.max(vesselFrost, ambientFrost));
+      }
+      const frostRate = targetFrost > (v.frostOpacity || 0) ? 1.8 : 0.65;
+      v.frostOpacity = Math.max(
+        0,
+        Math.min(1, (v.frostOpacity || 0) + (targetFrost - (v.frostOpacity || 0)) * Math.min(1, realDeltaSec * frostRate))
+      );
 
       const visibleOutRate = visibleNonSteamRate + (steamVisible ? rateSteam : 0);
       if ((visibleOutRate > 3.5e-5 || frameBoiling || isDehydrating) && formulaSummary) {
@@ -2878,7 +2994,8 @@ export class LabSimulation {
           naRate:
             (frameActiveMap.get('na_water')?.rateMolS || 0) +
             (frameActiveMap.get('na_acid')?.rateMolS || 0) +
-            (frameActiveMap.get('na_ethanol')?.rateMolS || 0),
+            (frameActiveMap.get('na_ethanol')?.rateMolS || 0) +
+            (frameActiveMap.get('na_ice')?.rateMolS || 0),
         });
       }
 
@@ -2933,6 +3050,24 @@ export class LabSimulation {
       for (let s = 0; s < numSteps; s++) {
         stepSyringeThermodynamics(item, dt, this.environment);
       }
+      const syrT = item.tempK ?? this.environment.tempK;
+      const envSubzeroSyr = Math.max(0, CONSTANTS.T_FREEZE_WATER_K - this.environment.tempK);
+      let targetSyrFrost = 0;
+      if (syrT < CONSTANTS.T_FREEZE_WATER_K + 1.5 && (syrT < CONSTANTS.T_FREEZE_WATER_K - 0.3 || envSubzeroSyr > 1.0)) {
+        const syrCold = Math.max(0, CONSTANTS.T_FREEZE_WATER_K - syrT);
+        targetSyrFrost = Math.min(
+          1.0,
+          Math.max(
+            Math.min(0.85, (syrCold / 22) * 0.72 + ((item.frozenWaterMol || 0) > 1e-5 ? 0.25 : 0)),
+            Math.min(0.55, envSubzeroSyr / 40)
+          )
+        );
+      }
+      const syrFrostRate = targetSyrFrost > (item.frostOpacity || 0) ? 1.8 : 0.65;
+      item.frostOpacity = Math.max(
+        0,
+        Math.min(1, (item.frostOpacity || 0) + (targetSyrFrost - (item.frostOpacity || 0)) * Math.min(1, realDeltaSec * syrFrostRate))
+      );
       if ((item.inflowLiquidTimer || 0) > 0) {
         item.inflowLiquidTimer = Math.max(0, item.inflowLiquidTimer - realDeltaSec);
         if (item.inflowLiquidTimer === 0) item.inflowLiquidRateMlS = 0;

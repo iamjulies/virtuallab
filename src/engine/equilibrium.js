@@ -49,10 +49,50 @@ export function computeLiquidVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
 }
 
 /**
+ * Effective osmolality-weighted solute moles for Raoult cryoscopy (freezing point depression).
+ */
+export function calcEffectiveSoluteMoles(moles) {
+  let sum = 0;
+  for (const [id, n] of Object.entries(moles || {})) {
+    if (n <= 0) continue;
+    const sp = SPECIES[id];
+    if (!sp) continue;
+    if (sp.phase === 'aq') {
+      const weight = sp.cryoscopyFactor ?? (Math.abs(sp.charge || 0) >= 2 ? 0.7 : 1.0);
+      sum += n * weight;
+    } else if (id === 'C2H5OH_l') {
+      sum += n * (sp.cryoscopyFactor ?? 1.0);
+    }
+  }
+  return sum;
+}
+
+/**
+ * Solution freezing point (K) via Raoult's Law cryoscopy:
+ * T_freeze = 273.15 - Kf * sum(i_k * m_k), bounded at eutectic floor (~210 K).
+ * Pure Ethanol without water freezes at 159.05 K (-114.1 C).
+ */
+export function solutionFreezingPointK(moles, useBulkWaterIfFrozen = false) {
+  const nWater = moles?.H2O_l || 0;
+  const nIce = moles?.H2O_s || 0;
+  if (nWater <= 1e-12 && nIce <= 1e-12) {
+    return (moles?.C2H5OH_l || 0) > 1e-12 ? 159.05 : CONSTANTS.T_FREEZE_WATER_K;
+  }
+  const effectiveSoluteMol = calcEffectiveSoluteMoles(moles);
+  const waterMol = useBulkWaterIfFrozen ? nWater + nIce : nWater;
+  const waterMassKg = Math.max(waterMol * (CONSTANTS.M_H2O / 1000), 1e-5);
+  const molality = effectiveSoluteMol / waterMassKg;
+  return Math.max(
+    CONSTANTS.EUTECTIC_FLOOR_K,
+    CONSTANTS.T_FREEZE_WATER_K - CONSTANTS.CRYOSCOPY_KF_WATER * molality
+  );
+}
+
+/**
  * Water auto-ionization constant Kw(T) using Van 't Hoff equation.
  */
 export function computeKw(tempK = CONSTANTS.T_STD_K) {
-  const T = Math.max(250, Math.min(450, tempK));
+  const T = Math.max(200, Math.min(450, tempK));
   const exponent =
     (-CONSTANTS.DELTA_H_WATER_IONIZATION_J / CONSTANTS.R_J_MOL_K) *
     (1 / T - 1 / CONSTANTS.T_STD_K);

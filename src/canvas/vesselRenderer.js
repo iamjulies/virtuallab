@@ -1,5 +1,5 @@
 import { APPARATUS, getClampNeckOffsetY } from '../data/apparatus.js';
-import { kelvinToCelsius } from '../data/constants.js';
+import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
 import {
   computeLiquidVolumeL,
@@ -10,6 +10,8 @@ import {
 import {
   ALL_GASES,
   buildCombinedSyringeLiquidMoles,
+  buildCombinedSyringeTotalMoles,
+  computeSyringeFrozenVolumeMl,
   computeSyringeGasVolumeMl,
   computeSyringeLiquidVolumeMl,
   computeSyringeTotalVolumeMl,
@@ -595,7 +597,9 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   const overflowL = computeLiquidVolumeL(item.overflowMoles || {}, syrTempK);
   const overflowMl = overflowL * 1000;
   const condensedMl = ((item.condensedWaterMol || 0) * SPECIES.H2O_l.molarMass) / 0.997;
+  const frozenMl = computeSyringeFrozenVolumeMl(item);
   const totalLiqMl = overflowMl + condensedMl;
+  const totalFluidMl = totalLiqMl + frozenMl;
   const totalVolMl = computeSyringeTotalVolumeMl(item, env);
 
   // Calibrate stroke: 0 mL tick aligns directly with chamber front face; travel span = 166 px
@@ -694,46 +698,75 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
       ctx.fillRect(barrelLeft + 2, innerTop, chamberW, innerH);
     }
 
-    // 2. Unified aqueous liquid + condensate strictly confined ahead of plunger face!
-    if (totalLiqMl > 0.002) {
-      const combMoles = buildCombinedSyringeLiquidMoles(item);
-      const combL = computeLiquidVolumeL(combMoles, syrTempK);
+    // 2. Unified aqueous liquid + condensate + frozen ice strictly confined ahead of plunger face!
+    if (totalFluidMl > 0.002) {
+      const combMoles = buildCombinedSyringeTotalMoles(item);
+      const liqMoles = buildCombinedSyringeLiquidMoles(item);
+      const combL = computeLiquidVolumeL(liqMoles, syrTempK);
       let liqColor = isDark ? 'rgba(56, 189, 248, 0.62)' : 'rgba(14, 165, 233, 0.55)';
       if (combL > 1e-8) {
         liqColor = computeSolutionVisuals(
           combMoles,
           combL,
-          computePH(combMoles, combL, syrTempK),
+          computePH(liqMoles, combL, syrTempK),
           4.29,
           item.overflowBleachFrac || 0
         ).css;
       }
 
+      const iceFrac = frozenMl / Math.max(1e-6, totalFluidMl);
+      const iceFill = isDark ? 'rgba(224, 242, 254, 0.78)' : 'rgba(186, 230, 253, 0.84)';
+      const iceEdge = isDark ? 'rgba(248, 250, 252, 0.72)' : 'rgba(56, 189, 248, 0.65)';
+
       if (chamberW < 8) {
-        // Tiny condensate volume near 0 mL (e.g. 0.90 mL water with 0.0 mL gas):
+        // Tiny condensate/ice volume near 0 mL:
         // pool proportionally in the front nose gap strictly inside [barrelLeft+2 .. plungerFaceX]
-        const miniFrac = Math.max(0.16, Math.min(1, totalLiqMl / 2.2));
+        const miniFrac = Math.max(0.16, Math.min(1, totalFluidMl / 2.2));
         const miniH = innerH * miniFrac;
-        ctx.fillStyle = liqColor;
-        ctx.fillRect(barrelLeft + 2, innerBot - miniH, chamberW, miniH);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.68)';
+        const poolY = innerBot - miniH;
+        const iceH = miniH * iceFrac;
+        if (totalLiqMl > 0.002) {
+          ctx.fillStyle = liqColor;
+          ctx.fillRect(barrelLeft + 2, poolY + iceH, chamberW, miniH - iceH);
+        }
+        if (frozenMl > 0.002) {
+          ctx.fillStyle = iceFill;
+          ctx.fillRect(barrelLeft + 2, poolY, chamberW, Math.max(2, iceH));
+        }
+        ctx.strokeStyle = frozenMl > 0.002 ? iceEdge : 'rgba(255, 255, 255, 0.68)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(barrelLeft + 2, innerBot - miniH);
-        ctx.lineTo(activeChamberRight, innerBot - miniH);
+        ctx.moveTo(barrelLeft + 2, poolY);
+        ctx.lineTo(activeChamberRight, poolY);
         ctx.stroke();
       } else {
-        // Horizontal cylinder pool: height derived from cross-section volume fraction V_liq / (V_liq + V_gas)
-        const areaFrac = totalLiqMl / Math.max(totalLiqMl + gasVolMl, 1e-6);
+        // Horizontal cylinder pool: height derived from cross-section volume fraction
+        const areaFrac = totalFluidMl / Math.max(totalFluidMl + gasVolMl, 1e-6);
         const hFrac = cylinderFillHeightFraction(areaFrac);
         const poolH = Math.max(2.5, innerH * hFrac);
         const poolY = innerBot - poolH;
+        const iceH = poolH * iceFrac;
 
-        ctx.fillStyle = liqColor;
-        ctx.fillRect(barrelLeft + 2, poolY, chamberW, poolH);
+        if (totalLiqMl > 0.002) {
+          ctx.fillStyle = liqColor;
+          ctx.fillRect(barrelLeft + 2, poolY + iceH, chamberW, Math.max(0, poolH - iceH));
+        }
+        if (frozenMl > 0.002) {
+          ctx.fillStyle = iceFill;
+          ctx.fillRect(barrelLeft + 2, poolY, chamberW, Math.max(2.2, iceH));
+          ctx.strokeStyle = iceEdge;
+          ctx.lineWidth = 0.85;
+          ctx.beginPath();
+          for (let k = 0; k < Math.min(6, Math.floor(chamberW / 14)); k++) {
+            const cx = barrelLeft + 8 + k * 14;
+            ctx.moveTo(cx, poolY + 1);
+            ctx.lineTo(cx + 5, poolY + Math.min(iceH, 5));
+          }
+          ctx.stroke();
+        }
 
         if (hFrac < 0.985) {
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.68)';
+          ctx.strokeStyle = frozenMl > 0.002 ? iceEdge : 'rgba(255, 255, 255, 0.68)';
           ctx.lineWidth = 1.1;
           ctx.beginPath();
           ctx.moveTo(barrelLeft + 2, poolY);
@@ -742,8 +775,8 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
         }
       }
 
-      // Condensation micro-droplets strictly inside active gas chamber above pool
-      if (condensedMl > 0.002 && chamberW >= 12) {
+      // Condensation micro-droplets strictly inside active gas chamber above pool when >= 0°C
+      if (condensedMl > 0.002 && syrTempK >= 273.15 && chamberW >= 12) {
         ctx.fillStyle = 'rgba(186, 230, 253, 0.84)';
         const nDrops = Math.min(10, Math.max(3, Math.floor(chamberW / 12)));
         for (let i = 0; i < nDrops; i++) {
@@ -752,6 +785,31 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
           ctx.beginPath();
           ctx.arc(dx, dy, 1.1 + (i % 3) * 0.4, 0, Math.PI * 2);
           ctx.fill();
+        }
+      }
+    }
+
+    // Outer/inner rime frost layer on cold syringe walls
+    const syrFrost = Math.min(1, item.frostOpacity || 0);
+    if (syrFrost > 0.03) {
+      const fGrad = ctx.createLinearGradient(barrelLeft, barrelTop, barrelLeft, barrelTop + barrelH);
+      fGrad.addColorStop(0, isDark ? `rgba(224, 242, 254, ${0.42 * syrFrost})` : `rgba(186, 230, 253, ${0.52 * syrFrost})`);
+      fGrad.addColorStop(0.5, isDark ? `rgba(241, 245, 249, ${0.12 * syrFrost})` : `rgba(224, 242, 254, ${0.22 * syrFrost})`);
+      fGrad.addColorStop(1, isDark ? `rgba(224, 242, 254, ${0.38 * syrFrost})` : `rgba(186, 230, 253, ${0.46 * syrFrost})`);
+      ctx.fillStyle = fGrad;
+      ctx.fillRect(barrelLeft + 2, innerTop, chamberW, innerH);
+      ctx.strokeStyle = isDark ? `rgba(248, 250, 252, ${0.55 * syrFrost})` : `rgba(14, 165, 233, ${0.45 * syrFrost})`;
+      ctx.lineWidth = 0.85;
+      for (let i = 0; i < 6; i++) {
+        const fx = barrelLeft + 8 + ((i * 0.618 + 0.1) % 1) * Math.max(8, barrelW - 18);
+        const fy = innerTop + 5 + ((i * 0.41) % 1) * Math.max(6, innerH - 10);
+        if (fx <= activeChamberRight - 3) {
+          ctx.beginPath();
+          ctx.moveTo(fx - 2.6, fy);
+          ctx.lineTo(fx + 2.6, fy);
+          ctx.moveTo(fx, fy - 2.6);
+          ctx.lineTo(fx, fy + 2.6);
+          ctx.stroke();
         }
       }
     }
@@ -861,14 +919,15 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
 
   // Live Gas + Liquid + Temperature Badge below syringe
   const gasTag = getDominantSyringeGasFormula(item, langCode);
+  const syrPhaseIcon = frozenMl > totalLiqMl ? '❄️' : '💧';
   let labelText;
-  if (totalLiqMl > 0.2 && gasVolMl > 0.5) {
-    labelText = `💨 ${gasVolMl.toFixed(1)} + 💧 ${totalLiqMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
-  } else if (overflowMl > 0.2) {
+  if (totalFluidMl > 0.2 && gasVolMl > 0.5) {
+    labelText = `💨 ${gasVolMl.toFixed(1)} + ${syrPhaseIcon} ${totalFluidMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
+  } else if (overflowMl > 0.2 || frozenMl > 0.2) {
     labelText =
       langCode === 'vi'
-        ? `💧 Tràn vào: ${totalLiqMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`
-        : `💧 Liquid: ${totalLiqMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
+        ? `${syrPhaseIcon} ${frozenMl > totalLiqMl ? 'Băng' : 'Tràn vào'}: ${totalFluidMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`
+        : `${syrPhaseIcon} ${frozenMl > totalLiqMl ? 'Ice' : 'Liquid'}: ${totalFluidMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
   } else {
     labelText = `${gasTag}: ${gasVolMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
   }
@@ -1342,6 +1401,9 @@ export function renderVessel(ctx, vessel, opts) {
   const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
   const liqMl = liqL * 1000;
   const solMl = computeSolidVolumeMl(vessel.moles);
+  const iceMol = vessel.moles.H2O_s || 0;
+  const iceMl = (iceMol * SPECIES.H2O_s.molarMass) / CONSTANTS.ICE_DENSITY_G_ML;
+  const hasIce = iceMl > 0.15;
   const geom = computeVesselFluidGeometry(spec, y, liqMl + solMl);
   const { interiorBottom, scaleY, neckHalf, surfaceY, surfaceHalfWPx, volumeMlToY, volumeMlToState } = geom;
   const hasWater = liqMl > 0.15 && ((vessel.moles.H2O_l || 0) > 1e-7 || (vessel.moles.C2H5OH_l || 0) > 1e-7);
@@ -1361,13 +1423,78 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.fillStyle = vis.css;
     ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
 
-    // Concave meniscus highlight sized accurately to the vessel's radial slice width
+    if (!hasIce) {
+      // Concave meniscus highlight sized accurately to the vessel's radial slice width
+      ctx.beginPath();
+      ctx.moveTo(x - surfaceHalfWPx, surfaceY);
+      ctx.quadraticCurveTo(x, surfaceY + 3.2, x + surfaceHalfWPx, surfaceY);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+    }
+  }
+
+  // Draw floating slush or solid frozen H2O(s) ice matrix with trapped solute tint & crystalline facets
+  if (hasIce) {
+    const aqSpanMl = Math.max(0.1, liqMl + iceMl);
+    const iceFrac = Math.min(1, iceMl / aqSpanMl);
+    const totalHeight = Math.max(4, interiorBottom - surfaceY);
+    const iceBottomY = iceFrac >= 0.96 ? interiorBottom + 4 : surfaceY + Math.max(4, totalHeight * iceFrac);
+
+    // Subtle trapped solute color behind frost matrix (e.g. dilute Cu2+ sky-blue or basic Phenolphthalein pink)
+    const trappedAqL = Math.max(liqL, iceMl / 1000);
+    const trappedVis = computeSolutionVisuals(
+      vessel.moles,
+      trappedAqL,
+      computePH(vessel.moles, trappedAqL, vessel.tempK),
+      spec.opticalPathCm,
+      vessel.phenBleachFrac,
+      vessel.phenIrrevFrac || 0
+    );
+    ctx.save();
+    if (!hasWater && trappedVis?.css) {
+      ctx.globalAlpha = 0.72;
+      ctx.fillStyle = trappedVis.css;
+      ctx.fillRect(x - w / 2, surfaceY, w, iceBottomY - surfaceY);
+    }
+
+    // Translucent glacier ice body & frost facets (high contrast in both Light and Dark themes)
+    ctx.globalAlpha = 1;
+    const iceGrad = ctx.createLinearGradient(x, surfaceY, x, iceBottomY);
+    iceGrad.addColorStop(0, isDark ? 'rgba(224, 242, 254, 0.74)' : 'rgba(186, 230, 253, 0.80)');
+    iceGrad.addColorStop(0.5, isDark ? 'rgba(186, 230, 253, 0.56)' : 'rgba(125, 211, 252, 0.62)');
+    iceGrad.addColorStop(1, isDark ? 'rgba(147, 197, 253, 0.44)' : 'rgba(96, 165, 250, 0.50)');
+    ctx.fillStyle = iceGrad;
+    ctx.fillRect(x - w / 2, surfaceY, w, iceBottomY - surfaceY);
+
+    // Internal crystalline fracture lines
+    ctx.strokeStyle = isDark ? 'rgba(248, 250, 252, 0.48)' : 'rgba(255, 255, 255, 0.75)';
+    ctx.lineWidth = 1;
+    const bandH = Math.max(4, iceBottomY - surfaceY);
+    const numFractures = Math.min(8, Math.max(3, Math.floor(bandH / 10)));
+    ctx.beginPath();
+    for (let i = 0; i < numFractures; i++) {
+      const fy = surfaceY + 3 + ((i + 0.4) / numFractures) * Math.max(2, bandH - 6);
+      const fx = x + (((i * 0.618 + 0.19) % 1) - 0.5) * surfaceHalfWPx * 1.3;
+      ctx.moveTo(fx - 7, fy + 2.5);
+      ctx.lineTo(fx, fy - 1.5);
+      ctx.lineTo(fx + 6, fy + 1.5);
+    }
+    ctx.stroke();
+
+    // Jagged crystalline ice top ridge
     ctx.beginPath();
     ctx.moveTo(x - surfaceHalfWPx, surfaceY);
-    ctx.quadraticCurveTo(x, surfaceY + 3.2, x + surfaceHalfWPx, surfaceY);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
-    ctx.lineWidth = 1.6;
+    const segs = 6;
+    for (let s = 1; s <= segs; s++) {
+      const sx = x - surfaceHalfWPx + (s / segs) * (2 * surfaceHalfWPx);
+      const sy = surfaceY + (s < segs ? (s % 2 === 0 ? 1.2 : -1.2) : 0);
+      ctx.lineTo(sx, sy);
+    }
+    ctx.strokeStyle = isDark ? 'rgba(240, 249, 255, 0.85)' : 'rgba(2, 132, 199, 0.65)';
+    ctx.lineWidth = 1.5;
     ctx.stroke();
+    ctx.restore();
   }
 
   // Draw solids, crystals, precipitates, and floating Na inside clipped region
@@ -1412,6 +1539,35 @@ export function renderVessel(ctx, vessel, opts) {
       }
       ctx.restore();
     }
+  }
+
+  // Outer/inner rime frost crystals coating cold vessel glass (< 0°C)
+  if ((vessel.frostOpacity || 0) > 0.03) {
+    const fAlpha = Math.min(0.82, (vessel.frostOpacity || 0) * 0.78);
+    ctx.save();
+    const frostGrad = ctx.createLinearGradient(x, top + 2, x, interiorBottom + 2);
+    frostGrad.addColorStop(0, isDark ? `rgba(224, 242, 254, ${0.42 * fAlpha})` : `rgba(186, 230, 253, ${0.52 * fAlpha})`);
+    frostGrad.addColorStop(0.55, isDark ? `rgba(224, 242, 254, ${0.22 * fAlpha})` : `rgba(186, 230, 253, ${0.28 * fAlpha})`);
+    frostGrad.addColorStop(1, isDark ? `rgba(186, 230, 253, ${0.46 * fAlpha})` : `rgba(125, 211, 252, ${0.56 * fAlpha})`);
+    ctx.fillStyle = frostGrad;
+    ctx.fillRect(x - w / 2, top + 2, w, interiorBottom - top + 2);
+
+    // Microscopic snowflake/rime needles on glass walls
+    ctx.strokeStyle = isDark ? `rgba(248, 250, 252, ${0.62 * fAlpha})` : `rgba(14, 165, 233, ${0.52 * fAlpha})`;
+    ctx.lineWidth = 0.85;
+    const spanW = spec.shape === 'erlenmeyer' ? Math.max(12, (spec.neckRadius || 18) * 1.4) : w * 0.42;
+    for (let i = 0; i < 14; i++) {
+      const fx = x + (((i * 0.618 + 0.13) % 1) - 0.5) * 2 * spanW;
+      const fy = top + 12 + (((i * 0.41 + 0.07) % 1) * Math.max(12, interiorBottom - top - 20));
+      const arm = 1.8 + (i % 3) * 0.7;
+      ctx.beginPath();
+      ctx.moveTo(fx - arm, fy);
+      ctx.lineTo(fx + arm, fy);
+      ctx.moveTo(fx, fy - arm);
+      ctx.lineTo(fx, fy + arm);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // Stirring rod animation inside vessel
@@ -1642,11 +1798,20 @@ export function renderVessel(ctx, vessel, opts) {
 
   // Floating Vessel Status Pill below/above vessel (Temp + pH + Volume)
   const tempC = kelvinToCelsius(vessel.tempK);
-  const ph = hasWater ? computePH(vessel.moles, liqL, vessel.tempK) : null;
+  const tDisp = Math.abs(tempC) < 0.05 ? 0 : tempC;
+  const ph = hasWater && !vessel.isFrozenSolid ? computePH(vessel.moles, liqL, vessel.tempK) : null;
   const pillParts = [vessel.label];
-  if (liqMl > 0.05) pillParts.push(`${liqMl.toFixed(1)}mL`);
+  if (vessel.isFrozenSolid && hasIce) {
+    pillParts.push(`❄️ ${iceMl.toFixed(1)}mL`);
+  } else if (hasIce && hasWater) {
+    pillParts.push(`❄️💧 ${(liqMl + iceMl).toFixed(1)}mL`);
+  } else if (liqMl > 0.05) {
+    pillParts.push(`${liqMl.toFixed(1)}mL`);
+  } else if (hasIce) {
+    pillParts.push(`❄️ ${iceMl.toFixed(1)}mL`);
+  }
   if (ph !== null) pillParts.push(`pH ${ph.toFixed(1)}`);
-  pillParts.push(`${tempC.toFixed(0)}°C`);
+  pillParts.push(`${Math.abs(tDisp) < 10 ? tDisp.toFixed(1) : tDisp.toFixed(0)}°C`);
 
   const pillText = pillParts.join(' · ');
   ctx.save();

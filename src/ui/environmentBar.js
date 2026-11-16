@@ -34,15 +34,27 @@ export class EnvironmentBar {
 
         <!-- Lab Environment Controls: T (298.15 K), P (1.00 bar), Speed -->
         <div class="flex flex-wrap items-center gap-2 sm:gap-3">
-          <!-- Ambient Temperature -->
+          ${(() => {
+            const isSatp =
+              Math.abs(env.tempK - CONSTANTS.T_STD_K) <= 0.15 &&
+              Math.abs(env.pressureBar - CONSTANTS.P_STD_BAR) <= 0.015;
+            const isCryo = env.tempK < CONSTANTS.T_FREEZE_WATER_K - 0.05;
+            const badgeLabel = isSatp ? t('envBadgeSatp') : isCryo ? t('envBadgeCryo') : t('envBadgeCustom');
+            const badgeCls = isSatp
+              ? 'px-2 py-0.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-xs font-semibold text-emerald-400 hover:opacity-90'
+              : isCryo
+              ? 'px-2 py-0.5 rounded border border-sky-500/35 bg-sky-500/10 text-xs font-semibold text-sky-400 hover:opacity-90'
+              : 'px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-xs font-semibold text-amber-400 hover:opacity-90';
+            return `<!-- Ambient Temperature -->
           <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt">
             <span class="text-xs text-muted hidden sm:inline">🌡️ ${t('envTemp')}:</span>
-            <input id="env-temp-input" type="number" min="250" max="420" step="1" value="${env.tempK.toFixed(2)}"
+            <input id="env-temp-input" type="number" min="200" max="450" step="1" value="${env.tempK.toFixed(2)}"
               class="w-[70px] px-1.5 py-0.5 rounded border border-theme bg-surface text-xs font-mono font-bold text-right" />
             <span class="text-xs font-mono">K <span class="text-muted">(${tempC.toFixed(1)}°C)</span></span>
-            <button type="button" id="btn-std-satp" title="Reset SATP (298.15 K, 1.00 bar)"
-              class="px-1.5 py-0.5 rounded border border-theme bg-surface text-xs text-muted hover:text-main">SATP</button>
-          </div>
+            <button type="button" id="btn-std-satp" title="${t('envBadgeResetTip')}"
+              class="${badgeCls}">${badgeLabel}</button>
+          </div>`;
+          })()}
 
           <!-- Ambient Pressure -->
           <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt">
@@ -102,9 +114,8 @@ export class EnvironmentBar {
     `;
 
     this.container.querySelector('#env-temp-input')?.addEventListener('change', (e) => {
-      const val = Math.max(240, Math.min(450, Number(e.target.value) || CONSTANTS.T_STD_K));
-      this.sim.environment.tempK = val;
-      this.sim.emitChange();
+      const val = Math.max(200, Math.min(450, Number(e.target.value) || CONSTANTS.T_STD_K));
+      this.sim.setAmbientTempK(val);
     });
 
     this.container.querySelector('#env-press-input')?.addEventListener('change', (e) => {
@@ -114,9 +125,8 @@ export class EnvironmentBar {
     });
 
     this.container.querySelector('#btn-std-satp')?.addEventListener('click', () => {
-      this.sim.environment.tempK = CONSTANTS.T_STD_K;
       this.sim.environment.pressureBar = CONSTANTS.P_STD_BAR;
-      this.sim.emitChange();
+      this.sim.setAmbientTempK(CONSTANTS.T_STD_K);
     });
 
     this.container.querySelector('#btn-pause')?.addEventListener('click', () => {

@@ -16,6 +16,13 @@ export const CONSTANTS = {
   KW_298: 1.0e-14,
   DELTA_H_WATER_IONIZATION_J: 55800, // J/mol
   DELTA_H_VAP_WATER_J: 40660,        // J/mol at ~373K
+  DELTA_H_FUS_WATER_J: 6010,         // J/mol latent heat of fusion of water (333.5 J/g)
+  DELTA_H_SUB_ICE_J: 51060,          // J/mol sublimation enthalpy of ice near 273.15 K
+  T_FREEZE_WATER_K: 273.15,          // Normal freezing point of pure water (0 C)
+  CRYOSCOPY_KF_WATER: 1.86,          // Cryoscopic constant Kf of water (K*kg/mol)
+  EUTECTIC_FLOOR_K: 210.0,           // Eutectic freezing depression limit for aqueous solutions
+  ICE_DENSITY_G_ML: 0.917,           // Ice density at 0 C (~9% volume expansion)
+  CP_ICE_J_MOL_K: 38.0,              // Molar heat capacity of solid ice H2O(s)
   DELTA_H_VAP_HCL_AQ_J: 74800,       // J/mol enthalpy of HCl(aq) -> HCl(g) outgassing
   HCL_AZEOTROPE_WT_FRAC: 0.2024,     // 20.24% w/w HCl-H2O azeotrope (~108.6 C at 1 bar)
   M_H2O: 18.01528,                   // g/mol
@@ -59,12 +66,18 @@ export function celsiusToKelvin(c) {
 }
 
 /**
- * Water vapor saturation pressure in mmHg using the Antoine equation (valid ~0..150 C).
+ * Water vapor saturation pressure in mmHg using the Antoine equation (>= 0 C)
+ * and Clausius-Clapeyron ice sublimation curve below 0 C (< 273.15 K).
  */
 export function waterVaporPressureMmHg(T_K) {
-  const T_C = Math.max(0, Math.min(200, T_K - CONSTANTS.KELVIN_OFFSET));
   const { A, B, C } = CONSTANTS.ANTOINE_WATER;
-  return Math.pow(10, A - B / (C + T_C));
+  const T_C = T_K - CONSTANTS.KELVIN_OFFSET;
+  if (T_C < 0) {
+    const T = Math.max(180, T_K);
+    const pTriple = Math.pow(10, A - B / C);
+    return pTriple * Math.exp((CONSTANTS.DELTA_H_SUB_ICE_J / CONSTANTS.R_J_MOL_K) * (1 / CONSTANTS.KELVIN_OFFSET - 1 / T));
+  }
+  return Math.pow(10, A - B / (C + Math.min(200, T_C)));
 }
 
 /**

@@ -1,5 +1,5 @@
 import { APPARATUS } from '../data/apparatus.js';
-import { kelvinToCelsius } from '../data/constants.js';
+import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
 import { GAS_DISPLAY_META, SPECIES } from '../data/species.js';
 import {
   computeContentsMassG,
@@ -8,6 +8,7 @@ import {
 } from '../engine/equilibrium.js';
 import {
   computeSyringeDischargeArc,
+  computeSyringeFrozenVolumeMl,
   computeSyringeGasVolumeMl,
   computeSyringeLiquidVolumeMl,
   computeSyringeTotalVolumeMl,
@@ -30,13 +31,17 @@ function sumAllGasMoles(gasMap = {}) {
   return tot;
 }
 
-function formatGasSummaryHtml(gasMap = {}) {
+function formatGasSummaryHtml(gasMap = {}, escapedFrostMol = 0, t = null) {
   const parts = [];
   for (const g of GAS_DISPLAY_META) {
     const val = gasMap[g.id] || 0;
     if (g.always || val > 1e-6) {
       parts.push(`<span class="whitespace-nowrap">${g.label}: ${(val * 1000).toFixed(2)} mmol</span>`);
     }
+  }
+  if (escapedFrostMol > 1e-6) {
+    const frostLabel = t ? t('frostEscapedTag') : 'Frost';
+    parts.push(`<span class="whitespace-nowrap text-sky-400">❄️ ${frostLabel}: ${(escapedFrostMol * 1000).toFixed(2)} mmol H₂O(s)</span>`);
   }
   return parts.join('<span class="text-muted px-1">·</span>');
 }
@@ -45,9 +50,12 @@ function getSyringeCondenseInfo(syr, env, t) {
   const syrTempK = syr.tempK ?? env.tempK;
   const syrTempC = kelvinToCelsius(syrTempK);
   const condensedMol = syr.condensedWaterMol || 0;
+  const frozenMol = syr.frozenWaterMol || 0;
   const condensedMl = (condensedMol * SPECIES.H2O_l.molarMass) / 0.997;
+  const frozenMl = computeSyringeFrozenVolumeMl(syr);
   const overflowMl = computeLiquidVolumeL(syr.overflowMoles || {}, syrTempK) * 1000;
   const totalLiqMl = condensedMl + overflowMl;
+  const totalFluidMl = totalLiqMl + frozenMl;
   const hasSteam = (syr.gasMoles?.H2O_g || 0) > 1e-6;
   const isCondensing = (syr.lastCondenseRateMolS || 0) > 1e-6;
   const condenseState =
@@ -55,14 +63,16 @@ function getSyringeCondenseInfo(syr, env, t) {
       ? `⚠️ ${t('alertSyringeOverflow')}`
       : isCondensing
       ? `💧 ${t('syringeCondenseActive')}`
+      : frozenMol > 1e-5 && condensedMol <= 1e-5
+      ? `❄️ ${t('syringeCondenseFrozen')}`
       : overflowMl > 0.05
       ? `💧 ${t('syringeLiquidOverflowLabel')}: ${overflowMl.toFixed(2)} mL`
-      : condensedMol > 1e-5
-      ? `💧 ${t('syringeCondenseDone')}`
+      : condensedMol > 1e-5 || frozenMol > 1e-5
+      ? `${frozenMol > condensedMol ? '❄️' : '💧'} ${t('syringeCondenseDone')}`
       : hasSteam
       ? `♨️ ${t('syringeHotSteam')}`
       : t('syringeDryGas');
-  return { syrTempK, syrTempC, condensedMol, condensedMl, overflowMl, totalLiqMl, isCondensing, condenseState };
+  return { syrTempK, syrTempC, condensedMol, frozenMol, condensedMl, frozenMl, overflowMl, totalLiqMl, totalFluidMl, isCondensing, condenseState };
 }
 
 export class InspectorPanel {
@@ -91,7 +101,8 @@ export class InspectorPanel {
         .sort()
         .join(',');
       const rxnKeys = item.activeReactions.map((r) => r.id).join(',');
-      return `v|${item.id}|${item.isStoppered}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
+      const hasFrost = (item.escapedFrostH2OMol || 0) > 1e-6 ? 1 : 0;
+      return `v|${item.id}|${item.isStoppered}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'burner') {
       return `b|${item.id}|${langCode}|${logLen}`;
@@ -107,7 +118,8 @@ export class InspectorPanel {
       return `st|${item.id}|${children}|${langCode}|${logLen}`;
     }
     if (item.kind === 'gas_syringe') {
-      return `g|${item.id}|${item.connectedFromId}|${item.clampedToId}|${standCount}|${item.isBroken}|${langCode}|${logLen}`;
+      const hasIce = (item.frozenWaterMol || 0) > 1e-5 ? 1 : 0;
+      return `g|${item.id}|${hasIce}|${item.connectedFromId}|${item.clampedToId}|${standCount}|${item.isBroken}|${langCode}|${logLen}`;
     }
     return `other|${item.id}|${langCode}|${logLen}`;
   }
@@ -309,7 +321,7 @@ export class InspectorPanel {
             </div>
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
               <div class="text-xs text-muted">${t('syringeCondenseLabel')}</div>
-              <div class="text-sm font-bold font-mono text-sky-400" id="live-syr-cond">${condInfo.totalLiqMl.toFixed(2)} mL</div>
+              <div class="text-sm font-bold font-mono text-sky-400" id="live-syr-cond">${condInfo.totalFluidMl.toFixed(2)} mL</div>
             </div>
           </div>
           <div class="p-2 rounded-lg border border-theme bg-surface text-[11px] flex items-center justify-between gap-2">
@@ -354,18 +366,27 @@ export class InspectorPanel {
     } else if (item.kind === 'vessel') {
       const spec = APPARATUS[item.typeId];
       const liqL = computeLiquidVolumeL(item.moles, item.tempK);
-      const ph = computePH(item.moles, liqL, item.tempK);
+      const liqMl = liqL * 1000;
+      const iceMl = ((item.moles.H2O_s || 0) * SPECIES.H2O_s.molarMass) / CONSTANTS.ICE_DENSITY_G_ML;
+      const ph = item.isFrozenSolid ? null : computePH(item.moles, liqL, item.tempK);
       const contentsG = computeContentsMassG(item.moles);
       const grossG = spec.tareMassG + contentsG;
       const connTargetId = item.connectedTargetId || item.connectedSyringeId;
       const connTarget = connTargetId ? this.sim.getItem(connTargetId) : null;
-      const stateLabel = item.isShattered
+      const baseStateLabel = item.isShattered
         ? t('stateShattered')
         : connTarget
         ? t('stateConnected')
         : item.isStoppered
         ? t('stateClosed')
         : t('stateOpen');
+      const stateLabel = item.isFrozenSolid && !item.isShattered ? `${baseStateLabel} · ${t('stateFrozen')}` : baseStateLabel;
+      const volDisplayStr =
+        iceMl > 0.05 && liqMl <= 0.05
+          ? `❄️ ${iceMl.toFixed(2)} / ${spec.maxVolumeMl} mL`
+          : iceMl > 0.05
+          ? `${liqMl.toFixed(1)} + ❄️${iceMl.toFixed(1)} / ${spec.maxVolumeMl} mL`
+          : `${liqMl.toFixed(2)} / ${spec.maxVolumeMl} mL`;
 
       const activeSpecies = Object.entries(item.moles)
         .filter(([, n]) => n > 1e-10)
@@ -399,7 +420,7 @@ export class InspectorPanel {
                 : ''
               : `<div class="flex flex-wrap gap-1.5">
             <button type="button" id="ins-pour" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionPourTo')}</button>
-            <button type="button" id="ins-stir" title="${t('actionStirTip')}" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionStir')}</button>
+            <button type="button" id="ins-stir" ${item.isFrozenSolid ? 'disabled' : ''} title="${t('actionStirTip')}" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent disabled:opacity-40">${t('actionStir')}</button>
             ${
               spec.stopperable
                 ? `<button type="button" id="ins-stopper" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${
@@ -440,7 +461,7 @@ export class InspectorPanel {
         <div class="grid grid-cols-2 gap-2">
           <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
             <div class="text-xs text-muted">${t('metricPH')}</div>
-            <div class="text-sm font-bold font-mono" id="live-ph">${ph === null ? '—' : ph.toFixed(2)}</div>
+            <div class="text-sm font-bold font-mono" id="live-ph">${item.isFrozenSolid ? '— ❄️' : ph === null ? '—' : ph.toFixed(2)}</div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
             <div class="text-xs text-muted">${t('metricTemp')}</div>
@@ -448,7 +469,7 @@ export class InspectorPanel {
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
             <div class="text-xs text-muted">${t('metricVol')}</div>
-            <div class="text-sm font-bold font-mono" id="live-vol">${(liqL * 1000).toFixed(2)} / ${spec.maxVolumeMl} mL</div>
+            <div class="text-sm font-bold font-mono" id="live-vol">${volDisplayStr}</div>
             <div class="text-[11px] text-muted font-mono" id="live-brim">${t('brimLabel')}: ~${(
         spec.geometry ? spec.geometry.maxVolumeMl * 0.96 : spec.maxVolumeMl
       ).toFixed(0)} mL</div>
@@ -476,8 +497,8 @@ export class InspectorPanel {
                   <strong class="font-mono" id="live-collected-gas">${syrVol.toFixed(2)} mL · ${syrCondInfo.syrTempC.toFixed(1)}°C</strong>
                 </div>
                 <div class="text-[11px] text-sky-400 font-mono" id="live-collected-cond">${
-                  syrCondInfo.totalLiqMl > 0.0005 || syrCondInfo.isCondensing
-                    ? `💧 ${t('gasCondensedShort')}: ${syrCondInfo.totalLiqMl.toFixed(2)} mL H₂O`
+                  syrCondInfo.totalFluidMl > 0.0005 || syrCondInfo.isCondensing
+                    ? `${syrCondInfo.frozenMol > syrCondInfo.condensedMol ? '❄️' : '💧'} ${t(syrCondInfo.frozenMol > syrCondInfo.condensedMol ? 'syringeFrozenShort' : 'gasCondensedShort')}: ${syrCondInfo.totalFluidMl.toFixed(2)} mL H₂O`
                     : ''
                 }</div>
               </div>`
@@ -495,7 +516,7 @@ export class InspectorPanel {
                       : ''
                   }</span>
                 </div>
-                <div class="font-mono text-main flex flex-wrap gap-x-2 gap-y-0.5" id="live-escaped-gas">${formatGasSummaryHtml(item.escapedGasMoles)}</div>
+                <div class="font-mono text-main flex flex-wrap gap-x-2 gap-y-0.5" id="live-escaped-gas">${formatGasSummaryHtml(item.escapedGasMoles, item.escapedFrostH2OMol || 0, t)}</div>
               </div>`
         }
 
@@ -763,7 +784,7 @@ export class InspectorPanel {
       if (vEl) vEl.textContent = `${volMl.toFixed(2)} mL`;
       if (mEl) mEl.textContent = `${(totalGasMol * 1000).toFixed(2)} mmol`;
       if (tEl) tEl.textContent = `${condInfo.syrTempK.toFixed(1)} K (${condInfo.syrTempC.toFixed(1)}°C)`;
-      if (cEl) cEl.textContent = `${condInfo.totalLiqMl.toFixed(2)} mL`;
+      if (cEl) cEl.textContent = `${condInfo.totalFluidMl.toFixed(2)} mL`;
       if (sEl) sEl.textContent = condInfo.condenseState;
       if (bEl) bEl.innerHTML = formatGasSummaryHtml(item.gasMoles);
       if (pEl) {
@@ -781,7 +802,9 @@ export class InspectorPanel {
 
     const spec = APPARATUS[item.typeId];
     const liqL = computeLiquidVolumeL(item.moles, item.tempK);
-    const ph = computePH(item.moles, liqL, item.tempK);
+    const liqMl = liqL * 1000;
+    const iceMl = ((item.moles.H2O_s || 0) * SPECIES.H2O_s.molarMass) / CONSTANTS.ICE_DENSITY_G_ML;
+    const ph = item.isFrozenSolid ? null : computePH(item.moles, liqL, item.tempK);
     const contentsG = computeContentsMassG(item.moles);
     const grossG = spec.tareMassG + contentsG;
 
@@ -790,15 +813,22 @@ export class InspectorPanel {
     const volEl = this.container.querySelector('#live-vol');
     const massEl = this.container.querySelector('#live-mass');
     const massGrossEl = this.container.querySelector('#live-mass-gross');
-    if (phEl) phEl.textContent = ph === null ? '—' : ph.toFixed(2);
+    if (phEl) phEl.textContent = item.isFrozenSolid ? '— ❄️' : ph === null ? '—' : ph.toFixed(2);
     if (tempEl) tempEl.textContent = `${item.tempK.toFixed(1)} K (${kelvinToCelsius(item.tempK).toFixed(1)}°C)`;
-    if (volEl) volEl.textContent = `${(liqL * 1000).toFixed(2)} / ${spec.maxVolumeMl} mL`;
+    if (volEl) {
+      volEl.textContent =
+        iceMl > 0.05 && liqMl <= 0.05
+          ? `❄️ ${iceMl.toFixed(2)} / ${spec.maxVolumeMl} mL`
+          : iceMl > 0.05
+          ? `${liqMl.toFixed(1)} + ❄️${iceMl.toFixed(1)} / ${spec.maxVolumeMl} mL`
+          : `${liqMl.toFixed(2)} / ${spec.maxVolumeMl} mL`;
+    }
     if (massEl) massEl.textContent = `${contentsG.toFixed(2)} g · ${item.internalPressureBar.toFixed(2)} bar`;
     if (massGrossEl) massGrossEl.textContent = `${t('grossMassNote')}: ${grossG.toFixed(2)} g (${t('tarePrefix')} ${spec.tareMassG.toFixed(0)}g)`;
 
     const escEl = this.container.querySelector('#live-escaped-gas');
     if (escEl) {
-      escEl.innerHTML = formatGasSummaryHtml(item.escapedGasMoles);
+      escEl.innerHTML = formatGasSummaryHtml(item.escapedGasMoles, item.escapedFrostH2OMol || 0, t);
     }
     const escTempEl = this.container.querySelector('#live-escaped-gas-temp');
     if (escTempEl) {
@@ -827,8 +857,8 @@ export class InspectorPanel {
         colEl.textContent = `${computeSyringeTotalVolumeMl(syr, this.sim.environment).toFixed(2)} mL · ${syrCondInfo.syrTempC.toFixed(1)}°C`;
         if (colCondEl) {
           colCondEl.textContent =
-            syrCondInfo.totalLiqMl > 0.0005 || syrCondInfo.isCondensing
-              ? `💧 ${t('gasCondensedShort')}: ${syrCondInfo.totalLiqMl.toFixed(2)} mL H₂O`
+            syrCondInfo.totalFluidMl > 0.0005 || syrCondInfo.isCondensing
+              ? `${syrCondInfo.frozenMol > syrCondInfo.condensedMol ? '❄️' : '💧'} ${t(syrCondInfo.frozenMol > syrCondInfo.condensedMol ? 'syringeFrozenShort' : 'gasCondensedShort')}: ${syrCondInfo.totalFluidMl.toFixed(2)} mL H₂O`
               : '';
         }
       }
