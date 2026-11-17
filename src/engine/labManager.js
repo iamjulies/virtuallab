@@ -76,6 +76,7 @@ export class LabManager {
     };
     this._wireLabHooks(lab);
     sim.setupPreset(presetName);
+    sim.undoStack = [];
     this.labs.push(lab);
     const newIndex = this.labs.length - 1;
     if (!options.keepActive) {
@@ -214,6 +215,7 @@ export class LabManager {
   pasteItems(simOverride = null) {
     const sim = simOverride || this.getActiveSim();
     if (!sim || !Array.isArray(this.clipboard) || this.clipboard.length === 0) return [];
+    sim.recordUndo?.();
     this.pasteSequence = (this.pasteSequence || 0) + 1;
     const stepShiftX = 32 * this.pasteSequence;
     const stepShiftY = -16 * (this.pasteSequence % 3);
@@ -223,7 +225,7 @@ export class LabManager {
       if (!spec) continue;
       const targetX = Math.max(60, Math.min(940, (entry.anchorX ?? 420) + stepShiftX + entry.dx));
       const targetY = Math.max(65, Math.min(SIM_BENCH_FLOOR_Y - (spec.height || 80) / 2 + 2, (entry.anchorY ?? 360) + stepShiftY + entry.dy));
-      const item = sim.createApparatus(entry.typeId, targetX, targetY);
+      const item = sim.createApparatus(entry.typeId, targetX, targetY, { silentUndo: true });
       if (!item) continue;
       item.flippedX = Boolean(entry.flippedX);
       if (entry.isInverted && item.kind === 'vessel') item.isInverted = true;
@@ -266,6 +268,23 @@ export class LabManager {
       sim.emitChange();
     }
     return createdList;
+  }
+
+  recordUndo(simOverride = null) {
+    const sim = simOverride || this.getActiveSim();
+    return sim?.recordUndo?.() || false;
+  }
+
+  undo(simOverride = null) {
+    const lab = this.getActiveLab();
+    const sim = simOverride || lab?.sim;
+    if (!sim?.undo) return false;
+    const ok = sim.undo();
+    if (ok && lab?.particles) {
+      lab.particles.clear();
+    }
+    if (ok) this.hooks.onChange?.();
+    return ok;
   }
 
   /**

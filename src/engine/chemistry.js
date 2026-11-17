@@ -217,9 +217,25 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
       Math.exp(rxn.solubilityTempCoeff * (T - CONSTANTS.T_STD_K));
     const maxSoluble = sTemp * effectiveSolventKg;
     const currentIon = moles[rxn.ionCheckId] || 0;
-    if (currentIon >= maxSoluble * 0.999) return 0;
+    if (rxn.solidId === 'NaHCO3_s') {
+      const mNa = (moles.Na_aq || 0) / Math.max(1e-8, effectiveSolventKg);
+      const mHco3 = (moles.HCO3_aq || 0) / Math.max(1e-8, effectiveSolventKg);
+      const kspNaHCO3 = sTemp * sTemp;
+      if (mNa * mHco3 >= kspNaHCO3 * 0.998 || currentIon >= maxSoluble * 0.999) return 0;
+    } else if (currentIon >= maxSoluble * 0.999) {
+      return 0;
+    }
 
-    const undersaturation = Math.max(0, 1 - currentIon / Math.max(1e-12, maxSoluble));
+    const undersaturation =
+      rxn.solidId === 'NaHCO3_s'
+        ? Math.max(
+            0,
+            Math.min(
+              1 - currentIon / Math.max(1e-12, maxSoluble),
+              1 - ((moles.Na_aq || 0) * (moles.HCO3_aq || 0)) / Math.max(1e-12, Math.pow(Math.max(1e-8, effectiveSolventKg) * sTemp, 2))
+            )
+          )
+        : Math.max(0, 1 - currentIon / Math.max(1e-12, maxSoluble));
     const pCount = vessel.particleCounts?.[rxn.solidId] ?? 12;
     const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, pCount);
     const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
@@ -299,6 +315,8 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, pCount);
 
     if (rxn.solidId === 'Na_s') {
+      if (rxn.aqueousId === 'H_aq' && hasNitrateOxidizingEnv(moles, liquidVolL)) return 0;
+      if (hasNitrateOxidizingEnv(moles, liquidVolL) && (moles.H_aq || 0) > 1e-3) return 0;
       const tNa = vessel.naTempK ?? T;
       const spec = APPARATUS[vessel.typeId];
       const totMl = liquidVolL * 1000 + computeSolidVolumeMl(moles);
@@ -333,6 +351,7 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     }
 
     if (iceMob <= 0) return 0;
+    if (rxn.aqueousId === 'H_aq' && hasNitrateOxidizingEnv(moles, liquidVolL)) return 0;
     const k = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
     const aqConc = (moles[rxn.aqueousId] || 0) / liquidVolL;
     if (rxn.minAqConc && aqConc < rxn.minAqConc) return 0;
@@ -823,13 +842,13 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
 
   if (rxn.type === 'metal_nonox_acid') {
     if (!hasWater || iceMob <= 0) return 0;
+    if (hasNitrateOxidizingEnv(moles, liquidVolL)) return 0;
     const solidId = rxn.solidId || 'Fe_s';
     const nSolid = moles[solidId] || 0;
     const nH = moles.H_aq || 0;
     if (nSolid <= 1e-10 || nH <= 1e-10) return 0;
     const cH = nH / liquidVolL;
-    const cNO3 = (moles.NO3_aq || 0) / liquidVolL;
-    if (cH < 0.015 || cNO3 >= (rxn.maxNO3Conc ?? 0.25)) return 0;
+    if (cH < 0.015) return 0;
     const pCount = vessel.particleCounts?.[solidId] ?? 4;
     const isFine = Boolean(vessel.groundPowderMap?.[solidId]) || pCount >= 18;
     const area = computeSolidSurfaceAreaM2(solidId, nSolid, isFine ? Math.max(pCount, 65) : pCount);
@@ -839,33 +858,8 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
   }
 
   if (rxn.type === 'metal_hno3_redox') {
-    if (!hasWater || iceMob <= 0) return 0;
-    const solidId = rxn.solidId || 'Cu_s';
-    const nSolid = moles[solidId] || 0;
-    if (nSolid <= 1e-10) return 0;
-    const cH = (moles.H_aq || 0) / liquidVolL;
-    const cNO3 = (moles.NO3_aq || 0) / liquidVolL;
-    const cCl = (moles.Cl_aq || 0) / liquidVolL;
-    if (cH < 0.08 || cNO3 < (rxn.minNO3Conc ?? 0.05)) return 0;
-    if (rxn.maxNO3Conc && cNO3 >= rxn.maxNO3Conc) return 0;
-    if (cCl >= 4.0 && (solidId === 'Cu_s' || solidId === 'Ag_s')) return 0;
-    if (solidId === 'Fe_s' && cNO3 >= 5.5) {
-      const mAcid = Math.min(moles.H_aq || 0, moles.NO3_aq || 0) * CONSTANTS.M_HNO3;
-      const mW = (moles.H2O_l || 0) * CONSTANTS.M_H2O;
-      const wHNO3 = mAcid / Math.max(1e-9, mAcid + mW);
-      if ((wHNO3 >= 0.50 || cNO3 >= 8.5) && T < 318.15) {
-        vessel.fePassivated = true;
-        return 0;
-      }
-      vessel.fePassivated = false;
-    }
-    const pCount = vessel.particleCounts?.[solidId] ?? 8;
-    const isFine = Boolean(vessel.groundPowderMap?.[solidId]) || pCount >= 18;
-    const area = computeSolidSurfaceAreaM2(solidId, nSolid, isFine ? Math.max(pCount, 60) : pCount);
-    const fineBoost = isFine ? 1.85 : 1.0;
-    const k = rxn.k298 * arrheniusFactor(rxn.eaJ || 30000, T);
-    const drive = Math.min(5.0, cH / 2.5) * Math.min(4.0, cNO3 / 2.0);
-    return k * area * fineBoost * drive * stirBoost * iceMob * 4.5;
+    // Unified 4-step Nitrate Redox Solver runs once per vessel in stepMetalNitrateSolver()
+    return 0;
   }
 
   if (rxn.type === 'metal_displacement') {
@@ -994,7 +988,7 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
     { cat: 'Fe2_aq', cCat: 1, an: 'NO3_aq', cAn: 2, solid: 'FeNO3_2_s', formula: 'Fe(NO₃)₂', sol298: 3.8, coeff: 0.016, etohRel: 0.04, crystHeatJ: 8000 },
     { cat: 'Fe2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'FeCl2_s', formula: 'FeCl₂', sol298: 5.1, coeff: 0.012, etohRel: 0.25, crystHeatJ: 8000 },
     { cat: 'Fe3_aq', cCat: 1, an: 'Cl_aq', cAn: 3, solid: 'FeCl3_s', formula: 'FeCl₃', sol298: 5.6, coeff: 0.014, etohRel: 0.30, crystHeatJ: 8000 },
-    { cat: 'Na_aq', cCat: 1, an: 'HCO3_aq', cAn: 1, solid: 'NaHCO3_s', formula: 'NaHCO₃', sol298: 1.15, coeff: 0.016, etohRel: 0.01, crystHeatJ: -17500 },
+    { cat: 'Na_aq', cCat: 1, an: 'HCO3_aq', cAn: 1, solid: 'NaHCO3_s', formula: 'NaHCO₃', sol298: 1.15, coeff: 0.016, etohRel: 0.01, crystHeatJ: -17500, useKsp: true },
     { cat: 'Na_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'Na2SO4_s', formula: 'Na₂SO₄', sol298: 1.98, coeff: 0.032, etohRel: 0.02, crystHeatJ: 8000 },
     { cat: 'Na_aq', cCat: 2, an: 'CO3_2_aq', cAn: 1, solid: 'Na2CO3_s', formula: 'Na₂CO₃', sol298: 2.9, coeff: 0.015, etohRel: 0.01, crystHeatJ: 26700 },
     { cat: 'Zn2_aq', cCat: 1, an: 'SO4_2_aq', cAn: 1, solid: 'ZnSO4_s', formula: 'ZnSO₄', sol298: 3.57, coeff: 0.012, etohRel: 0.02, crystHeatJ: 8000 },
@@ -1021,12 +1015,23 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
     const nPair = Math.min((moles[pair.cat] || 0) / pair.cCat, (moles[pair.an] || 0) / pair.cAn);
     if (nPair <= 1e-11) continue;
     const effectiveSolventKg = curWaterKg + (pair.etohRel || 0) * etohMassKg;
-    const maxSol =
-      effectiveSolventKg > 1e-8
-        ? pair.sol298 * Math.exp(pair.coeff * (T - CONSTANTS.T_STD_K)) * effectiveSolventKg
-        : 0;
-    if (nPair > maxSol) {
-      const excess = nPair - maxSol;
+    const sTemp = pair.sol298 * Math.exp(pair.coeff * (T - CONSTANTS.T_STD_K));
+    let excess = 0;
+    if (pair.useKsp && effectiveSolventKg > 1e-8 && pair.cCat === 1 && pair.cAn === 1) {
+      const mCat = (moles[pair.cat] || 0) / effectiveSolventKg;
+      const mAn = (moles[pair.an] || 0) / effectiveSolventKg;
+      const ksp = sTemp * sTemp;
+      if (mCat * mAn > ksp) {
+        const sumM = mCat + mAn;
+        const disc = Math.max(0, sumM * sumM - 4 * (mCat * mAn - ksp));
+        const dMolKg = Math.min(nPair / effectiveSolventKg, (sumM - Math.sqrt(disc)) / 2);
+        excess = Math.max(0, dMolKg * effectiveSolventKg);
+      }
+    } else {
+      const maxSol = effectiveSolventKg > 1e-8 ? sTemp * effectiveSolventKg : 0;
+      if (nPair > maxSol) excess = nPair - maxSol;
+    }
+    if (excess > 0) {
       const rateScale = (curWaterKg < 0.01 ? 8.0 : 2.5) * iceMob;
       const dXi = Math.min(excess, excess * Math.min(1, rateScale * dt));
       if (dXi > 1e-12) {
@@ -1604,7 +1609,8 @@ function stepCarbonateAndCO2Equilibria(vessel, liquidVolL, dt, activeReactions, 
   const headCo2 = vessel.headspaceGasMoles?.CO2_g || 0;
   if (headCo2 > 1e-9) {
     const cOH = (moles.OH_aq || 0) / liquidVolL;
-    const absorbRate = (cOH > 1e-4 ? 6.5 : 1.2) * (vessel.stirTimer > 0 ? 1.8 : 1.0);
+    const cNH3 = (moles.NH3_aq || 0) / liquidVolL;
+    const absorbRate = (cOH > 1e-4 || cNH3 > 0.05 ? 6.5 : 1.2) * (vessel.stirTimer > 0 ? 1.8 : 1.0);
     const dAbs = Math.min(headCo2, headCo2 * Math.min(1, absorbRate * dt));
     if (dAbs > 1e-12) {
       vessel.headspaceGasMoles.CO2_g = Math.max(0, headCo2 - dAbs);
@@ -1613,9 +1619,28 @@ function stepCarbonateAndCO2Equilibria(vessel, liquidVolL, dt, activeReactions, 
     }
   }
 
-  // 2. Stepwise acid/base carbonate proton transfers
+  // 2. Stepwise acid/base carbonate proton transfers (+ Solvay NH3 carbonation)
   const nH = moles.H_aq || 0;
   const nOH = moles.OH_aq || 0;
+  if ((moles.NH3_aq || 0) > 1e-12 && (moles.H2CO3_aq || 0) > 1e-12) {
+    const dSolvay = Math.min(moles.NH3_aq, moles.H2CO3_aq) * relax;
+    heatJ += applyEquilibriumShift({
+      moles,
+      dXi: dSolvay,
+      deltas: { NH3_aq: -1, H2CO3_aq: -1, NH4_aq: 1, HCO3_aq: 1 },
+      heatPerMolJ: -34000,
+      dt,
+      activeReactions,
+      buildMeta: () => ({
+        id: 'solvay_nh3_co2',
+        equation: 'NH₃(aq) + CO₂(aq) + H₂O(l) → NH₄⁺(aq) + HCO₃⁻(aq)',
+        nameVi: 'Hấp thụ CO₂ tạo NH₄HCO₃ (quy trình Solvay)',
+        nameEn: 'Carbonation of ammoniated brine (Solvay intermediate step)',
+        descVi: 'NH₃ phản ứng với H₂CO₃ tạo ion NH₄⁺ và HCO₃⁻; khi có NaCl bão hòa, NaHCO₃(s) ít tan kết tinh tách ra.',
+        descEn: 'NH₃ converts CO₂(aq) to HCO₃⁻ + NH₄⁺; saturated Na⁺ brine triggers white NaHCO₃(s) crystallization.',
+      }),
+    });
+  }
   if (nOH > 1e-12 && (moles.H2CO3_aq || 0) > 1e-12) {
     const d1 = Math.min(moles.H2CO3_aq, nOH) * relax;
     heatJ += applyEquilibriumShift({
@@ -1702,7 +1727,7 @@ function stepCarbonateAndCO2Equilibria(vessel, liquidVolL, dt, activeReactions, 
     const solEq = Math.max(0.0005, 0.034 * Math.exp(-0.025 * tC)) * liquidVolL;
     const isDissolvingCaCO3 = (moles.CaCO3_s || 0) > 1e-7 && (moles.OH_aq || 0) <= 1e-5;
     const maxHold = isDissolvingCaCO3 ? Math.max(solEq, nAcidCO2 * 0.45) : solEq;
-    if (nAcidCO2 > maxHold && ((moles.H_aq || 0) > 1e-5 || tC >= 45 || (moles.OH_aq || 0) < 1e-6)) {
+    if (nAcidCO2 > maxHold && ((moles.H_aq || 0) > 1e-5 || tC >= 45 || ((moles.OH_aq || 0) < 1e-6 && (moles.NH3_aq || 0) < 1e-4))) {
       const ex = nAcidCO2 - maxHold;
       const dOut = Math.min(nAcidCO2, ex * Math.min(1, 2.8 * dt));
       if (dOut > 1e-11) {
@@ -1773,6 +1798,7 @@ export const DRY_SALT_PAIRINGS = [
   ['Na_aq', 2, 'CO3_2_aq', 1, 'Na2CO3_s', 1, false],
   ['Na_aq', 1, 'HCO3_aq', 1, 'NaHCO3_s', 1, false],
   ['Na_aq', 1, 'Cl_aq', 1, 'NaCl_s', 1, false],
+  ['Na_aq', 1, 'ClO_aq', 1, 'NaClO_s', 1, false],
   ['Na_aq', 2, 'SO4_2_aq', 1, 'Na2SO4_s', 1, false],
   ['Na_aq', 1, 'NO3_aq', 1, 'NaNO3_s', 1, false],
   ['Na_aq', 1, 'C2H5O_aq', 1, 'C2H5ONa_s', 1, false],
@@ -1983,6 +2009,231 @@ export function validateVesselInvariants(vessel) {
     errors.push(`Invalid phenBleachFrac=${vessel.phenBleachFrac}`);
   }
   return { valid: errors.length === 0, errors };
+}
+
+export const METAL_REDOX_SPECS = {
+  Na_s: { solidId: 'Na_s', formula: 'Na', name: 'Sodium', E0: -2.71, maxValence: 1, ionId: 'Na_aq', canPassivate: false, noble: false },
+  Mg_s: { solidId: 'Mg_s', formula: 'Mg', name: 'Magnesium', E0: -2.37, maxValence: 2, ionId: 'Mg2_aq', canPassivate: false, noble: false },
+  Al_s: { solidId: 'Al_s', formula: 'Al', name: 'Aluminium', E0: -1.66, maxValence: 3, ionId: 'Al3_aq', canPassivate: true, noble: false },
+  Zn_s: { solidId: 'Zn_s', formula: 'Zn', name: 'Zinc', E0: -0.76, maxValence: 2, ionId: 'Zn2_aq', canPassivate: false, noble: false },
+  Fe_s: { solidId: 'Fe_s', formula: 'Fe', name: 'Iron', E0: -0.44, maxValence: 3, ionId: 'Fe3_aq', canPassivate: true, noble: false },
+  Cu_s: { solidId: 'Cu_s', formula: 'Cu', name: 'Copper', E0: 0.34, maxValence: 2, ionId: 'Cu2_aq', canPassivate: false, noble: false },
+  Ag_s: { solidId: 'Ag_s', formula: 'Ag', name: 'Silver', E0: 0.80, maxValence: 1, ionId: 'Ag_aq', canPassivate: false, noble: false },
+  Pt_s: { solidId: 'Pt_s', formula: 'Pt', name: 'Platinum', E0: 1.18, maxValence: 4, ionId: 'PtCl6_2_aq', canPassivate: false, noble: true },
+  Au_s: { solidId: 'Au_s', formula: 'Au', name: 'Gold', E0: 1.50, maxValence: 3, ionId: 'AuCl4_aq', canPassivate: false, noble: true },
+};
+
+export const NITRATE_PRODUCTS = {
+  NO2: { id: 'NO2', speciesId: 'NO2_g', formula: 'NO₂', isGas: true, ep: 1, kN: 1, hP: 2 },
+  NO: { id: 'NO', speciesId: 'NO_g', formula: 'NO', isGas: true, ep: 3, kN: 1, hP: 4 },
+  N2O: { id: 'N2O', speciesId: 'N2O_g', formula: 'N₂O', isGas: true, ep: 8, kN: 2, hP: 10 },
+  N2: { id: 'N2', speciesId: 'N2_g', formula: 'N₂', isGas: true, ep: 10, kN: 2, hP: 12 },
+  'NH4+': { id: 'NH4+', speciesId: 'NH4_aq', formula: 'NH₄⁺', isGas: false, ep: 8, kN: 1, hP: 10 },
+};
+
+export function hasNitrateOxidizingEnv(moles, liquidVolL) {
+  if (!moles || !(liquidVolL > 1e-6)) return false;
+  return (moles.H_aq || 0) / liquidVolL > 0.01 && (moles.NO3_aq || 0) / liquidVolL > 0.01;
+}
+
+export function selectNitrateReductionMix(metalSpec, wHNO3, cAcid) {
+  if (!metalSpec || metalSpec.noble || metalSpec.E0 > 1.2) return [];
+  const isStrongMetal = metalSpec.E0 < -0.7;
+  if (wHNO3 >= 0.60 || cAcid >= 10.0) {
+    return [{ product: NITRATE_PRODUCTS.NO2, weight: 1.0 }];
+  }
+  if (cAcid >= 4.0 || wHNO3 >= 0.30) {
+    const fConc = Math.max(0, Math.min(1, Math.max((cAcid - 4.0) / 6.0, (wHNO3 - 0.30) / 0.30)));
+    if (!isStrongMetal) {
+      return [
+        { product: NITRATE_PRODUCTS.NO2, weight: fConc },
+        { product: NITRATE_PRODUCTS.NO, weight: 1 - fConc },
+      ].filter((x) => x.weight > 0.01);
+    }
+    const rem = 1 - fConc;
+    return [
+      { product: NITRATE_PRODUCTS.NO2, weight: fConc },
+      { product: NITRATE_PRODUCTS.NO, weight: 0.45 * rem },
+      { product: NITRATE_PRODUCTS.N2O, weight: 0.40 * rem },
+      { product: NITRATE_PRODUCTS.N2, weight: 0.15 * rem },
+    ].filter((x) => x.weight > 0.01);
+  }
+  if (wHNO3 >= 0.10 || cAcid >= 1.0) {
+    if (!isStrongMetal) {
+      return [{ product: NITRATE_PRODUCTS.NO, weight: 1.0 }];
+    }
+    return [
+      { product: NITRATE_PRODUCTS.NO, weight: 0.45 },
+      { product: NITRATE_PRODUCTS.N2O, weight: 0.40 },
+      { product: NITRATE_PRODUCTS.N2, weight: 0.15 },
+    ];
+  }
+  return isStrongMetal
+    ? [{ product: NITRATE_PRODUCTS['NH4+'], weight: 1.0 }]
+    : [{ product: NITRATE_PRODUCTS.NO, weight: 1.0 }];
+}
+
+export function solveMetalNitrateStep(metalMolesAvailable, n, hPlusMoles, no3MinusMoles, product) {
+  if (!(metalMolesAvailable > 0) || !(hPlusMoles > 0) || !(no3MinusMoles > 0) || !product || !(n > 0)) {
+    return {
+      reactedMetal: 0,
+      deltaMetal: 0,
+      deltaMetalIon: 0,
+      deltaHPlus: 0,
+      deltaNO3Minus: 0,
+      deltaProduct: 0,
+      deltaH2O: 0,
+    };
+  }
+  const prodPerMetal = n / product.ep;
+  const hPlusPerMetal = prodPerMetal * product.hP;
+  const no3RedoxPerMetal = prodPerMetal * product.kN;
+  const reactedMetal = Math.max(
+    0,
+    Math.min(
+      metalMolesAvailable,
+      hPlusMoles / hPlusPerMetal,
+      no3MinusMoles / no3RedoxPerMetal
+    )
+  );
+  const dProd = reactedMetal * prodPerMetal;
+  return {
+    reactedMetal,
+    deltaMetal: -reactedMetal,
+    deltaMetalIon: +reactedMetal,
+    deltaHPlus: -(reactedMetal * hPlusPerMetal),
+    deltaNO3Minus: -(reactedMetal * no3RedoxPerMetal),
+    deltaProduct: +dProd,
+    deltaH2O: +(reactedMetal * (hPlusPerMetal - (product.id === 'NH4+' ? 4 * prodPerMetal : 0)) / 2),
+  };
+}
+
+function formatNitrateEquation(metalSpec, product) {
+  const gcd2 = (a, b) => (b === 0 ? a : gcd2(b, a % b));
+  const n = metalSpec.maxValence;
+  const div = gcd2(n, product.ep);
+  const mCoeff = product.ep / div;
+  const pCoeff = n / div;
+  const hCoeff = pCoeff * product.hP;
+  const nCoeff = pCoeff * product.kN;
+  const wCoeff = (hCoeff - (product.id === 'NH4+' ? 4 * pCoeff : 0)) / 2;
+  const gDiv = [mCoeff, hCoeff, nCoeff, pCoeff, wCoeff].reduce(gcd2);
+  const cM = mCoeff / gDiv;
+  const cH = hCoeff / gDiv;
+  const cN = nCoeff / gDiv;
+  const cP = pCoeff / gDiv;
+  const cW = wCoeff / gDiv;
+  const fIon = SPECIES[metalSpec.ionId]?.formula || `${metalSpec.formula}${n > 1 ? `${n}⁺` : '⁺'}`;
+  const mStr = cM > 1 ? `${cM}${metalSpec.formula}(s)` : `${metalSpec.formula}(s)`;
+  const mOutStr = cM > 1 ? `${cM}${fIon}(aq)` : `${fIon}(aq)`;
+  const pTag = product.isGas ? `${product.formula}(g)↑` : `${product.formula}(aq)`;
+  const pStr = cP > 1 ? `${cP}${pTag}` : pTag;
+  const wStr = cW > 1 ? `${cW}H₂O(l)` : 'H₂O(l)';
+  return `${mStr} + ${cH}H⁺ + ${cN}NO₃⁻ → ${mOutStr} + ${pStr} + ${wStr}`;
+}
+
+function stepMetalNitrateSolver(vessel, liquidVolL, dt, activeReactions, gasProduced) {
+  const moles = vessel.moles;
+  if (!hasNitrateOxidizingEnv(moles, liquidVolL) || (moles.H2O_l || 0) <= 1e-7) return 0;
+  const iceMob = computeIceMobilityFactor(vessel);
+  if (iceMob <= 0) return 0;
+
+  const T = vessel.tempK;
+  const cH = (moles.H_aq || 0) / liquidVolL;
+  const cNO3 = (moles.NO3_aq || 0) / liquidVolL;
+  const cCl = (moles.Cl_aq || 0) / liquidVolL;
+  const nAcid = Math.min(moles.H_aq || 0, moles.NO3_aq || 0);
+  const cAcid = nAcid / liquidVolL;
+  const mHNO3 = nAcid * CONSTANTS.M_HNO3;
+  const mWater = (moles.H2O_l || 0) * CONSTANTS.M_H2O;
+  const wHNO3 = mHNO3 / Math.max(1e-9, mHNO3 + mWater);
+  const stirBoost = vessel.stirTimer > 0 ? 3.0 : 1.0;
+
+  let totalHeatJ = 0;
+
+  for (const metalSpec of Object.values(METAL_REDOX_SPECS)) {
+    const solidId = metalSpec.solidId;
+    const nSolid = moles[solidId] || 0;
+    if (nSolid <= 1e-10 || metalSpec.noble || !SPECIES[metalSpec.ionId]) continue;
+    // Let aqua regia reactions handle Cu/Ag when concentrated Cl- >= 4.0 M is present
+    if (cCl >= 4.0 && (solidId === 'Cu_s' || solidId === 'Ag_s')) continue;
+
+    if (metalSpec.canPassivate) {
+      if ((wHNO3 >= 0.60 || cAcid >= 10.0) && T < 323.15) {
+        if (solidId === 'Fe_s') vessel.fePassivated = true;
+        continue;
+      }
+      if (solidId === 'Fe_s') vessel.fePassivated = false;
+    }
+
+    const mix = selectNitrateReductionMix(metalSpec, wHNO3, cAcid);
+    if (!mix.length) continue;
+
+    const pCount = vessel.particleCounts?.[solidId] ?? 8;
+    const isFine = Boolean(vessel.groundPowderMap?.[solidId]) || pCount >= 18;
+    const area = computeSolidSurfaceAreaM2(solidId, nSolid, isFine ? Math.max(pCount, 60) : pCount);
+    const fineBoost = isFine ? 1.85 : 1.0;
+    const baseK298 =
+      metalSpec.E0 <= -2.0 ? 2.4 : metalSpec.E0 <= -0.7 ? 0.85 : metalSpec.E0 <= 0 ? 0.55 : metalSpec.E0 <= 0.4 ? 0.52 : 0.36;
+    const eaJ = solidId === 'Ag_s' ? 32000 : 28000;
+    const k = baseK298 * arrheniusFactor(eaJ, T);
+    const drive = Math.min(5.0, cH / 2.2) * Math.min(4.0, cNO3 / 1.8) * (0.45 + 0.55 * Math.min(1, cAcid / 1.5));
+    const rateMetal = k * area * fineBoost * Math.max(0.025, drive) * stirBoost * iceMob * 4.5;
+    const targetMetal = Math.min(nSolid, rateMetal * dt);
+    if (targetMetal <= 1e-14) continue;
+
+    let reactedTotal = 0;
+    let dominantProduct = mix[0].product;
+    let maxProdYield = -1;
+
+    for (const part of mix) {
+      const nHAvail = moles.H_aq || 0;
+      const nNO3Avail = moles.NO3_aq || 0;
+      const nMAvail = Math.min(moles[solidId] || 0, targetMetal * part.weight);
+      if (nMAvail <= 1e-15 || nHAvail <= 1e-14 || nNO3Avail <= 1e-14) continue;
+
+      const step = solveMetalNitrateStep(nMAvail, metalSpec.maxValence, nHAvail, nNO3Avail, part.product);
+      if (step.reactedMetal <= 1e-15) continue;
+
+      moles[solidId] = Math.max(0, (moles[solidId] || 0) + step.deltaMetal);
+      if (moles[solidId] < 1e-13) delete moles[solidId];
+      moles[metalSpec.ionId] = (moles[metalSpec.ionId] || 0) + step.deltaMetalIon;
+      moles.H_aq = Math.max(0, (moles.H_aq || 0) + step.deltaHPlus);
+      if (moles.H_aq < 1e-13) delete moles.H_aq;
+      moles.NO3_aq = Math.max(0, (moles.NO3_aq || 0) + step.deltaNO3Minus);
+      if (moles.NO3_aq < 1e-13) delete moles.NO3_aq;
+      moles.H2O_l = (moles.H2O_l || 0) + step.deltaH2O;
+      if (part.product.isGas) {
+        gasProduced[part.product.speciesId] = (gasProduced[part.product.speciesId] || 0) + step.deltaProduct;
+      } else {
+        moles[part.product.speciesId] = (moles[part.product.speciesId] || 0) + step.deltaProduct;
+      }
+      reactedTotal += step.reactedMetal;
+      if (step.deltaProduct > maxProdYield) {
+        maxProdYield = step.deltaProduct;
+        dominantProduct = part.product;
+      }
+      const heatPerMolMetal = metalSpec.maxValence * 115000 + (part.product.id === 'NH4+' ? 85000 : 0);
+      totalHeatJ += heatPerMolMetal * step.reactedMetal;
+    }
+
+    if (reactedTotal > 1e-11 && activeReactions) {
+      const prodList = mix.map((m) => m.product.formula).join(' + ');
+      activeReactions.push({
+        id: `nitrate_redox_${metalSpec.formula.toLowerCase()}_${dominantProduct.id.toLowerCase().replace('+', 'p')}`,
+        equation: formatNitrateEquation(metalSpec, dominantProduct),
+        nameVi: `${metalSpec.name} phản ứng trong môi trường H⁺ + NO₃⁻ (tạo ${prodList})`,
+        nameEn: `${metalSpec.name} oxidation in H⁺ + NO₃⁻ medium (yielding ${prodList})`,
+        descVi: `Ion H⁺ và NO₃⁻ oxi hóa ${metalSpec.name} lên hóa trị cực đại ${SPECIES[metalSpec.ionId]?.formula} không giải phóng H₂.`,
+        descEn: `Combined H⁺ + NO₃⁻ oxidizes ${metalSpec.name} to ${SPECIES[metalSpec.ionId]?.formula} without evolving H₂ gas.`,
+        rateMolS: reactedTotal / Math.max(1e-4, dt),
+        vigorousGas: dominantProduct.isGas,
+        dXi: reactedTotal,
+      });
+    }
+  }
+
+  return totalHeatJ;
 }
 
 /**
@@ -2323,6 +2574,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     reactionHeatJ += stepAmphotericHydroxideEquilibria(vessel, liquidVolL, dt, activeReactions);
     reactionHeatJ += stepChloroSilverAndCuprousEquilibria(vessel, liquidVolL, dt, activeReactions);
     reactionHeatJ += stepAmmineComplexEquilibria(vessel, liquidVolL, dt, activeReactions);
+    reactionHeatJ += stepMetalNitrateSolver(vessel, liquidVolL, dt, activeReactions, gasProduced);
     stepLiquidLiquidPartition(vessel, strat, dt);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
   } else {
@@ -2423,8 +2675,12 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
 
   // Clear Fe passivation flag once outside cold concentrated HNO3
   if (vessel.fePassivated) {
-    const cNO3Check = liqV > 1e-5 ? (moles.NO3_aq || 0) / liqV : 0;
-    if ((moles.Fe_s || 0) <= 1e-10 || cNO3Check < 5.5 || vessel.tempK >= 318.15) {
+    const nAcidCheck = Math.min(moles.H_aq || 0, moles.NO3_aq || 0);
+    const cAcidCheck = liqV > 1e-5 ? nAcidCheck / liqV : 0;
+    const mHno3C = nAcidCheck * CONSTANTS.M_HNO3;
+    const mWaterC = (moles.H2O_l || 0) * CONSTANTS.M_H2O;
+    const wHno3C = mHno3C / Math.max(1e-9, mHno3C + mWaterC);
+    if ((moles.Fe_s || 0) <= 1e-10 || (wHno3C < 0.60 && cAcidCheck < 10.0) || vessel.tempK >= 323.15) {
       vessel.fePassivated = false;
     }
   }

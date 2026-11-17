@@ -369,25 +369,32 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
     refreshChrome();
   },
   onSelectReagent: (reagentId) => {
-    const sel = sim.getItem(sim.selectedId);
-    const isSolidReg = STARTER_REAGENTS.find((r) => r.id === reagentId)?.kind === 'solid';
+    const reg = STARTER_REAGENTS.find((r) => r.id === reagentId);
+    if (!reg) return;
+    const isSolidReg = reg.kind === 'solid';
     const validKind = (it) =>
       it &&
       !it.isShattered &&
       !it.isBroken &&
       (it.kind === 'vessel' ||
         it.kind === 'filter_funnel' ||
-        it.kind === 'burette' ||
+        (it.kind === 'burette' && !isSolidReg) ||
         (it.kind === 'spoon' && isSolidReg));
-    let target = validKind(sel) ? sel : null;
-    if (!target) {
-      target = sim.items.find((i) => validKind(i)) || null;
-    }
-    if (!target) {
+    const candidates = sim.items.filter(validKind);
+    if (candidates.length === 0) {
       // Auto-create a beaker so user isn't stuck
-      target = sim.createApparatus('beaker_250', 480, BENCH_FLOOR_Y - 70);
+      const created = sim.createApparatus('beaker_250', 480, BENCH_FLOOR_Y - 70);
+      dosingModal.openReagent(reagentId, created.id);
+      return;
     }
-    dosingModal.openReagent(reagentId, target.id);
+    const t = getTranslator();
+    startBenchPick({
+      candidateIds: candidates.map((c) => c.id),
+      promptText: `${t(reg.i18nKey)} (${reg.formula}) — ${t('pickBenchPrompt')}`,
+      onPick: (picked) => {
+        dosingModal.openReagent(reagentId, picked.id);
+      },
+    });
   },
   onExternalDragMove: (clientX, clientY, kind, id) => {
     workbench.setExternalDropPreview(clientX, clientY, kind, id);
@@ -413,8 +420,32 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
 });
 
 const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
-  onOpenTransfer: (sourceId) => dosingModal.openTransfer(sourceId),
-  onOpenSolidTransfer: (sourceId) => dosingModal.openSolidTransfer(sourceId),
+  onOpenTransfer: (sourceId) => {
+    const others = sim.items.filter(
+      (i) =>
+        i.id !== sourceId &&
+        !i.isShattered &&
+        !i.isBroken &&
+        (i.kind === 'vessel' || i.kind === 'filter_funnel' || i.kind === 'burette')
+    );
+    if (others.length === 0) return;
+    const t = getTranslator();
+    startBenchPick({
+      candidateIds: others.map((o) => o.id),
+      promptText: `${t('actionPourTo')} — ${t('pickBenchPrompt')}`,
+      onPick: (picked) => dosingModal.openTransfer(sourceId, picked.id),
+    });
+  },
+  onOpenSolidTransfer: (sourceId) => {
+    const vessels = sim.items.filter((i) => i.id !== sourceId && i.kind === 'vessel' && !i.isShattered);
+    if (vessels.length === 0) return;
+    const t = getTranslator();
+    startBenchPick({
+      candidateIds: vessels.map((v) => v.id),
+      promptText: `${t('actionPourTo')} — ${t('pickBenchPrompt')}`,
+      onPick: (picked) => dosingModal.openSolidTransfer(sourceId, picked.id),
+    });
+  },
   onOpenTubeTarget: (sourceId) => dosingModal.openTubeTarget(sourceId),
   onOpenSyringeTransfer: (syringeId) => dosingModal.openSyringeTransfer(syringeId),
   onStartBenchPick: (opts) => startBenchPick(opts),
@@ -595,15 +626,38 @@ resetBtnEl?.addEventListener('click', () => {
   refreshChrome(true);
 });
 
-// Keyboard shortcuts: Ctrl+A (Select All), Ctrl+C (Copy apparatus only), Ctrl+V (Paste clean apparatus)
+// Keyboard shortcuts: Backspace/Delete (Delete selected), Ctrl+Z (Undo up to 10 actions), Ctrl+A (Select All), Ctrl+C (Copy), Ctrl+V (Paste)
 window.addEventListener('keydown', (e) => {
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement?.isContentEditable) {
     return;
   }
+  const modalVisible = modalEl && !modalEl.classList.contains('hidden');
+  if ((e.key === 'Backspace' || e.key === 'Delete') && !modalVisible && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const deletedCount = sim.deleteSelectedItems ? sim.deleteSelectedItems() : 0;
+    if (deletedCount > 0) {
+      e.preventDefault();
+      workbench.setSelection([], null);
+      const t = getTranslator();
+      showToast(t('toastDeletedApparatus').replace('{count}', String(deletedCount)));
+      refreshChrome();
+    }
+    return;
+  }
   if (!(e.ctrlKey || e.metaKey)) return;
   const key = (e.key || '').toLowerCase();
-  if (key === 'a') {
+  if (key === 'z' && !e.shiftKey) {
+    e.preventDefault();
+    const ok = labManager.undo(sim);
+    const t = getTranslator();
+    if (ok) {
+      workbench.setSelection(Array.from(sim.selectedIds || []), sim.selectedId);
+      showToast(t('toastUndoSuccess'));
+      refreshChrome(true);
+    } else {
+      showToast(t('toastUndoEmpty'));
+    }
+  } else if (key === 'a') {
     e.preventDefault();
     const allIds = sim.items.map((it) => it.id);
     sim.selectedIds = new Set(allIds);

@@ -946,6 +946,28 @@ export function stepVesselGasAndPressure(
     vessel.headspaceGasMoles[g] = (vessel.headspaceGasMoles[g] || 0) + produced[g];
   }
 
+  // Spontaneous headspace oxidation: 2 NO(g) + O2(g) -> 2 NO2(g) (dark red-brown gas)
+  const headNO = vessel.headspaceGasMoles.NO_g || 0;
+  const o2Avail = (vessel.headspaceGasMoles.O2_g || 0) + (vessel.sealedAirO2Moles || 0);
+  if (headNO > 1e-8 && o2Avail > 1e-8) {
+    const dO2 = Math.min(o2Avail, headNO / 2) * 0.65;
+    if (dO2 > 1e-11) {
+      let remO2 = dO2;
+      const fromHead = Math.min(vessel.headspaceGasMoles.O2_g || 0, remO2);
+      if (fromHead > 0) {
+        vessel.headspaceGasMoles.O2_g = Math.max(0, (vessel.headspaceGasMoles.O2_g || 0) - fromHead);
+        remO2 -= fromHead;
+      }
+      if (remO2 > 0 && (vessel.sealedAirO2Moles || 0) > 0) {
+        const fromAir = Math.min(vessel.sealedAirO2Moles, remO2);
+        vessel.sealedAirO2Moles = Math.max(0, vessel.sealedAirO2Moles - fromAir);
+        vessel.sealedAirMoles = Math.max(0, (vessel.sealedAirMoles || 0) - fromAir);
+      }
+      vessel.headspaceGasMoles.NO_g = Math.max(0, headNO - 2 * dO2);
+      vessel.headspaceGasMoles.NO2_g = (vessel.headspaceGasMoles.NO2_g || 0) + 2 * dO2;
+    }
+  }
+
   // Rapid Ammonia / HCl gas absorption into liquid water inside stoppered flask (drives Ammonia Fountain vacuum!)
   const nWaterIn = vessel.moles.H2O_l || 0;
   if (nWaterIn > 1e-4) {

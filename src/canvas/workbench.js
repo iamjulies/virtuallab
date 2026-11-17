@@ -470,7 +470,8 @@ export class LabWorkbenchCanvas {
       const hoverSyr = payloadId === 'pipette_10' && !hoverVessel ? this.findSyringeAt(pt.x, pt.y) : null;
       const clampedX = Math.max(60, Math.min(BENCH_LOGICAL_W - 60, pt.x));
       const clampedY = Math.min(BENCH_FLOOR_Y - (spec.height || 80) / 2 + 2, Math.max(65, pt.y));
-      const created = this.sim.createApparatus(payloadId, clampedX, clampedY);
+      this.sim.recordUndo?.();
+      const created = this.sim.createApparatus(payloadId, clampedX, clampedY, { silentUndo: true });
 
       if (created) {
         if (created.kind === 'rubber_stopper') {
@@ -745,6 +746,7 @@ export class LabWorkbenchCanvas {
         if (hit.kind === 'wash_bottle' && (hit.waterMl || 0) > 0.1) {
           hit.isSpraying = true;
         }
+        const preDragSnap = this.sim.exportSnapshot ? this.sim.exportSnapshot() : null;
         // Bring dragged item to front visually unless it's a support base (scale/burner/stand)
         if (
           hit.kind === 'vessel' ||
@@ -775,6 +777,8 @@ export class LabWorkbenchCanvas {
           prevY: hit.y,
           startX: hit.x,
           startY: hit.y,
+          preDragSnap,
+          undoRecorded: false,
           unmountHoldoffId: wasMountedId,
           pourTargetId: null,
           pipetteTargetId: null,
@@ -919,6 +923,15 @@ export class LabWorkbenchCanvas {
       this.canvas.style.cursor = 'grabbing';
       const item = this.sim.getItem(this.dragState.itemId);
       if (!item) return;
+
+      if (
+        !this.dragState.undoRecorded &&
+        this.dragState.preDragSnap &&
+        Math.hypot(pt.x - this.dragState.offsetX - this.dragState.startX, pt.y - this.dragState.offsetY - this.dragState.startY) > 3
+      ) {
+        this.dragState.undoRecorded = true;
+        this.sim.pushUndoSnapshot?.(this.dragState.preDragSnap);
+      }
 
       // Once user actually drags a docked stir bar (>6 px), undock it cleanly so simple clicks still inspect without ejecting!
       if (

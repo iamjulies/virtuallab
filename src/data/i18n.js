@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v3+build.5',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v3+build.6',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -122,6 +122,8 @@ export const I18N = {
     reg_bacl2_2h2o_desc: 'Tinh thể muối ngậm nước · Thuốc thử đặc hiệu nhận biết SO₄²⁻ (BaSO₄ không tan trong acid)',
     reg_caco3: 'Calcium carbonate (CaCO₃)',
     reg_caco3_desc: 'Tinh thể đá vôi / bột mịn · Nhiệt phân CaCO₃ ⇌ CaO + CO₂ & điều chế CO₂ với acid',
+    reg_nacl: 'Sodium chloride (NaCl)',
+    reg_nacl_desc: 'Tinh thể muối ăn · Điện phân dung dịch/nóng chảy (801 °C), quy trình Solvay & kết tủa AgCl',
 
     // Workbench & Actions
     noSelection: 'Chưa chọn dụng cụ',
@@ -474,10 +476,13 @@ export const I18N = {
     toastCopiedApparatus: '📋 Đã sao chép {count} dụng cụ (chỉ khung, không hóa chất)',
     toastPastedApparatus: '📥 Đã dán {count} dụng cụ sạch lên bàn',
     toastDiscardedShelf: '🗑️ Đã vứt bỏ {count} dụng cụ về kệ',
+    toastDeletedApparatus: '🗑️ Đã xóa {count} dụng cụ đang chọn (Ctrl+Z để hoàn tác)',
+    toastUndoSuccess: '↩️ Đã hoàn tác thao tác trước đó (tối đa 10 bước)',
+    toastUndoEmpty: 'ℹ️ Không còn thao tác nào để hoàn tác',
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v3+build.5',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v3+build.6',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -588,6 +593,8 @@ export const I18N = {
     reg_bacl2_2h2o_desc: 'Crystalline hydrate · Selective SO₄²⁻ test yielding acid-insoluble white BaSO₄ precipitate',
     reg_caco3: 'Calcium carbonate (CaCO₃)',
     reg_caco3_desc: 'Limestone chips / powder · Reversible calcination CaCO₃ ⇌ CaO + CO₂ & acid CO₂ source',
+    reg_nacl: 'Sodium chloride (NaCl)',
+    reg_nacl_desc: 'Crystalline salt · Brine/molten electrolysis (801 °C), Solvay NaHCO₃ synthesis & AgCl test',
 
     noSelection: 'No apparatus selected',
     selectVesselTip: 'Click any vessel on the bench, or drag apparatus & reagents directly onto the workbench.',
@@ -936,5 +943,8 @@ export const I18N = {
     toastCopiedApparatus: '📋 Copied {count} clean apparatus (no chemicals)',
     toastPastedApparatus: '📥 Pasted {count} clean apparatus',
     toastDiscardedShelf: '🗑️ Discarded {count} item(s)',
+    toastDeletedApparatus: '🗑️ Deleted {count} selected item(s) (Ctrl+Z to undo)',
+    toastUndoSuccess: '↩️ Undid last action (up to 10 steps)',
+    toastUndoEmpty: 'ℹ️ Nothing left to undo',
   }
 };

@@ -158,6 +158,113 @@ export class LabSimulation {
       onAlert: null,
       onReagentDispense: null,
     };
+    this.undoStack = [];
+    this.maxUndo = 10;
+    this._suppressUndo = 0;
+  }
+
+  withUndoSuppressed(fn) {
+    this._suppressUndo = (this._suppressUndo || 0) + 1;
+    try {
+      return fn();
+    } finally {
+      this._suppressUndo = Math.max(0, (this._suppressUndo || 1) - 1);
+    }
+  }
+
+  exportSnapshot() {
+    const cleanItems = this.items.map((it) => {
+      const copy = JSON.parse(JSON.stringify(it));
+      if (Array.isArray(copy.history) && copy.history.length > 8) {
+        copy.history = copy.history.slice(-8);
+      }
+      return copy;
+    });
+    return {
+      timeSec: this.timeSec,
+      nextId: this.nextId,
+      environment: { ...this.environment },
+      items: cleanItems,
+      selectedId: this.selectedId,
+      selectedIds: Array.from(this.selectedIds || []),
+      compareVesselIds: Array.isArray(this.compareVesselIds) ? [...this.compareVesselIds] : [],
+      pipette: JSON.parse(JSON.stringify(this.pipette)),
+      logs: JSON.parse(JSON.stringify(this.logs.slice(0, 12))),
+    };
+  }
+
+  restoreSnapshot(snap) {
+    if (!snap) return false;
+    this.timeSec = snap.timeSec ?? 0;
+    this.nextId = snap.nextId ?? 1;
+    if (snap.environment) {
+      this.environment = JSON.parse(JSON.stringify(snap.environment));
+    }
+    this.items = Array.isArray(snap.items) ? JSON.parse(JSON.stringify(snap.items)) : [];
+    for (const it of this.items) {
+      it.isDragging = false;
+      it.tiltAngle = 0;
+      it.hoveredActionLabel = null;
+    }
+    this.selectedId = snap.selectedId || null;
+    this.selectedIds = new Set(Array.isArray(snap.selectedIds) ? snap.selectedIds : this.selectedId ? [this.selectedId] : []);
+    this.compareVesselIds = Array.isArray(snap.compareVesselIds) ? [...snap.compareVesselIds] : [];
+    if (snap.pipette) {
+      this.pipette = JSON.parse(JSON.stringify(snap.pipette));
+    }
+    if (Array.isArray(snap.logs)) {
+      this.logs = JSON.parse(JSON.stringify(snap.logs));
+    }
+    this.activePourStream = null;
+    this.activeReagentTransfer = null;
+    this.timedTransfers = [];
+    this.updateSupportAttachments();
+    this.recomputeScaleReadings();
+    this.emitChange();
+    return true;
+  }
+
+  pushUndoSnapshot(snap) {
+    if (!snap || this._suppressUndo > 0) return false;
+    if (!Array.isArray(this.undoStack)) this.undoStack = [];
+    this.undoStack.push(snap);
+    const limit = this.maxUndo || 10;
+    while (this.undoStack.length > limit) {
+      this.undoStack.shift();
+    }
+    return true;
+  }
+
+  recordUndo() {
+    if (this._suppressUndo > 0) return false;
+    return this.pushUndoSnapshot(this.exportSnapshot());
+  }
+
+  undo() {
+    if (!Array.isArray(this.undoStack) || this.undoStack.length === 0) return false;
+    const snap = this.undoStack.pop();
+    return this.restoreSnapshot(snap);
+  }
+
+  deleteSelectedItems() {
+    const rawIds =
+      this.selectedIds && this.selectedIds.size > 0
+        ? Array.from(this.selectedIds)
+        : this.selectedId
+        ? [this.selectedId]
+        : [];
+    const validIds = rawIds.filter((id) => Boolean(this.getItem(id)));
+    if (validIds.length === 0) return 0;
+    this.recordUndo();
+    this.withUndoSuppressed(() => {
+      for (const id of validIds) {
+        this.removeApparatus(id);
+      }
+    });
+    this.selectedIds.clear();
+    this.selectedId = null;
+    this.emitChange();
+    return validIds.length;
   }
 
   subscribe(fn) {
@@ -182,9 +289,10 @@ export class LabSimulation {
     return this.items.find((it) => it.id === id) || null;
   }
 
-  createApparatus(typeId, x = 280, y = 380) {
+  createApparatus(typeId, x = 280, y = 380, options = {}) {
     const spec = APPARATUS[typeId];
     if (!spec) return null;
+    if (!options?.silentUndo) this.recordUndo();
     const id = `${typeId}_${this.nextId++}`;
     const base = {
       id,
@@ -656,6 +764,7 @@ export class LabSimulation {
   removeApparatus(id) {
     const item = this.getItem(id);
     if (!item) return;
+    this.recordUndo();
     this.detachItemRelations(item);
     this.items = this.items.filter((it) => it.id !== id);
     if (Array.isArray(this.compareVesselIds)) {
@@ -716,6 +825,16 @@ export class LabSimulation {
   }
 
   setupPreset(presetName) {
+    if (this.items.length > 0) this.recordUndo();
+    this._suppressUndo = (this._suppressUndo || 0) + 1;
+    try {
+      this._setupPresetInner(presetName);
+    } finally {
+      this._suppressUndo = Math.max(0, (this._suppressUndo || 1) - 1);
+    }
+  }
+
+  _setupPresetInner(presetName) {
     this.items = [];
     this.compareVesselIds = [];
     this.logs = [];
@@ -2470,6 +2589,7 @@ export class LabSimulation {
       amt = Math.min(amt, 15.0);
     }
     if (amt <= 0) return false;
+    if (!options?.silentUndo && !options?.silentEmit) this.recordUndo();
 
     // Thermal capacity & ethanol-water excess enthalpy baseline before addition
     const cOld = computeHeatCapacityJK(v);
@@ -2617,8 +2737,9 @@ export class LabSimulation {
     const v = this.getItem(vesselId);
     const amt = Math.max(0, Number(amount) || 0);
     if (!v || !reg || amt <= 0) return false;
+    this.recordUndo();
     if (this.environment.paused || options.instant || reg.kind === 'solid' || amt <= 0.25) {
-      return this.addReagentToVessel(vesselId, reagentId, amt, options);
+      return this.addReagentToVessel(vesselId, reagentId, amt, { ...options, silentUndo: true });
     }
 
     const startMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -2658,8 +2779,9 @@ export class LabSimulation {
     const dst = this.getItem(targetId);
     const amt = Math.max(0, Number(amount) || 0);
     if (!src || !dst || amt <= 0) return 0;
+    this.recordUndo();
     if (this.environment.paused || amt <= 0.25) {
-      return this.pourBetweenVessels(sourceId, targetId, amt, shakeBeforePour);
+      return this.pourBetweenVessels(sourceId, targetId, amt, shakeBeforePour, { silentUndo: true });
     }
 
     const durationMs = Math.max(680, Math.min(2800, Math.round(480 + amt * 22)));
@@ -2680,6 +2802,10 @@ export class LabSimulation {
 
   stepTimedTransfers(nowMsOverride = null) {
     if (!this.timedTransfers || this.timedTransfers.length === 0) return;
+    return this.withUndoSuppressed(() => this._stepTimedTransfersInner(nowMsOverride));
+  }
+
+  _stepTimedTransfersInner(nowMsOverride = null) {
     const nowMs = nowMsOverride ?? (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const remaining = [];
     let anyCompleted = false;
@@ -2756,6 +2882,7 @@ export class LabSimulation {
     if (!src || !dst || src.id === dst.id || src.isShattered || dst.isShattered || src.isBroken || dst.isBroken) return 0;
     const dstValid = dst.kind === 'vessel' || dst.kind === 'filter_funnel' || dst.kind === 'burette';
     if (!dstValid) return 0;
+    if (!streamOpts?.silentUndo && !streamOpts?.pouredMlTotal) this.recordUndo();
 
     const srcLiqL = computeLiquidVolumeL(src.moles, src.tempK);
     const srcLiqMl = srcLiqL * 1000;
@@ -2763,7 +2890,7 @@ export class LabSimulation {
     if (srcLiqMl <= 0.01) {
       // Allow dry pouring solids cleanly from Mortar & Pestle or Filter Funnel paper into another vessel
       if ((srcSpec.isMortar || src.kind === 'filter_funnel') && dst.kind === 'vessel') {
-        const moved = this.transferSolidsToVessel(sourceId, targetId, 1.0);
+        const moved = this.withUndoSuppressed(() => this.transferSolidsToVessel(sourceId, targetId, 1.0));
         return moved > 0 ? 1 : 0;
       }
       return 0;
@@ -2923,6 +3050,7 @@ export class LabSimulation {
     const src = this.getItem(sourceId);
     const dst = this.getItem(targetId);
     if (!src || !dst || src.isShattered || dst.isShattered || dst.kind !== 'vessel') return 0;
+    this.recordUndo();
     const frac = Math.max(0, Math.min(1, fraction));
     let totalMol = 0;
     for (const [spId, n] of Object.entries(src.moles || {})) {
@@ -3928,6 +4056,10 @@ export class LabSimulation {
       ['CO2_g', 'CO2_g_total'],
       ['HCl_g', 'HCl_g_total'],
       ['Cl2_g', 'Cl2_g_total'],
+      ['NO2_g', 'NO2_g_total'],
+      ['NO_g', 'NO_g_total'],
+      ['N2O_g', 'N2O_g_total'],
+      ['N2_g', 'N2_g_total'],
     ]) {
       const tot =
         (vessel.escapedGasMoles[gId] || 0) +
@@ -5326,7 +5458,7 @@ export class LabSimulation {
         !v.isFrozenSolid &&
         ((rateSteam > 3e-5 && curSteamOpacity > 0.04) || (frameBoiling && rateSteam > 1e-6) || isDehydrating);
 
-      const labelOrder = ['C2H5Cl_g', 'NH3_g', 'NO2_g', 'NO_g', 'H2_g', 'O2_g', 'Cl2_g', 'HCl_g', 'C2H5OH_g'];
+      const labelOrder = ['C2H5Cl_g', 'NH3_g', 'NO2_g', 'NO_g', 'N2O_g', 'N2_g', 'H2_g', 'O2_g', 'Cl2_g', 'HCl_g', 'C2H5OH_g'];
       const extraLabelIds = ALL_GAS_IDS.filter(
         (id) => id !== 'H2O_g' && id !== 'HNO3_g' && !labelOrder.includes(id)
       );
@@ -5423,6 +5555,7 @@ export class LabSimulation {
           gasRateNO2: rateMap.NO2_g,
           gasRateSO3: rateMap.SO3_g,
           gasRateNO: rateMap.NO_g,
+          atmosphereMode: this.environment.atmosphereMode || 'air',
           steamRate: rateSteam,
           steamOpacity: curSteamOpacity,
           overflowRateMlS: v.overflowRateMlS || 0,

@@ -233,6 +233,7 @@ export class ShelfPanel {
       if (!ds) return;
       const { kind, id, moved } = ds;
       cleanup();
+      this._lastPointerUpMs = Date.now();
       if (!moved) {
         if (kind === 'apparatus') this.callbacks.onAddApparatus?.(id);
         else if (kind === 'reagent') this.callbacks.onSelectReagent?.(id);
@@ -399,6 +400,10 @@ export class ShelfPanel {
           ghostEl: null,
         };
       });
+      el.addEventListener('click', () => {
+        if (this._lastPointerUpMs && Date.now() - this._lastPointerUpMs < 180) return;
+        this.callbacks.onAddApparatus?.(id);
+      });
       el.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -421,6 +426,10 @@ export class ShelfPanel {
           moved: false,
           ghostEl: null,
         };
+      });
+      el.addEventListener('click', () => {
+        if (this._lastPointerUpMs && Date.now() - this._lastPointerUpMs < 180) return;
+        this.callbacks.onSelectReagent?.(id);
       });
       el.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {

@@ -2361,6 +2361,18 @@ export function renderVessel(ctx, vessel, opts) {
       const shoulderY = interiorBottom - spec.geometry.profilePoints[3][0] * scaleY;
       ctx.moveTo(x - neckHalf + 4, shoulderY + 2);
       ctx.lineTo(x - w * 0.36, bottom - 15);
+    } else if (spec.shape === 'round_flask') {
+      const { pts } = mapProfileToCanvas(spec, x, y, sagFrac);
+      const minBulbRx = Math.max(neckHalf + 5, w * 0.25);
+      const bulbPts = pts.filter((p) => p.rx >= minBulbRx);
+      if (bulbPts.length >= 3) {
+        const iStart = Math.max(0, Math.floor(bulbPts.length * 0.14));
+        const iEnd = Math.min(bulbPts.length - 1, Math.floor(bulbPts.length * 0.86));
+        ctx.moveTo(x - bulbPts[iStart].rx * 0.80, bulbPts[iStart].cy);
+        for (let i = iStart + 1; i <= iEnd; i++) {
+          ctx.lineTo(x - bulbPts[i].rx * 0.80, bulbPts[i].cy);
+        }
+      }
     } else if (spec.shape === 'trough') {
       ctx.moveTo(x - w * 0.38, top + 12);
       ctx.lineTo(x - w * 0.35, bottom - 12);
@@ -2456,7 +2468,8 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.font = '600 6.5px system-ui, sans-serif';
     ctx.fillText('ISO', patchX + patchW / 2, patchY + 15.5);
   } else if (spec.shape === 'round_flask') {
-    // NS 29/32 ground-glass joint neck band + nominal shoulder mark + ceramic capacity badge
+    // NS 29/32 ground-glass joint neck band + ISO bulb graduations + non-overlapping capacity badge
+    const isLargeRound = (spec.maxVolumeMl || 250) >= 900;
     const neckHalfPx = spec.neckRadius || 17;
     ctx.fillStyle = isDark ? 'rgba(226, 232, 240, 0.22)' : 'rgba(148, 163, 184, 0.25)';
     ctx.fillRect(x - neckHalfPx + 1.5, top + 2, (neckHalfPx - 1.5) * 2, 16);
@@ -2467,20 +2480,31 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.lineTo(x + neckHalfPx - 1.5, top + 18);
     ctx.stroke();
 
-    const nomY = volumeMlToY(spec.maxVolumeMl || 250);
-    const nomSt = volumeMlToState(spec.maxVolumeMl || 250);
-    const tickX = x - Math.max(12, nomSt.rx * 0.55);
-    ctx.strokeStyle = pal.tickStroke;
-    ctx.lineWidth = 1.1;
-    ctx.beginPath();
-    ctx.moveTo(tickX, nomY);
-    ctx.lineTo(tickX + 10, nomY);
-    ctx.stroke();
+    const marks = isLargeRound ? [200, 400, 600, 800, 1000] : [50, 100, 150, 200, 250];
+    for (const ml of marks) {
+      const st = volumeMlToState(ml);
+      const ty = st.cy;
+      const halfR = st.halfWPx || st.rx || w * 0.36;
+      const tickX = x - Math.max(10, halfR * 0.72);
+      const isMajor = isLargeRound ? ml % 400 === 0 || ml === 200 || ml === 1000 : ml % 100 === 0 || ml === 50 || ml === 250;
+      const tickLen = isMajor ? (isLargeRound ? 8.5 : 6.5) : 4.5;
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.05 : 0.85;
+      ctx.beginPath();
+      ctx.moveTo(tickX, ty);
+      ctx.lineTo(tickX + tickLen, ty);
+      ctx.stroke();
+      ctx.fillStyle = pal.enamelText;
+      ctx.textAlign = 'left';
+      ctx.font = isLargeRound ? '600 7.5px system-ui, sans-serif' : '600 6.5px system-ui, sans-serif';
+      ctx.fillText(String(ml), tickX + tickLen + 2, ty + 0.5);
+    }
 
-    const patchW = (spec.maxVolumeMl || 250) >= 900 ? 28 : 22;
-    const patchH = 22;
-    const patchX = x - patchW / 2;
-    const patchY = y + h * 0.08;
+    const eqSt = volumeMlToState((spec.maxVolumeMl || 250) * 0.45);
+    const patchW = isLargeRound ? 28 : 21;
+    const patchH = 21;
+    const patchX = x + (isLargeRound ? 14 : 7);
+    const patchY = Math.round(eqSt.cy - patchH / 2);
     ctx.fillStyle = pal.writePatchBg;
     ctx.strokeStyle = pal.writePatchBorder;
     ctx.lineWidth = 0.8;

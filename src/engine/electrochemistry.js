@@ -16,12 +16,20 @@ function addMolSafe(moles, id, delta) {
 
 function getElectrodeLiquidInfo(items, elec) {
   if (!elec || !elec.dockedVesselId) return null;
-  if (elec.immersedFrac !== undefined && elec.immersedFrac <= 0.01) return null;
   const v = items.find((i) => i.id === elec.dockedVesselId && i.kind === 'vessel' && !i.isShattered);
   if (!v || v.isFrozenSolid) return null;
   const liqL = computeLiquidVolumeL(v.moles, v.tempK);
+  const hasMoltenNaCl =
+    (v.moles.NaCl_s || 0) > 1e-6 &&
+    v.tempK >= 1073.85 &&
+    (v.moles.H2O_l || 0) < 0.005;
+  if (hasMoltenNaCl && liqL <= 1e-5) {
+    const moltenVolL = Math.max(0.01, (v.moles.NaCl_s * 58.44) / 1556 / 1000);
+    return { vessel: v, liqL: moltenVolL, isMoltenNaCl: true };
+  }
+  if (elec.immersedFrac !== undefined && elec.immersedFrac <= 0.01) return null;
   if (liqL <= 1e-5 || (v.moles.H2O_l || 0) <= 1e-5) return null;
-  return { vessel: v, liqL };
+  return { vessel: v, liqL, isMoltenNaCl: false };
 }
 
 function findBridgingSaltBridge(items, vIdA, vIdB) {
@@ -200,11 +208,14 @@ export function stepElectrochemistry(sim, dt) {
         continue;
       }
 
+      const isMoltenNaCl = Boolean(infoPos.isMoltenNaCl && infoNeg.isMoltenNaCl);
       const cCu = ((v.moles.Cu2_aq || 0) + 0.65 * (v.moles.CuNH3_4_2_aq || 0)) / liqL;
       const cAg = (v.moles.Ag_aq || 0) / liqL;
       const cCl = (v.moles.Cl_aq || 0) / liqL;
       const hasPlatedAgAnode = elPos.platedMaterial === 'Ag' && (elPos.platedAgMol || 0) > 1e-8;
-      const decompV = hasPlatedAgAnode
+      const decompV = isMoltenNaCl
+        ? 3.6
+        : hasPlatedAgAnode
         ? 0.12
         : elPos.material === 'Cu' && cCu > 0.01
         ? 0.15
@@ -213,23 +224,25 @@ export function stepElectrochemistry(sim, dt) {
         : cCu > 0.005
         ? 1.15
         : 1.55;
-      const ionConductivity = Math.max(
-        0.04,
-        Math.min(
-          1.0,
-          0.08 +
-            0.35 *
-              ((v.moles.H_aq || 0) +
-                (v.moles.OH_aq || 0) +
-                (v.moles.Cu2_aq || 0) +
-                (v.moles.Ag_aq || 0) +
-                (v.moles.NO3_aq || 0) +
-                (v.moles.Na_aq || 0) +
-                (v.moles.SO4_2_aq || 0) +
-                (v.moles.Cl_aq || 0)) /
-              Math.max(0.05, liqL)
-        )
-      );
+      const ionConductivity = isMoltenNaCl
+        ? 1.0
+        : Math.max(
+            0.04,
+            Math.min(
+              1.0,
+              0.08 +
+                0.35 *
+                  ((v.moles.H_aq || 0) +
+                    (v.moles.OH_aq || 0) +
+                    (v.moles.Cu2_aq || 0) +
+                    (v.moles.Ag_aq || 0) +
+                    (v.moles.NO3_aq || 0) +
+                    (v.moles.Na_aq || 0) +
+                    (v.moles.SO4_2_aq || 0) +
+                    (v.moles.Cl_aq || 0)) /
+                  Math.max(0.05, liqL)
+            )
+          );
 
       const effResistanceOhm = rheoOhm + 1.4 / ionConductivity;
       const currentA = vSet > decompV ? Math.min(5.0, (vSet - decompV) / effResistanceOhm) : 0;
@@ -244,6 +257,34 @@ export function stepElectrochemistry(sim, dt) {
       if (currentA <= 1e-4) continue;
 
       const neMol = (currentA * dt) / CONSTANTS.FARADAY_C_MOL;
+
+      if (isMoltenNaCl) {
+        const dElect = Math.min(v.moles.NaCl_s || 0, neMol);
+        if (dElect > 1e-10) {
+          addMolSafe(v.moles, 'NaCl_s', -dElect);
+          addMolSafe(v.moles, 'Na_s', dElect);
+          const dCl2M = dElect / 2;
+          sim.emitElectrolysisGas(v, 'Cl2_g', dCl2M, elPos.x, elPos);
+          elPos.gasBubbleType = 'Cl2_g';
+          elPos.gasBubbleRate = dCl2M / Math.max(1e-4, dt);
+          v.tempK = Math.min(1850, v.tempK + (currentA * vSet * 0.25 * dt) / Math.max(50, 2200 * liqL + 100));
+          v.activeReactions = [
+            ...(v.activeReactions || []),
+            {
+              id: 'electrolysis_molten_nacl',
+              equation: '2NaCl(l) —(đpnc)→ 2Na + Cl₂(g)↑',
+              nameVi: `Điện phân nóng chảy NaCl (${currentA.toFixed(2)} A)`,
+              nameEn: `Molten NaCl electrolysis (${currentA.toFixed(2)} A)`,
+              descVi: `NaCl nóng chảy trên 801 °C dẫn điện tốt, tạo kim loại Na ở Cathode (-) và khí Cl₂ vàng lục ở Anode (+).`,
+              descEn: `Conductive molten NaCl (> 801 °C) electrolyzes into metallic Na at Cathode (-) and green-yellow Cl₂ gas at Anode (+).`,
+              rateMolS: dElect / Math.max(1e-4, dt),
+              vigorousGas: true,
+              dXi: dElect,
+            },
+          ];
+        }
+        continue;
+      }
 
       // Cathode (-) reduction: Ag+ > Cu2+ (free or ammine) > 2H+/2H2O -> H2(g)
       // Phenomenon #9A: Moderate J <= 6.5 A/dm2 plates bright salmon-pink Cu(s); high J > 6.5 A/dm2 gives burned powdery black Cu(s) + H2 co-evolution
@@ -325,13 +366,23 @@ export function stepElectrochemistry(sim, dt) {
         const dZnDiss = neMol / 2;
         addMolSafe(v.moles, 'Zn2_aq', dZnDiss);
         anDesc = 'Zn(s) → Zn²⁺(aq) + 2e⁻';
-      } else if (cCl >= 0.45 && (v.moles.Cl_aq || 0) > neMol) {
-        const dCl2 = neMol / 2;
-        addMolSafe(v.moles, 'Cl_aq', -2 * dCl2);
-        sim.emitElectrolysisGas(v, 'Cl2_g', dCl2, elPos.x, elPos);
-        elPos.gasBubbleType = 'Cl2_g';
-        elPos.gasBubbleRate = dCl2 / Math.max(1e-4, dt);
-        anDesc = '2Cl⁻ → Cl₂(g)↑ + 2e⁻';
+      } else if (cCl >= 0.45 && (v.moles.Cl_aq || 0) > 1e-7) {
+        const dCl2Raw = Math.min((v.moles.Cl_aq || 0) / 2, neMol / 2);
+        const nOH = v.moles.OH_aq || 0;
+        const dJavel = nOH >= 1e-7 ? Math.min(dCl2Raw * 0.55, nOH / 2) : 0;
+        const dCl2Emit = dCl2Raw - dJavel;
+        addMolSafe(v.moles, 'Cl_aq', -2 * dCl2Raw + dJavel);
+        if (dJavel > 1e-11) {
+          addMolSafe(v.moles, 'OH_aq', -2 * dJavel);
+          addMolSafe(v.moles, 'ClO_aq', dJavel);
+          addMolSafe(v.moles, 'H2O_l', dJavel);
+        }
+        if (dCl2Emit > 1e-11) {
+          sim.emitElectrolysisGas(v, 'Cl2_g', dCl2Emit, elPos.x, elPos);
+          elPos.gasBubbleType = 'Cl2_g';
+          elPos.gasBubbleRate = dCl2Emit / Math.max(1e-4, dt);
+        }
+        anDesc = dJavel > 1e-10 ? '2Cl⁻ → Cl₂↑  (+ ClO⁻ Javel không màng ngăn)' : '2Cl⁻ → Cl₂(g)↑ + 2e⁻';
       } else if ((v.moles.H2O_l || 0) > neMol * 0.6) {
         const dO2 = neMol / 4;
         addMolSafe(v.moles, 'H2O_l', -2 * dO2);
@@ -358,8 +409,22 @@ export function stepElectrochemistry(sim, dt) {
         },
       ];
     } else {
-      // 2. Two-vessel Galvanic Cell Mode through DC supply panel
-      stepGalvanicInstrument(sim, sup, elPos, elNeg, infoPos, infoNeg, items, dt, true);
+      // 2. Two-vessel DC Electrolysis across salt bridge (diaphragm brine / chloralkali) OR Galvanic discharge
+      const bridge = findBridgingSaltBridge(items, infoPos.vessel.id, infoNeg.vessel.id);
+      const vSet = Math.max(0, Math.min(12, sup.voltageV ?? 6.0));
+      const e1 = computeHalfCellPotentialV(elPos.material, infoPos.vessel, infoPos.liqL);
+      const e2 = computeHalfCellPotentialV(elNeg.material, infoNeg.vessel, infoNeg.liqL);
+      const emfV = Math.max(0, Math.abs(e1 - e2));
+      const vPos = infoPos.vessel;
+      const cClPos = (vPos.moles.Cl_aq || 0) / Math.max(1e-5, infoPos.liqL);
+      const forceTwoVesselElectrolysis = Boolean(
+        sup.powerOn && bridge && vSet >= 1.8 && (cClPos >= 0.45 || vSet > emfV + 0.3)
+      );
+      if (forceTwoVesselElectrolysis) {
+        stepTwoVesselElectrolysis(sim, sup, elPos, elNeg, infoPos, infoNeg, bridge, dt);
+      } else {
+        stepGalvanicInstrument(sim, sup, elPos, elNeg, infoPos, infoNeg, items, dt, true);
+      }
     }
   }
 
@@ -443,6 +508,104 @@ export function stepElectrochemistry(sim, dt) {
     const allowLoad = (meter.mode || 'voltmeter') !== 'voltmeter';
     stepGalvanicInstrument(sim, meter, elPos, elNeg, infoPos, infoNeg, items, dt, allowLoad, meter.mode === 'short' ? 0.25 : 2.2);
   }
+}
+
+function stepTwoVesselElectrolysis(sim, sup, elPos, elNeg, infoPos, infoNeg, bridge, dt) {
+  const CATHODE_AREA_DM2 = 0.08;
+  const vPos = infoPos.vessel;
+  const vNeg = infoNeg.vessel;
+  const vSet = Math.max(0, Math.min(12, sup.voltageV ?? 6.0));
+  const rheoOhm = Math.max(0.2, Math.min(25, sup.rheostatOhm ?? 2.0));
+  const condPos = Math.min(1.0, 0.08 + 0.35 * ((vPos.moles.Cl_aq || 0) + (vPos.moles.Na_aq || 0) + (vPos.moles.SO4_2_aq || 0) + (vPos.moles.H_aq || 0) + (vPos.moles.OH_aq || 0)) / Math.max(0.05, infoPos.liqL));
+  const condNeg = Math.min(1.0, 0.08 + 0.35 * ((vNeg.moles.Cl_aq || 0) + (vNeg.moles.Na_aq || 0) + (vNeg.moles.SO4_2_aq || 0) + (vNeg.moles.H_aq || 0) + (vNeg.moles.OH_aq || 0)) / Math.max(0.05, infoNeg.liqL));
+  const effRes = rheoOhm + 1.8 / Math.max(0.04, Math.min(condPos, condNeg));
+  const decompV = 1.65;
+  const currentA = vSet > decompV ? Math.min(5.0, (vSet - decompV) / effRes) : 0;
+  const jADm2 = currentA / CATHODE_AREA_DM2;
+  sup.circuitMode = 'electrolysis';
+  sup.measuredV = vSet;
+  sup.measuredCurrentA = currentA;
+  sup.currentDensityADm2 = jADm2;
+  elPos.polarityLabel = '+ Anode';
+  elNeg.polarityLabel = `- Cathode (${jADm2.toFixed(1)} A/dm²)`;
+  elNeg.currentDensityADm2 = jADm2;
+  if (currentA <= 1e-4) return;
+  bridge.activeCurrentA = Math.max(bridge.activeCurrentA || 0, currentA);
+
+  const neMol = (currentA * dt) / CONSTANTS.FARADAY_C_MOL;
+  let cathDesc = '2H₂O + 2e⁻ → H₂(g)↑ + 2OH⁻';
+  let anDesc = '2H₂O → O₂(g)↑ + 4H⁺ + 4e⁻';
+
+  // Cathode (-): Ag+ / Cu2+ / 2H+ / 2H2O -> H2 + 2OH-
+  if ((vNeg.moles.Ag_aq || 0) > 1e-7) {
+    const dAg = Math.min(vNeg.moles.Ag_aq, neMol);
+    addMolSafe(vNeg.moles, 'Ag_aq', -dAg);
+    addMolSafe(vNeg.moles, 'Ag_s', dAg);
+    cathDesc = 'Ag⁺ + e⁻ → Ag(s)';
+  } else if ((vNeg.moles.Cu2_aq || 0) > 1e-7) {
+    const dCu = Math.min(vNeg.moles.Cu2_aq, neMol / 2);
+    addMolSafe(vNeg.moles, 'Cu2_aq', -dCu);
+    addMolSafe(vNeg.moles, 'Cu_s', dCu);
+    cathDesc = 'Cu²⁺ + 2e⁻ → Cu(s)';
+  } else if ((vNeg.moles.H_aq || 0) > neMol * 1.2) {
+    const dH2 = neMol / 2;
+    addMolSafe(vNeg.moles, 'H_aq', -2 * dH2);
+    sim.emitElectrolysisGas(vNeg, 'H2_g', dH2, elNeg.x, elNeg);
+    elNeg.gasBubbleType = 'H2_g';
+    elNeg.gasBubbleRate = dH2 / Math.max(1e-4, dt);
+    cathDesc = '2H⁺ + 2e⁻ → H₂(g)↑';
+  } else if ((vNeg.moles.H2O_l || 0) > neMol) {
+    const dH2 = neMol / 2;
+    addMolSafe(vNeg.moles, 'H2O_l', -2 * dH2);
+    addMolSafe(vNeg.moles, 'OH_aq', 2 * dH2);
+    // Na+ migrates across salt bridge/diaphragm into cathode vessel to balance OH- as NaOH(aq)
+    const dNaMig = Math.min(vPos.moles.Na_aq || 0, 2 * dH2);
+    if (dNaMig > 1e-11) {
+      addMolSafe(vPos.moles, 'Na_aq', -dNaMig);
+      addMolSafe(vNeg.moles, 'Na_aq', dNaMig);
+    }
+    sim.emitElectrolysisGas(vNeg, 'H2_g', dH2, elNeg.x, elNeg);
+    elNeg.gasBubbleType = 'H2_g';
+    elNeg.gasBubbleRate = dH2 / Math.max(1e-4, dt);
+  }
+
+  // Anode (+): 2Cl- -> Cl2(g) or Cu/Zn oxidation or O2(g)
+  const cClPos = (vPos.moles.Cl_aq || 0) / Math.max(1e-5, infoPos.liqL);
+  if (elPos.material === 'Cu') {
+    addMolSafe(vPos.moles, 'Cu2_aq', neMol / 2);
+    anDesc = 'Cu(s) → Cu²⁺(aq) + 2e⁻';
+  } else if (elPos.material === 'Zn') {
+    addMolSafe(vPos.moles, 'Zn2_aq', neMol / 2);
+    anDesc = 'Zn(s) → Zn²⁺(aq) + 2e⁻';
+  } else if (cClPos >= 0.45 && (vPos.moles.Cl_aq || 0) > 1e-7) {
+    const dCl2 = Math.min((vPos.moles.Cl_aq || 0) / 2, neMol / 2);
+    addMolSafe(vPos.moles, 'Cl_aq', -2 * dCl2);
+    sim.emitElectrolysisGas(vPos, 'Cl2_g', dCl2, elPos.x, elPos);
+    elPos.gasBubbleType = 'Cl2_g';
+    elPos.gasBubbleRate = dCl2 / Math.max(1e-4, dt);
+    anDesc = '2Cl⁻ → Cl₂(g)↑ + 2e⁻';
+  } else if ((vPos.moles.H2O_l || 0) > neMol * 0.6) {
+    const dO2 = neMol / 4;
+    addMolSafe(vPos.moles, 'H2O_l', -2 * dO2);
+    addMolSafe(vPos.moles, 'H_aq', 4 * dO2);
+    sim.emitElectrolysisGas(vPos, 'O2_g', dO2, elPos.x, elPos);
+    elPos.gasBubbleType = 'O2_g';
+    elPos.gasBubbleRate = dO2 / Math.max(1e-4, dt);
+  }
+
+  const rxnMeta = {
+    id: 'electrolysis_diaphragm_cell',
+    equation: `${cathDesc}  |  ${anDesc}`,
+    nameVi: `Điện phân 2 bình qua cầu muối (${currentA.toFixed(2)} A)`,
+    nameEn: `Two-cell diaphragm electrolysis (${currentA.toFixed(2)} A)`,
+    descVi: `Ngăn riêng hai bán cực bằng cầu muối thu khí Cl₂ tại Anode (+) và H₂↑ + NaOH(aq) tinh khiết tại Cathode (-).`,
+    descEn: `Salt-bridge compartment separation harvests Cl₂(g) at Anode (+) and pure NaOH(aq) + H₂(g) at Cathode (-).`,
+    rateMolS: neMol / Math.max(1e-4, dt),
+    vigorousGas: true,
+    dXi: neMol,
+  };
+  vPos.activeReactions = [...(vPos.activeReactions || []), rxnMeta];
+  vNeg.activeReactions = [...(vNeg.activeReactions || []), rxnMeta];
 }
 
 function stepGalvanicInstrument(sim, inst, elPos, elNeg, infoPos, infoNeg, items, dt, allowLoad = false, loadOhm = 2.2) {

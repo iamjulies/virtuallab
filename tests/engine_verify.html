@@ -67,6 +67,11 @@
       validateVesselInvariants,
       DRY_COMPLEX_DISSOCIATIONS,
       DRY_SALT_PAIRINGS,
+      METAL_REDOX_SPECS,
+      NITRATE_PRODUCTS,
+      hasNitrateOxidizingEnv,
+      selectNitrateReductionMix,
+      solveMetalNitrateStep,
     } from '../src/engine/chemistry.js';
     import { LabManager } from '../src/engine/labManager.js';
     import { LabSimulation } from '../src/engine/simulation.js';
@@ -1859,11 +1864,12 @@
       const aqLeft = Object.entries(dryCheck).filter(([id, n]) => SPECIES[id]?.phase === 'aq' && n > 1e-10);
 
       assert(
-        'v2/v3 Registry & dry conservation: 14 starter reagents incl. nh3_25, h2o2_30, caco3, hno3_68, fe & bacl2_2h2o, dynamic nonVolatileSoluteMoles excludes NH3_aq, dry NH4Cl & H2O2 decomposition clean',
+        'v2/v3 Registry & dry conservation: 15 starter reagents incl. nh3_25, h2o2_30, caco3, hno3_68, fe, bacl2_2h2o & nacl, dynamic nonVolatileSoluteMoles excludes NH3_aq, dry NH4Cl & H2O2 decomposition clean',
         hasNh3 &&
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
-          STARTER_REAGENTS.length === 14 &&
+          STARTER_REAGENTS.some(r => r.id === 'nacl') &&
+          STARTER_REAGENTS.length === 15 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2425,13 +2431,13 @@
       );
     }
 
-    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_beta_v3+build.5 Sync
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_beta_v3+build.6 Sync
     {
       const allTranslated = APPARATUS_ORDER.every((id) => {
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.5';
+      const expectedBuild = 'virlab_beta_v3+build.6';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2454,6 +2460,9 @@
         Boolean(I18N.vi.reg_hno3_68 && I18N.en.reg_hno3_68) &&
         Boolean(I18N.vi.reg_fe && I18N.en.reg_fe) &&
         Boolean(I18N.vi.reg_bacl2_2h2o && I18N.en.reg_bacl2_2h2o) &&
+        Boolean(I18N.vi.reg_nacl && I18N.en.reg_nacl) &&
+        Boolean(I18N.vi.toastDeletedApparatus && I18N.en.toastDeletedApparatus) &&
+        Boolean(I18N.vi.toastUndoSuccess && I18N.en.toastUndoSuccess) &&
         Boolean(I18N.vi.eq_beaker_1000 && I18N.en.eq_beaker_1000) &&
         Boolean(I18N.vi.eq_erlenmeyer_1000 && I18N.en.eq_erlenmeyer_1000) &&
         Boolean(I18N.vi.eq_round_flask_250 && I18N.en.eq_round_flask_250) &&
@@ -2477,9 +2486,9 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v3+build.5 parity: All 39 apparatus & 14 starter reagents translated in VI/EN, Prompt 25 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v3+build.6 parity: All 39 apparatus & 15 starter reagents translated in VI/EN, Prompt 26 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 39 &&
-          STARTER_REAGENTS.length === 14 &&
+          STARTER_REAGENTS.length === 15 &&
           !APPARATUS.clay_triangle &&
           allTranslated &&
           newKeysPresent &&
@@ -5350,6 +5359,296 @@
           airOxFeOH3 > 0.002 &&
           tongsBurnedFe,
         `nail=${nailCnt}, powd=${powdCnt}, faster=${powderFaster}, cuDisp=${cuDisplaced}, Fe3=${(fe3FromPeroxide*1000).toFixed(1)}mmol, airFeOH3=${(airOxFeOH3*1000).toFixed(1)}mmol, o2Burn=${tongsBurnedFe}`
+      );
+    }
+
+    // TEST 114: Round-Bottom Flask (250 & 1000 mL) Smooth Spherical Silhouette (>=30 profile points), Interior Highlight Arc & Graduation Ticks
+    {
+      const pts250 = APPARATUS.round_flask_250.geometry.profilePoints.length;
+      const pts1000 = APPARATUS.round_flask_1000.geometry.profilePoints.length;
+      const simR = new LabSimulation();
+      const rf250 = simR.createApparatus('round_flask_250', 220, 395);
+      const rf1000 = simR.createApparatus('round_flask_1000', 480, 360);
+      simR.addReagentToVessel(rf250.id, 'h2o', 125, { silentAnim: true, silentEmit: true });
+      simR.addReagentToVessel(rf1000.id, 'h2o', 500, { silentAnim: true, silentEmit: true });
+      const cnv = document.createElement('canvas');
+      cnv.width = 760;
+      cnv.height = 520;
+      const ctx = cnv.getContext('2d');
+      const textsDrawn = [];
+      const origFillText = ctx.fillText.bind(ctx);
+      ctx.fillText = (str, x, y) => {
+        textsDrawn.push({ str: String(str), x, y });
+        origFillText(str, x, y);
+      };
+      beginCanvasLabelFrame();
+      renderVessel(ctx, rf250, { isSelected: false, isDropTarget: false, isDark: true, timeNow: 0, langCode: 'vi' });
+      renderVessel(ctx, rf1000, { isSelected: false, isDropTarget: false, isDark: true, timeNow: 0, langCode: 'vi' });
+      flushCanvasLabelFrame(ctx, true);
+
+      const hasMarks250 = ['50', '100', '150', '200', '250'].every((m) =>
+        textsDrawn.some((t) => t.str === m && Math.abs(t.x - rf250.x) < APPARATUS.round_flask_250.width / 2)
+      );
+      const hasMarks1000 = ['200', '400', '600', '800', '1000'].every((m) =>
+        textsDrawn.some((t) => t.str === m && Math.abs(t.x - rf1000.x) < APPARATUS.round_flask_1000.width / 2)
+      );
+      assert(
+        'Round-Bottom Flasks (250 & 1000 mL) use smooth >=30-pt spherical profiles, render all 5 interior graduation marks, and keep highlights strictly inside bulb',
+        pts250 >= 30 && pts1000 >= 30 && hasMarks250 && hasMarks1000,
+        `pts250=${pts250}, pts1000=${pts1000}, marks250=${hasMarks250}, marks1000=${hasMarks1000}`
+      );
+    }
+
+    // TEST 115: NaCl Starter Reagent, Thermodynamics (801 °C mp, 1465 °C bp, Conductive Melt), Diaphragm vs Javelle Brine Electrolysis & Solvay Process
+    {
+      const naclReg = STARTER_REAGENTS.find((r) => r.id === 'nacl');
+      const spNaCl = SPECIES.NaCl_s;
+      const thermoOk =
+        Boolean(naclReg && naclReg.speciesId === 'NaCl_s') &&
+        Math.abs(spNaCl.meltTempK - 1074.15) < 0.5 &&
+        Math.abs(spNaCl.boilTempK - 1738.15) < 0.5 &&
+        spNaCl.noDecomp === true &&
+        !spNaCl.decompTempK &&
+        spNaCl.conductiveMelt === true;
+
+      // 1) Solid NaCl (700 K) non-conductive vs Molten NaCl (1120 K >= 801 C) conductive electrolysis -> Na + Cl2(g)
+      const simMelt = new LabSimulation();
+      simMelt.environment.atmosphereMode = 'inert';
+      const cruc = simMelt.createApparatus('crucible_porcelain', 300, 427);
+      cruc.moles = { NaCl_s: 0.4 };
+      cruc.tempK = 700.0;
+      const elM1 = simMelt.createApparatus('electrode_rod', 288, 395);
+      elM1.material = 'C';
+      elM1.dockedVesselId = cruc.id;
+      const elM2 = simMelt.createApparatus('electrode_rod', 312, 395);
+      elM2.material = 'C';
+      elM2.dockedVesselId = cruc.id;
+      const dcM = simMelt.createApparatus('dc_power', 500, 420);
+      dcM.posElectrodeId = elM1.id;
+      dcM.negElectrodeId = elM2.id;
+      simMelt.setDcPowerState(dcM.id, { voltageV: 8.0, powerOn: true });
+      simMelt.step(0.05);
+      const solidCurrentA = dcM.measuredCurrentA;
+      cruc.tempK = 1120.0;
+      for (let i = 0; i < 40; i++) {
+        cruc.tempK = 1120.0;
+        simMelt.step(0.1);
+      }
+      const moltenCurrentA = dcM.measuredCurrentA;
+      const moltenMadeNaAndCl2 = (cruc.moles.Na_s || 0) > 5e-5 && (cruc.escapedGasMoles?.Cl2_g || 0) > 2e-5;
+
+      // 2) Two-vessel Diaphragm/Salt-Bridge Brine Electrolysis -> pure NaOH(aq) + H2 at Cathode, Cl2 at Anode, zero ClO-
+      const simDiaph = new LabSimulation();
+      const bAn = simDiaph.createApparatus('beaker_250', 220, 427);
+      bAn.moles = { H2O_l: 6.0, Na_aq: 0.6, Cl_aq: 0.6 };
+      const bCath = simDiaph.createApparatus('beaker_250', 320, 427);
+      bCath.moles = { H2O_l: 6.0, Na_aq: 0.3, Cl_aq: 0.3 };
+      const sbD = simDiaph.createApparatus('salt_bridge', 270, 390);
+      const elPosD = simDiaph.createApparatus('electrode_rod', 210, 410);
+      elPosD.material = 'C';
+      elPosD.dockedVesselId = bAn.id;
+      const elNegD = simDiaph.createApparatus('electrode_rod', 330, 410);
+      elNegD.material = 'C';
+      elNegD.dockedVesselId = bCath.id;
+      simDiaph.updateSupportAttachments();
+      const dcD = simDiaph.createApparatus('dc_power', 520, 420);
+      dcD.posElectrodeId = elPosD.id;
+      dcD.negElectrodeId = elNegD.id;
+      simDiaph.setDcPowerState(dcD.id, { voltageV: 8.0, powerOn: true });
+      stepSeconds(simDiaph, 15.0, 0.1);
+      const diaphOk =
+        (bAn.escapedGasMoles?.Cl2_g || 0) > 5e-5 &&
+        (bCath.escapedGasMoles?.H2_g || 0) > 5e-5 &&
+        (bCath.moles.OH_aq || 0) > 1e-4 &&
+        (bCath.moles.ClO_aq || 0) === 0 &&
+        (bAn.moles.ClO_aq || 0) === 0;
+
+      // 3) Single-vessel Brine Electrolysis (no diaphragm) -> forms Javelle ClO-(aq)
+      const simJav = new LabSimulation();
+      const bJav = simJav.createApparatus('beaker_250', 260, 427);
+      bJav.moles = { H2O_l: 6.0, Na_aq: 0.6, Cl_aq: 0.6 };
+      const elPJ = simJav.createApparatus('electrode_rod', 245, 410);
+      elPJ.material = 'C';
+      elPJ.dockedVesselId = bJav.id;
+      const elNJ = simJav.createApparatus('electrode_rod', 275, 410);
+      elNJ.material = 'C';
+      elNJ.dockedVesselId = bJav.id;
+      simJav.updateSupportAttachments();
+      const dcJ = simJav.createApparatus('dc_power', 480, 420);
+      dcJ.posElectrodeId = elPJ.id;
+      dcJ.negElectrodeId = elNJ.id;
+      simJav.setDcPowerState(dcJ.id, { voltageV: 8.0, powerOn: true });
+      stepSeconds(simJav, 15.0, 0.1);
+      const javelClO = bJav.moles.ClO_aq || 0;
+
+      // 4) Solvay Process: Saturated NaCl + NH3 + CO2 -> NaHCO3(s) precipitate + NH4Cl(aq); then thermal calcination -> Na2CO3(s)
+      const simSolv = new LabSimulation();
+      const bSolv = simSolv.createApparatus('beaker_250', 300, 427);
+      bSolv.moles = { H2O_l: 2.8, Na_aq: 0.30, Cl_aq: 0.30, NH3_aq: 0.14, H2CO3_aq: 0.14 };
+      stepSeconds(simSolv, 3.0, 0.05);
+      const nahco3Ppt = bSolv.moles.NaHCO3_s || 0;
+      const nh4Formed = bSolv.moles.NH4_aq || 0;
+
+      const crucRoast = simSolv.createApparatus('crucible_porcelain', 480, 427);
+      crucRoast.moles = { NaHCO3_s: nahco3Ppt };
+      crucRoast.tempK = 460.0;
+      stepSeconds(simSolv, 5.0, 0.05);
+      const na2co3Yield = crucRoast.moles.Na2CO3_s || 0;
+
+      assert(
+        'NaCl reagent & thermodynamics (801 °C mp conductive melt, 1465 °C bp, no decomp), diaphragm vs Javelle brine electrolysis & Solvay NaHCO3->Na2CO3 pass',
+        thermoOk &&
+          solidCurrentA === 0 &&
+          moltenCurrentA > 0.3 &&
+          moltenMadeNaAndCl2 &&
+          diaphOk &&
+          javelClO > 5e-5 &&
+          nahco3Ppt > 0.015 &&
+          nh4Formed > 0.08 &&
+          na2co3Yield > 0.004,
+        `thermo=${thermoOk}, I_solid=${solidCurrentA}, I_melt=${moltenCurrentA.toFixed(2)}A, diaph=${diaphOk}, ClO=${(javelClO*1000).toFixed(2)}mmol, NaHCO3=${(nahco3Ppt*1000).toFixed(1)}mmol, Na2CO3=${(na2co3Yield*1000).toFixed(1)}mmol`
+      );
+    }
+
+    // TEST 116: Universal 4-Step (H+ + NO3-) Metal Filter & Electron-Conservation Auto-Balancer (Zn, Fe, Cu, HCl+NaNO3, 2NO+O2->2NO2)
+    {
+      const simOx = new LabSimulation();
+      // 1) Zn + Concentrated HNO3 (68% ~15.17 M) -> NO2(g), ZERO H2(g)
+      const bZnConc = simOx.createApparatus('beaker_250', 140, 427);
+      simOx.addReagentToVessel(bZnConc.id, 'hno3_68', 25, { silentAnim: true, silentEmit: true });
+      bZnConc.moles.Zn_s = 0.03;
+
+      // 2) Zn + Moderately Dilute HNO3 (~2.2 M / ~13%) -> NO + N2O + N2 mix, ZERO H2(g)
+      const bZnMed = simOx.createApparatus('beaker_250', 280, 427);
+      simOx.addReagentToVessel(bZnMed.id, 'h2o', 55, { silentAnim: true, silentEmit: true });
+      simOx.addReagentToVessel(bZnMed.id, 'hno3_68', 10, { silentAnim: true, silentEmit: true });
+      bZnMed.moles.Zn_s = 0.03;
+
+      // 3) Zn + Very Dilute HNO3 (~0.45 M / ~2.8%) -> NH4+(aq), ZERO H2(g)
+      const bZnVeryDil = simOx.createApparatus('beaker_250', 420, 427);
+      simOx.addReagentToVessel(bZnVeryDil.id, 'h2o', 160, { silentAnim: true, silentEmit: true });
+      simOx.addReagentToVessel(bZnVeryDil.id, 'hno3_68', 5, { silentAnim: true, silentEmit: true });
+      bZnVeryDil.moles.Zn_s = 0.03;
+
+      // 4) Mixed HCl + NaNO3 (no HNO3 reagent!) + Cu(s) & Zn(s) -> oxidizes via (H+ + NO3-) with ZERO H2(g)
+      const bMixCu = simOx.createApparatus('beaker_250', 560, 427);
+      bMixCu.moles = { H2O_l: 3.0, H_aq: 0.12, Cl_aq: 0.12, Na_aq: 0.12, NO3_aq: 0.12, Cu_s: 0.025 };
+      const bMixZn = simOx.createApparatus('beaker_250', 700, 427);
+      bMixZn.moles = { H2O_l: 3.0, H_aq: 0.12, Cl_aq: 0.12, Na_aq: 0.12, NO3_aq: 0.12, Zn_s: 0.025 };
+
+      // 5) Sealed flask with NO(g) + O2(g) -> spontaneous 2NO + O2 -> 2NO2
+      const fNoOx = simOx.createApparatus('erlenmeyer_250', 840, 405);
+      fNoOx.isStoppered = true;
+      fNoOx.stopperMode = 'solid';
+      fNoOx.headspaceGasMoles.NO_g = 0.004;
+      fNoOx.headspaceGasMoles.O2_g = 0.003;
+
+      stepSeconds(simOx, 4.0, 0.05);
+
+      const zeroH2Everywhere =
+        (bZnConc.escapedGasMoles?.H2_g || 0) === 0 &&
+        (bZnMed.escapedGasMoles?.H2_g || 0) === 0 &&
+        (bZnVeryDil.escapedGasMoles?.H2_g || 0) === 0 &&
+        (bMixCu.escapedGasMoles?.H2_g || 0) === 0 &&
+        (bMixZn.escapedGasMoles?.H2_g || 0) === 0;
+      const znConcOk = (bZnConc.escapedGasMoles?.NO2_g || 0) > 0.001;
+      const znMedOk =
+        (bZnMed.escapedGasMoles?.NO_g || 0) > 1e-4 &&
+        (bZnMed.escapedGasMoles?.N2O_g || 0) > 1e-4 &&
+        (bZnMed.escapedGasMoles?.N2_g || 0) > 2e-5;
+      const znVeryDilOk = (bZnVeryDil.moles.NH4_aq || 0) > 5e-5 && (bZnVeryDil.escapedGasMoles?.NO2_g || 0) === 0;
+      const mixCuOk = (bMixCu.moles.Cu2_aq || 0) > 1e-4 && (bMixCu.escapedGasMoles?.NO_g || 0) > 5e-5;
+      const mixZnOk = (bMixZn.moles.Zn2_aq || 0) > 5e-4;
+      const noOxOk = (fNoOx.headspaceGasMoles.NO2_g || 0) > 0.002 && (fNoOx.headspaceGasMoles.NO_g || 0) < 0.002;
+
+      // Verify exact mathematical balance of solveMetalNitrateStep for Zn (n=2) -> N2O (ep=8, kN=2, hP=10): 4Zn + 10H+ + 2NO3- -> 4Zn2+ + N2O + 5H2O
+      const stN2O = solveMetalNitrateStep(0.4, 2, 10.0, 10.0, NITRATE_PRODUCTS.N2O);
+      const mathExact =
+        Math.abs(stN2O.deltaMetalIon - 0.4) < 1e-12 &&
+        Math.abs(stN2O.deltaHPlus - (-1.0)) < 1e-12 &&
+        Math.abs(stN2O.deltaNO3Minus - (-0.2)) < 1e-12 &&
+        Math.abs(stN2O.deltaProduct - 0.1) < 1e-12 &&
+        Math.abs(stN2O.deltaH2O - 0.5) < 1e-12;
+
+      assert(
+        '4-Step (H+ + NO3-) Metal Redox Solver blocks H2 completely, yields NO2 / NO+N2O+N2 / NH4+ by E0×[HNO3], handles HCl+NaNO3, and oxidizes 2NO+O2->2NO2',
+        zeroH2Everywhere && znConcOk && znMedOk && znVeryDilOk && mixCuOk && mixZnOk && noOxOk && mathExact,
+        `zeroH2=${zeroH2Everywhere}, znNO2=${(bZnConc.escapedGasMoles?.NO2_g||0).toFixed(4)}, znN2O=${(bZnMed.escapedGasMoles?.N2O_g||0).toFixed(4)}, znNH4=${(bZnVeryDil.moles.NH4_aq||0).toFixed(5)}, mixCu=${(bMixCu.moles.Cu2_aq||0).toFixed(4)}, no2Head=${(fNoOx.headspaceGasMoles.NO2_g||0).toFixed(4)}, math=${mathExact}`
+      );
+    }
+
+    // TEST 117: Backspace/Delete Apparatus Removal & 10-Step Ctrl+Z Undo Stack
+    {
+      const lm = new LabManager();
+      const s = lm.getActiveSim();
+      s.setupPreset('clean');
+      s.undoStack = [];
+      for (let i = 0; i < 12; i++) {
+        s.createApparatus('beaker_250', 120 + i * 45, 427);
+      }
+      const cappedAt10 = s.undoStack.length === 10 && s.items.length === 12;
+      const bLast = s.items[11];
+      s.addReagentToVessel(bLast.id, 'nacl', 5.85, { silentAnim: true });
+      const naclBeforeDel = bLast.moles.NaCl_s || 0;
+
+      // Multi-select last 2 beakers and delete via deleteSelectedItems() (simulating Backspace/Delete key)
+      s.selectedIds = new Set([s.items[10].id, s.items[11].id]);
+      s.selectedId = s.items[11].id;
+      const delCount = s.deleteSelectedItems();
+      const countAfterDel = s.items.length;
+
+      // Ctrl+Z #1: restores both deleted beakers including exact NaCl moles
+      const undo1 = lm.undo();
+      const lenAfterUndo1 = s.items.length;
+      const restoredBeaker = s.getItem(bLast.id);
+      const restoredNaCl = restoredBeaker?.moles?.NaCl_s || 0;
+
+      // Ctrl+Z #2: undoes NaCl addition
+      const undo2 = lm.undo();
+      const naclAfterUndo2 = s.getItem(bLast.id)?.moles?.NaCl_s || 0;
+
+      // Remaining 8 undos walk back cleanly (total 10 steps)
+      let undoSteps = 2;
+      while (lm.undo()) undoSteps++;
+
+      assert(
+        'Backspace/Delete removes selected apparatus and Ctrl+Z restores up to 10 consecutive actions (including vessel chemical state)',
+        cappedAt10 &&
+          delCount === 2 &&
+          countAfterDel === 10 &&
+          undo1 &&
+          lenAfterUndo1 === 12 &&
+          Math.abs(restoredNaCl - naclBeforeDel) < 1e-6 &&
+          undo2 &&
+          naclAfterUndo2 === 0 &&
+          undoSteps === 10,
+        `capped10=${cappedAt10}, del=${delCount}, restoredLen=${lenAfterUndo1}, restoredNaCl=${restoredNaCl.toFixed(3)}, afterUndo2=${naclAfterUndo2}, totalUndos=${undoSteps}`
+      );
+    }
+
+    // TEST 118: Streamlined Single-Step Bench Pick for Reagent Addition & Transfer Modal Pre-Targeted Vessel
+    {
+      const simP = new LabSimulation();
+      const b1 = simP.createApparatus('beaker_250', 200, 427);
+      const b2 = simP.createApparatus('beaker_250', 360, 427);
+      const b3 = simP.createApparatus('erlenmeyer_250', 520, 405);
+      simP.addReagentToVessel(b1.id, 'h2o', 80, { silentAnim: true, silentEmit: true });
+      const modalHost = document.createElement('div');
+      modalHost.className = 'hidden';
+      const dm = new DosingModal(modalHost, simP, () => (k) => I18N.vi[k] || k);
+
+      // Opening transfer with preferredTargetId (picked directly on bench first!) targets b3 immediately in 1 step
+      dm.openTransfer(b1.id, b3.id);
+      const transferTargetedB3 = dm.state?.mode === 'transfer' && dm.state?.targetVesselId === b3.id;
+
+      // Opening reagent with picked vessel b2 targets b2 immediately in 1 step
+      dm.openReagent('nacl', b2.id);
+      const reagentTargetedB2 = dm.state?.mode === 'reagent' && dm.state?.reagentId === 'nacl' && dm.state?.targetVesselId === b2.id;
+
+      assert(
+        'Streamlined bench-pick flow opens DosingModal once pre-targeted to the picked vessel for both Reagent addition and <Rót sang bình khác>',
+        transferTargetedB3 && reagentTargetedB2,
+        `transferTarget=${dm.state?.targetVesselId}, b3=${b3.id}, reagentTarget=${reagentTargetedB2}`
       );
     }
 

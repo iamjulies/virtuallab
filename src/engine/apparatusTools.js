@@ -817,7 +817,7 @@ export function checkIndicatorStripInteractions(sim, strip) {
       const liqL = computeLiquidVolumeL(v.moles, v.tempK);
       if (liqL > 1e-5) {
         detectedPH = computePH(v.moles, liqL, v.tempK);
-        if ((v.moles.Cl2_aq || 0) > 1e-5) bleached = true;
+        if ((v.moles.Cl2_aq || 0) > 1e-5 || (v.moles.ClO_aq || 0) > 1e-4) bleached = true;
         sourceTag = v.label;
       }
     }

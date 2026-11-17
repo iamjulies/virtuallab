@@ -101,7 +101,7 @@ export class DosingModal {
     this.render();
   }
 
-  openTransfer(sourceVesselId) {
+  openTransfer(sourceVesselId, preferredTargetId = null) {
     const src = this.sim.getItem(sourceVesselId);
     if (!src || (src.kind !== 'vessel' && src.kind !== 'filter_funnel')) return;
     const others = this.sim.items.filter(
@@ -115,10 +115,14 @@ export class DosingModal {
 
     const liqMl = computeLiquidVolumeL(src.moles, src.tempK) * 1000;
     const hasSolidsOnly = liqMl <= 0.05 && Object.values(src.moles || {}).some((n) => n > 1e-8);
+    const chosenTarget =
+      others.find((o) => o.id === preferredTargetId) ||
+      others.find((o) => o.kind === 'vessel') ||
+      others[0];
     this.state = {
       mode: hasSolidsOnly ? 'solid_transfer' : 'transfer',
       sourceVesselId,
-      targetVesselId: (others.find((o) => o.kind === 'vessel') || others[0]).id,
+      targetVesselId: chosenTarget.id,
       amount: Math.min(25, Math.max(0.5, Number((liqMl * 0.5).toFixed(2)))),
       rateMlS: 10,
       includePpt: false, // Default to physical Decantation (Gạn), unchecked "Shake before pour"
@@ -127,14 +131,15 @@ export class DosingModal {
     this.render();
   }
 
-  openSolidTransfer(sourceId) {
+  openSolidTransfer(sourceId, preferredTargetId = null) {
     const src = this.sim.getItem(sourceId);
     const vessels = this.sim.items.filter((i) => i.id !== sourceId && i.kind === 'vessel' && !i.isShattered);
     if (!src || vessels.length === 0) return;
+    const chosenTarget = vessels.find((v) => v.id === preferredTargetId) || vessels[0];
     this.state = {
       mode: 'solid_transfer',
       sourceVesselId: sourceId,
-      targetVesselId: vessels[0].id,
+      targetVesselId: chosenTarget.id,
       amount: 100,
     };
     this.render();

@@ -1,6 +1,41 @@
 import { VesselGeometry } from './vesselGeometry.js';
 
 /**
+ * Generate a smooth spherical profile ([heightCm, radiusCm]) for round-bottom flasks
+ * so both VesselGeometry volume integration and Canvas silhouette/interior clip look smooth.
+ */
+function buildRoundFlaskProfile({
+  bulbRadiusCm,
+  neckRadiusCm,
+  neckBaseCm,
+  neckTopCm,
+  rimCm,
+  rimRadiusCm,
+  heelRadiusCm = 0.36,
+  sphereSteps = 28,
+}) {
+  const R = bulbRadiusCm;
+  const pts = [[0.0, heelRadiusCm]];
+  const startPhi = -Math.PI / 2 + Math.asin(Math.min(0.45, heelRadiusCm / R)) + 0.04;
+  const shoulderRatio = Math.min(0.92, (neckRadiusCm * 1.18) / R);
+  const endPhi = Math.acos(shoulderRatio);
+  for (let i = 0; i <= sphereSteps; i++) {
+    const phi = startPhi + (endPhi - startPhi) * (i / sphereSteps);
+    const h = +(R * (1 + Math.sin(phi))).toFixed(3);
+    const r = +(R * Math.cos(phi)).toFixed(3);
+    if (h > 0.02 && r > 0.05) pts.push([h, r]);
+  }
+  const lastBulbH = pts[pts.length - 1][0];
+  if (neckBaseCm - lastBulbH > 0.25) {
+    pts.push([+(lastBulbH + (neckBaseCm - lastBulbH) * 0.55).toFixed(3), +(neckRadiusCm * 1.05).toFixed(3)]);
+  }
+  pts.push([neckBaseCm, neckRadiusCm]);
+  pts.push([neckTopCm, neckRadiusCm]);
+  pts.push([rimCm, rimRadiusCm]);
+  return pts;
+}
+
+/**
  * Apparatus specifications calibrated to ISO / DIN international glassware standards
  * (ISO 3819 / DIN 12331 Beakers, ISO 1773 / DIN 12380 Erlenmeyer, ISO 4788 Cylinder, ISO 4142 Test Tube).
  * Glassware liquid height, radius & Dalton surface area derive directly from VesselGeometry slice profiles.
@@ -969,21 +1004,15 @@ export const APPARATUS = {
     shatterOverpressureBar: 1.35,
     implosionUnderpressureBar: 0.98,
     fragilityDropPx: 265,
-    geometry: new VesselGeometry([
-      [0.0, 0.45],
-      [0.35, 1.66],
-      [1.0, 2.67],
-      [2.0, 3.55],
-      [3.1, 4.00],
-      [4.13, 4.13],
-      [5.2, 3.99],
-      [6.25, 3.55],
-      [7.2, 2.75],
-      [7.95, 1.68],
-      [8.6, 1.33],
-      [13.2, 1.33],
-      [13.8, 1.62],
-    ]),
+    geometry: new VesselGeometry(buildRoundFlaskProfile({
+      bulbRadiusCm: 4.13,
+      neckRadiusCm: 1.33,
+      neckBaseCm: 8.6,
+      neckTopCm: 13.2,
+      rimCm: 13.8,
+      rimRadiusCm: 1.62,
+      heelRadiusCm: 0.34,
+    })),
   },
   round_flask_1000: {
     id: 'round_flask_1000',
@@ -1016,21 +1045,15 @@ export const APPARATUS = {
     shatterOverpressureBar: 1.25,
     implosionUnderpressureBar: 0.96,
     fragilityDropPx: 240,
-    geometry: new VesselGeometry([
-      [0.0, 0.55],
-      [0.5, 2.48],
-      [1.4, 3.98],
-      [2.8, 5.29],
-      [4.5, 6.11],
-      [6.4, 6.40],
-      [8.2, 6.14],
-      [10.0, 5.31],
-      [11.5, 3.85],
-      [12.5, 2.02],
-      [13.5, 1.38],
-      [18.9, 1.38],
-      [19.6, 1.72],
-    ]),
+    geometry: new VesselGeometry(buildRoundFlaskProfile({
+      bulbRadiusCm: 6.40,
+      neckRadiusCm: 1.38,
+      neckBaseCm: 13.5,
+      neckTopCm: 18.9,
+      rimCm: 19.6,
+      rimRadiusCm: 1.72,
+      heelRadiusCm: 0.42,
+    })),
   },
 };
 

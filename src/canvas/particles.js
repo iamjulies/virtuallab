@@ -410,6 +410,7 @@ export class ParticleSystem {
               r: (4.2 + steamVis * 2.0) + Math.random() * 5.2,
               growR: 13,
               alphaScale: mistAlphaScale,
+              oxidizesInAirToNO2: Boolean(dominantPlume?.oxidizesInAirToNO2 && (metrics.atmosphereMode || 'air') === 'air'),
               life: 0,
               maxLife: 0.95 + Math.random() * 0.65,
               color: activePlumeColor,
@@ -482,6 +483,7 @@ export class ParticleSystem {
             r: (fromCrystal ? 3.8 : 4.5 + steamVis * 2.2) + Math.random() * 5.8,
             growR: 13,
             alphaScale: mistAlphaScale,
+            oxidizesInAirToNO2: Boolean(dominantPlume?.oxidizesInAirToNO2 && (metrics.atmosphereMode || 'air') === 'air'),
             life: 0,
             maxLife: (fromCrystal ? 1.35 : 0.95) + Math.random() * 0.65,
             color: activePlumeColor,
@@ -1411,6 +1413,14 @@ export class ParticleSystem {
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
         ctx.fill();
+        if (p.oxidizesInAirToNO2 && t > 0.20) {
+          const brownAlpha = Math.max(0, Math.min(0.68, (t - 0.20) * 1.15 * alpha));
+          ctx.globalAlpha = brownAlpha;
+          ctx.fillStyle = this.isDark ? 'rgba(234, 88, 12, 0.72)' : 'rgba(180, 83, 9, 0.68)';
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r * 1.15, 0, Math.PI * 2);
+          ctx.fill();
+        }
       } else if (p.kind === 'gas_filament') {
         const pts = p.trail || [];
         if (pts.length >= 2) {

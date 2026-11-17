@@ -1403,6 +1403,7 @@ export class InspectorPanel {
                           sp.phase === 's'
                             ? [
                                 sp.meltTempK && !sp.noMelt ? `T_nc: ${kelvinToCelsius(sp.meltTempK).toFixed(0)}°C` : null,
+                                sp.boilTempK ? `T_s: ${kelvinToCelsius(sp.boilTempK).toFixed(0)}°C` : null,
                                 sp.decompTempK ? `T_dec: ${kelvinToCelsius(sp.decompTempK).toFixed(0)}°C` : null,
                               ]
                                 .filter(Boolean)
@@ -2289,6 +2290,10 @@ export class InspectorPanel {
         H2_g_total: 'H₂↑',
         HCl_g_total: 'HCl↑',
         Cl2_g_total: 'Cl₂↑',
+        NO2_g_total: 'NO₂↑',
+        NO_g_total: 'NO↑',
+        N2O_g_total: 'N₂O↑',
+        N2_g_total: 'N₂↑',
       };
       legendEl.innerHTML = keys
         .map((k, idx) => {
