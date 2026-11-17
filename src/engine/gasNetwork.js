@@ -6,7 +6,7 @@ import {
   NON_STEAM_GAS_IDS,
   SPECIES,
 } from '../data/species.js';
-import { APPARATUS, getCondenserPorts, getSyringeGeometry } from '../data/apparatus.js';
+import { APPARATUS, getCondenserPorts, getSyringeGeometry, getVesselEndPorts } from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, solutionFreezingPointK } from './equilibrium.js';
 
 export const NON_STEAM_GASES = NON_STEAM_GAS_IDS;
@@ -109,18 +109,22 @@ export function computeTubingGeometry(vessel, target) {
   const tSpec = APPARATUS[target.typeId] || APPARATUS.gas_syringe;
   const condPorts = target.kind === 'condenser' ? getCondenserPorts(target) : null;
   const syrNozzle = target.kind === 'gas_syringe' ? getSyringeGeometry(target) : null;
-  const p0 = vSpec.isHorizontalTube
-    ? { x: vessel.x + (vessel.flippedX ? -1 : 1) * (vSpec.width / 2 + 6), y: vessel.y }
+  const vEnds = vSpec.hasTwoEnds ? getVesselEndPorts(vessel) : null;
+  const vSide = vessel.connectedPortSide || (vessel.flippedX ? 'left' : 'right');
+  const p0 = vEnds
+    ? { x: vEnds[vSide].x, y: vEnds[vSide].y }
     : vessel.isInverted
     ? { x: vessel.x, y: vessel.y + vSpec.height / 2 + 8 }
     : { x: vessel.x, y: vessel.y - vSpec.height / 2 - 8 };
+  const tEnds = tSpec.hasTwoEnds ? getVesselEndPorts(target) : null;
+  const tSide = target.incomingPortSide || (target.flippedX ? 'right' : 'left');
   const p3 =
     target.kind === 'gas_syringe'
       ? { x: syrNozzle.nozzleX, y: syrNozzle.nozzleY }
       : target.kind === 'condenser'
       ? condPorts.inlet
-      : tSpec.isHorizontalTube
-      ? { x: target.x + (target.flippedX ? -1 : 1) * (tSpec.width / 2 + 4), y: target.y }
+      : tEnds
+      ? { x: tEnds[tSide].x, y: tEnds[tSide].y + (tSpec.isUTube ? 8 : 0) }
       : target.isInverted
       ? { x: target.x, y: target.y + tSpec.height / 2 - 4 }
       : { x: target.x, y: target.y - tSpec.height / 2 + (target.isStoppered ? -8 : 12) };
@@ -131,7 +135,7 @@ export function computeTubingGeometry(vessel, target) {
     ? Math.min(p0.y, p3.y) - 38
     : Math.min(p0.y, p3.y) - 66;
   const p1 = vSpec.isHorizontalTube
-    ? { x: p0.x + (vessel.flippedX ? -28 : 28), y: archTopY }
+    ? { x: p0.x + (vSide === 'left' ? -28 : 28), y: archTopY }
     : { x: p0.x, y: archTopY };
   const p2 =
     target.kind === 'gas_syringe'
@@ -654,8 +658,22 @@ export function stepVesselGasAndPressure(
     return events;
   }
 
-  // Porcelain crucible with fitted lid (`lidState === 'closed'`) partially retains CO2/vapor under its cover
-  if (!vessel.isStoppered) {
+  let effectiveSealed = Boolean(vessel.isStoppered);
+  if (spec.hasTwoEnds) {
+    const connSide = vessel.connectedPortSide || (vessel.flippedX ? 'left' : 'right');
+    const hasTube = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);
+    const lClosed = Boolean(vessel.leftStoppered || (hasTube && connSide === 'left'));
+    const rClosed = Boolean(vessel.rightStoppered || (hasTube && connSide === 'right'));
+    effectiveSealed = lClosed && rClosed;
+    vessel._openLeftEnd = !lClosed;
+    vessel._openRightEnd = !rClosed;
+  } else {
+    vessel._openLeftEnd = false;
+    vessel._openRightEnd = false;
+  }
+
+  // Porcelain crucible with fitted lid (`lidState === 'closed'`) or open vessel / partially-open dual-ended tube vents to room
+  if (!effectiveSealed) {
     if (spec.hasLid && vessel.lidState === 'closed' && (produced.CO2_g || 0) > 0) {
       vessel.headspaceGasMoles = vessel.headspaceGasMoles || createEmptyGasMap();
       const headNow = vessel.headspaceGasMoles.CO2_g || 0;
@@ -764,6 +782,22 @@ export function stepVesselGasAndPressure(
           target.escapedGasMoles.C2H5OH_g = (target.escapedGasMoles.C2H5OH_g || 0) + dEt;
         }
       }
+      let remSO3 = produced.SO3_g || 0;
+      if (remSO3 > 0 && (target.moles.H2O_l || 0) > 1e-4) {
+        const dSO3 = Math.min(remSO3, Math.max(0, target.moles.H2O_l - 1e-4));
+        if (dSO3 > 1e-12) {
+          target.moles.H2O_l -= dSO3;
+          if (target.moles.H2O_l < 1e-12) delete target.moles.H2O_l;
+          target.moles.H_aq = (target.moles.H_aq || 0) + 2 * dSO3;
+          target.moles.SO4_2_aq = (target.moles.SO4_2_aq || 0) + dSO3;
+          remSO3 -= dSO3;
+          heatAddedJ += dSO3 * 132000;
+          target._tubeBubbleGasMol = (target._tubeBubbleGasMol || 0) + dSO3;
+        }
+      }
+      if (remSO3 > 0) {
+        target.escapedGasMoles.SO3_g = (target.escapedGasMoles.SO3_g || 0) + remSO3;
+      }
       target.headspaceGasMoles = target.headspaceGasMoles || createEmptyGasMap();
       if ((produced.CO2_g || 0) > 0) {
         const dCo2 = produced.CO2_g;
@@ -788,7 +822,7 @@ export function stepVesselGasAndPressure(
         }
       }
       for (const g of NON_STEAM_GASES) {
-        if (g !== 'HCl_g' && g !== 'NH3_g' && g !== 'C2H5OH_g' && g !== 'CO2_g' && produced[g] > 0) {
+        if (g !== 'HCl_g' && g !== 'NH3_g' && g !== 'C2H5OH_g' && g !== 'CO2_g' && g !== 'SO3_g' && produced[g] > 0) {
           target.headspaceGasMoles[g] = (target.headspaceGasMoles[g] || 0) + produced[g];
           target.gasFlushInMol = (target.gasFlushInMol || 0) + produced[g];
           if ((target.moles.H2O_l || 0) > 1e-4) {
@@ -858,6 +892,16 @@ export function stepVesselGasAndPressure(
         vessel.headspaceGasMoles.HCl_g = Math.max(0, headHCl - dDissHCl);
         vessel.moles.H_aq = (vessel.moles.H_aq || 0) + dDissHCl;
         vessel.moles.Cl_aq = (vessel.moles.Cl_aq || 0) + dDissHCl;
+      }
+    }
+    const headSO3 = vessel.headspaceGasMoles.SO3_g || 0;
+    if (headSO3 > 1e-9 && nWaterIn > 1e-4) {
+      const dSO3 = Math.min(headSO3, Math.max(0, nWaterIn - 1e-4));
+      if (dSO3 > 1e-11) {
+        vessel.headspaceGasMoles.SO3_g = Math.max(0, headSO3 - dSO3);
+        vessel.moles.H2O_l -= dSO3;
+        vessel.moles.H_aq = (vessel.moles.H_aq || 0) + 2 * dSO3;
+        vessel.moles.SO4_2_aq = (vessel.moles.SO4_2_aq || 0) + dSO3;
       }
     }
   }

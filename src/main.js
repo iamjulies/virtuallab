@@ -203,6 +203,27 @@ function clearLabDropHighlights() {
   labTabsEl?.querySelectorAll('.lab-tab-drop-target').forEach((el) => {
     el.classList.remove('lab-tab-drop-target');
   });
+  document.getElementById('panel-shelf')?.classList.remove('shelf-discard-target');
+  document.querySelector('.mobile-tab-btn[data-tab="shelf"]')?.classList.remove('shelf-discard-target');
+}
+
+function isOverShelfDiscardZone(clientX, clientY) {
+  if (!clientX && !clientY) return false;
+  const panelEl = document.getElementById('panel-shelf');
+  if (panelEl) {
+    const r = panelEl.getBoundingClientRect();
+    if (r.width > 10 && r.height > 10 && clientX <= r.right + 12 && clientY >= r.top - 12 && clientY <= r.bottom + 12) {
+      return panelEl;
+    }
+  }
+  const mobShelfBtn = document.querySelector('.mobile-tab-btn[data-tab="shelf"]');
+  if (mobShelfBtn) {
+    const r = mobShelfBtn.getBoundingClientRect();
+    if (r.width > 10 && r.height > 10 && clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+      return mobShelfBtn;
+    }
+  }
+  return null;
 }
 
 workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
@@ -215,11 +236,33 @@ workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
   onExternalTabDragHover: (clientX, clientY, item) => {
     clearLabDropHighlights();
     if (!item) return;
+    const shelfHit = isOverShelfDiscardZone(clientX, clientY);
+    if (shelfHit) {
+      shelfHit.classList.add('shelf-discard-target');
+      return;
+    }
     const hit = findDropLabTab(clientX, clientY);
     if (hit) hit.btn.classList.add('lab-tab-drop-target');
   },
-  onDropToLabTab: (clientX, clientY, item) => {
+  onDropToLabTab: (clientX, clientY, item, dragItems = null) => {
     clearLabDropHighlights();
+    const shelfHit = item ? isOverShelfDiscardZone(clientX, clientY) : null;
+    if (shelfHit) {
+      const toRemove = Array.isArray(dragItems) && dragItems.length > 0 ? dragItems : [item];
+      let removedCount = 0;
+      for (const rem of toRemove) {
+        if (rem && sim.getItem(rem.id)) {
+          sim.removeApparatus(rem.id);
+          removedCount++;
+        }
+      }
+      if (removedCount > 0) {
+        const t = getTranslator();
+        showToast(t('toastDiscardedShelf').replace('{count}', String(removedCount)));
+        refreshChrome();
+      }
+      return true;
+    }
     const hit = item ? findDropLabTab(clientX, clientY) : null;
     if (!hit) return false;
     const moved = labManager.moveItemBetweenLabs(item.id, labManager.activeIndex, hit.idx);
@@ -550,6 +593,39 @@ resetBtnEl?.addEventListener('click', () => {
   comparisonPanel?.setOpen(false);
   sim.setupPreset('clean');
   refreshChrome(true);
+});
+
+// Keyboard shortcuts: Ctrl+A (Select All), Ctrl+C (Copy apparatus only), Ctrl+V (Paste clean apparatus)
+window.addEventListener('keydown', (e) => {
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement?.isContentEditable) {
+    return;
+  }
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const key = (e.key || '').toLowerCase();
+  if (key === 'a') {
+    e.preventDefault();
+    const allIds = sim.items.map((it) => it.id);
+    sim.selectedIds = new Set(allIds);
+    sim.selectedId = allIds[allIds.length - 1] || null;
+    sim.emitChange();
+    refreshChrome();
+  } else if (key === 'c') {
+    const count = labManager.copyItems(sim.selectedIds?.size > 0 ? sim.selectedIds : sim.selectedId ? [sim.selectedId] : [], sim);
+    if (count > 0) {
+      e.preventDefault();
+      const t = getTranslator();
+      showToast(t('toastCopiedApparatus').replace('{count}', String(count)));
+    }
+  } else if (key === 'v') {
+    const pasted = labManager.pasteItems(sim);
+    if (pasted.length > 0) {
+      e.preventDefault();
+      const t = getTranslator();
+      showToast(t('toastPastedApparatus').replace('{count}', String(pasted.length)));
+      refreshChrome();
+    }
+  }
 });
 
 // Expose LabManager & Workbench hooks for automation / diagnostics

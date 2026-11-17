@@ -1,5 +1,5 @@
 import { CONSTANTS } from '../data/constants.js';
-import { APPARATUS, getCondenserPorts, getSyringeGeometry } from '../data/apparatus.js';
+import { APPARATUS, getCondenserPorts, getSyringeGeometry, getVesselEndPorts } from '../data/apparatus.js';
 import { NON_STEAM_GAS_IDS, SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl } from '../engine/equilibrium.js';
 import { getSyringeNozzlePos } from '../engine/gasNetwork.js';
@@ -355,7 +355,86 @@ export class ParticleSystem {
       : steamPalette;
     const hasFilaments = Boolean(dominantPlume?.filamentProb);
 
-    if (vaporIntensity > 0.08 && !vessel.isStoppered) {
+    if (spec.hasTwoEnds) {
+      const ends = getVesselEndPorts(vessel);
+      const openLeft = vessel._openLeftEnd ?? !(vessel.leftStoppered ?? vessel.isStoppered);
+      const openRight = vessel._openRightEnd ?? !(vessel.rightStoppered ?? vessel.isStoppered);
+      const openList = [];
+      if (openLeft && ends?.left) openList.push(ends.left);
+      if (openRight && ends?.right) openList.push(ends.right);
+
+      if (vaporIntensity > 0.08 && openList.length > 0) {
+        const mistRate = Math.min(58, vaporIntensity * 26);
+        const count = Math.floor(mistRate * dt) + (Math.random() < (mistRate * dt) % 1 ? 1 : 0);
+        for (let i = 0; i < count; i++) {
+          const port = openList[i % openList.length];
+          const dirSign = port.side === 'left' ? -1 : 1;
+          const outVx = spec.isHorizontalTube
+            ? dirSign * (24 + Math.random() * 24)
+            : (Math.random() - 0.5) * 14;
+          const outVy = spec.isHorizontalTube
+            ? -(10 + Math.random() * 18)
+            : -(30 + Math.random() * 34);
+          if (hasFilaments && Math.random() < dominantPlume.filamentProb) {
+            this.particles.push({
+              kind: 'gas_filament',
+              x: port.mouthX,
+              y: port.mouthY + (Math.random() - 0.5) * 6,
+              vx: outVx,
+              vy: outVy,
+              phase: Math.random() * Math.PI * 2,
+              trail: [{ x: port.mouthX, y: port.mouthY }],
+              w: dominantPlume.filamentWidth || 2.8,
+              life: 0,
+              maxLife: 1.45 + Math.random() * 0.6,
+              color: this.isDark ? dominantPlume.filDarkColor : dominantPlume.filLightColor,
+            });
+          } else {
+            this.particles.push({
+              kind:
+                dominantPlume && (dominantPlume.kind === 'colored_filament' || dominantPlume.kind === 'colored_cloud')
+                  ? 'gas_cloud'
+                  : 'mist',
+              x: port.mouthX,
+              y: port.mouthY + (Math.random() - 0.5) * 6,
+              vx: outVx,
+              vy: outVy,
+              phase: Math.random() * Math.PI * 2,
+              r: (4.2 + steamVis * 2.0) + Math.random() * 5.2,
+              growR: 13,
+              alphaScale: mistAlphaScale,
+              life: 0,
+              maxLife: 0.95 + Math.random() * 0.65,
+              color: activePlumeColor,
+            });
+          }
+        }
+      }
+      if ((metrics.horizontalSpillRateMlS || 0) > 0.5 && ends) {
+        const spillRate = Math.min(60, 14 + metrics.horizontalSpillRateMlS * 0.45);
+        const dropCount = Math.floor(spillRate * dt) + (Math.random() < (spillRate * dt) % 1 ? 1 : 0);
+        const col = metrics.horizontalSpillColor || 'rgba(186, 230, 253, 0.85)';
+        const spillEnds = [];
+        if (metrics.horizontalSpillLeft && ends.left) spillEnds.push(ends.left);
+        if (metrics.horizontalSpillRight && ends.right) spillEnds.push(ends.right);
+        for (let i = 0; i < dropCount && spillEnds.length > 0; i++) {
+          const ep = spillEnds[i % spillEnds.length];
+          const dirSign = ep.side === 'left' ? -1 : 1;
+          this.particles.push({
+            kind: 'drip',
+            x: ep.mouthX,
+            y: ep.mouthY + 4,
+            vx: dirSign * (18 + Math.random() * 24),
+            vy: 18 + Math.random() * 28,
+            r: 2.3 + Math.random() * 2.0,
+            life: 0,
+            maxLife: 0.95 + Math.random() * 0.35,
+            color: col,
+            splashed: false,
+          });
+        }
+      }
+    } else if (vaporIntensity > 0.08 && !vessel.isStoppered) {
       const mistRate = Math.min(58, vaporIntensity * 26);
       const count = Math.floor(mistRate * dt) + (Math.random() < (mistRate * dt) % 1 ? 1 : 0);
       for (let i = 0; i < count; i++) {

@@ -361,7 +361,7 @@ export const APPARATUS = {
       0: 298.15,
       1: 920.0,
       2: 1320.0,
-      3: 1623.15,
+      3: 1773.15,
     },
     yellowPowerLevelsW: {
       0: 0,
@@ -408,7 +408,7 @@ export const APPARATUS = {
     maxVolumeMl: 60,
     tareMassG: 34.0,
     glassHeatCapacityJK: 36.0,
-    maxThermalStressK: 1723,
+    maxThermalStressK: 1850,
     width: 58,
     height: 54,
     neckRadius: 27,
@@ -435,6 +435,7 @@ export const APPARATUS = {
     category: 'thermal',
     shape: 'quartz_tube',
     isHorizontalTube: true,
+    hasTwoEnds: true,
     supportsClamp: true,
     flippable: true,
     breakable: true,
@@ -468,6 +469,50 @@ export const APPARATUS = {
       [1.2, 1.38],
       [12.0, 1.38],
       [13.8, 1.38],
+    ]),
+  },
+  quartz_u_tube: {
+    id: 'quartz_u_tube',
+    kind: 'vessel',
+    category: 'thermal',
+    shape: 'quartz_u_tube',
+    isUTube: true,
+    hasTwoEnds: true,
+    supportsClamp: true,
+    breakable: true,
+    i18nKey: 'eq_quartz_u_tube',
+    isoStandard: 'Fused Silica U-Tube (SiO₂ ≥ 99.9% · 1600 °C · Dual-Limb)',
+    materialSpec: 'Fused Quartz (SiO₂)',
+    diameterMm: 24,
+    heightMm: 108,
+    wallThicknessMm: 2.2,
+    maxThermalStressK: 1873,
+    clampOffsetY: -12,
+    maxVolumeMl: 100,
+    tareMassG: 76.0,
+    glassHeatCapacityJK: 68.0,
+    width: 92,
+    height: 118,
+    limbSpacingX: 28,
+    tubeOuterR: 13,
+    tubeInnerR: 10,
+    neckRadius: 11,
+    heatable: true,
+    stopperable: true,
+    popPressureBar: 1.55,
+    popOverpressureBar: 0.55,
+    shatterPressureBar: 3.4,
+    shatterOverpressureBar: 2.4,
+    implosionUnderpressureBar: 1.0,
+    fragilityDropPx: 290,
+    heatLossCoeffWK: 0.32,
+    surfaceAreaCm2: 14.0,
+    opticalPathCm: 2.4,
+    geometry: new VesselGeometry([
+      [0.0, 1.15],
+      [1.2, 1.2],
+      [8.0, 1.2],
+      [10.2, 1.2],
     ]),
   },
   crucible_tongs: {
@@ -802,6 +847,34 @@ export const APPARATUS = {
     height: 76,
     fragilityDropPx: 240,
   },
+  rubber_stopper: {
+    id: 'rubber_stopper',
+    kind: 'rubber_stopper',
+    category: 'separation',
+    breakable: false,
+    flippable: true,
+    i18nKey: 'eq_rubber_stopper',
+    isoStandard: 'DIN 12871 · Tapered EPDM Rubber Stopper (Solid / 1-Hole Bore)',
+    materialSpec: 'Chemically Resistant EPDM Elastomer',
+    tareMassG: 14.0,
+    width: 34,
+    height: 28,
+    fragilityDropPx: Infinity,
+  },
+  phen_cotton: {
+    id: 'phen_cotton',
+    kind: 'phen_cotton',
+    category: 'titration',
+    breakable: false,
+    flippable: true,
+    i18nKey: 'eq_phen_cotton',
+    isoStandard: 'Phenolphthalein-Impregnated Absorbent Cotton Swab (NH₃ Indicator)',
+    materialSpec: 'Sterile Cotton Fiber + 1% C₂₀H₁₄O₄ Solution',
+    tareMassG: 4.5,
+    width: 32,
+    height: 24,
+    fragilityDropPx: Infinity,
+  },
 };
 
 export const APPARATUS_CATEGORIES = [
@@ -822,10 +895,12 @@ export const APPARATUS_ORDER = [
   'cylinder_100',
   'crucible_porcelain',
   'quartz_tube',
+  'quartz_u_tube',
   'porcelain_dish',
   'water_trough',
   'mortar_pestle',
   'filter_funnel',
+  'rubber_stopper',
   'wash_bottle',
   'pipette_10',
   'burette_50',
@@ -843,6 +918,7 @@ export const APPARATUS_ORDER = [
   'flame_loop',
   'litmus_paper',
   'ph_strip',
+  'phen_cotton',
   'stir_bar',
   'dc_power',
   'volt_ammeter',
@@ -958,15 +1034,68 @@ export function getProbeTipPos(item) {
   return { x: item.x, y: item.y, dir };
 }
 
-export function getVesselTubingPort(vessel) {
-  if (!vessel || vessel.kind !== 'vessel' || vessel.isShattered || !vessel.isStoppered) return null;
+export function getVesselEndPorts(vessel) {
+  if (!vessel || vessel.kind !== 'vessel' || vessel.isShattered) return null;
   const spec = APPARATUS[vessel.typeId] || APPARATUS.erlenmeyer_250;
   if (spec.isHorizontalTube) {
-    const dir = vessel.flippedX ? -1 : 1;
-    return { x: vessel.x + dir * (spec.width / 2 + 4), y: vessel.y };
+    return {
+      left: {
+        side: 'left',
+        x: vessel.x - spec.width / 2 - 4,
+        y: vessel.y,
+        mouthX: vessel.x - spec.width / 2 + 1,
+        mouthY: vessel.y,
+        stoppered: Boolean(vessel.leftStoppered ?? vessel.isStoppered),
+      },
+      right: {
+        side: 'right',
+        x: vessel.x + spec.width / 2 + 4,
+        y: vessel.y,
+        mouthX: vessel.x + spec.width / 2 - 1,
+        mouthY: vessel.y,
+        stoppered: Boolean(vessel.rightStoppered ?? vessel.isStoppered),
+      },
+    };
   }
+  if (spec.isUTube) {
+    const dx = spec.limbSpacingX || 28;
+    const topY = vessel.y - spec.height / 2;
+    return {
+      left: {
+        side: 'left',
+        x: vessel.x - dx,
+        y: topY - 8,
+        mouthX: vessel.x - dx,
+        mouthY: topY + 2,
+        stoppered: Boolean(vessel.leftStoppered ?? vessel.isStoppered),
+      },
+      right: {
+        side: 'right',
+        x: vessel.x + dx,
+        y: topY - 8,
+        mouthX: vessel.x + dx,
+        mouthY: topY + 2,
+        stoppered: Boolean(vessel.rightStoppered ?? vessel.isStoppered),
+      },
+    };
+  }
+  return null;
+}
+
+export function getVesselTubingPort(vessel, preferredSide = null) {
+  if (!vessel || vessel.kind !== 'vessel' || vessel.isShattered) return null;
+  const spec = APPARATUS[vessel.typeId] || APPARATUS.erlenmeyer_250;
+  if (spec.hasTwoEnds) {
+    const ends = getVesselEndPorts(vessel);
+    if (!ends) return null;
+    const activeSide = preferredSide || vessel.connectedPortSide || (vessel.flippedX ? 'left' : 'right');
+    const chosen = ends[activeSide] || ends.right;
+    if (!chosen.stoppered && !vessel.isStoppered) return null;
+    return { x: chosen.x, y: chosen.y, side: activeSide };
+  }
+  if (!vessel.isStoppered) return null;
   if (vessel.isInverted) {
-    return { x: vessel.x, y: vessel.y + spec.height / 2 + 8 };
+    return { x: vessel.x, y: vessel.y + spec.height / 2 + 8, side: 'main' };
   }
-  return { x: vessel.x, y: vessel.y - spec.height / 2 - 8 };
+  return { x: vessel.x, y: vessel.y - spec.height / 2 - 8, side: 'main' };
 }

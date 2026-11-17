@@ -1,4 +1,5 @@
 import {
+  isSolidMoltenAtTemp,
   SORTED_BOTTOM_SOLID_SPECIES,
   SORTED_PRECIPITATE_SPECIES,
   SPECIES,
@@ -20,11 +21,64 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
   const { left, right, bottom, width } = bounds;
   const moles = vessel.moles;
 
+  // 0. Molten Salt / Hydroxide / Metal Melt Pool when T >= sp.meltTempK (dry anhydrous melt!)
+  const moltenIds = new Set();
+  let moltenMassG = 0;
+  let moltenPrimary = null;
+  for (const [spId, n] of Object.entries(moles)) {
+    if (n <= 1e-7) continue;
+    const sp = SPECIES[spId];
+    if (isSolidMoltenAtTemp(sp, vessel.tempK, moles)) {
+      moltenIds.add(spId);
+      const mG = n * sp.molarMass;
+      moltenMassG += mG;
+      if (!moltenPrimary || mG > moltenPrimary.massG) {
+        moltenPrimary = { sp, massG: mG };
+      }
+    }
+  }
+  if (moltenMassG > 0 && moltenPrimary) {
+    const meltH = Math.min(28, 5.5 + Math.sqrt(moltenMassG) * 4.9);
+    const poolTop = bottom - meltH;
+    const baseCol = moltenPrimary.sp.moltenColor || moltenPrimary.sp.color || '#f1f5f9';
+    ctx.save();
+    const mGrad = ctx.createLinearGradient(0, poolTop, 0, bottom);
+    mGrad.addColorStop(0, baseCol);
+    mGrad.addColorStop(1, moltenPrimary.sp.highlightColor || baseCol);
+    ctx.globalAlpha = 0.86;
+    ctx.fillStyle = mGrad;
+    ctx.beginPath();
+    ctx.moveTo(left + 2, bottom);
+    ctx.lineTo(left + 2, poolTop + 1.5);
+    ctx.quadraticCurveTo(left + width * 0.5, poolTop + 4.0, right - 2, poolTop + 1.5);
+    ctx.lineTo(right - 2, bottom);
+    ctx.closePath();
+    ctx.fill();
+
+    // Glossy molten meniscus + warm thermal glow rim
+    ctx.globalAlpha = 0.78;
+    ctx.strokeStyle = vessel.tempK >= 700 ? '#fb923c' : '#ffffff';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(left + 2, poolTop + 1.5);
+    ctx.quadraticCurveTo(left + width * 0.5, poolTop + 4.0, right - 2, poolTop + 1.5);
+    ctx.stroke();
+
+    // Specular liquid shimmer highlights across molten surface
+    ctx.globalAlpha = 0.42;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(left + width * 0.36, poolTop + meltH * 0.36, Math.max(4, width * 0.16), 2.1, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // 1. Precipitates & Metallic Alloys (settled layer + swirling flocculent cloud)
   let accumulatedSedimentH = 0;
 
   for (const sp of SORTED_PRECIPITATE_SPECIES) {
     const spId = sp.id;
+    if (moltenIds.has(spId)) continue;
     const n = moles[spId] || 0;
     if (n <= 1e-8) continue;
     const massG = n * sp.molarMass;
@@ -85,6 +139,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
   // 2. Crystalline & Pelleted Starter / Evaporated Solids resting on bottom
   for (const sp of SORTED_BOTTOM_SOLID_SPECIES) {
     const spId = sp.id;
+    if (moltenIds.has(spId)) continue;
     const n = moles[spId] || 0;
     if (n <= 1e-7) continue;
     const massG = n * sp.molarMass;

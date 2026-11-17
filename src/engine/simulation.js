@@ -5,7 +5,7 @@ import {
   SPECIES,
   STARTER_REAGENTS,
 } from '../data/species.js';
-import { APPARATUS, clampItemToStandY, getProbeTipPos, getStandGeometry, getSyringeGeometry } from '../data/apparatus.js';
+import { APPARATUS, clampItemToStandY, getProbeTipPos, getStandGeometry, getSyringeGeometry, getVesselEndPorts } from '../data/apparatus.js';
 import {
   calcSolidTransferRatio,
   computeContentsMassG,
@@ -138,6 +138,7 @@ export class LabSimulation {
     };
     this.items = [];
     this.selectedId = null;
+    this.selectedIds = new Set();
     this.compareVesselIds = [];
     this.logs = [];
     this.pipette = {
@@ -211,6 +212,11 @@ export class LabSimulation {
         tempK: this.environment.tempK,
         internalPressureBar: this.environment.pressureBar,
         isStoppered: false,
+        stopperMode: 'holed',
+        leftStoppered: false,
+        rightStoppered: false,
+        connectedPortSide: null,
+        incomingPortSide: null,
         connectedSyringeId: null,
         connectedTargetId: null,
         tubeMoles: {},
@@ -253,6 +259,14 @@ export class LabSimulation {
         gardenGrowth: 0,
         hasPhenCotton: false,
         phenCottonLevel: 0,
+        leftHasPhenCotton: false,
+        rightHasPhenCotton: false,
+        phenCottonLeftLevel: 0,
+        phenCottonRightLevel: 0,
+        horizontalSpillRateMlS: 0,
+        horizontalSpillLeft: false,
+        horizontalSpillRight: false,
+        horizontalSpillColor: null,
         recentHalogenGasTimer: 0,
         naHazardFlag: false,
         overflowRateMlS: 0,
@@ -521,6 +535,19 @@ export class LabSimulation {
         seenReactions: {},
         hoveredActionLabel: null,
       });
+    } else if (spec.kind === 'rubber_stopper') {
+      Object.assign(base, {
+        stopperMode: 'holed', // 'holed' (1-hole bore for tubing) | 'solid' (solid airtight bung)
+        attachedToId: null,
+        attachedSide: null, // 'main' | 'left' | 'right'
+      });
+    } else if (spec.kind === 'phen_cotton') {
+      Object.assign(base, {
+        attachedToId: null,
+        attachedSide: null, // 'main' | 'left' | 'right'
+        pinkLevel: 0,
+        dampness: 0.85,
+      });
     }
 
     this.items.push(base);
@@ -529,6 +556,7 @@ export class LabSimulation {
       base.sprayTargetId = base.squirtArc.hitTarget ? base.squirtArc.hitTarget.id : null;
     }
     this.selectedId = id;
+    this.selectedIds = new Set([id]);
     this.updateSupportAttachments();
     this.emitChange();
     return base;
@@ -570,11 +598,23 @@ export class LabSimulation {
       item.posElectrodeId = null;
       item.negElectrodeId = null;
     }
+    if (item.kind === 'rubber_stopper' && item.attachedToId) {
+      this.detachRubberStopper(item.id, { keepPos: true });
+    }
+    if (item.kind === 'phen_cotton' && item.attachedToId) {
+      this.detachPhenCotton(item.id);
+    }
     item.clampedToId = null;
     item.restingOnId = null;
 
     for (const other of this.items) {
       if (other.id === id) continue;
+      if (other.kind === 'rubber_stopper' && other.attachedToId === id) {
+        this.detachRubberStopper(other.id, { keepPos: true });
+      }
+      if (other.kind === 'phen_cotton' && other.attachedToId === id) {
+        this.detachPhenCotton(other.id);
+      }
       if (other.connectedSyringeId === id || other.connectedTargetId === id) {
         this.disconnectSyringe(other.id);
       }
@@ -623,8 +663,13 @@ export class LabSimulation {
     if (Array.isArray(this.compareVesselIds)) {
       this.compareVesselIds = this.compareVesselIds.filter((cid) => cid !== id);
     }
+    if (this.selectedIds) this.selectedIds.delete(id);
     if (this.selectedId === id) {
-      this.selectedId = this.items[0]?.id || null;
+      const firstRem = this.selectedIds && this.selectedIds.size > 0 ? Array.from(this.selectedIds)[0] : null;
+      this.selectedId = firstRem || this.items[0]?.id || null;
+      if (this.selectedId && this.selectedIds && this.selectedIds.size === 0) {
+        this.selectedIds.add(this.selectedId);
+      }
     }
     this.updateSupportAttachments();
     this.emitChange();
@@ -973,6 +1018,17 @@ export class LabSimulation {
         const flameSeatY = sup.y - supSpec.height / 2 - 14;
         if (Math.abs(bowlX - sup.x) <= 44 && (item.restingOnId === sup.id || item.y <= sup.y - 6)) {
           return { centerY: flameSeatY, support: sup };
+        }
+      }
+      return { centerY: floorCenterY, support: null };
+    }
+
+    if (item.kind === 'rubber_stopper' || item.kind === 'phen_cotton') {
+      if (item.attachedToId) {
+        const hostV = this.getItem(item.attachedToId);
+        if (hostV && !hostV.isShattered) {
+          const slot = this.getMouthSlotCoords(hostV, item.attachedSide || 'main');
+          return { centerY: slot ? slot.y : item.y, support: hostV };
         }
       }
       return { centerY: floorCenterY, support: null };
@@ -1384,8 +1440,18 @@ export class LabSimulation {
 
     const prevTargetId = vessel.connectedTargetId || vessel.connectedSyringeId;
     vessel.isStoppered = false;
+    vessel.leftStoppered = false;
+    vessel.rightStoppered = false;
     if (prevTargetId) {
       this.disconnectSyringe(vessel.id);
+    }
+    for (const it of this.items) {
+      if (it.kind === 'rubber_stopper' && it.attachedToId === vessel.id) {
+        it.attachedToId = null;
+        it.attachedSide = null;
+        it.vy = -170;
+        it.fallStartY = it.y;
+      }
     }
     for (const g of ALL_GASES) {
       vessel.escapedGasMoles[g] = (vessel.escapedGasMoles[g] || 0) + (vessel.headspaceGasMoles[g] || 0);
@@ -1406,15 +1472,296 @@ export class LabSimulation {
     }
   }
 
-  toggleStopper(vesselId) {
+  getMouthSlotCoords(vessel, side = 'main') {
+    if (!vessel || vessel.kind !== 'vessel') return null;
+    const spec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
+    if (spec.hasTwoEnds) {
+      const ends = getVesselEndPorts(vessel);
+      const s = side === 'left' || side === 'right' ? side : 'right';
+      const p = ends?.[s];
+      return p ? { x: p.mouthX, y: p.mouthY, side: s } : null;
+    }
+    return {
+      x: vessel.x,
+      y: vessel.isInverted ? vessel.y + spec.height / 2 - 1 : vessel.y - spec.height / 2 + 1,
+      side: 'main',
+    };
+  }
+
+  syncAttachedMouthTools() {
+    for (const it of this.items) {
+      if (it.kind === 'vessel') {
+        it._physStopperMain = false;
+        it._physStopperLeft = false;
+        it._physStopperRight = false;
+        it._physCottonMain = false;
+        it._physCottonLeft = false;
+        it._physCottonRight = false;
+      }
+    }
+    for (const it of this.items) {
+      if ((it.kind !== 'rubber_stopper' && it.kind !== 'phen_cotton') || !it.attachedToId) {
+        if (it.kind === 'rubber_stopper' || it.kind === 'phen_cotton') it._attachOrient = 'top';
+        continue;
+      }
+      const v = this.getItem(it.attachedToId);
+      if (!v || v.isShattered) {
+        it.attachedToId = null;
+        it.attachedSide = null;
+        it._attachOrient = 'top';
+        it.fallStartY = it.y;
+        continue;
+      }
+      const vSpec = APPARATUS[v.typeId];
+      const side = it.attachedSide || 'main';
+      if (it.kind === 'rubber_stopper') {
+        if (side === 'left') v._physStopperLeft = true;
+        else if (side === 'right') v._physStopperRight = true;
+        else v._physStopperMain = true;
+      } else {
+        if (side === 'left') v._physCottonLeft = true;
+        else if (side === 'right') v._physCottonRight = true;
+        else v._physCottonMain = true;
+      }
+      it._attachOrient = vSpec?.isHorizontalTube ? side : v.isInverted ? 'bottom' : 'top';
+      const slot = this.getMouthSlotCoords(v, side);
+      if (slot) {
+        it.x = slot.x;
+        it.y = slot.y;
+        it.vy = 0;
+        it.restingOnId = null;
+      }
+    }
+  }
+
+  attachRubberStopper(stopperId, vesselId, side = 'main') {
+    const st = this.getItem(stopperId);
+    const v = this.getItem(vesselId);
+    if (!st || st.kind !== 'rubber_stopper' || !v || v.kind !== 'vessel' || v.isShattered) return false;
+    const spec = APPARATUS[v.typeId];
+    if (!spec?.stopperable) return false;
+
+    const chosenSide = spec.hasTwoEnds ? (side === 'left' || side === 'right' ? side : 'right') : 'main';
+    if (st.attachedToId && (st.attachedToId !== v.id || st.attachedSide !== chosenSide)) {
+      this.detachRubberStopper(st.id, { keepPos: true, silent: true });
+    }
+
+    for (const other of this.items) {
+      if (other.id === st.id) continue;
+      if (other.kind === 'rubber_stopper' && other.attachedToId === v.id && (other.attachedSide || 'main') === chosenSide) {
+        this.detachRubberStopper(other.id, { keepPos: true, silent: true });
+      } else if (other.kind === 'phen_cotton' && other.attachedToId === v.id && (other.attachedSide || 'main') === chosenSide) {
+        this.detachPhenCotton(other.id, { silent: true });
+      }
+    }
+
+    st.attachedToId = v.id;
+    st.attachedSide = chosenSide;
+    st.restingOnId = null;
+    st.vy = 0;
+
+    if (spec.hasTwoEnds) {
+      if (chosenSide === 'left') {
+        v.leftStoppered = true;
+        v.leftHasPhenCotton = false;
+        v.phenCottonLeftLevel = 0;
+      } else {
+        v.rightStoppered = true;
+        v.rightHasPhenCotton = false;
+        v.phenCottonRightLevel = 0;
+      }
+      v.isStoppered = Boolean(v.leftStoppered && v.rightStoppered);
+    } else {
+      v.isStoppered = true;
+      v.hasPhenCotton = false;
+      v.phenCottonLevel = 0;
+    }
+    v.stopperMode = st.stopperMode || 'holed';
+    v.overflowRateMlS = 0;
+    v.wasOverflowing = false;
+    v.sealedAirMoles = null;
+    this.syncAttachedMouthTools();
+    this.checkOverflow(v);
+    this.emitChange();
+    return true;
+  }
+
+  detachRubberStopper(stopperId, opts = {}) {
+    const st = this.getItem(stopperId);
+    if (!st || st.kind !== 'rubber_stopper' || !st.attachedToId) return false;
+    const v = this.getItem(st.attachedToId);
+    const oldSide = st.attachedSide || 'main';
+    st.attachedToId = null;
+    st.attachedSide = null;
+    if (!opts.keepPos && v) {
+      const slot = this.getMouthSlotCoords(v, oldSide);
+      if (slot) {
+        st.x = slot.x;
+        st.y = slot.y - 26;
+      }
+    }
+    st.fallStartY = st.y;
+    if (v && !v.isShattered) {
+      const spec = APPARATUS[v.typeId];
+      if (spec?.hasTwoEnds) {
+        if (oldSide === 'left') v.leftStoppered = false;
+        else v.rightStoppered = false;
+        v.isStoppered = Boolean(v.leftStoppered && v.rightStoppered);
+        if ((v.connectedTargetId || v.connectedSyringeId) && (v.connectedPortSide || (v.flippedX ? 'left' : 'right')) === oldSide) {
+          this.disconnectSyringe(v.id);
+        }
+      } else {
+        v.isStoppered = false;
+        this.disconnectSyringe(v.id);
+      }
+      if (!v.isStoppered) {
+        for (const g of ALL_GASES) {
+          v.escapedGasMoles[g] = (v.escapedGasMoles[g] || 0) + (v.headspaceGasMoles[g] || 0);
+          v.headspaceGasMoles[g] = 0;
+        }
+        v.sealedAirMoles = null;
+        v.internalPressureBar = this.environment.pressureBar;
+      }
+    }
+    if (!opts.silent) this.emitChange();
+    return true;
+  }
+
+  setStopperMode(stopperId, mode) {
+    const st = this.getItem(stopperId);
+    if (!st || st.kind !== 'rubber_stopper') return false;
+    st.stopperMode = mode === 'solid' ? 'solid' : 'holed';
+    if (st.attachedToId) {
+      const v = this.getItem(st.attachedToId);
+      if (v) {
+        if (st.stopperMode === 'solid') {
+          const oldSide = st.attachedSide || 'main';
+          const spec = APPARATUS[v.typeId];
+          if (!spec?.hasTwoEnds || (v.connectedPortSide || (v.flippedX ? 'left' : 'right')) === oldSide) {
+            this.disconnectSyringe(v.id);
+          }
+        }
+        v.stopperMode = st.stopperMode;
+      }
+    }
+    this.emitChange();
+    return true;
+  }
+
+  attachPhenCotton(cottonId, vesselId, side = 'main') {
+    const ct = this.getItem(cottonId);
+    const v = this.getItem(vesselId);
+    if (!ct || ct.kind !== 'phen_cotton' || !v || v.kind !== 'vessel' || v.isShattered) return false;
+    const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+    const chosenSide = spec.hasTwoEnds ? (side === 'left' || side === 'right' ? side : 'right') : 'main';
+    const isBlockedByStopper = spec.hasTwoEnds
+      ? (chosenSide === 'left' ? v.leftStoppered : v.rightStoppered)
+      : v.isStoppered;
+    if (isBlockedByStopper) return false;
+
+    if (ct.attachedToId && (ct.attachedToId !== v.id || ct.attachedSide !== chosenSide)) {
+      this.detachPhenCotton(ct.id, { silent: true });
+    }
+    for (const other of this.items) {
+      if (other.id !== ct.id && other.kind === 'phen_cotton' && other.attachedToId === v.id && (other.attachedSide || 'main') === chosenSide) {
+        this.detachPhenCotton(other.id, { silent: true });
+      }
+    }
+
+    ct.attachedToId = v.id;
+    ct.attachedSide = chosenSide;
+    ct.restingOnId = null;
+    ct.vy = 0;
+    if (spec.hasTwoEnds) {
+      if (chosenSide === 'left') {
+        v.leftHasPhenCotton = true;
+        v.phenCottonLeftLevel = ct.pinkLevel || 0;
+      } else {
+        v.rightHasPhenCotton = true;
+        v.phenCottonRightLevel = ct.pinkLevel || 0;
+      }
+    } else {
+      v.hasPhenCotton = true;
+      v.phenCottonLevel = ct.pinkLevel || 0;
+    }
+    this.syncAttachedMouthTools();
+    this.emitChange();
+    return true;
+  }
+
+  detachPhenCotton(cottonId, opts = {}) {
+    const ct = this.getItem(cottonId);
+    if (!ct || ct.kind !== 'phen_cotton' || !ct.attachedToId) return false;
+    const v = this.getItem(ct.attachedToId);
+    const oldSide = ct.attachedSide || 'main';
+    ct.attachedToId = null;
+    ct.attachedSide = null;
+    ct.fallStartY = ct.y;
+    if (v) {
+      const spec = APPARATUS[v.typeId];
+      if (spec?.hasTwoEnds) {
+        if (oldSide === 'left') {
+          v.leftHasPhenCotton = false;
+          v.phenCottonLeftLevel = 0;
+        } else {
+          v.rightHasPhenCotton = false;
+          v.phenCottonRightLevel = 0;
+        }
+      } else {
+        v.hasPhenCotton = false;
+        v.phenCottonLevel = 0;
+      }
+    }
+    if (!opts.silent) this.emitChange();
+    return true;
+  }
+
+  toggleStopper(vesselId, side = null) {
     const v = this.getItem(vesselId);
     if (!v || v.kind !== 'vessel' || v.isShattered) return false;
     const spec = APPARATUS[v.typeId];
     if (!spec.stopperable) return false;
 
+    if (spec.hasTwoEnds && (side === 'left' || side === 'right')) {
+      const flag = side === 'left' ? 'leftStoppered' : 'rightStoppered';
+      v[flag] = !v[flag];
+      if (!v[flag] && (v.connectedPortSide || (v.flippedX ? 'left' : 'right')) === side) {
+        this.disconnectSyringe(v.id);
+      }
+      if (!v[flag]) {
+        for (const it of this.items) {
+          if (it.kind === 'rubber_stopper' && it.attachedToId === v.id && (it.attachedSide || 'right') === side) {
+            it.attachedToId = null;
+            it.attachedSide = null;
+            it.fallStartY = it.y;
+          }
+        }
+      }
+      v.isStoppered = Boolean(v.leftStoppered && v.rightStoppered);
+      if (!v.isStoppered) {
+        for (const g of ALL_GASES) {
+          v.escapedGasMoles[g] = (v.escapedGasMoles[g] || 0) + (v.headspaceGasMoles[g] || 0);
+          v.headspaceGasMoles[g] = 0;
+        }
+        v.sealedAirMoles = null;
+        v.internalPressureBar = this.environment.pressureBar;
+      }
+      this.emitChange();
+      return true;
+    }
+
     if (v.isStoppered) {
       v.isStoppered = false;
+      v.leftStoppered = false;
+      v.rightStoppered = false;
       this.disconnectSyringe(v.id);
+      for (const it of this.items) {
+        if (it.kind === 'rubber_stopper' && it.attachedToId === v.id) {
+          it.attachedToId = null;
+          it.attachedSide = null;
+          it.fallStartY = it.y;
+        }
+      }
       for (const g of ALL_GASES) {
         v.escapedGasMoles[g] = (v.escapedGasMoles[g] || 0) + (v.headspaceGasMoles[g] || 0);
         v.headspaceGasMoles[g] = 0;
@@ -1423,6 +1770,10 @@ export class LabSimulation {
       v.internalPressureBar = this.environment.pressureBar;
     } else {
       v.isStoppered = true;
+      if (spec.hasTwoEnds) {
+        v.leftStoppered = true;
+        v.rightStoppered = true;
+      }
       v.overflowRateMlS = 0;
       v.wasOverflowing = false;
       v.sealedAirMoles = null;
@@ -1432,7 +1783,7 @@ export class LabSimulation {
     return true;
   }
 
-  connectTube(vesselId, targetId = null) {
+  connectTube(vesselId, targetId = null, opts = {}) {
     const v = this.getItem(vesselId);
     if (!v || v.kind !== 'vessel' || v.isShattered) return { ok: false, reason: 'invalid' };
     const spec = APPARATUS[v.typeId];
@@ -1458,11 +1809,25 @@ export class LabSimulation {
       this.disconnectSyringe(v.id);
     }
 
-    v.isStoppered = true;
+    if (spec.hasTwoEnds) {
+      const side = opts.side || v.connectedPortSide || (v.flippedX ? 'left' : 'right');
+      v.connectedPortSide = side;
+      if (side === 'left') v.leftStoppered = true;
+      else v.rightStoppered = true;
+      // When invoked without explicit side (e.g. preset workflow) and opposite end wasn't explicitly set, seal both so gas drives downstream cleanly
+      if (!opts.side && !v.leftStoppered && side === 'right') v.leftStoppered = true;
+      if (!opts.side && !v.rightStoppered && side === 'left') v.rightStoppered = true;
+      v.isStoppered = Boolean(v.leftStoppered && v.rightStoppered);
+    } else {
+      v.isStoppered = true;
+    }
     v.overflowRateMlS = 0;
     v.wasOverflowing = false;
     v.connectedTargetId = target.id;
     v.connectedSyringeId = target.kind === 'gas_syringe' ? target.id : null;
+    if (opts.targetSide && APPARATUS[target.typeId]?.hasTwoEnds) {
+      target.incomingPortSide = opts.targetSide;
+    }
     target.connectedFromId = v.id;
 
     // Vent non-steam headspace equilibrium into syringe
@@ -1841,6 +2206,24 @@ export class LabSimulation {
     v.tempK = this.environment.tempK;
     v.internalPressureBar = this.environment.pressureBar;
     v.isStoppered = false;
+    v.leftStoppered = false;
+    v.rightStoppered = false;
+    v.connectedPortSide = null;
+    v.leftHasPhenCotton = false;
+    v.rightHasPhenCotton = false;
+    v.phenCottonLeftLevel = 0;
+    v.phenCottonRightLevel = 0;
+    v.horizontalSpillRateMlS = 0;
+    v.horizontalSpillLeft = false;
+    v.horizontalSpillRight = false;
+    v.horizontalSpillColor = null;
+    for (const it of this.items) {
+      if ((it.kind === 'rubber_stopper' || it.kind === 'phen_cotton') && it.attachedToId === v.id) {
+        it.attachedToId = null;
+        it.attachedSide = null;
+        it.fallStartY = it.y;
+      }
+    }
     this.disconnectSyringe(v.id);
     v.sealedAirMoles = null;
     v.headspaceGasMoles = createEmptyGasMap();
@@ -3427,8 +3810,22 @@ export class LabSimulation {
 
     vessel.isShattered = true;
     vessel.isStoppered = false;
+    vessel.leftStoppered = false;
+    vessel.rightStoppered = false;
+    vessel.leftHasPhenCotton = false;
+    vessel.rightHasPhenCotton = false;
+    vessel.phenCottonLeftLevel = 0;
+    vessel.phenCottonRightLevel = 0;
+    vessel.horizontalSpillRateMlS = 0;
     vessel.clampedToId = null;
     vessel.fallStartY = vessel.y;
+    for (const it of this.items) {
+      if ((it.kind === 'rubber_stopper' || it.kind === 'phen_cotton') && it.attachedToId === vessel.id) {
+        it.attachedToId = null;
+        it.attachedSide = null;
+        it.fallStartY = it.y;
+      }
+    }
     this.disconnectSyringe(vessel.id);
     vessel.moles = {};
     vessel.headspaceGasMoles = {};
@@ -3883,7 +4280,7 @@ export class LabSimulation {
           if (Math.abs(sup.x - b.x) <= 44) {
             const focusedTempK =
               p.isBunsen && p.airOpen && p.flameTempK
-                ? Math.min(1773.15, p.flameTempK + 90) // Centered right at hottest oxidizing cone tip
+                ? Math.min(1833.15, p.flameTempK + 60) // Centered right at hottest oxidizing cone tip (~1560 °C peak)
                 : p.flameTempK;
             return { burner: b, flameLevel: p.fl, powerW: p.rawW, flameTempK: focusedTempK };
           }
@@ -4402,10 +4799,66 @@ export class LabSimulation {
         }
       } else {
         v.softenGlowFrac = Math.max(0, Math.min(0.45, (v.tempK - 760) / 420));
-        if (v.tempK >= (specV.maxThermalStressK || 783)) {
+        if (specV.breakable !== false && v.tempK >= (specV.maxThermalStressK || 783)) {
           this.shatterVessel(v, 'alertThermalShock', 'thermal_shock');
           continue;
         }
+      }
+
+      // Open horizontal quartz tube loses liquids out open end(s) immediately by gravity (solids stay inside!)
+      if (specV.isHorizontalTube && (!v.leftStoppered || !v.rightStoppered)) {
+        const drainL = computeLiquidVolumeL(v.moles, v.tempK);
+        const drainMl = drainL * 1000;
+        if (drainMl > 0.05) {
+          const drainFrac = Math.min(1, scaledDt * 6.5);
+          const visD = computeSolutionVisuals(
+            v.moles,
+            drainL,
+            computePH(v.moles, drainL, v.tempK),
+            specV.opticalPathCm,
+            v.phenBleachFrac,
+            v.phenIrrevFrac || 0
+          );
+          const leftOpen = !v.leftStoppered;
+          const rightOpen = !v.rightStoppered;
+          const drainedMoles = {};
+          for (const [spId, n] of Object.entries(v.moles)) {
+            const sp = SPECIES[spId];
+            if (n > 1e-12 && (spId === 'H2O_l' || spId === 'C2H5OH_l' || sp?.phase === 'aq')) {
+              const dM = drainFrac >= 0.999 ? n : n * drainFrac;
+              drainedMoles[spId] = dM;
+              v.moles[spId] = n - dM;
+              if (v.moles[spId] < 1e-12) delete v.moles[spId];
+            }
+          }
+          const ends = getVesselEndPorts(v);
+          const catchV = this.items.find(
+            (o) =>
+              o.id !== v.id &&
+              o.kind === 'vessel' &&
+              !o.isShattered &&
+              !o.isStoppered &&
+              !o.isInverted &&
+              o.y > v.y &&
+              ((leftOpen && Math.abs(o.x - ends.left.mouthX) <= 38) ||
+                (rightOpen && Math.abs(o.x - ends.right.mouthX) <= 38))
+          );
+          if (catchV) {
+            for (const [spId, dM] of Object.entries(drainedMoles)) {
+              catchV.moles[spId] = (catchV.moles[spId] || 0) + dM;
+            }
+          } else {
+            v.spilledPuddleColor = visD.css;
+          }
+          v.horizontalSpillRateMlS = (drainMl * drainFrac) / Math.max(1e-4, scaledDt);
+          v.horizontalSpillLeft = leftOpen;
+          v.horizontalSpillRight = rightOpen;
+          v.horizontalSpillColor = visD.css;
+        } else {
+          v.horizontalSpillRateMlS = 0;
+        }
+      } else {
+        v.horizontalSpillRateMlS = 0;
       }
 
       // Advance reversible phenolphthalein carbinol fading & high-temp irreversible C-C cleavage (locked while frozen solid)
@@ -4793,11 +5246,16 @@ export class LabSimulation {
           gasRateC2H5Cl: rateMap.C2H5Cl_g,
           gasRateNH3: rateMap.NH3_g,
           gasRateNO2: rateMap.NO2_g,
+          gasRateSO3: rateMap.SO3_g,
           gasRateNO: rateMap.NO_g,
           steamRate: rateSteam,
           steamOpacity: curSteamOpacity,
           overflowRateMlS: v.overflowRateMlS || 0,
           overflowColor: v.overflowColor || null,
+          horizontalSpillRateMlS: v.horizontalSpillRateMlS || 0,
+          horizontalSpillLeft: !!v.horizontalSpillLeft,
+          horizontalSpillRight: !!v.horizontalSpillRight,
+          horizontalSpillColor: v.horizontalSpillColor || null,
           isBoiling: frameBoiling,
           isDehydrating,
           naActive,
@@ -4938,6 +5396,7 @@ export class LabSimulation {
     }
 
     stepApparatusTools(this, scaledDt, realDeltaSec);
+    this.syncAttachedMouthTools();
     stepElectrochemistry(this, scaledDt);
 
     if (this.visualHooks.onParticlesNeeded) {

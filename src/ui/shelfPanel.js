@@ -66,6 +66,12 @@ function apparatusSvg(typeId) {
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14h16l-2.5 14h-11z"/><path d="M9 11h18"/><circle cx="18" cy="8.5" r="2"/></svg>`;
     case 'quartz_tube':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="14" width="28" height="8" rx="2"/><rect x="13" y="15.5" width="10" height="5" fill="currentColor" opacity="0.25" stroke="none"/><path d="M4 18h2M30 18h2" stroke-width="2.2"/></svg>`;
+    case 'quartz_u_tube':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 7v13a9 9 0 0018 0V7"/><path d="M13 7v13a5 5 0 0010 0V7"/><path d="M8 7h6M22 7h6" stroke-width="2"/></svg>`;
+    case 'rubber_stopper':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11h18l-2.8 15H11.8L9 11z" fill="currentColor" opacity="0.35"/><path d="M9 11h18l-2.8 15H11.8L9 11z"/><circle cx="18" cy="11" r="2.2" fill="#f59e0b" stroke="none"/></svg>`;
+    case 'phen_cotton':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 23a4 4 0 01-.5-7.8 5 5 0 019.2-2.2 4.5 4.5 0 017.8 3.2A4 4 0 0125 23H10z" fill="#f472b6" opacity="0.45"/><path d="M10 23a4 4 0 01-.5-7.8 5 5 0 019.2-2.2 4.5 4.5 0 017.8 3.2A4 4 0 0125 23H10z"/></svg>`;
     case 'crucible_tongs':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 26l10-10 11-8M11 29l7-11 9-4"/><circle cx="17" cy="16" r="1.5" fill="currentColor"/></svg>`;
     case 'iron_spoon':

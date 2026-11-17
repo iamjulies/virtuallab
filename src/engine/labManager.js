@@ -15,6 +15,8 @@ export class LabManager {
     this.labs = [];
     this.activeIndex = 0;
     this.nextLabNumber = 1;
+    this.clipboard = null;
+    this.pasteSequence = 0;
     this.addLab('starter', { silent: true });
   }
 
@@ -164,6 +166,106 @@ export class LabManager {
     dstSim.emitChange();
     this.hooks.onChange?.();
     return { item, srcLab, dstLab };
+  }
+
+  /**
+   * Copy selected apparatus blueprints onto clipboard (clean apparatus geometry/settings ONLY — zero chemicals!).
+   */
+  copyItems(itemIds = null, simOverride = null) {
+    const sim = simOverride || this.getActiveSim();
+    if (!sim) return 0;
+    const rawIds =
+      Array.isArray(itemIds) || itemIds instanceof Set
+        ? Array.from(itemIds)
+        : sim.selectedIds?.size > 0
+        ? Array.from(sim.selectedIds)
+        : sim.selectedId
+        ? [sim.selectedId]
+        : [];
+    const selected = sim.items.filter((it) => rawIds.includes(it.id));
+    if (selected.length === 0) return 0;
+    const avgX = selected.reduce((s, it) => s + it.x, 0) / selected.length;
+    const avgY = selected.reduce((s, it) => s + it.y, 0) / selected.length;
+    this.clipboard = selected.map((it) => ({
+      typeId: it.typeId,
+      dx: it.x - avgX,
+      dy: it.y - avgY,
+      anchorX: avgX,
+      anchorY: avgY,
+      flippedX: Boolean(it.flippedX),
+      isInverted: Boolean(it.isInverted),
+      material: it.material,
+      mode: it.kind === 'volt_ammeter' ? it.mode : it.kind === 'splint' ? 'unlit' : undefined,
+      stripKind: it.stripKind,
+      stopperMode: it.stopperMode,
+      dampness: it.dampness,
+      airHoleOpen: it.airHoleOpen,
+      lidState: it.kind === 'vessel' && APPARATUS[it.typeId]?.hasLid ? it.lidState || 'open' : undefined,
+      dropDoseMl: it.dropDoseMl,
+      voltage: it.voltage,
+    }));
+    this.pasteSequence = 0;
+    return this.clipboard.length;
+  }
+
+  /**
+   * Paste clean empty apparatus duplicates from clipboard onto active bench.
+   */
+  pasteItems(simOverride = null) {
+    const sim = simOverride || this.getActiveSim();
+    if (!sim || !Array.isArray(this.clipboard) || this.clipboard.length === 0) return [];
+    this.pasteSequence = (this.pasteSequence || 0) + 1;
+    const stepShiftX = 32 * this.pasteSequence;
+    const stepShiftY = -16 * (this.pasteSequence % 3);
+    const createdList = [];
+    for (const entry of this.clipboard) {
+      const spec = APPARATUS[entry.typeId];
+      if (!spec) continue;
+      const targetX = Math.max(60, Math.min(940, (entry.anchorX ?? 420) + stepShiftX + entry.dx));
+      const targetY = Math.max(65, Math.min(SIM_BENCH_FLOOR_Y - (spec.height || 80) / 2 + 2, (entry.anchorY ?? 360) + stepShiftY + entry.dy));
+      const item = sim.createApparatus(entry.typeId, targetX, targetY);
+      if (!item) continue;
+      item.flippedX = Boolean(entry.flippedX);
+      if (entry.isInverted && item.kind === 'vessel') item.isInverted = true;
+      if (entry.material && item.kind === 'electrode') item.material = entry.material;
+      if (entry.mode !== undefined && (item.kind === 'volt_ammeter' || item.kind === 'splint')) item.mode = entry.mode;
+      if (entry.stripKind && item.kind === 'indicator_strip') item.stripKind = entry.stripKind;
+      if (entry.stopperMode && item.kind === 'rubber_stopper') item.stopperMode = entry.stopperMode;
+      if (entry.dampness !== undefined && item.kind === 'phen_cotton') item.dampness = entry.dampness;
+      if (entry.airHoleOpen !== undefined && item.typeId === 'bunsen_burner') item.airHoleOpen = entry.airHoleOpen;
+      if (entry.lidState !== undefined && item.kind === 'vessel') item.lidState = entry.lidState;
+      if (entry.dropDoseMl !== undefined && item.kind === 'pipette') item.dropDoseMl = entry.dropDoseMl;
+      if (entry.voltage !== undefined && item.kind === 'dc_power') item.voltage = entry.voltage;
+      // Ensure strictly zero chemical reagents copied
+      if (item.moles) item.moles = {};
+      if (item.particleCounts) item.particleCounts = {};
+      if (item.groundPowderMap) item.groundPowderMap = {};
+      if (item.flattenedMetalMap) item.flattenedMetalMap = {};
+      if (item.kind === 'pipette') {
+        item.volumeMl = 0;
+        item.moles = {};
+      }
+      if (item.kind === 'wash_bottle') {
+        item.waterMl = 0;
+      }
+      if (item.kind === 'vessel') {
+        item.isStoppered = false;
+        item.leftStoppered = false;
+        item.rightStoppered = false;
+        item.hasPhenCotton = false;
+        item.phenCottonLevel = 0;
+      }
+      item.fallStartY = item.y;
+      createdList.push(item);
+    }
+    if (createdList.length > 0) {
+      sim.selectedIds = new Set(createdList.map((c) => c.id));
+      sim.selectedId = createdList[createdList.length - 1].id;
+      sim.updateSupportAttachments();
+      sim.recomputeScaleReadings();
+      sim.emitChange();
+    }
+    return createdList;
   }
 
   /**

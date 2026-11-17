@@ -244,9 +244,12 @@ export function stepVesselThermodynamics(
     vessel.tempK < CONSTANTS.T_FREEZE_WATER_K &&
     env.tempK >= CONSTANTS.T_FREEZE_WATER_K &&
     vessel.tempK < env.tempK;
-  const isBunsenRad = Boolean(flameTempOverrideK && flameTempOverrideK >= 850 && effectiveBurnerW > 600);
-  const hLoss = (isCryoCool ? baseHLoss * 75.0 : isCryoThaw ? baseHLoss * 40.0 : baseHLoss) * lidLossScale;
-  const radCoeff = baseHLoss * lidLossScale * (isBunsenRad ? 0.38e-9 : 4.0e-9);
+  const isBunsenRad = Boolean(flameTempOverrideK && flameTempOverrideK >= 850 && burnerPowerW > 600);
+  const flameShieldScale = isBunsenRad && flameTempOverrideK >= 1650 ? 0.28 : 1.0;
+  const hLoss = (isCryoCool ? baseHLoss * 75.0 : isCryoThaw ? baseHLoss * 40.0 : baseHLoss * flameShieldScale) * lidLossScale;
+  const bunsenRadFactor =
+    isBunsenRad && flameTempOverrideK >= 1650 ? 0.04e-9 : isBunsenRad ? 0.36e-9 : 4.0e-9;
+  const radCoeff = baseHLoss * lidLossScale * bunsenRadFactor;
   const tEnv = Math.max(150, env.tempK);
   const tCurClamped = Math.max(150, Math.min(1950, vessel.tempK));
   const ambientExchangeJ =

@@ -584,7 +584,12 @@ export function renderFlameLoop(ctx, item, isSelected, isDark, timeNow = 0) {
 
   if (item.sampledIon) {
     // Subtle wet solution film on wire loop — color reveals ONLY upon heating in burner flame!
-    ctx.fillStyle = item.sampledIon === 'Cu²⁺' ? 'rgba(56, 189, 248, 0.42)' : 'rgba(226, 232, 240, 0.42)';
+    ctx.fillStyle =
+      item.sampledIon === 'Cu²⁺'
+        ? 'rgba(56, 189, 248, 0.42)'
+        : item.sampledIon === 'Ca²⁺'
+        ? 'rgba(239, 68, 68, 0.42)'
+        : 'rgba(226, 232, 240, 0.42)';
     ctx.beginPath();
     ctx.arc(tip.loopCenterX, y, 4.0, 0, Math.PI * 2);
     ctx.fill();
@@ -1559,6 +1564,109 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
   drawLabelPill(ctx, x, y - 22, pillText, {
     pal,
     borderColor: item.hoveredActionLabel ? '#10b981' : isSelected ? '#3b82f6' : pal.badgeBorder,
+    font: '600 10px system-ui, sans-serif',
+    height: 17,
+    itemId: item.id,
+  });
+  ctx.restore();
+}
+
+export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFromVessel = null) {
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const orient = item._attachOrient || 'top';
+  const isHoled = (item.stopperMode || 'holed') !== 'solid';
+  ctx.save();
+  drawSelectionGlow(ctx, isSelected, false);
+
+  ctx.save();
+  ctx.translate(x, y);
+  if (orient === 'left') ctx.rotate(-Math.PI / 2);
+  else if (orient === 'right') ctx.rotate(Math.PI / 2);
+  else if (orient === 'bottom') ctx.rotate(Math.PI);
+
+  // Tapered EPDM rubber bung body
+  ctx.fillStyle = isDark ? '#334155' : '#475569';
+  ctx.strokeStyle = isSelected ? '#3b82f6' : '#0f172a';
+  ctx.lineWidth = isSelected ? 2 : 1.25;
+  ctx.beginPath();
+  ctx.moveTo(-14, -9);
+  ctx.lineTo(14, -9);
+  ctx.lineTo(10, 9);
+  ctx.lineTo(-10, 9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Top bevel rib
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-12.5, -6.5);
+  ctx.lineTo(12.5, -6.5);
+  ctx.stroke();
+
+  if (isHoled) {
+    // Glass bore tube stub + amber tubing connector ring on outer crown
+    ctx.fillStyle = pal.glassFill;
+    ctx.strokeStyle = pal.glassStroke;
+    ctx.lineWidth = 1.2;
+    ctx.fillRect(-3.2, -13, 6.4, 22);
+    ctx.strokeRect(-3.2, -13, 6.4, 22);
+
+    const isConn = Boolean(
+      connectedFromVessel &&
+      (connectedFromVessel.connectedTargetId || connectedFromVessel.connectedSyringeId) &&
+      (!item.attachedSide || item.attachedSide === 'main' || connectedFromVessel.connectedPortSide === item.attachedSide)
+    );
+    ctx.fillStyle = isConn ? '#f59e0b' : pal.badgeBg;
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(0, -10, 4.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  const modeTag = isHoled ? '1-Hole' : 'Solid';
+  drawLabelPill(ctx, x, y - 22, `${item.label} · ${modeTag}`, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : null,
+    font: '600 10px system-ui, sans-serif',
+    height: 17,
+    itemId: item.id,
+  });
+  ctx.restore();
+}
+
+export function renderPhenCotton(ctx, item, isSelected, isDark) {
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const lvl = Math.max(0, Math.min(1, item.pinkLevel || 0));
+  const r = Math.round(244 * lvl + 248 * (1 - lvl));
+  const g = Math.round(114 * lvl + 250 * (1 - lvl));
+  const b = Math.round(182 * lvl + 252 * (1 - lvl));
+
+  ctx.save();
+  drawSelectionGlow(ctx, isSelected, false);
+  ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+  ctx.strokeStyle = isSelected ? '#3b82f6' : lvl > 0.25 ? '#ec4899' : '#94a3b8';
+  ctx.lineWidth = isSelected ? 2 : 1.15;
+
+  // Scalloped fluffy cotton wad silhouette
+  ctx.beginPath();
+  ctx.arc(x - 6, y + 1, 6.5, Math.PI * 0.5, Math.PI * 1.6);
+  ctx.arc(x, y - 3, 7.2, Math.PI * 1.0, Math.PI * 2.0);
+  ctx.arc(x + 6, y + 1, 6.5, Math.PI * 1.4, Math.PI * 0.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  const statusTxt = lvl > 0.28 ? `${item.label} · 🌸 NH₃` : `${item.label} · ${Math.round((item.dampness ?? 0.85) * 100)}%`;
+  drawLabelPill(ctx, x, y - 19, statusTxt, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : lvl > 0.28 ? '#ec4899' : null,
     font: '600 10px system-ui, sans-serif',
     height: 17,
     itemId: item.id,

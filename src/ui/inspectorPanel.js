@@ -1,6 +1,6 @@
 import { APPARATUS, getStandGeometry } from '../data/apparatus.js';
 import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
-import { GAS_DISPLAY_META, SPECIES, STARTER_REAGENTS } from '../data/species.js';
+import { GAS_DISPLAY_META, isSolidMoltenAtTemp, SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
 import {
   computeContentsMassG,
@@ -185,6 +185,12 @@ export class InspectorPanel {
     if (item.kind === 'filter_funnel' || item.kind === 'burette') {
       const spKeys = Object.keys(item.moles || {}).filter((k) => item.moles[k] > 1e-10).sort().join(',');
       return `${item.kind}|${item.id}|${item.isBroken ? 1 : 0}|${item.clampedToId}|${item.valveRateMlS || 0}|${item.isFiltering ? 1 : 0}|${item.uvMaskHalf ? 1 : 0}|${spKeys}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'rubber_stopper') {
+      return `rb|${item.id}|${item.stopperMode || 'holed'}|${item.attachedToId || ''}|${item.attachedSide || ''}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'phen_cotton') {
+      return `pc|${item.id}|${item.attachedToId || ''}|${item.attachedSide || ''}|${Math.round((item.dampness ?? 0.85) * 100)}|${langCode}|${logLen}`;
     }
     if (item.kind === 'dc_power') {
       return `dc|${item.id}|${item.powerOn ? 1 : 0}|${item.circuitMode}|${item.posElectrodeId || ''}|${item.negElectrodeId || ''}|${Math.round((item.rheostatOhm ?? 2) * 10)}|${langCode}|${logLen}`;
@@ -1052,6 +1058,78 @@ export class InspectorPanel {
           <p class="text-[11px] text-muted leading-relaxed">${t('spoonHint')}</p>
         </div>
       `;
+    } else if (item.kind === 'rubber_stopper') {
+      const hostV = item.attachedToId ? this.sim.getItem(item.attachedToId) : null;
+      const isHoled = (item.stopperMode || 'holed') !== 'solid';
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">🔌 ${t('eq_rubber_stopper')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${APPARATUS.rubber_stopper.materialSpec}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex flex-col gap-1.5">
+            <span class="text-muted">${t('stopperModeLabel')}</span>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button type="button" id="ins-stopper-holed" class="py-1.5 px-2 rounded-lg border text-xs font-semibold ${
+                isHoled ? 'border-amber-500 bg-amber-500/15 text-amber-400' : 'border-theme bg-surface-alt text-muted'
+              }">${t('stopperModeHoled')}</button>
+              <button type="button" id="ins-stopper-solid" class="py-1.5 px-2 rounded-lg border text-xs font-semibold ${
+                !isHoled ? 'border-sky-500 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface-alt text-muted'
+              }">${t('stopperModeSolid')}</button>
+            </div>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex items-center justify-between gap-2">
+            <span class="text-muted">${
+              hostV
+                ? `${t('stopperStatusMounted')} <strong>${hostV.label}</strong>${item.attachedSide && item.attachedSide !== 'main' ? ` (${item.attachedSide})` : ''}`
+                : t('stopperStatusLoose')
+            }</span>
+            ${
+              hostV
+                ? `<button type="button" id="ins-stopper-unplug" class="px-2.5 py-1 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-400 font-semibold">${t('stopperUnplugBtn')}</button>`
+                : `<button type="button" id="ins-stopper-attach" class="px-2.5 py-1 rounded-lg border border-theme bg-surface-alt font-medium hover:border-accent">${t('stopperAttachBtn')}</button>`
+            }
+          </div>
+          <p class="text-[11px] text-muted leading-relaxed">${t('stopperHint')}</p>
+        </div>
+      `;
+    } else if (item.kind === 'phen_cotton') {
+      const hostV = item.attachedToId ? this.sim.getItem(item.attachedToId) : null;
+      const pinkPct = Math.round(Math.max(0, Math.min(1, item.pinkLevel || 0)) * 100);
+      const dampPct = Math.round(Math.max(20, Math.min(100, (item.dampness ?? 0.85) * 100)));
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">🌸 ${t('eq_phen_cotton')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${APPARATUS.phen_cotton.materialSpec}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex flex-col gap-2">
+            <div class="flex justify-between items-center">
+              <span class="text-muted">${t('cottonPinknessLabel')}</span>
+              <strong id="live-cotton-pink" class="font-mono ${pinkPct > 25 ? 'text-pink-400' : 'text-main'}">${pinkPct}%</strong>
+            </div>
+            <label class="flex flex-col gap-1">
+              <span class="flex justify-between text-muted"><span>${t('cottonDampnessLabel')}</span><strong class="font-mono">${dampPct}%</strong></span>
+              <input type="range" id="ins-cotton-damp" min="20" max="100" step="5" value="${dampPct}" class="w-full accent-pink-500" />
+            </label>
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            <button type="button" id="ins-cotton-reset" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('cottonResetBtn')}</button>
+            ${
+              hostV
+                ? `<button type="button" id="ins-cotton-detach" class="px-2.5 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-400 text-xs font-semibold">${t('cottonDetachBtn')}</button>`
+                : `<button type="button" id="ins-cotton-attach" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('cottonAttachBtn')}</button>`
+            }
+          </div>
+          <p class="text-[11px] text-muted leading-relaxed">${t('cottonHint')}</p>
+        </div>
+      `;
     } else if (item.kind === 'vessel') {
       const spec = APPARATUS[item.typeId];
       const liqL = computeLiquidVolumeL(item.moles, item.tempK);
@@ -1143,13 +1221,6 @@ export class InspectorPanel {
             <button type="button" id="ins-pour" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionPourTo')}</button>
             <button type="button" id="ins-stir" ${item.isFrozenSolid ? 'disabled' : ''} title="${t('actionStirTip')}" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent disabled:opacity-40">${t('actionStir')}</button>
             ${
-              spec.stopperable
-                ? `<button type="button" id="ins-stopper" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${
-                    item.isStoppered ? t('actionUnstopper') : t('actionStopper')
-                  }</button>`
-                : ''
-            }
-            ${
               spec.hasLid
                 ? `<button type="button" id="ins-crucible-lid" class="px-2.5 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-xs font-semibold hover:border-accent">${
                     t('crucibleLidLabel')
@@ -1175,15 +1246,6 @@ export class InspectorPanel {
               spec.stopperable
                 ? `<button type="button" id="ins-tube" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${
                     connTarget ? t('actionDisconnectTube') : t('actionConnectSyringe')
-                  }</button>`
-                : ''
-            }
-            ${
-              !item.isStoppered
-                ? `<button type="button" id="ins-phen-cotton" class="px-2.5 py-1.5 rounded-lg border ${
-                    item.hasPhenCotton ? 'border-pink-500/70 bg-pink-500/15 text-pink-300' : 'border-theme bg-surface'
-                  } text-xs font-medium hover:border-accent">${
-                    item.hasPhenCotton ? t('actionRemovePhenCotton') : t('actionAddPhenCotton')
                   }</button>`
                 : ''
             }
@@ -1336,14 +1398,28 @@ export class InspectorPanel {
                       .map(([spId, n]) => {
                         const sp = SPECIES[spId];
                         const mass = n * sp.molarMass;
-                        const conc = sp.phase === 'aq' && liqL > 1e-6 ? `${(n / liqL).toFixed(3)} M` : sp.phase;
+                        const isMolten = isSolidMoltenAtTemp(sp, item.tempK, item.moles);
+                        const conc = isMolten
+                          ? t('moltenStateTag')
+                          : sp.phase === 'aq' && liqL > 1e-6
+                          ? `${(n / liqL).toFixed(3)} M`
+                          : sp.phase;
+                        const thermalTitle =
+                          sp.phase === 's'
+                            ? [
+                                sp.meltTempK && !sp.noMelt ? `T_nc: ${kelvinToCelsius(sp.meltTempK).toFixed(0)}°C` : null,
+                                sp.decompTempK ? `T_dec: ${kelvinToCelsius(sp.decompTempK).toFixed(0)}°C` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')
+                            : '';
                         const molStr = n >= 0.01 ? `${n.toFixed(4)}` : `${(n * 1000).toFixed(3)}m`;
                         return `
-                          <tr class="border-b border-theme/50 last:border-0">
-                            <td class="py-1 font-semibold">${sp.formula}</td>
+                          <tr class="border-b border-theme/50 last:border-0" title="${thermalTitle}">
+                            <td class="py-1 font-semibold">${sp.formula}${isMolten ? ' 🔥' : ''}</td>
                             <td class="py-1 text-right font-mono" id="sp-mol-${spId}">${molStr}</td>
                             <td class="py-1 text-right font-mono" id="sp-mass-${spId}">${mass.toFixed(3)}g</td>
-                            <td class="py-1 text-right font-mono text-muted" id="sp-conc-${spId}">${conc}</td>
+                            <td class="py-1 text-right font-mono ${isMolten ? 'text-orange-400 font-semibold' : 'text-muted'}" id="sp-conc-${spId}">${conc}</td>
                           </tr>
                         `;
                       })
@@ -1532,13 +1608,11 @@ export class InspectorPanel {
       });
       this.container.querySelector('#ins-stir')?.addEventListener('click', () => this.sim.stirVessel(item.id));
       this.container.querySelector('#ins-rinse')?.addEventListener('click', () => this.sim.rinseVessel(item.id));
-      this.container.querySelector('#ins-stopper')?.addEventListener('click', () => this.sim.toggleStopper(item.id));
       this.container.querySelector('#ins-crucible-lid')?.addEventListener('click', () => this.sim.cycleCrucibleLid(item.id));
       this.container.querySelector('#ins-toggle-compare')?.addEventListener('click', () => {
         this.sim.toggleCompareVessel(item.id);
         this.callbacks.onOpenCompare?.();
       });
-      this.container.querySelector('#ins-phen-cotton')?.addEventListener('click', () => this.sim.togglePhenCotton(item.id));
       this.container.querySelector('#ins-invert')?.addEventListener('click', () => this.sim.toggleVesselInverted(item.id));
       this.container.querySelector('#ins-fountain-primer')?.addEventListener('click', () => this.sim.injectFountainPrimer(item.id));
       this.container.querySelector('#ins-grind')?.addEventListener('click', () => this.sim.grindMortar(item.id));
@@ -1785,6 +1859,55 @@ export class InspectorPanel {
       this.container.querySelector('#ins-spoon-rinse')?.addEventListener('click', () => {
         this.sim.rinseSpoon(item.id);
       });
+    } else if (item.kind === 'rubber_stopper') {
+      this.container.querySelector('#ins-stopper-holed')?.addEventListener('click', () => {
+        this.sim.setStopperMode(item.id, 'holed');
+      });
+      this.container.querySelector('#ins-stopper-solid')?.addEventListener('click', () => {
+        this.sim.setStopperMode(item.id, 'solid');
+      });
+      this.container.querySelector('#ins-stopper-unplug')?.addEventListener('click', () => {
+        this.sim.detachRubberStopper(item.id);
+      });
+      this.container.querySelector('#ins-stopper-attach')?.addEventListener('click', () => {
+        const candidates = this.sim.items.filter(
+          (v) => v.kind === 'vessel' && !v.isShattered && APPARATUS[v.typeId]?.stopperable
+        );
+        if (candidates.length === 0) return;
+        const nearest = candidates.sort((a, b) => Math.hypot(a.x - item.x, a.y - item.y) - Math.hypot(b.x - item.x, b.y - item.y))[0];
+        const nSpec = APPARATUS[nearest.typeId];
+        const side = nSpec?.hasTwoEnds ? (item.x < nearest.x ? 'left' : 'right') : 'main';
+        this.sim.attachRubberStopper(item.id, nearest.id, side);
+      });
+    } else if (item.kind === 'phen_cotton') {
+      this.container.querySelector('#ins-cotton-damp')?.addEventListener('input', (e) => {
+        item.dampness = Math.max(0.2, Math.min(1.0, Number(e.target.value) / 100));
+        this.sim.emitChange();
+      });
+      this.container.querySelector('#ins-cotton-reset')?.addEventListener('click', () => {
+        item.pinkLevel = 0;
+        item.dampness = 0.85;
+        if (item.attachedToId) {
+          const v = this.sim.getItem(item.attachedToId);
+          if (v) {
+            if (item.attachedSide === 'left') v.phenCottonLeftLevel = 0;
+            else if (item.attachedSide === 'right') v.phenCottonRightLevel = 0;
+            else v.phenCottonLevel = 0;
+          }
+        }
+        this.sim.emitChange();
+      });
+      this.container.querySelector('#ins-cotton-detach')?.addEventListener('click', () => {
+        this.sim.detachPhenCotton(item.id);
+      });
+      this.container.querySelector('#ins-cotton-attach')?.addEventListener('click', () => {
+        const candidates = this.sim.items.filter((v) => v.kind === 'vessel' && !v.isShattered && !v.isStoppered);
+        if (candidates.length === 0) return;
+        const nearest = candidates.sort((a, b) => Math.hypot(a.x - item.x, a.y - item.y) - Math.hypot(b.x - item.x, b.y - item.y))[0];
+        const nSpec = APPARATUS[nearest.typeId];
+        const side = nSpec?.hasTwoEnds ? (item.x < nearest.x ? 'left' : 'right') : 'main';
+        this.sim.attachPhenCotton(item.id, nearest.id, side);
+      });
     }
   }
 
@@ -1792,6 +1915,12 @@ export class InspectorPanel {
     const item = this.sim.getItem(this.sim.selectedId);
     if (!item) return;
 
+    if (item.kind === 'rubber_stopper') return;
+    if (item.kind === 'phen_cotton') {
+      const pEl = this.container.querySelector('#live-cotton-pink');
+      if (pEl) pEl.textContent = `${Math.round(Math.max(0, Math.min(1, item.pinkLevel || 0)) * 100)}%`;
+      return;
+    }
     if (item.kind === 'dc_power') {
       const rEl = this.container.querySelector('#live-dc-readout');
       const mEl = this.container.querySelector('#live-dc-mode');
@@ -2015,7 +2144,14 @@ export class InspectorPanel {
       const cEl = this.container.querySelector(`#sp-conc-${spId}`);
       if (molEl) molEl.textContent = n >= 0.01 ? `${n.toFixed(4)}` : `${(n * 1000).toFixed(3)}m`;
       if (mEl) mEl.textContent = `${(n * sp.molarMass).toFixed(3)}g`;
-      if (cEl) cEl.textContent = sp.phase === 'aq' && liqL > 1e-6 ? `${(n / liqL).toFixed(3)} M` : sp.phase;
+      if (cEl) {
+        const isMolten = isSolidMoltenAtTemp(sp, item.tempK, item.moles);
+        cEl.textContent = isMolten
+          ? t('moltenStateTag')
+          : sp.phase === 'aq' && liqL > 1e-6
+          ? `${(n / liqL).toFixed(3)} M`
+          : sp.phase;
+      }
     }
   }
 

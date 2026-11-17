@@ -5,6 +5,7 @@ import {
   getProbeTipPos,
   getStandGeometry,
   getSyringeGeometry,
+  getVesselEndPorts,
   getVesselTubingPort,
 } from '../data/apparatus.js';
 import { CONSTANTS } from '../data/constants.js';
@@ -45,6 +46,8 @@ import {
   renderIndicatorStrip,
   renderIronSpoon,
   renderLiebigCondenser,
+  renderPhenCotton,
+  renderRubberStopper,
   renderSaltBridge,
   renderSplint,
   renderStirBar,
@@ -68,6 +71,7 @@ export class LabWorkbenchCanvas {
     this.langCode = 'vi';
     this.dragState = null; // { itemId, offsetX, offsetY, startX, startY, pourTargetId, pouredMl }
     this.portDragState = null;
+    this.marqueeState = null;
     this.pickState = null; // { candidateIds: Set<string>, promptText, onPick, onCancel }
     this.hoverItemId = null;
     this.dropTargetVesselId = null;
@@ -240,14 +244,98 @@ export class LabWorkbenchCanvas {
         if (Math.hypot(lx - nozzleX, ly - nozzleY) <= 14) {
           return { cond: it, item: it, kind: 'gas_syringe', port: 'nozzle', origin: { x: nozzleX, y: nozzleY } };
         }
-      } else if (it.kind === 'vessel' && it.isStoppered) {
-        const vPort = getVesselTubingPort(it);
-        if (vPort && Math.hypot(lx - vPort.x, ly - vPort.y) <= 14) {
-          return { cond: it, item: it, kind: 'vessel', port: 'stopper', origin: vPort };
+      } else if (it.kind === 'vessel') {
+        const spec = APPARATUS[it.typeId];
+        if (spec?.hasTwoEnds) {
+          const ends = getVesselEndPorts(it);
+          for (const side of ['left', 'right']) {
+            const ep = ends?.[side];
+            if (!ep || !ep.stoppered) continue;
+            const attachedSt = this.sim.items.find(
+              (s) => s.kind === 'rubber_stopper' && s.attachedToId === it.id && (s.attachedSide || 'right') === side
+            );
+            const isSolid = attachedSt ? attachedSt.stopperMode === 'solid' : it.stopperMode === 'solid';
+            if (isSolid) continue;
+            if (Math.hypot(lx - ep.x, ly - ep.y) <= 14) {
+              return { cond: it, item: it, kind: 'vessel', port: 'stopper', side, origin: ep };
+            }
+          }
+        } else if (it.isStoppered) {
+          const attachedSt = this.sim.items.find(
+            (s) => s.kind === 'rubber_stopper' && s.attachedToId === it.id
+          );
+          const isSolid = attachedSt ? attachedSt.stopperMode === 'solid' : it.stopperMode === 'solid';
+          if (!isSolid) {
+            const vPort = getVesselTubingPort(it);
+            if (vPort && Math.hypot(lx - vPort.x, ly - vPort.y) <= 14) {
+              return { cond: it, item: it, kind: 'vessel', port: 'stopper', side: 'main', origin: vPort };
+            }
+          }
         }
       }
     }
     return null;
+  }
+
+  findMouthTargetAt(lx, ly, mode = 'stopper') {
+    let best = null;
+    let bestD = Infinity;
+    for (let i = this.sim.items.length - 1; i >= 0; i--) {
+      const v = this.sim.items[i];
+      if (v.kind !== 'vessel' || v.isShattered) continue;
+      const spec = APPARATUS[v.typeId];
+      if (!spec) continue;
+      if (mode === 'stopper' && !spec.stopperable) continue;
+      if (spec.hasTwoEnds) {
+        const ends = getVesselEndPorts(v);
+        for (const side of ['left', 'right']) {
+          const ep = ends?.[side];
+          if (!ep) continue;
+          const isSideStoppered = side === 'left' ? v.leftStoppered : v.rightStoppered;
+          if (mode === 'cotton' && isSideStoppered) continue;
+          const d = Math.hypot(lx - ep.mouthX, ly - ep.mouthY);
+          if (d <= 32 && d < bestD) {
+            bestD = d;
+            best = { vessel: v, side, slot: ep };
+          }
+        }
+      } else {
+        if (mode === 'cotton' && v.isStoppered) continue;
+        const mouthY = v.isInverted ? v.y + spec.height / 2 : v.y - spec.height / 2;
+        const dx = Math.abs(lx - v.x);
+        const dy = Math.abs(ly - mouthY);
+        const maxDx = Math.max(24, (spec.neckRadius || spec.width * 0.42) + 10);
+        if (dx <= maxDx && dy <= 34) {
+          const d = Math.hypot(dx, dy);
+          if (d < bestD) {
+            bestD = d;
+            best = { vessel: v, side: 'main', slot: { mouthX: v.x, mouthY } };
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  getSelectedIdSet() {
+    if (!(this.sim.selectedIds instanceof Set)) {
+      this.sim.selectedIds = new Set(this.sim.selectedId ? [this.sim.selectedId] : []);
+    }
+    if (this.sim.selectedId && this.sim.selectedIds.size === 0) {
+      this.sim.selectedIds.add(this.sim.selectedId);
+    }
+    return this.sim.selectedIds;
+  }
+
+  setSelection(ids, primaryId = null) {
+    const arr = Array.from(ids).filter((id) => Boolean(this.sim.getItem(id)));
+    this.sim.selectedIds = new Set(arr);
+    this.sim.selectedId =
+      primaryId && this.sim.selectedIds.has(primaryId)
+        ? primaryId
+        : arr.length > 0
+        ? arr[arr.length - 1]
+        : null;
   }
 
   getMountedFunnelOnVessel(vesselId) {
@@ -261,6 +349,8 @@ export class LabWorkbenchCanvas {
   hitTestItem(lx, ly, excludeId = null, filterFn = null) {
     // Check compact/docked foreground tools BEFORE enclosing vessels so electrodes & funnels remain directly clickable
     const isPriorityTool = (it) =>
+      it.kind === 'rubber_stopper' ||
+      it.kind === 'phen_cotton' ||
       it.kind === 'electrode' ||
       it.kind === 'filter_funnel' ||
       it.kind === 'stir_bar' ||
@@ -353,6 +443,12 @@ export class LabWorkbenchCanvas {
     } else if (payloadId === 'pipette_10' || payloadId === 'stir_bar' || payloadId === 'electrode_rod' || payloadId === 'filter_funnel') {
       const tgt = this.findVesselAt(pt.x, pt.y, null, false);
       this.dropTargetVesselId = tgt ? tgt.id : null;
+    } else if (payloadId === 'rubber_stopper') {
+      const mTgt = this.findMouthTargetAt(pt.x, pt.y, 'stopper');
+      this.dropTargetVesselId = mTgt ? mTgt.vessel.id : null;
+    } else if (payloadId === 'phen_cotton') {
+      const mTgt = this.findMouthTargetAt(pt.x, pt.y, 'cotton');
+      this.dropTargetVesselId = mTgt ? mTgt.vessel.id : null;
     } else {
       this.dropTargetVesselId = null;
     }
@@ -376,7 +472,21 @@ export class LabWorkbenchCanvas {
       const created = this.sim.createApparatus(payloadId, clampedX, clampedY);
 
       if (created) {
-        if (created.kind === 'stir_bar' && hoverVessel && !hoverVessel.isStoppered) {
+        if (created.kind === 'rubber_stopper') {
+          const mTgt = this.findMouthTargetAt(pt.x, pt.y, 'stopper');
+          if (mTgt) {
+            this.sim.attachRubberStopper(created.id, mTgt.vessel.id, mTgt.side);
+          } else {
+            created.fallStartY = created.y;
+          }
+        } else if (created.kind === 'phen_cotton') {
+          const mTgt = this.findMouthTargetAt(pt.x, pt.y, 'cotton');
+          if (mTgt) {
+            this.sim.attachPhenCotton(created.id, mTgt.vessel.id, mTgt.side);
+          } else {
+            created.fallStartY = created.y;
+          }
+        } else if (created.kind === 'stir_bar' && hoverVessel && !hoverVessel.isStoppered) {
           this.sim.insertStirBarIntoVessel(created.id, hoverVessel.id, 800);
         } else if (created.kind === 'electrode' && hoverVessel) {
           created.dockedVesselId = hoverVessel.id;
@@ -530,10 +640,11 @@ export class LabWorkbenchCanvas {
       // 0. Check direct tubing port handles on Liebig Condenser (Inlet Left / Outlet Right)
       const portHit = this.findCondenserPortAt(pt.x, pt.y);
       if (portHit) {
-        this.sim.selectedId = portHit.cond.id;
+        this.setSelection([portHit.cond.id], portHit.cond.id);
         this.portDragState = {
           condId: portHit.cond.id,
           port: portHit.port,
+          side: portHit.side || null,
           startX: portHit.origin.x,
           startY: portHit.origin.y,
           x: pt.x,
@@ -548,11 +659,12 @@ export class LabWorkbenchCanvas {
 
       const hit = this.hitTestItem(pt.x, pt.y);
       this.hoverItemId = hit ? hit.id : null;
+      const isCtrl = Boolean(e.ctrlKey || e.metaKey);
 
       // In Magnifier Loupe mode at 1x, clicking zooms straight to 2.8x onto the inspected detail
       if (this.zoomMode && this.zoomScale <= 1.02) {
         if (hit) {
-          this.sim.selectedId = hit.id;
+          this.setSelection([hit.id], hit.id);
           if (this.callbacks.onSelect) this.callbacks.onSelect(hit);
           this.sim.emitChange();
         }
@@ -560,8 +672,40 @@ export class LabWorkbenchCanvas {
         return;
       }
 
+      if (isCtrl && !hit) {
+        // Ctrl+Drag on empty canvas starts Marquee Multi-Select Rectangle
+        this.marqueeState = {
+          startX: pt.x,
+          startY: pt.y,
+          x: pt.x,
+          y: pt.y,
+          baseSet: new Set(this.getSelectedIdSet()),
+        };
+        this.canvas.setPointerCapture(e.pointerId);
+        this.sim.emitChange();
+        return;
+      }
+
       if (hit) {
-        this.sim.selectedId = hit.id;
+        const curSel = this.getSelectedIdSet();
+        if (isCtrl) {
+          if (curSel.has(hit.id)) {
+            curSel.delete(hit.id);
+            const rem = Array.from(curSel);
+            this.setSelection(rem, rem[rem.length - 1] || null);
+            if (this.callbacks.onSelect) this.callbacks.onSelect(this.sim.getItem(this.sim.selectedId));
+            this.sim.emitChange();
+            return;
+          }
+          curSel.add(hit.id);
+          this.setSelection(curSel, hit.id);
+        } else if (!curSel.has(hit.id) || curSel.size <= 1) {
+          this.setSelection([hit.id], hit.id);
+        } else {
+          // Clicking inside existing multi-selection keeps group intact so drag moves all selected items together
+          this.sim.selectedId = hit.id;
+        }
+        const activeGroupIds = Array.from(this.getSelectedIdSet());
         hit.isDragging = true;
         hit.vy = 0;
         hit.fallStartY = hit.y;
@@ -581,6 +725,8 @@ export class LabWorkbenchCanvas {
           hit.kind === 'wash_bottle' ||
           hit.kind === 'burette' ||
           hit.kind === 'condenser' ||
+          hit.kind === 'rubber_stopper' ||
+          hit.kind === 'phen_cotton' ||
           hit.kind === 'splint' ||
           hit.kind === 'flame_loop' ||
           hit.kind === 'indicator_strip' ||
@@ -592,6 +738,10 @@ export class LabWorkbenchCanvas {
           this.sim.items = this.sim.items.filter((i) => i.id !== hit.id);
           this.sim.items.push(hit);
         }
+        const groupMembers = activeGroupIds
+          .map((gid) => this.sim.getItem(gid))
+          .filter(Boolean)
+          .map((g) => ({ item: g, startX: g.x, startY: g.y }));
         this.dragState = {
           itemId: hit.id,
           offsetX: pt.x - hit.x,
@@ -607,6 +757,7 @@ export class LabWorkbenchCanvas {
           targetTilt: 0,
           pourAlignFactor: 1.0,
           pouredMl: 0,
+          groupMembers,
         };
         this.canvas.setPointerCapture(e.pointerId);
         if (this.callbacks.onSelect) this.callbacks.onSelect(hit);
@@ -621,7 +772,7 @@ export class LabWorkbenchCanvas {
         this.canvas.style.cursor = 'grabbing';
         this.canvas.setPointerCapture(e.pointerId);
       } else {
-        this.sim.selectedId = null;
+        this.setSelection([], null);
         if (this.callbacks.onSelect) this.callbacks.onSelect(null);
         this.sim.emitChange();
       }
@@ -636,6 +787,8 @@ export class LabWorkbenchCanvas {
         this.sim.setElectrodeMaterial(hit.id, nextMat);
       } else if (hit && hit.kind === 'vessel' && APPARATUS[hit.typeId]?.hasLid) {
         this.sim.cycleCrucibleLid(hit.id);
+      } else if (hit && hit.kind === 'rubber_stopper') {
+        this.sim.setStopperMode(hit.id, hit.stopperMode === 'solid' ? 'holed' : 'solid');
       } else if (hit && hit.typeId === 'bunsen_burner') {
         this.sim.toggleBurnerAirHole(hit.id);
       } else if (hit && hit.kind === 'tongs') {
@@ -699,6 +852,26 @@ export class LabWorkbenchCanvas {
         return;
       }
 
+      if (this.marqueeState) {
+        this.marqueeState.x = pt.x;
+        this.marqueeState.y = pt.y;
+        const minX = Math.min(this.marqueeState.startX, pt.x);
+        const maxX = Math.max(this.marqueeState.startX, pt.x);
+        const minY = Math.min(this.marqueeState.startY, pt.y);
+        const maxY = Math.max(this.marqueeState.startY, pt.y);
+        const picked = new Set(this.marqueeState.baseSet || []);
+        for (const it of this.sim.items) {
+          const sp = APPARATUS[it.typeId] || { width: 48, height: 48 };
+          const hw = sp.width / 2;
+          const hh = (it.renderHeight || sp.height) / 2;
+          if (it.x + hw >= minX && it.x - hw <= maxX && it.y + hh >= minY && it.y - hh <= maxY) {
+            picked.add(it.id);
+          }
+        }
+        this.setSelection(picked);
+        this.canvas.style.cursor = 'crosshair';
+        return;
+      }
       if (!this.dragState) {
         const portHover = this.findCondenserPortAt(pt.x, pt.y);
         if (portHover) {
@@ -746,6 +919,28 @@ export class LabWorkbenchCanvas {
       item.y = nextY;
       item.vy = 0;
       item.fallStartY = item.y;
+
+      // Move all multi-selected peers along with dragged item when dragging a multi-selection
+      if (this.dragState.groupMembers && this.dragState.groupMembers.length > 1) {
+        for (const member of this.dragState.groupMembers) {
+          const peer = member.item;
+          if (!peer || peer.id === item.id) continue;
+          const pSpec = APPARATUS[peer.typeId] || { height: 60 };
+          peer.x = Math.max(40, Math.min(BENCH_LOGICAL_W - 40, peer.x + dxMove));
+          peer.y = Math.max(45, Math.min(BENCH_FLOOR_Y - (pSpec.height || 60) / 2 + 4, peer.y + dyMove));
+          peer.vy = 0;
+          peer.fallStartY = peer.y;
+          peer.restingOnId = null;
+        }
+      }
+
+      // Detach Rubber Stopper or Phen Cotton when pulled away from its vessel mouth (>16px)
+      if ((item.kind === 'rubber_stopper' || item.kind === 'phen_cotton') && item.attachedToId) {
+        if (Math.hypot(nextX - this.dragState.startX, nextY - this.dragState.startY) > 16) {
+          if (item.kind === 'rubber_stopper') this.sim.detachRubberStopper(item.id, { keepPos: true });
+          else this.sim.detachPhenCotton(item.id);
+        }
+      }
       if (
         item.kind === 'vessel' &&
         item.mountedOverElectrodeId &&
@@ -806,6 +1001,12 @@ export class LabWorkbenchCanvas {
       } else if (item.kind === 'stir_bar' || item.kind === 'electrode' || item.kind === 'filter_funnel') {
         const tgt = this.findVesselAt(item.x, item.y + 18, item.id, false);
         this.dropTargetVesselId = tgt && !tgt.isStoppered ? tgt.id : null;
+      } else if (item.kind === 'rubber_stopper' && !item.attachedToId) {
+        const mTgt = this.findMouthTargetAt(item.x, item.y, 'stopper');
+        this.dropTargetVesselId = mTgt ? mTgt.vessel.id : null;
+      } else if (item.kind === 'phen_cotton' && !item.attachedToId) {
+        const mTgt = this.findMouthTargetAt(item.x, item.y, 'cotton');
+        this.dropTargetVesselId = mTgt ? mTgt.vessel.id : null;
       } else if (item.kind === 'tongs') {
         const tip = getProbeTipPos(item);
         if (item.grippedVesselId) {
@@ -931,12 +1132,27 @@ export class LabWorkbenchCanvas {
         }
       }
 
-      this.callbacks.onExternalTabDragHover?.(e.clientX, e.clientY, item);
+      const dragItemsList = this.dragState?.groupMembers?.length > 1
+        ? this.dragState.groupMembers.map((m) => m.item).filter(Boolean)
+        : [item];
+      this.callbacks.onExternalTabDragHover?.(e.clientX, e.clientY, item, dragItemsList);
       this.sim.recomputeScaleReadings();
     });
 
     const endDrag = (e) => {
-      this.callbacks.onExternalTabDragHover?.(0, 0, null);
+      this.callbacks.onExternalTabDragHover?.(0, 0, null, null);
+      if (this.marqueeState) {
+        this.marqueeState = null;
+        this.canvas.style.cursor = 'default';
+        if (e?.pointerId != null && this.canvas.hasPointerCapture?.(e.pointerId)) {
+          try {
+            this.canvas.releasePointerCapture(e.pointerId);
+          } catch {}
+        }
+        this.callbacks.onSelect?.(this.sim.getItem(this.sim.selectedId));
+        this.sim.emitChange();
+        return;
+      }
       if (this.panDragState) {
         this.panDragState = null;
         this.canvas.style.cursor = this.zoomScale > 1.02 ? 'grab' : this.zoomMode ? 'zoom-in' : 'default';
@@ -981,12 +1197,14 @@ export class LabWorkbenchCanvas {
               (c) => c.kind === 'condenser' && !c.isBroken && Math.hypot(pd.x - c.x, pd.y - c.y) <= 85
             );
             if (pd.moved) {
+              const tSpec = vTgt ? APPARATUS[vTgt.typeId] : null;
+              const tgtSide = tSpec?.hasTwoEnds && vTgt ? (pd.x < vTgt.x ? 'left' : 'right') : null;
               if (syrTgt && !syrTgt.isBroken) {
-                this.sim.connectTube(src.id, syrTgt.id);
+                this.sim.connectTube(src.id, syrTgt.id, { side: pd.side });
               } else if (condTgt) {
-                this.sim.connectTube(src.id, condTgt.id);
+                this.sim.connectTube(src.id, condTgt.id, { side: pd.side });
               } else if (vTgt && !vTgt.isShattered && vTgt.id !== src.id) {
-                this.sim.connectTube(src.id, vTgt.id);
+                this.sim.connectTube(src.id, vTgt.id, { side: pd.side, targetSide: tgtSide });
               }
             } else if (src.connectedTargetId || src.connectedSyringeId) {
               this.sim.disconnectSyringe(src.id);
@@ -1006,14 +1224,27 @@ export class LabWorkbenchCanvas {
       try {
         const item = this.sim.getItem(this.dragState.itemId);
         const pipTargetId = this.dragState.pipetteTargetId;
-        if (item && this.callbacks.onDropToLabTab?.(e.clientX, e.clientY, item)) {
+        const dropItemsList = this.dragState.groupMembers?.length > 1
+          ? this.dragState.groupMembers.map((m) => m.item).filter(Boolean)
+          : item ? [item] : [];
+        if (item && this.callbacks.onDropToLabTab?.(e.clientX, e.clientY, item, dropItemsList)) {
           item.isDragging = false;
           if (item.tiltAngle !== undefined) item.tiltAngle = 0;
           return;
         }
         if (item) {
           item.isDragging = false;
-          if (item.kind === 'stir_bar') {
+          if (item.kind === 'rubber_stopper' && !item.attachedToId) {
+            const mTgt = this.findMouthTargetAt(item.x, item.y, 'stopper');
+            if (mTgt) {
+              this.sim.attachRubberStopper(item.id, mTgt.vessel.id, mTgt.side);
+            }
+          } else if (item.kind === 'phen_cotton' && !item.attachedToId) {
+            const mTgt = this.findMouthTargetAt(item.x, item.y, 'cotton');
+            if (mTgt) {
+              this.sim.attachPhenCotton(item.id, mTgt.vessel.id, mTgt.side);
+            }
+          } else if (item.kind === 'stir_bar') {
             const tgt = this.findVesselAt(item.x, item.y + 10, null, false);
             if (tgt && !tgt.isStoppered) {
               this.sim.insertStirBarIntoVessel(item.id, tgt.id, 800);
@@ -1037,7 +1268,7 @@ export class LabWorkbenchCanvas {
             }
           }
           item.fallStartY =
-            item.clampedToId || item.dockedVesselId || item.inVesselId || item.mountedOnVesselId
+            item.clampedToId || item.dockedVesselId || item.inVesselId || item.mountedOnVesselId || item.attachedToId
               ? null
               : item.y;
           item.vy = 0;
@@ -1429,6 +1660,7 @@ export class LabWorkbenchCanvas {
       ...this.sim.items.filter((i) => i.kind === 'scale' || i.kind === 'burner' || i.kind === 'clay_triangle' || i.kind === 'diffusion_tube'),
       ...this.sim.items.filter((i) => i.kind === 'gas_syringe' || i.kind === 'condenser' || i.kind === 'burette'),
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
+      ...this.sim.items.filter((i) => i.kind === 'rubber_stopper' || i.kind === 'phen_cotton'),
       ...this.sim.items.filter((i) => i.kind === 'filter_funnel' || i.kind === 'electrode' || i.kind === 'salt_bridge' || i.kind === 'stir_bar'),
       ...this.sim.items.filter((i) => i.kind === 'pipette' || i.kind === 'wash_bottle' || i.kind === 'splint' || i.kind === 'flame_loop' || i.kind === 'indicator_strip' || i.kind === 'tongs' || i.kind === 'spoon'),
     ];
@@ -1436,8 +1668,9 @@ export class LabWorkbenchCanvas {
     renderDcPowerAndWires(ctx, this.sim.items, this.sim.selectedId, this.isDark);
     renderVoltAmmeterAndWires(ctx, this.sim.items, this.sim.selectedId, this.isDark);
 
+    const selectedSet = this.getSelectedIdSet();
     for (const item of ordered) {
-      const isSelected = item.id === this.sim.selectedId;
+      const isSelected = item.id === this.sim.selectedId || selectedSet.has(item.id);
       const isPickCandidate = Boolean(this.pickState?.candidateIds?.has(item.id));
       const isDropTgt = item.id === this.dropTargetVesselId || (isPickCandidate && item.id === this.hoverItemId);
       setCurrentLabelItemId(item.id);
@@ -1490,6 +1723,11 @@ export class LabWorkbenchCanvas {
         renderElectrodeRod(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'salt_bridge') {
         renderSaltBridge(ctx, item, this.sim.items, isSelected, this.isDark, timeNow, this.langCode);
+      } else if (item.kind === 'rubber_stopper') {
+        const hostV = item.attachedToId ? this.sim.getItem(item.attachedToId) : null;
+        renderRubberStopper(ctx, item, isSelected, this.isDark, hostV);
+      } else if (item.kind === 'phen_cotton') {
+        renderPhenCotton(ctx, item, isSelected, this.isDark);
       }
 
       if (item.clampedToId) {
@@ -1672,6 +1910,22 @@ export class LabWorkbenchCanvas {
         ctx.fill();
         ctx.stroke();
       }
+      ctx.restore();
+    }
+
+    // 6b. Marquee Multi-Select Rectangle Overlay (Ctrl+Drag)
+    if (this.marqueeState) {
+      const mx = Math.min(this.marqueeState.startX, this.marqueeState.x);
+      const my = Math.min(this.marqueeState.startY, this.marqueeState.y);
+      const mw = Math.abs(this.marqueeState.x - this.marqueeState.startX);
+      const mh = Math.abs(this.marqueeState.y - this.marqueeState.startY);
+      ctx.save();
+      ctx.fillStyle = 'rgba(59, 130, 246, 0.14)';
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([5, 3]);
+      ctx.fillRect(mx, my, mw, mh);
+      ctx.strokeRect(mx, my, mw, mh);
       ctx.restore();
     }
 

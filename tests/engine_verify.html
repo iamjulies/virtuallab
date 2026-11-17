@@ -27,6 +27,7 @@
       getProbeTipPos,
       getStandGeometry,
       getSyringeGeometry,
+      getVesselEndPorts,
       getVesselTubingPort,
     } from '../src/data/apparatus.js';
     import {
@@ -37,6 +38,7 @@
       SPECIES,
       STARTER_REAGENTS,
       getGasRelativeAirDensity,
+      isSolidMoltenAtTemp,
     } from '../src/data/species.js';
     import { REACTIONS } from '../src/data/reactions.js';
     import {
@@ -2429,7 +2431,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.2';
+      const expectedBuild = 'virlab_beta_v3+build.3';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2452,6 +2454,9 @@
         Boolean(I18N.vi.eq_bunsen_burner && I18N.en.eq_bunsen_burner) &&
         Boolean(I18N.vi.eq_crucible_porcelain && I18N.en.eq_crucible_porcelain) &&
         Boolean(I18N.vi.eq_quartz_tube && I18N.en.eq_quartz_tube) &&
+        Boolean(I18N.vi.eq_quartz_u_tube && I18N.en.eq_quartz_u_tube) &&
+        Boolean(I18N.vi.eq_rubber_stopper && I18N.en.eq_rubber_stopper) &&
+        Boolean(I18N.vi.eq_phen_cotton && I18N.en.eq_phen_cotton) &&
         Boolean(I18N.vi.eq_crucible_tongs && I18N.en.eq_crucible_tongs) &&
         Boolean(I18N.vi.eq_iron_spoon && I18N.en.eq_iron_spoon) &&
         Boolean(I18N.vi.alertGlassSoftenMelt && I18N.en.alertGlassSoftenMelt) &&
@@ -2459,8 +2464,8 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v3+build.2 parity: All 33 apparatus translated in VI/EN, all beta_v3 keys present, IUPAC spellings enforced',
-        APPARATUS_ORDER.length === 33 &&
+        'Build virlab_beta_v3+build.3 parity: All 36 apparatus translated in VI/EN, all beta_v3 keys present, IUPAC spellings enforced',
+        APPARATUS_ORDER.length === 36 &&
           allTranslated &&
           newKeysPresent &&
           I18N.vi.appSubtitle.includes(expectedBuild) &&
@@ -4548,6 +4553,297 @@
           cuoLeft < 0.005 &&
           validateVesselInvariants(bCuO).valid,
         `scoop=${scooped}, zn0=${(znOnSpoonBefore*1000).toFixed(1)}mmol, znoSpoon=${(znoOnSpoon*1000).toFixed(1)}(${spoonBurnedCyan}), znoDst=${(znoInDst*1000).toFixed(1)}, ports=${hitVPort?.port}/${hitSyrPort?.port}, Cu2+=${(cu2Formed*1000).toFixed(1)}mmol(CuO_left=${(cuoLeft*1000).toFixed(1)})`
+      );
+    }
+
+    // TEST 98: Flame Loop Ca2+ Brick-Red (622 nm) Sampling & Alcohol/Bunsen Burner Emission + Na+ Spectral Masking
+    {
+      const simF = new LabSimulation();
+      const bCa = simF.createApparatus('beaker_250', 220, 427);
+      bCa.moles = { H2O_l: 1.5, Ca2_aq: 0.25, Cl_aq: 0.5 };
+      const bnAlc = simF.createApparatus('burner', 420, 426);
+      simF.setBurnerFlame(bnAlc.id, 3);
+      const bnBun = simF.createApparatus('bunsen_burner', 620, 428);
+      simF.setBurnerFlame(bnBun.id, 3);
+
+      const loop = simF.createApparatus('flame_loop', 270, 427); // tip inside bCa
+      simF.step(0.05);
+      const sampledCa = loop.sampledIon;
+
+      // Move over Alcohol burner
+      loop.x = 470;
+      loop.y = bnAlc.y - APPARATUS.burner.height / 2 - 16;
+      simF.step(0.05);
+      const alcColor = bnAlc.flameTestColor;
+      const alcIon = bnAlc.flameTestIon;
+
+      // Move over Bunsen burner
+      loop.x = 670;
+      loop.y = bnBun.y + APPARATUS.bunsen_burner.height / 2 - 86;
+      simF.step(0.05);
+      const bunColor = bnBun.flameTestColor;
+      const bunIon = bnBun.flameTestIon;
+
+      // Check Na+ masks Ca2+
+      bCa.moles.Na_aq = 0.05;
+      loop.x = 270;
+      loop.y = 427;
+      simF.step(0.05);
+      const maskedIon = loop.sampledIon;
+      const maskedLabel = loop.sampleLabel;
+
+      assert(
+        'Flame Loop samples Ca2+ (CaCl2/Ca2_aq), emits brick-red (#ef4444) on Alcohol & Bunsen burners, and Na+ masks Ca2+',
+        sampledCa === 'Ca²⁺' &&
+          alcIon === 'Ca²⁺' &&
+          alcColor === '#ef4444' &&
+          bunIon === 'Ca²⁺' &&
+          bunColor === '#ef4444' &&
+          maskedIon === 'Na⁺' &&
+          maskedLabel.includes('Ca²⁺'),
+        `sampled=${sampledCa}, alc=${alcIon}(${alcColor}), bun=${bunIon}(${bunColor}), masked=${maskedLabel}`
+      );
+    }
+
+    // TEST 99: CuSO4 Direct Thermal Decomp (>620 °C -> CuO + SO3(g) -> H2SO4) & NaOH 318 °C Melt -> 1388 °C Na2O(s) + H2O(g)
+    {
+      const simT = new LabSimulation();
+      // A: Anhydrous CuSO4 has no melt, decomposes above 620 °C cleanly via Quartz Tube -> H2O beaker
+      const qCu = simT.createApparatus('quartz_tube', 240, 340);
+      qCu.moles = { CuSO4_s: 0.02 };
+      const bWater = simT.createApparatus('beaker_250', 480, 427);
+      bWater.moles = { H2O_l: 3.0 };
+      simT.connectTube(qCu.id, bWater.id);
+      const dryNotMoltenLow = !isSolidMoltenAtTemp(SPECIES.CuSO4_s, 860, qCu.moles);
+      const dryNotMoltenHigh = !isSolidMoltenAtTemp(SPECIES.CuSO4_s, 1100, qCu.moles);
+      qCu.tempK = 930; // 657 °C > 620 °C
+      for (let i = 0; i < 120; i++) {
+        qCu.tempK = 930;
+        simT.step(0.05);
+      }
+      const cuoMade = qCu.moles.CuO_s || 0;
+      const so4InBeaker = bWater.moles.SO4_2_aq || 0;
+      const hInBeaker = bWater.moles.H_aq || 0;
+
+      // B: Dry NaOH in Porcelain Crucible over roaring Blue Bunsen reaches >=1665 K, melts cleanly >318 °C without premature boil, then forms Na2O(s)
+      const bnNaOH = simT.createApparatus('bunsen_burner', 740, 428);
+      bnNaOH.airHoleOpen = true;
+      simT.setBurnerFlame(bnNaOH.id, 3);
+      simT.createApparatus('clay_triangle', 740, 396);
+      const crucNaOH = simT.createApparatus('crucible_porcelain', 740, 366);
+      crucNaOH.moles = { NaOH_s: 0.04 };
+      const naohSolid25 = !isSolidMoltenAtTemp(SPECIES.NaOH_s, 300, crucNaOH.moles);
+      const naohMolten350 = isSolidMoltenAtTemp(SPECIES.NaOH_s, 623.15, crucNaOH.moles);
+      crucNaOH.tempK = 1400; // Intact molten NaOH at 1127 °C
+      stepSeconds(simT, 1.5, 0.05);
+      const intactAt1127 = (crucNaOH.moles.NaOH_s || 0) > 0.039 && !(crucNaOH.moles.Na2O_s > 0);
+      simT.updateSupportAttachments();
+      let peakCrucT = crucNaOH.tempK;
+      for (let i = 0; i < 640; i++) {
+        simT.step(0.05);
+        if (crucNaOH.tempK > peakCrucT) peakCrucT = crucNaOH.tempK;
+      }
+      const na2oMade = crucNaOH.moles.Na2O_s || 0;
+
+      assert(
+        'CuSO4 decomposes >620°C to CuO + SO3(g)->H2SO4 without melting; NaOH melts at 318°C, stays intact at 1127°C, and Bunsen reaches >=1388°C forming Na2O(s)',
+        dryNotMoltenLow &&
+          dryNotMoltenHigh &&
+          cuoMade > 0.015 &&
+          so4InBeaker > 0.015 &&
+          hInBeaker > 0.03 &&
+          naohSolid25 &&
+          naohMolten350 &&
+          intactAt1127 &&
+          peakCrucT >= 1661.15 &&
+          na2oMade > 0.012 &&
+          !crucNaOH.isShattered,
+        `CuO=${(cuoMade*1000).toFixed(1)}mmol, SO4=${(so4InBeaker*1000).toFixed(1)}, H+=${(hInBeaker*1000).toFixed(1)}, peakT=${peakCrucT.toFixed(1)}K, Na2O=${(na2oMade*1000).toFixed(1)}mmol`
+      );
+    }
+
+    // TEST 100: AgNO3 Melt (212 °C) -> Thermal Decomp (250–440 °C -> Ag + NO2 + O2) & Solid Thermal Registry
+    {
+      const simAg = new LabSimulation();
+      const qAg = simAg.createApparatus('quartz_tube', 260, 340);
+      qAg.moles = { AgNO3_s: 0.02 };
+      // Hold at 225 °C (498.15 K): melts cleanly (485.15 K <= T < 523.15 K) with ZERO premature NO2 decomp!
+      qAg.tempK = 498.15;
+      for (let i = 0; i < 30; i++) {
+        qAg.tempK = 498.15;
+        simAg.step(0.05);
+      }
+      const moltenAt225 = isSolidMoltenAtTemp(SPECIES.AgNO3_s, 498.15, qAg.moles);
+      const agNoDecompAt225 = (qAg.moles.AgNO3_s || 0) > 0.0199 && (qAg.moles.Ag_s || 0) === 0;
+
+      // Raise to 360 °C (633.15 K) -> decomposes cleanly into Ag(s) + NO2(g) + O2(g)
+      for (let i = 0; i < 120; i++) {
+        qAg.tempK = 633.15;
+        simAg.step(0.05);
+      }
+      const agMetal = qAg.moles.Ag_s || 0;
+      const no2Esc = qAg.escapedGasMoles.NO2_g || 0;
+      const o2Esc = qAg.escapedGasMoles.O2_g || 0;
+
+      const thermalMetaOk =
+        Math.abs(SPECIES.NaCl_s.meltTempK - 1074.15) < 1 &&
+        Math.abs(SPECIES.AgCl_s.meltTempK - 728.15) < 1 &&
+        SPECIES.AgCl_s.moltenColor === '#fcd34d' &&
+        Math.abs(SPECIES.CaCl2_s.meltTempK - 1045.15) < 1 &&
+        SPECIES.CaCO3_s.noMelt === true;
+
+      assert(
+        'AgNO3 melts cleanly at 212°C without premature decomp below 250°C, decomposes at 360°C -> Ag + NO2 + O2; solid thermal metadata valid',
+        moltenAt225 &&
+          agNoDecompAt225 &&
+          agMetal > 0.015 &&
+          no2Esc > 0.015 &&
+          o2Esc > 0.007 &&
+          thermalMetaOk,
+        `molten225=${moltenAt225}, intact225=${agNoDecompAt225}, Ag=${(agMetal*1000).toFixed(1)}mmol, NO2=${(no2Esc*1000).toFixed(1)}, O2=${(o2Esc*1000).toFixed(1)}`
+      );
+    }
+
+    // TEST 101: Horizontal Quartz Tube Bidirectional Venting & Gravity Liquid Drain vs U-Shaped Quartz Tube
+    {
+      const simQ = new LabSimulation();
+      // A: Open horizontal quartz_tube drains liquid by gravity while retaining solids & venting gases from both open ends
+      const hTube = simQ.createApparatus('quartz_tube', 260, 320);
+      hTube.moles = { H2O_l: 1.5, Na_aq: 0.05, Cl_aq: 0.05, CaCO3_s: 0.02 };
+      hTube.tempK = 1150; // Hot CaCO3 calcining inside unstoppered tube
+      stepSeconds(simQ, 1.5, 0.05);
+      const liqDrainedH = (hTube.moles.H2O_l || 0) < 0.02;
+      const solidKeptH = (hTube.moles.CaCO3_s || 0) + (hTube.moles.CaO_s || 0) > 0.019;
+      const bothEndsOpen = Boolean(hTube._openLeftEnd && hTube._openRightEnd);
+
+      // Stopper LEFT end only -> only RIGHT end vents!
+      simQ.toggleStopper(hTube.id, 'left');
+      stepSeconds(simQ, 0.2, 0.05);
+      const onlyRightOpen = Boolean(!hTube._openLeftEnd && hTube._openRightEnd && !hTube.isStoppered);
+
+      // B: U-Shaped Quartz Tube retains water even unstoppered, exposes 2 end ports & routes gas when 1 end plugged + 1 connected
+      const uTube = simQ.createApparatus('quartz_u_tube', 640, 360);
+      uTube.moles = { H2O_l: 2.0, Na_aq: 0.1, OH_aq: 0.1, CaCO3_s: 0.015 };
+      const uEnds = getVesselEndPorts(uTube);
+      stepSeconds(simQ, 1.5, 0.05);
+      const liqKeptU = (uTube.moles.H2O_l || 0) > 1.9;
+      const uHolesWork = Boolean(uEnds?.left && uEnds?.right && uEnds.left.x < uEnds.right.x);
+
+      assert(
+        'Open Quartz Tube drains liquids while keeping solids and vents open end(s); U-Shaped Quartz Tube holds liquids with dual Left/Right ports',
+        liqDrainedH && solidKeptH && bothEndsOpen && onlyRightOpen && liqKeptU && uHolesWork,
+        `liqDrained=${liqDrainedH}, solidKept=${solidKeptH}, bothOpen=${bothEndsOpen}, rightOnly=${onlyRightOpen}, liqKeptU=${liqKeptU}, portsOK=${uHolesWork}`
+      );
+    }
+
+    // TEST 102: Physical Rubber Stopper & Phenolphthalein Cotton Apparatus (+Inspector -2 Action Buttons Removed)
+    {
+      const simR = new LabSimulation();
+      const erl = simR.createApparatus('erlenmeyer_250', 220, 405);
+      const stopper = simR.createApparatus('rubber_stopper', 220, 320);
+      simR.attachRubberStopper(stopper.id, erl.id, 'main');
+      const attachedStop = stopper.attachedToId === erl.id && erl.isStoppered;
+
+      // Switch stopper to 'solid' -> suppresses tubing port discovery!
+      simR.setStopperMode(stopper.id, 'solid');
+      const cWrap = document.createElement('div');
+      const cvs = document.createElement('canvas');
+      cWrap.appendChild(cvs);
+      document.body.appendChild(cWrap);
+      const wb = new LabWorkbenchCanvas(cvs, simR, new ParticleSystem());
+      const vPortSolid = wb.findCondenserPortAt(erl.x, erl.y - APPARATUS.erlenmeyer_250.height / 2 - 8);
+      simR.setStopperMode(stopper.id, 'holed');
+      const vPortHoled = wb.findCondenserPortAt(erl.x, erl.y - APPARATUS.erlenmeyer_250.height / 2 - 8);
+      cWrap.remove();
+
+      // Unplug stopper -> vessel opens -> attach phen_cotton & expose NH3_g -> turns pink!
+      simR.detachRubberStopper(stopper.id);
+      const unpluggedOk = !erl.isStoppered && !stopper.attachedToId;
+
+      const cotton = simR.createApparatus('phen_cotton', 220, 320);
+      simR.attachPhenCotton(cotton.id, erl.id, 'main');
+      erl.moles = { H2O_l: 1.5, NH3_aq: 2.5 };
+      erl.tempK = 355;
+      stepSeconds(simR, 2.5, 0.05);
+      const cottonPink = cotton.pinkLevel > 0.5 && erl.phenCottonLevel > 0.5;
+
+      // Verify vessel Inspector removed #ins-stopper & #ins-phen-cotton
+      const insDiv = document.createElement('div');
+      document.body.appendChild(insDiv);
+      const insp = new InspectorPanel(insDiv, simR, () => (k) => I18N.en[k] || k, {});
+      simR.selectedId = erl.id;
+      insp.update('en', true);
+      const hasLegacyStopBtn = Boolean(insDiv.querySelector('#ins-stopper'));
+      const hasLegacyCottonBtn = Boolean(insDiv.querySelector('#ins-phen-cotton'));
+      insDiv.remove();
+
+      assert(
+        'Rubber Stopper (1-Hole vs Solid) & Phen Cotton work as standalone apparatus with canvas mount/unplug & NH3 pink test; Vessel Inspector removed legacy buttons',
+        attachedStop &&
+          vPortSolid === null &&
+          vPortHoled?.port === 'stopper' &&
+          unpluggedOk &&
+          cottonPink &&
+          !hasLegacyStopBtn &&
+          !hasLegacyCottonBtn,
+        `attached=${attachedStop}, solidPort=${Boolean(vPortSolid)}, holedPort=${vPortHoled?.port}, unplugged=${unpluggedOk}, pink=${cotton.pinkLevel.toFixed(2)}, legacyBtns=${hasLegacyStopBtn}/${hasLegacyCottonBtn}`
+      );
+    }
+
+    // TEST 103: Multi-Select (Marquee / Select All), Copy/Paste (Apparatus-Only Without Chemicals) & Render Validation
+    {
+      const lm = new LabManager();
+      const simM = lm.getActiveSim();
+      simM.setupPreset('clean');
+      const v1 = simM.createApparatus('beaker_250', 220, 427);
+      v1.moles = { H2O_l: 3.0, Cu2_aq: 0.1, SO4_2_aq: 0.1 }; // Filled with CuSO4 solution!
+      const v2 = simM.createApparatus('crucible_porcelain', 420, 455);
+      v2.lidState = 'closed';
+      v2.moles = { AgNO3_s: 0.05 };
+      const st = simM.createApparatus('rubber_stopper', 540, 468);
+      st.stopperMode = 'solid';
+
+      // Verify Copy/Paste copies ALL 3 items structurally with ZERO chemicals inside!
+      const copiedN = lm.copyItems([v1.id, v2.id, st.id], simM);
+      const pastedList = lm.pasteItems(simM);
+      const pBeaker = pastedList.find((p) => p.typeId === 'beaker_250');
+      const pCruc = pastedList.find((p) => p.typeId === 'crucible_porcelain');
+      const pStop = pastedList.find((p) => p.typeId === 'rubber_stopper');
+      const noChemsCopied =
+        pBeaker &&
+        Object.keys(pBeaker.moles || {}).length === 0 &&
+        pCruc &&
+        Object.keys(pCruc.moles || {}).length === 0 &&
+        pCruc.lidState === 'closed' &&
+        pStop?.stopperMode === 'solid';
+
+      // Verify Marquee bounding selection & Molten/U-Tube/Stopper/Cotton Canvas render
+      const pU = simM.createApparatus('quartz_u_tube', 760, 380);
+      pU.moles = { AgCl_s: 0.05 };
+      pU.tempK = 760; // Molten amber AgCl!
+
+      const cWrap = document.createElement('div');
+      cWrap.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:448px;pointer-events:none;opacity:0.01;';
+      const cvs = document.createElement('canvas');
+      cvs.style.cssText = 'width:800px;height:448px;display:block;';
+      cWrap.appendChild(cvs);
+      document.body.appendChild(cWrap);
+      const wbM = new LabWorkbenchCanvas(cvs, simM, new ParticleSystem());
+      wbM.resize();
+      wbM.marqueeState = { startX: 150, startY: 320, x: 600, y: 490 };
+      wbM.setSelection(new Set([v1.id, v2.id, st.id]), v1.id);
+      wbM.render(1.0);
+      cWrap.remove();
+
+      assert(
+        'Multi-Select (selectedIds + Marquee) & Copy/Paste duplicate apparatus settings without chemicals; Canvas renders molten solids, U-Tube & marquee cleanly',
+        copiedN === 3 &&
+          pastedList.length === 3 &&
+          noChemsCopied &&
+          simM.selectedIds.size === 3 &&
+          validateVesselInvariants(pBeaker).valid &&
+          validateVesselInvariants(pU).valid,
+        `copied=${copiedN}, pasted=${pastedList.length}, cleanChems=${noChemsCopied}, selSize=${simM.selectedIds.size}`
       );
     }
 

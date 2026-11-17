@@ -664,6 +664,13 @@ button:disabled {
   transform: translateY(-1px);
 }
 
+.panel-card.shelf-discard-target {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.35), inset 0 0 24px rgba(239, 68, 68, 0.14);
+  background-color: rgba(239, 68, 68, 0.08);
+  transition: all 0.14s ease;
+}
+
 .lab-tab-close {
   display: inline-flex;
   align-items: center;

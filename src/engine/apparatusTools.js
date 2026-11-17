@@ -1,4 +1,4 @@
-import { APPARATUS, getCondenserPorts, getProbeTipPos } from '../data/apparatus.js';
+import { APPARATUS, getCondenserPorts, getProbeTipPos, getVesselEndPorts } from '../data/apparatus.js';
 import { CONSTANTS } from '../data/constants.js';
 import { SPECIES, createZeroGasMap } from '../data/species.js';
 import {
@@ -681,22 +681,46 @@ export function checkFlameLoopInteractions(sim, loop) {
   if (!loop || loop.kind !== 'flame_loop') return;
   const { x: tipX, y: tipY } = getProbeTipPos(loop);
 
-  // 1. Sample from vessel interior/liquid
+  // 1. Sample from vessel or deflagrating spoon interior/liquid
   for (const v of sim.items) {
-    if (v.kind !== 'vessel' || v.isShattered) continue;
+    if ((v.kind !== 'vessel' && v.kind !== 'spoon') || v.isShattered) continue;
     const spec = APPARATUS[v.typeId];
-    if (Math.abs(tipX - v.x) <= spec.width * 0.48 && Math.abs(tipY - v.y) <= spec.height * 0.52) {
-      if (v.isSupersaturated) {
+    const inSpoonBowl =
+      v.kind === 'spoon' && Math.hypot(tipX - (v.x + (v.flippedX ? 48 : -48)), tipY - (v.y + 4)) <= 26;
+    const inVessel =
+      v.kind === 'vessel' &&
+      Math.abs(tipX - v.x) <= spec.width * 0.48 &&
+      Math.abs(tipY - v.y) <= spec.height * 0.52;
+    if (inVessel || inSpoonBowl) {
+      if (v.kind === 'vessel' && v.isSupersaturated) {
         v.crystallizeTriggered = true;
       }
-      const hasNa = (v.moles.Na_aq || 0) + (v.moles.Na_s || 0) + (v.moles.NaOH_s || 0) + (v.moles.NaCl_s || 0) > 1e-6;
-      const hasCu = (v.moles.Cu2_aq || 0) + (v.moles.CuCl4_2_aq || 0) + (v.moles.CuSO4_5H2O_s || 0) + (v.moles.CuCl2_s || 0) > 1e-6;
+      const m = v.moles || {};
+      const hasNa =
+        (m.Na_aq || 0) + (m.Na_s || 0) + (m.NaOH_s || 0) + (m.NaCl_s || 0) +
+        (m.Na2CO3_s || 0) + (m.NaHCO3_s || 0) + (m.Na2SO4_s || 0) + (m.NaNO3_s || 0) +
+        (m.Na2O_s || 0) + (m.Na2O2_s || 0) > 1e-6;
+      const hasCa =
+        (m.Ca2_aq || 0) + (m.CaCl2_s || 0) + (m.CaNO3_2_s || 0) + (m.CaCO3_s || 0) +
+        (m.CaO_s || 0) + (m.CaOH2_s || 0) + (m.CaSO4_s || 0) > 1e-6;
+      const hasCu =
+        (m.Cu2_aq || 0) + (m.CuCl4_2_aq || 0) + (m.CuNH3_4_2_aq || 0) + (m.CuOH4_2_aq || 0) +
+        (m.CuSO4_5H2O_s || 0) + (m.CuSO4_s || 0) + (m.CuCl2_s || 0) + (m.CuNO3_2_s || 0) +
+        (m.CuCO3_s || 0) + (m.CuO_s || 0) + (m.CuOH2_s || 0) > 1e-6;
       if (hasNa) {
-        // Exp 17: 589 nm Na D-doublet quantum emission overwhelms & completely masks emerald Cu2+ green!
+        // Exp 17: 589 nm Na D-doublet quantum emission overwhelms & masks weaker Cu2+ / Ca2+ bands
         loop.sampledIon = 'Na⁺';
         loop.sampledColor = '#facc15';
-        loop.sampleLabel = hasCu ? 'Na⁺ (che Cu²⁺)' : 'Na⁺';
-        loop.maskedCuByNa = hasCu;
+        const maskedLabel =
+          hasCu && hasCa ? 'Na⁺ (che Ca²⁺, Cu²⁺)' : hasCu ? 'Na⁺ (che Cu²⁺)' : hasCa ? 'Na⁺ (che Ca²⁺)' : 'Na⁺';
+        loop.sampleLabel = maskedLabel;
+        loop.maskedCuByNa = hasCu || hasCa;
+        loop.maskedTargetName = hasCa && !hasCu ? 'Ca²⁺' : 'Cu²⁺';
+      } else if (hasCa) {
+        loop.sampledIon = 'Ca²⁺';
+        loop.sampledColor = '#ef4444';
+        loop.sampleLabel = 'Ca²⁺ (Đỏ gạch · 622 nm)';
+        loop.maskedCuByNa = false;
       } else if (hasCu) {
         loop.sampledIon = 'Cu²⁺';
         loop.sampledColor = '#10b981';
@@ -706,33 +730,47 @@ export function checkFlameLoopInteractions(sim, loop) {
     }
   }
 
-  // 2. Apply emission spectrum onto lit Alcohol Burner when loop tip enters flame
+  // 2. Apply emission spectrum onto lit Alcohol / Bunsen Burner when loop tip enters flame
   if (loop.sampledIon) {
     for (const b of sim.items) {
       if (b.kind !== 'burner' || (b.powerW || 0) <= 10) continue;
-      const flameY = b.y - APPARATUS.burner.height / 2 - 16;
-      if (Math.hypot(tipX - b.x, tipY - flameY) <= 46) {
+      const bSpec = APPARATUS[b.typeId] || APPARATUS.burner;
+      const flameY =
+        b.typeId === 'bunsen_burner'
+          ? b.y + bSpec.height / 2 - 86
+          : b.y - bSpec.height / 2 - 16;
+      const hitR = b.typeId === 'bunsen_burner' ? 54 : 46;
+      if (Math.hypot(tipX - b.x, tipY - flameY) <= hitR) {
         b.flameTestTimer = 1.8;
         b.flameTestColor = loop.sampledColor;
         b.flameTestIon = loop.sampledIon;
         if ((loop.logCooldown || 0) <= 0) {
           loop.logCooldown = 5.0;
+          const maskedTgt = loop.maskedTargetName || 'Cu²⁺';
           sim.addLog({
             type: 'reaction',
             equation: loop.maskedCuByNa
-              ? 'Na⁺* (589 nm) >> Cu²⁺* (510 nm) → Che lấp quang phổ vàng rực!'
+              ? `Na⁺* (589 nm) >> ${maskedTgt}* → Che lấp quang phổ vàng rực!`
               : `${loop.sampledIon}* → ${loop.sampledIon} + hν (${loop.sampleLabel})`,
             nameVi: loop.maskedCuByNa
-              ? 'Thử màu ngọn lửa: Na⁺ (589 nm) che lấp hoàn toàn màu xanh Cu²⁺'
+              ? `Thử màu ngọn lửa: Na⁺ (589 nm) che lấp hoàn toàn màu ${maskedTgt}`
+              : loop.sampledIon === 'Ca²⁺'
+              ? 'Thử màu ngọn lửa: Ion Ca²⁺ phát quang đỏ gạch (622 nm)'
               : `Thử màu ngọn lửa: Ion ${loop.sampledIon} phát quang đặc trưng`,
             nameEn: loop.maskedCuByNa
-              ? 'Flame Test Spectral Masking: Trace Na⁺ (589 nm) masks emerald Cu²⁺!'
+              ? `Flame Test Spectral Masking: Trace Na⁺ (589 nm) masks ${maskedTgt}!`
+              : loop.sampledIon === 'Ca²⁺'
+              ? 'Flame Test: Ca²⁺ emits characteristic brick-red (622 nm) flame'
               : `Flame Test: Characteristic ${loop.sampleLabel} emission`,
             descVi: loop.maskedCuByNa
-              ? 'Vạch D vàng của Sodium (589 nm) có cường độ lượng tử vượt trội làm khuất hoàn toàn ánh xanh lục của Copper.'
-              : `Ion ${loop.sampledIon} kích thích nhiệt trong ngọn lửa đèn cồn phát xạ bước sóng đặc trưng.`,
+              ? `Vạch D vàng của Sodium (589 nm) có cường độ lượng tử vượt trội làm khuất hoàn toàn ánh phát xạ của ${maskedTgt}.`
+              : loop.sampledIon === 'Ca²⁺'
+              ? 'Ion Ca²⁺ bị kích thích nhiệt trong ngọn lửa phát ra dải quang phổ đỏ gạch / da cam đặc trưng (~622 nm).'
+              : `Ion ${loop.sampledIon} kích thích nhiệt trong ngọn lửa đèn cồn/Bunsen phát xạ bước sóng đặc trưng.`,
             descEn: loop.maskedCuByNa
-              ? 'Intense 589 nm Sodium D-line emission overwhelms and masks the weaker green Copper flame band.'
+              ? `Intense 589 nm Sodium D-line emission overwhelms and masks the weaker ${maskedTgt} flame band.`
+              : loop.sampledIon === 'Ca²⁺'
+              ? 'Thermally excited Ca²⁺ (CaOH* band ~622 nm) produces a brilliant brick-red flame coloration.'
               : `Thermal excitation of ${loop.sampledIon} emits its characteristic atomic flame line.`,
             vesselLabel: `${loop.label} → ${b.label}`,
           });
@@ -919,6 +957,67 @@ export function syncDockedToolPositions(sim) {
   }
 }
 
+export function checkPhenCottonInteractions(sim, cotton, dt) {
+  if (!cotton || cotton.kind !== 'phen_cotton') return;
+  const damp = Math.max(0.2, Math.min(1.0, cotton.dampness ?? 0.85));
+  let nh3Hit = false;
+  let acidHit = false;
+  const sideBias = cotton.attachedSide;
+  const attachedV = cotton.attachedToId ? sim.getItem(cotton.attachedToId) : null;
+
+  const checkVesselGas = (v, rx, ry) => {
+    if (!v || v.kind !== 'vessel' || v.isShattered) return;
+    const rateMap = v.lastGasRateMap || {};
+    const nNH3 = rateMap.NH3_g || 0;
+    const nHCl = (rateMap.HCl_g || 0) + (rateMap.SO3_g || 0);
+    if (nNH3 <= 1e-6 && nHCl <= 1e-6) return;
+    if (Math.hypot(cotton.x - rx, cotton.y - ry) <= 60) {
+      if (nNH3 > 1e-6) nh3Hit = true;
+      if (nHCl > 1e-6) acidHit = true;
+    }
+  };
+
+  if (attachedV && !attachedV.isShattered) {
+    const aSpec = APPARATUS[attachedV.typeId] || APPARATUS.beaker_250;
+    const ends = aSpec.hasTwoEnds ? getVesselEndPorts(attachedV) : null;
+    const isSideOpen = ends
+      ? (sideBias === 'left' ? !attachedV.leftStoppered : !attachedV.rightStoppered)
+      : !attachedV.isStoppered;
+    if (isSideOpen) {
+      const rateMap = attachedV.lastGasRateMap || {};
+      if ((rateMap.NH3_g || 0) > 1e-6) nh3Hit = true;
+      if ((rateMap.HCl_g || 0) + (rateMap.SO3_g || 0) > 1e-6) acidHit = true;
+    }
+  } else {
+    for (const v of sim.items) {
+      if (v.kind !== 'vessel' || v.isShattered) continue;
+      const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+      if (spec.hasTwoEnds) {
+        const ends = getVesselEndPorts(v);
+        if (ends?.left && !v.leftStoppered) checkVesselGas(v, ends.left.mouthX, ends.left.mouthY);
+        if (ends?.right && !v.rightStoppered) checkVesselGas(v, ends.right.mouthX, ends.right.mouthY);
+      } else if (!v.isStoppered) {
+        const mouthY = v.isInverted ? v.y + spec.height / 2 : v.y - spec.height / 2;
+        checkVesselGas(v, v.x, mouthY);
+      }
+    }
+  }
+
+  if (nh3Hit) {
+    cotton.pinkLevel = Math.min(1.0, (cotton.pinkLevel || 0) + dt * (2.4 * damp));
+  } else if (acidHit) {
+    cotton.pinkLevel = Math.max(0, (cotton.pinkLevel || 0) - dt * 2.8);
+  } else {
+    cotton.pinkLevel = Math.max(0, (cotton.pinkLevel || 0) - dt * 0.035);
+  }
+
+  if (attachedV && !attachedV.isShattered) {
+    if (sideBias === 'left') attachedV.phenCottonLeftLevel = cotton.pinkLevel;
+    else if (sideBias === 'right') attachedV.phenCottonRightLevel = cotton.pinkLevel;
+    else attachedV.phenCottonLevel = cotton.pinkLevel;
+  }
+}
+
 /**
  * Step all physical bench tools during simulation tick.
  */
@@ -947,6 +1046,8 @@ export function stepApparatusTools(sim, dt, realDeltaSec) {
       checkFlameLoopInteractions(sim, it);
     } else if (it.kind === 'indicator_strip') {
       checkIndicatorStripInteractions(sim, it);
+    } else if (it.kind === 'phen_cotton') {
+      checkPhenCottonInteractions(sim, it, realDeltaSec);
     } else if (it.kind === 'tongs') {
       stepCrucibleTongs(sim, it, dt);
     } else if (it.kind === 'spoon') {

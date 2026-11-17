@@ -4,6 +4,7 @@ import {
   getCondenserPorts,
   getStandGeometry,
   getSyringeGeometry,
+  getVesselEndPorts,
   getVesselTubingPort,
 } from '../data/apparatus.js';
 import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
@@ -244,6 +245,25 @@ function traceVesselPath(ctx, spec, x, y, sagFrac = 0) {
     ctx.roundRect(x - hw, y - hh, spec.width, spec.height, 4);
     return;
   }
+  if (spec.isUTube) {
+    const dx = spec.limbSpacingX || 28;
+    const rOut = spec.tubeOuterR || 13;
+    const topY = y - spec.height / 2 + 2;
+    const bottomY = y + spec.height / 2 - 2;
+    const bendCy = bottomY - (dx + rOut);
+    ctx.beginPath();
+    // Outer U contour
+    ctx.moveTo(x - dx - rOut, topY);
+    ctx.lineTo(x - dx - rOut, bendCy);
+    ctx.arc(x, bendCy, dx + rOut, Math.PI, 0, true);
+    ctx.lineTo(x + dx + rOut, topY);
+    // Inner U contour
+    ctx.moveTo(x - dx + rOut, topY);
+    ctx.lineTo(x - dx + rOut, bendCy);
+    ctx.arc(x, bendCy, dx - rOut, Math.PI, 0, true);
+    ctx.lineTo(x + dx - rOut, topY);
+    return;
+  }
   const { pts, bottom, baseBottom } = mapProfileToCanvas(spec, x, y, 0);
   const lastIdx = pts.length - 1;
   const spoutLeftExtra = spec.shape === 'beaker' || spec.shape === 'cylinder' ? 3.5 : 0;
@@ -286,6 +306,24 @@ function traceVesselInteriorClip(ctx, spec, x, y, sagFrac = 0) {
     const hh = spec.height / 2 - 2.5;
     ctx.beginPath();
     ctx.roundRect(x - hw, y - hh, hw * 2, hh * 2, 2.5);
+    return;
+  }
+  if (spec.isUTube) {
+    const dx = spec.limbSpacingX || 28;
+    const rIn = (spec.tubeOuterR || 13) - 2.4;
+    const topY = y - spec.height / 2 + 2;
+    const bottomY = y + spec.height / 2 - 4.4;
+    const bendCy = bottomY - (dx + rIn);
+    ctx.beginPath();
+    ctx.moveTo(x - dx - rIn, topY);
+    ctx.lineTo(x - dx - rIn, bendCy);
+    ctx.arc(x, bendCy, dx + rIn, Math.PI, 0, true);
+    ctx.lineTo(x + dx + rIn, topY);
+    ctx.lineTo(x + dx - rIn, topY);
+    ctx.lineTo(x + dx - rIn, bendCy);
+    ctx.arc(x, bendCy, dx - rIn, 0, Math.PI, false);
+    ctx.lineTo(x - dx + rIn, topY);
+    ctx.closePath();
     return;
   }
   const pad = spec.shape === 'beaker' || spec.shape === 'crucible' ? 2.6 : 2.1;
@@ -490,7 +528,7 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
         : `🔥 ${Math.round(powerW)} W · ${airOpen ? '~1400°C Blue' : '~800°C Yellow'}`;
       drawLabelPill(ctx, x, bottom + 6, flameBadge, {
         pal,
-        borderColor: airOpen ? '#38bdf8' : '#f59e0b',
+        borderColor: isBeilstein ? '#10b981' : isFlameTest ? item.flameTestColor : airOpen ? '#38bdf8' : '#f59e0b',
         font: '600 10.5px system-ui, sans-serif',
         height: 18,
       });
@@ -1703,7 +1741,11 @@ export function renderVessel(ctx, vessel, opts) {
   const iceMl = (iceMol * SPECIES.H2O_s.molarMass) / CONSTANTS.ICE_DENSITY_G_ML;
   const hasIce = iceMl > 0.15;
   const geom = computeVesselFluidGeometry(spec, y, liqMl + solMl);
-  const { interiorBottom, scaleY, neckHalf, surfaceY, surfaceHalfWPx, volumeMlToY, volumeMlToState } = geom;
+  const uFillFrac = spec.isUTube ? Math.min(0.92, Math.max(0.08, (liqMl + solMl) / Math.max(1, spec.maxVolumeMl))) : null;
+  const surfaceY = spec.isUTube
+    ? geom.interiorBottom - uFillFrac * Math.max(12, geom.interiorBottom - top - 10)
+    : geom.surfaceY;
+  const { interiorBottom, scaleY, neckHalf, surfaceHalfWPx, volumeMlToY, volumeMlToState } = geom;
   const strat = vessel.liquidStratification || computePhaseStratification(vessel.moles, vessel.tempK, spec, solMl);
   const hasWater =
     liqMl > 0.15 &&
@@ -1777,16 +1819,30 @@ export function renderVessel(ctx, vessel, opts) {
       }
 
       if (!hasIce) {
-        // Concave meniscus (or deeper vortex funnel when magnetic stir bar spins rapidly)
-        const vortexDip = (vessel.magStirRpm || 0) > 0 && vessel.hasStirBar && !vessel.isFrozenSolid
-          ? 3.5 + Math.min(10, (vessel.magStirRpm / 1200) * 9) + Math.sin(timeNow * 24) * 1.2
-          : 3.2;
-        ctx.beginPath();
-        ctx.moveTo(x - surfaceHalfWPx, surfaceY);
-        ctx.quadraticCurveTo(x, surfaceY + vortexDip, x + surfaceHalfWPx, surfaceY);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
-        ctx.lineWidth = 1.6;
-        ctx.stroke();
+        if (spec.isUTube) {
+          const dxU = spec.limbSpacingX || 28;
+          const armR = (spec.tubeOuterR || 13) - 3;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.58)';
+          ctx.lineWidth = 1.5;
+          for (const armSign of [-1, 1]) {
+            const cxArm = x + armSign * dxU;
+            ctx.beginPath();
+            ctx.moveTo(cxArm - armR, surfaceY);
+            ctx.quadraticCurveTo(cxArm, surfaceY + 2.5, cxArm + armR, surfaceY);
+            ctx.stroke();
+          }
+        } else {
+          // Concave meniscus (or deeper vortex funnel when magnetic stir bar spins rapidly)
+          const vortexDip = (vessel.magStirRpm || 0) > 0 && vessel.hasStirBar && !vessel.isFrozenSolid
+            ? 3.5 + Math.min(10, (vessel.magStirRpm / 1200) * 9) + Math.sin(timeNow * 24) * 1.2
+            : 3.2;
+          ctx.beginPath();
+          ctx.moveTo(x - surfaceHalfWPx, surfaceY);
+          ctx.quadraticCurveTo(x, surfaceY + vortexDip, x + surfaceHalfWPx, surfaceY);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+          ctx.lineWidth = 1.6;
+          ctx.stroke();
+        }
       }
       // Exp 15: Subtle crystalline shimmer along meniscus when solution is metastable supersaturated
       if (vessel.isSupersaturated && !hasIce) {
@@ -2067,35 +2123,77 @@ export function renderVessel(ctx, vessel, opts) {
   ctx.lineWidth = isSelected || isDropTarget ? 2.5 : spec.wallThicknessMm >= 1.1 || spec.shape === 'dish' || spec.shape === 'mortar' || spec.shape === 'crucible' ? 2.3 : 1.75;
   ctx.stroke();
 
-  // Horizontal Fused Quartz Tube open left/right double-walled fused-silica refractive highlights + silicone bung
-  if (spec.isHorizontalTube) {
-    ctx.strokeStyle = pal.glassHighlight;
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.moveTo(x - w * 0.44, y - h * 0.34);
-    ctx.lineTo(x + w * 0.44, y - h * 0.34);
-    ctx.stroke();
-    if (vessel.isStoppered && !vessel.isShattered) {
-      const dirQ = vessel.flippedX ? -1 : 1;
-      const sxQ = x + dirQ * (w / 2 - 1);
-      ctx.fillStyle = '#334155';
-      ctx.strokeStyle = '#1e293b';
-      ctx.lineWidth = 1;
+  // Horizontal Fused Quartz Tube & U-Shaped Quartz Tube double-ended stoppers, phen cotton plugs & tubing ports
+  if (spec.hasTwoEnds && !vessel.isShattered) {
+    if (spec.isHorizontalTube) {
+      ctx.strokeStyle = pal.glassHighlight;
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.roundRect(sxQ - 5, y - h * 0.42, 10, h * 0.84, 2);
-      ctx.fill();
+      ctx.moveTo(x - w * 0.44, y - h * 0.34);
+      ctx.lineTo(x + w * 0.44, y - h * 0.34);
       ctx.stroke();
+    } else if (spec.isUTube) {
+      const dxU = spec.limbSpacingX || 28;
+      const rOut = spec.tubeOuterR || 13;
+      const topY = y - h / 2 + 2;
+      ctx.strokeStyle = pal.glassHighlight;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x - dxU - rOut + 3, topY + 6);
+      ctx.lineTo(x - dxU - rOut + 3, y);
+      ctx.moveTo(x + dxU + rOut - 3, topY + 6);
+      ctx.lineTo(x + dxU + rOut - 3, y);
+      ctx.stroke();
+    }
 
-      const qPort = getVesselTubingPort(vessel);
-      if (qPort) {
-        const isConn = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);
-        ctx.fillStyle = isConn ? '#f59e0b' : pal.badgeBg;
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 1.8;
+    const ends = getVesselEndPorts(vessel);
+    const connSide = vessel.connectedPortSide || (vessel.flippedX ? 'left' : 'right');
+    const isHoledStopper = vessel.stopperMode !== 'solid';
+    for (const side of ['left', 'right']) {
+      const ep = ends?.[side];
+      if (!ep) continue;
+      const hasPhysStop = side === 'left' ? vessel._physStopperLeft : vessel._physStopperRight;
+      const hasPhysCotton = side === 'left' ? vessel._physCottonLeft : vessel._physCottonRight;
+      const isClosed = Boolean(side === 'left' ? vessel.leftStoppered : vessel.rightStoppered);
+      const hasCottonFlag = Boolean(side === 'left' ? vessel.leftHasPhenCotton : vessel.rightHasPhenCotton);
+
+      if (isClosed && !hasPhysStop) {
+        ctx.fillStyle = '#334155';
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(qPort.x, qPort.y, 4.8, 0, Math.PI * 2);
+        if (spec.isHorizontalTube) {
+          ctx.roundRect(ep.mouthX - 5, ep.mouthY - h * 0.42, 10, h * 0.84, 2);
+        } else {
+          ctx.roundRect(ep.mouthX - 11, ep.mouthY - 6, 22, 12, 2.5);
+        }
         ctx.fill();
         ctx.stroke();
+
+        if (isHoledStopper && (!vessel.connectedTargetId || connSide === side)) {
+          const isConn = Boolean((vessel.connectedTargetId || vessel.connectedSyringeId) && connSide === side);
+          ctx.fillStyle = isConn ? '#f59e0b' : pal.badgeBg;
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.arc(ep.x, ep.y, 4.8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      } else if (!isClosed && hasCottonFlag && !hasPhysCotton) {
+        const cLvl = Math.max(0, Math.min(1, (side === 'left' ? vessel.phenCottonLeftLevel : vessel.phenCottonRightLevel) || 0));
+        const r = Math.round(244 * cLvl + 241 * (1 - cLvl));
+        const g = Math.round(114 * cLvl + 245 * (1 - cLvl));
+        const b = Math.round(182 * cLvl + 249 * (1 - cLvl));
+        ctx.save();
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        ctx.strokeStyle = cLvl > 0.25 ? '#ec4899' : '#cbd5e1';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(ep.mouthX, ep.mouthY, spec.isHorizontalTube ? 5.5 : 8.5, spec.isHorizontalTube ? 9.5 : 5.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
       }
     }
   }
@@ -2295,34 +2393,38 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.restore();
   }
 
-  // Rubber stopper on narrow-neck vessels sized proportionally to neck ID (skip horizontal quartz tubes handled separately)
-  if (vessel.isStoppered && !vessel.isShattered && !spec.isHorizontalTube) {
-    const stopTop = Math.max(12, (spec.neckRadius || 18) + 1.5);
-    const stopBot = Math.max(9, (spec.neckRadius || 18) - 2.5);
-    ctx.fillStyle = '#334155';
-    ctx.strokeStyle = '#1e293b';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x - stopTop, top - 8);
-    ctx.lineTo(x + stopTop, top - 8);
-    ctx.lineTo(x + stopBot, top + 9);
-    ctx.lineTo(x - stopBot, top + 9);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    const vPort = getVesselTubingPort(vessel);
-    if (vPort) {
-      const isConn = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);
-      ctx.fillStyle = isConn ? '#f59e0b' : pal.badgeBg;
-      ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 1.8;
+  // Rubber stopper on narrow-neck vessels sized proportionally to neck ID (skip dual-ended quartz tubes handled above)
+  if (vessel.isStoppered && !vessel.isShattered && !spec.hasTwoEnds) {
+    if (!vessel._physStopperMain) {
+      const stopTop = Math.max(12, (spec.neckRadius || 18) + 1.5);
+      const stopBot = Math.max(9, (spec.neckRadius || 18) - 2.5);
+      ctx.fillStyle = '#334155';
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(vPort.x, vPort.y, 4.8, 0, Math.PI * 2);
+      ctx.moveTo(x - stopTop, top - 8);
+      ctx.lineTo(x + stopTop, top - 8);
+      ctx.lineTo(x + stopBot, top + 9);
+      ctx.lineTo(x - stopBot, top + 9);
+      ctx.closePath();
       ctx.fill();
       ctx.stroke();
+
+      if (vessel.stopperMode !== 'solid') {
+        const vPort = getVesselTubingPort(vessel);
+        if (vPort) {
+          const isConn = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);
+          ctx.fillStyle = isConn ? '#f59e0b' : pal.badgeBg;
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.arc(vPort.x, vPort.y, 4.8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
     }
-  } else if (vessel.hasPhenCotton && !vessel.isShattered) {
+  } else if (vessel.hasPhenCotton && !vessel.isShattered && !spec.hasTwoEnds && !vessel._physCottonMain) {
     // Phenolphthalein-soaked cotton/indicator strip at mouth (turns bright rose-pink on NH3 gas!)
     const cLvl = Math.max(0, Math.min(1, vessel.phenCottonLevel || 0));
     const r = Math.round(244 * cLvl + 241 * (1 - cLvl));
