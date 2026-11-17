@@ -521,7 +521,8 @@ function syncActiveLabRefs() {
 let lastLabTabSig = '';
 function renderLabTabs(t) {
   if (!labTabsEl) return;
-  const sig = `${appState.lang}|${labManager.activeIndex}|${labManager.labs
+  const userEmail = cloudSync.user?.email || '';
+  const sig = `${appState.lang}|${userEmail}|${labManager.activeIndex}|${labManager.labs
     .map((lb) => `${lb.id}:${lb.sim.items.length}:${lb.sim.environment.atmosphereMode}:${lb.unreadAlerts || 0}`)
     .join(',')}`;
   if (sig === lastLabTabSig) return;
@@ -553,6 +554,29 @@ function renderLabTabs(t) {
     <button type="button" id="btn-add-lab" class="lab-add-btn" ${atMax ? 'disabled' : ''} title="${atMax ? t('labMaxLimit') : ''}">
       ${t('labAddBtn')} (${labManager.labs.length}/${labManager.maxLabs})
     </button>
+
+    <!-- Prominent 3-Layer Persistence, .vlab Export/Import & Cloud Auth Toolbar -->
+    <div class="lab-persistence-group">
+      <button type="button" id="btn-export-vlab-bar" class="lab-persist-btn vlab-btn" title="${t('storageBtnExportVlab')}">
+        📤 ${t('barExportVlabBtn')}
+      </button>
+      <button type="button" id="btn-import-vlab-bar" class="lab-persist-btn vlab-btn" title="${t('storageBtnImportVlab')}">
+        📥 ${t('barImportVlabBtn')}
+      </button>
+      <input type="file" id="input-import-vlab-bar" accept=".vlab,.json,application/json" class="hidden" />
+      <button type="button" id="btn-cloud-save-bar" class="lab-persist-btn cloud-btn" title="${t('storageBtnCloudSave')}">
+        ☁️ ${t('barCloudSaveBtn')}
+      </button>
+      <button type="button" id="btn-share-code-bar" class="lab-persist-btn cloud-btn" title="${t('storageShareTitle')}">
+        🔗 ${t('barShareCodeBtn')}
+      </button>
+      <button type="button" id="btn-auth-open" class="lab-persist-btn auth-btn ${userEmail ? 'signed-in' : ''}" title="${t('storageLayer3Title')}">
+        ${userEmail ? `🟢 ${userEmail}` : `👤 ${t('barAuthBtn')}`}
+      </button>
+      <button type="button" id="btn-reset-all-bar" class="lab-persist-btn reset-all-btn" title="${t('storageBtnResetAll')}">
+        🔄 ${t('barResetAllBtn')}
+      </button>
+    </div>
   `;
 
   labTabsEl.querySelectorAll('.lab-tab-btn').forEach((btn) => {
@@ -578,6 +602,74 @@ function renderLabTabs(t) {
     } else {
       ensureLabSubscribed(res.lab);
     }
+  });
+
+  // Wire direct Export .vlab button
+  labTabsEl.querySelector('#btn-export-vlab-bar')?.addEventListener('click', () => {
+    soundEngine.playUiClick();
+    exportWorkspaceToFile(labManager);
+    showToast(`📤 ${t('toastExportedVlab')}`);
+  });
+
+  // Wire direct Import .vlab / .json button
+  const barFileInput = labTabsEl.querySelector('#input-import-vlab-bar');
+  labTabsEl.querySelector('#btn-import-vlab-bar')?.addEventListener('click', () => {
+    soundEngine.playUiClick();
+    barFileInput?.click();
+  });
+  barFileInput?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      await importWorkspaceFromFile(file, labManager);
+      soundEngine.playGlassClink('beaker_250', 0.8);
+      for (const lb of labManager.labs) ensureLabSubscribed(lb);
+      syncActiveLabRefs();
+      refreshChrome(true);
+      showToast(`📥 ${t('toastImportedVlab')}`);
+    } catch (err) {
+      showToast(`⚠️ ${t('toastImportFailed')}: ${err.message}`);
+    }
+  });
+
+  // Wire direct Cloud Save button
+  labTabsEl.querySelector('#btn-cloud-save-bar')?.addEventListener('click', async () => {
+    soundEngine.playUiClick();
+    saveToLocalStorage(labManager);
+    storageModal.setLastAutoSaveTime(Date.now());
+    if (!cloudSync.user) {
+      storageModal.open('login');
+      showToast(`🔑 ${t('toastCloudCredentialsHint')}`);
+      return;
+    }
+    try {
+      await cloudSync.saveWorkspaceToCloud(labManager);
+      showToast(`☁️ ${t('toastCloudSaved')}`);
+    } catch (err) {
+      showToast(`⚠️ ${err.message || t('toastCloudError')}`);
+    }
+  });
+
+  // Wire Share Code button
+  labTabsEl.querySelector('#btn-share-code-bar')?.addEventListener('click', () => {
+    soundEngine.playUiClick();
+    storageModal.open('share');
+  });
+
+  // Wire Login / Register modal button
+  labTabsEl.querySelector('#btn-auth-open')?.addEventListener('click', () => {
+    soundEngine.playUiClick();
+    storageModal.open('auth');
+  });
+
+  // Wire Reset All Benches button
+  labTabsEl.querySelector('#btn-reset-all-bar')?.addEventListener('click', () => {
+    soundEngine.playTrashCrumple();
+    resetAllBenches(labManager);
+    for (const lb of labManager.labs) ensureLabSubscribed(lb);
+    syncActiveLabRefs();
+    refreshChrome(true);
+    showToast(`🔄 ${t('toastResetAllBenches')}`);
   });
 }
 
@@ -817,9 +909,20 @@ requestAnimationFrame(frame);
 
 // Register PWA Service Worker if supported (works on localhost & GitHub Pages HTTPS)
 if ('serviceWorker' in navigator) {
+  let refreshingSw = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshingSw) return;
+    refreshingSw = true;
+    window.location.reload();
+  });
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => {
-      // Ignore registration error in restricted preview contexts
-    });
+    navigator.serviceWorker
+      .register('./sw.js')
+      .then((reg) => {
+        reg.update().catch(() => {});
+      })
+      .catch(() => {
+        // Ignore registration error in restricted preview contexts
+      });
   });
 }

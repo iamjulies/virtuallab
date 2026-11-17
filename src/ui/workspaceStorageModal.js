@@ -11,8 +11,12 @@ export class WorkspaceStorageModal {
   constructor(labManager, getTranslator, callbacks = {}) {
     this.labManager = labManager;
     this.getTranslator = getTranslator;
-    this.callbacks = callbacks; // { onNotify, onRefresh }
+    this.callbacks = callbacks; // { onNotify, onRefresh, onAuthChange }
     this.isOpen = false;
+    this.authMode = 'login'; // 'login' | 'register'
+    this.showPassword = false;
+    this.feedbackMsg = '';
+    this.feedbackType = ''; // 'error' | 'success' | ''
     this.lastGeneratedCode = '';
     this.lastAutoSaveTime = null;
     this.rootEl = null;
@@ -29,7 +33,7 @@ export class WorkspaceStorageModal {
     if (!el) {
       el = document.createElement('div');
       el.id = 'workspace-storage-modal';
-      el.className = 'fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-xs p-4';
+      el.className = 'storage-modal-backdrop hidden';
       document.body.appendChild(el);
     }
     this.rootEl = el;
@@ -43,24 +47,43 @@ export class WorkspaceStorageModal {
     }
   }
 
-  open() {
+  open(focusTarget = null) {
     this.isOpen = true;
+    this.feedbackMsg = '';
+    if (focusTarget === 'register') {
+      this.authMode = 'register';
+    } else if (focusTarget === 'login') {
+      this.authMode = 'login';
+    }
     this.rootEl.classList.remove('hidden');
-    this.rootEl.classList.add('flex');
-    // Lazy-init Firebase in background when modal opens so Auth state is fresh
     cloudSync.ensureFirebaseLoaded().catch(() => {});
     this.render();
+    if (focusTarget === 'auth' || focusTarget === 'login' || focusTarget === 'register') {
+      setTimeout(() => this.rootEl?.querySelector('#input-cloud-email')?.focus(), 40);
+    } else if (focusTarget === 'share') {
+      setTimeout(() => this.rootEl?.querySelector('#input-share-code')?.focus(), 40);
+    }
   }
 
   close() {
     this.isOpen = false;
     this.rootEl.classList.add('hidden');
-    this.rootEl.classList.remove('flex');
   }
 
   toggle() {
     if (this.isOpen) this.close();
     else this.open();
+  }
+
+  _setFeedback(msg, type = 'error') {
+    this.feedbackMsg = msg;
+    this.feedbackType = type;
+    const fbEl = this.rootEl?.querySelector('#cloud-auth-feedback');
+    if (fbEl) {
+      fbEl.textContent = msg;
+      fbEl.className = `storage-status-banner ${type}`;
+      fbEl.style.display = msg ? 'block' : 'none';
+    }
   }
 
   render() {
@@ -70,11 +93,13 @@ export class WorkspaceStorageModal {
     const timeStr = this.lastAutoSaveTime
       ? new Date(this.lastAutoSaveTime).toLocaleTimeString()
       : t('storageAutoSaveReady');
+    const isReg = this.authMode === 'register';
+    const passType = this.showPassword ? 'text' : 'password';
 
     this.rootEl.innerHTML = `
-      <div class="w-full max-w-lg rounded-2xl border border-theme bg-surface text-main shadow-2xl overflow-hidden animate-in">
+      <div class="storage-modal-card">
         <!-- Header -->
-        <div class="flex items-center justify-between px-5 py-3.5 border-b border-theme bg-surface-alt">
+        <div class="storage-modal-header">
           <div class="flex items-center gap-2.5">
             <span class="text-lg">💾</span>
             <div>
@@ -82,117 +107,147 @@ export class WorkspaceStorageModal {
               <p class="text-[11px] text-muted">${t('storageModalSubtitle')}</p>
             </div>
           </div>
-          <button type="button" id="btn-storage-close" class="w-7 h-7 rounded-lg border border-theme bg-surface text-muted hover:text-main flex items-center justify-center text-sm font-bold">✕</button>
+          <button type="button" id="btn-storage-close" class="w-8 h-8 rounded-lg border border-theme bg-surface text-muted hover:text-main flex items-center justify-center text-sm font-bold">✕</button>
         </div>
 
-        <div class="p-4 sm:p-5 space-y-4 max-h-[82vh] overflow-y-auto text-xs">
-          <!-- LAYER 1: Browser LocalStorage Auto-Save -->
-          <div class="p-3.5 rounded-xl border border-theme bg-surface-alt space-y-2.5">
-            <div class="flex items-center justify-between">
-              <span class="font-bold text-emerald-400">⚡ ${t('storageLayer1Title')}</span>
-              <span id="storage-autosave-time" class="text-[11px] font-mono text-muted">${timeStr}</span>
+        <div class="storage-modal-body">
+          <!-- LAYER 3 (TOP PROMINENT): Firebase Account Login/Register, Cloud Save/Load & Share Code -->
+          <div class="storage-section">
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-bold text-amber-400">☁️ ${t('storageLayer3Title')}</span>
+              <span class="text-[11px] font-mono px-2.5 py-0.5 rounded-full border ${
+                user
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400 font-bold'
+                  : 'border-theme bg-surface text-muted'
+              }">
+                ${user ? `🟢 ${user.email || 'Signed In'}` : `⚪ ${t('storageCloudSignedOut')}`}
+              </span>
             </div>
-            <p class="text-[11px] text-muted leading-relaxed">${t('storageLayer1Desc')}</p>
-            <div class="flex flex-wrap items-center gap-2 pt-1">
-              <button type="button" id="btn-storage-save-local" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition">
-                💾 ${t('storageBtnSaveNow')}
-              </button>
-              <button type="button" id="btn-storage-reset-all" class="px-3 py-1.5 rounded-lg border border-rose-500/50 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-semibold transition">
-                🔄 ${t('storageBtnResetAll')}
-              </button>
+
+            <div id="cloud-auth-feedback" class="storage-status-banner ${this.feedbackType || 'error'}" style="display:${
+              this.feedbackMsg ? 'block' : 'none'
+            }">${this.feedbackMsg}</div>
+
+            ${
+              user
+                ? `
+              <div class="flex flex-wrap items-center gap-2 pt-1">
+                <button type="button" id="btn-cloud-save" class="storage-btn storage-btn-amber">
+                  ☁️ ${t('storageBtnCloudSave')}
+                </button>
+                <button type="button" id="btn-cloud-load" class="storage-btn storage-btn-primary">
+                  📥 ${t('storageBtnCloudLoad')}
+                </button>
+                <button type="button" id="btn-cloud-signout" class="storage-btn storage-btn-danger" style="margin-left:auto">
+                  🚪 ${t('storageBtnSignOut')}
+                </button>
+              </div>
+            `
+                : `
+              <!-- Login / Register Switch Tabs -->
+              <div class="auth-tab-strip">
+                <button type="button" id="tab-auth-login" class="auth-tab-btn ${!isReg ? 'active' : ''}">
+                  🔑 ${t('storageBtnEmailSignIn')}
+                </button>
+                <button type="button" id="tab-auth-register" class="auth-tab-btn ${isReg ? 'active' : ''}">
+                  ✨ ${t('storageBtnEmailRegister')}
+                </button>
+              </div>
+
+              <div class="flex flex-col gap-2">
+                <input id="input-cloud-email" type="email" autocomplete="email" placeholder="Email (vd: hocsinh@truong.edu.vn)" class="storage-input" />
+                <input id="input-cloud-password" type="${passType}" autocomplete="${
+                  isReg ? 'new-password' : 'current-password'
+                }" placeholder="${t('storagePasswordPlaceholder')}" class="storage-input" />
+                ${
+                  isReg
+                    ? `<input id="input-cloud-password-confirm" type="${passType}" autocomplete="new-password" placeholder="${t('storagePasswordConfirmPlaceholder')}" class="storage-input" />`
+                    : ''
+                }
+                <div class="flex items-center justify-between text-[11px] text-muted">
+                  <label class="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" id="chk-show-password" ${this.showPassword ? 'checked' : ''} />
+                    <span>${t('storageShowPassword')}</span>
+                  </label>
+                  <span>Firebase Auth (sos-app-1c5ff)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button type="button" id="btn-cloud-email-login" class="storage-btn ${
+                    !isReg ? 'storage-btn-primary flex-1' : ''
+                  }">
+                    🔑 ${t('storageBtnEmailSignIn')}
+                  </button>
+                  <button type="button" id="btn-cloud-email-register" class="storage-btn ${
+                    isReg ? 'storage-btn-primary flex-1' : ''
+                  }">
+                    ✨ ${t('storageBtnEmailRegister')}
+                  </button>
+                </div>
+                <button type="button" id="btn-cloud-google" class="storage-btn-google">
+                  <span>🌐</span>
+                  <span>${t('storageBtnGoogleSignIn')}</span>
+                </button>
+              </div>
+            `
+            }
+
+            <!-- Classroom Share Code (LAB-XXX) -->
+            <div class="pt-2 border-t border-theme flex flex-col gap-2">
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-main">🔗 ${t('storageShareTitle')}</span>
+                ${
+                  this.lastGeneratedCode
+                    ? `<span id="share-code-badge" class="px-2.5 py-0.5 rounded bg-amber-500/10 border border-amber-500/40 text-amber-400 font-mono font-bold">${this.lastGeneratedCode}</span>`
+                    : ''
+                }
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <button type="button" id="btn-share-generate" class="storage-btn storage-btn-amber">
+                  🔗 ${t('storageBtnShareCreate')}
+                </button>
+                <div class="flex items-center gap-1.5 flex-1">
+                  <input id="input-share-code" type="text" maxlength="10" placeholder="LAB-842" value="${this.lastGeneratedCode}"
+                    class="storage-input font-mono uppercase" style="max-width:130px" />
+                  <button type="button" id="btn-share-load" class="storage-btn storage-btn-primary shrink-0">
+                    📥 ${t('storageBtnShareLoad')}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
           <!-- LAYER 2: Local .vlab / .json Export & Import -->
-          <div class="p-3.5 rounded-xl border border-theme bg-surface-alt space-y-2.5">
+          <div class="storage-section">
             <div class="flex items-center justify-between">
               <span class="font-bold text-sky-400">📁 ${t('storageLayer2Title')}</span>
               <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-surface border border-theme text-muted">.vlab / .json (v1.0.0)</span>
             </div>
             <p class="text-[11px] text-muted leading-relaxed">${t('storageLayer2Desc')}</p>
-            <div class="flex flex-wrap items-center gap-2 pt-1">
-              <button type="button" id="btn-storage-export-vlab" class="px-3 py-1.5 rounded-lg bg-accent hover:opacity-90 text-white font-semibold transition">
+            <div class="flex flex-wrap items-center gap-2">
+              <button type="button" id="btn-storage-export-vlab" class="storage-btn storage-btn-primary">
                 📤 ${t('storageBtnExportVlab')}
               </button>
-              <button type="button" id="btn-storage-import-vlab" class="px-3 py-1.5 rounded-lg border border-theme bg-surface hover:border-accent font-semibold transition">
+              <button type="button" id="btn-storage-import-vlab" class="storage-btn">
                 📥 ${t('storageBtnImportVlab')}
               </button>
               <input type="file" id="input-storage-import-vlab" accept=".vlab,.json,application/json" class="hidden" />
             </div>
           </div>
 
-          <!-- LAYER 3: Firebase Cloud Sync & Classroom Share Code -->
-          <div class="p-3.5 rounded-xl border border-theme bg-surface-alt space-y-3">
+          <!-- LAYER 1: Browser LocalStorage Auto-Save -->
+          <div class="storage-section">
             <div class="flex items-center justify-between">
-              <span class="font-bold text-amber-400">☁️ ${t('storageLayer3Title')}</span>
-              <span class="text-[10px] font-mono px-2 py-0.5 rounded border ${
-                user
-                  ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
-                  : 'border-theme bg-surface text-muted'
-              }">
-                ${user ? `🟢 ${user.email || 'Signed In'}` : t('storageCloudSignedOut')}
-              </span>
+              <span class="font-bold text-emerald-400">⚡ ${t('storageLayer1Title')}</span>
+              <span id="storage-autosave-time" class="text-[11px] font-mono text-muted">${timeStr}</span>
             </div>
-
-            ${
-              user
-                ? `
-              <div class="flex flex-wrap items-center gap-2">
-                <button type="button" id="btn-cloud-save" class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition">
-                  ☁️ ${t('storageBtnCloudSave')}
-                </button>
-                <button type="button" id="btn-cloud-load" class="px-3 py-1.5 rounded-lg border border-theme bg-surface hover:border-amber-400 font-semibold transition">
-                  📥 ${t('storageBtnCloudLoad')}
-                </button>
-                <button type="button" id="btn-cloud-signout" class="ml-auto px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-muted hover:text-rose-400 transition">
-                  ${t('storageBtnSignOut')}
-                </button>
-              </div>
-            `
-                : `
-              <div class="space-y-2">
-                <button type="button" id="btn-cloud-google" class="w-full py-2 px-3 rounded-lg bg-white text-slate-900 font-bold flex items-center justify-center gap-2 shadow hover:opacity-95 transition">
-                  <span>🌐</span>
-                  <span>${t('storageBtnGoogleSignIn')}</span>
-                </button>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                  <input id="input-cloud-email" type="email" placeholder="Email (user@example.com)" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs" />
-                  <input id="input-cloud-password" type="password" placeholder="Password (≥6 chars)" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs" />
-                </div>
-                <div class="flex items-center gap-2">
-                  <button type="button" id="btn-cloud-email-login" class="flex-1 py-1.5 px-3 rounded-lg bg-accent text-white font-semibold hover:opacity-90 transition">
-                    🔑 ${t('storageBtnEmailSignIn')}
-                  </button>
-                  <button type="button" id="btn-cloud-email-register" class="py-1.5 px-3 rounded-lg border border-theme bg-surface hover:border-accent font-semibold transition">
-                    ✨ ${t('storageBtnEmailRegister')}
-                  </button>
-                </div>
-              </div>
-            `
-            }
-
-            <!-- Classroom Share Code (LAB-XXX) -->
-            <div class="pt-2.5 border-t border-theme space-y-2">
-              <div class="flex items-center justify-between">
-                <span class="font-semibold text-main">🔗 ${t('storageShareTitle')}</span>
-                ${
-                  this.lastGeneratedCode
-                    ? `<span id="share-code-badge" class="px-2.5 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/50 text-amber-300 font-mono font-bold">${this.lastGeneratedCode}</span>`
-                    : ''
-                }
-              </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <button type="button" id="btn-share-generate" class="px-3 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 font-semibold transition">
-                  🔗 ${t('storageBtnShareCreate')}
-                </button>
-                <div class="flex items-center gap-1.5 flex-1 min-w-[180px]">
-                  <input id="input-share-code" type="text" maxlength="10" placeholder="LAB-842" value="${this.lastGeneratedCode}"
-                    class="w-full px-2.5 py-1.5 rounded-lg border border-theme bg-surface font-mono uppercase text-xs" />
-                  <button type="button" id="btn-share-load" class="px-3 py-1.5 rounded-lg bg-surface border border-theme hover:border-accent font-semibold shrink-0 transition">
-                    📥 ${t('storageBtnShareLoad')}
-                  </button>
-                </div>
-              </div>
+            <p class="text-[11px] text-muted leading-relaxed">${t('storageLayer1Desc')}</p>
+            <div class="flex flex-wrap items-center gap-2">
+              <button type="button" id="btn-storage-save-local" class="storage-btn storage-btn-emerald">
+                💾 ${t('storageBtnSaveNow')}
+              </button>
+              <button type="button" id="btn-storage-reset-all" class="storage-btn storage-btn-danger">
+                🔄 ${t('storageBtnResetAll')}
+              </button>
             </div>
           </div>
         </div>
@@ -206,8 +261,28 @@ export class WorkspaceStorageModal {
     const t = this.getTranslator();
 
     this.rootEl.querySelector('#btn-storage-close')?.addEventListener('click', () => this.close());
-    this.rootEl.addEventListener('click', (e) => {
+    this.rootEl.onclick = (e) => {
       if (e.target === this.rootEl) this.close();
+    };
+
+    // Auth Mode Tabs
+    this.rootEl.querySelector('#tab-auth-login')?.addEventListener('click', () => {
+      this.authMode = 'login';
+      this.feedbackMsg = '';
+      this.render();
+    });
+    this.rootEl.querySelector('#tab-auth-register')?.addEventListener('click', () => {
+      this.authMode = 'register';
+      this.feedbackMsg = '';
+      this.render();
+    });
+
+    this.rootEl.querySelector('#chk-show-password')?.addEventListener('change', (e) => {
+      this.showPassword = Boolean(e.target.checked);
+      const p1 = this.rootEl.querySelector('#input-cloud-password');
+      const p2 = this.rootEl.querySelector('#input-cloud-password-confirm');
+      if (p1) p1.type = this.showPassword ? 'text' : 'password';
+      if (p2) p2.type = this.showPassword ? 'text' : 'password';
     });
 
     // Layer 1: LocalStorage Save & Reset All
@@ -257,10 +332,13 @@ export class WorkspaceStorageModal {
     // Layer 3: Firebase Auth
     this.rootEl.querySelector('#btn-cloud-google')?.addEventListener('click', async () => {
       try {
+        this._setFeedback('⏳ Đang kết nối Google...', 'success');
         await cloudSync.signInWithGoogle();
+        this.feedbackMsg = '';
         this.callbacks.onNotify?.(`✅ ${t('toastCloudSignedIn')}`);
         this.render();
       } catch (err) {
+        this._setFeedback(`⚠️ ${err.message || t('toastCloudError')}`, 'error');
         this.callbacks.onNotify?.(`⚠️ ${err.message || t('toastCloudError')}`);
       }
     });
@@ -268,21 +346,44 @@ export class WorkspaceStorageModal {
     const handleEmailAuth = async (isRegister) => {
       const email = this.rootEl.querySelector('#input-cloud-email')?.value?.trim();
       const pass = this.rootEl.querySelector('#input-cloud-password')?.value || '';
-      if (!email || pass.length < 6) {
+      const passConfirm = this.rootEl.querySelector('#input-cloud-password-confirm')?.value;
+      if (!email || !email.includes('@') || pass.length < 6) {
+        this._setFeedback(`⚠️ ${t('toastCloudCredentialsHint')}`, 'error');
         this.callbacks.onNotify?.(`⚠️ ${t('toastCloudCredentialsHint')}`);
         return;
       }
+      if (isRegister && passConfirm !== undefined && pass !== passConfirm) {
+        this._setFeedback(`⚠️ ${t('storagePasswordMismatch')}`, 'error');
+        return;
+      }
       try {
+        this._setFeedback('⏳ Đang xác thực Firebase...', 'success');
         await cloudSync.signInWithEmail(email, pass, isRegister);
+        this.feedbackMsg = '';
         this.callbacks.onNotify?.(`✅ ${t('toastCloudSignedIn')}`);
         this.render();
       } catch (err) {
+        this._setFeedback(`⚠️ ${err.message || t('toastCloudError')}`, 'error');
         this.callbacks.onNotify?.(`⚠️ ${err.message || t('toastCloudError')}`);
       }
     };
 
-    this.rootEl.querySelector('#btn-cloud-email-login')?.addEventListener('click', () => handleEmailAuth(false));
-    this.rootEl.querySelector('#btn-cloud-email-register')?.addEventListener('click', () => handleEmailAuth(true));
+    this.rootEl.querySelector('#btn-cloud-email-login')?.addEventListener('click', () => {
+      if (this.authMode === 'register') {
+        this.authMode = 'login';
+        this.render();
+        return;
+      }
+      handleEmailAuth(false);
+    });
+    this.rootEl.querySelector('#btn-cloud-email-register')?.addEventListener('click', () => {
+      if (this.authMode === 'login' && !this.rootEl.querySelector('#input-cloud-email')?.value?.trim()) {
+        this.authMode = 'register';
+        this.render();
+        return;
+      }
+      handleEmailAuth(true);
+    });
 
     this.rootEl.querySelector('#btn-cloud-signout')?.addEventListener('click', async () => {
       await cloudSync.signOutUser();
@@ -293,8 +394,10 @@ export class WorkspaceStorageModal {
       try {
         await cloudSync.saveWorkspaceToCloud(this.labManager);
         soundEngine.playUiClick();
+        this._setFeedback(`✅ ${t('toastCloudSaved')}`, 'success');
         this.callbacks.onNotify?.(`☁️ ${t('toastCloudSaved')}`);
       } catch (err) {
+        this._setFeedback(`⚠️ ${err.message || t('toastCloudError')}`, 'error');
         this.callbacks.onNotify?.(`⚠️ ${err.message || t('toastCloudError')}`);
       }
     });
@@ -307,6 +410,7 @@ export class WorkspaceStorageModal {
         this.callbacks.onNotify?.(`☁️ ${t('toastCloudLoaded')}`);
         this.close();
       } catch (err) {
+        this._setFeedback(`⚠️ ${err.message || t('toastCloudError')}`, 'error');
         this.callbacks.onNotify?.(`⚠️ ${err.message || t('toastCloudError')}`);
       }
     });
@@ -337,6 +441,7 @@ export class WorkspaceStorageModal {
         this.callbacks.onNotify?.(`📥 ${t('toastShareLoaded')}: ${shareCode}`);
         this.close();
       } catch (err) {
+        this._setFeedback(`⚠️ ${t('toastShareNotFound')}: ${codeInput}`, 'error');
         this.callbacks.onNotify?.(`⚠️ ${t('toastShareNotFound')}: ${codeInput}`);
       }
     });

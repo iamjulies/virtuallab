@@ -411,8 +411,9 @@ button:disabled {
 .hidden.bench-pick-banner,
 .hidden.canvas-zoom-controls,
 .hidden.comparison-panel,
-#dosing-modal-root.hidden {
-  display: none;
+#dosing-modal-root.hidden,
+#workspace-storage-modal.hidden {
+  display: none !important;
 }
 
 /* Top-Right Canvas Magnifier & Zoom HUD */
@@ -713,6 +714,281 @@ button:disabled {
 .lab-add-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* Quick Persistence & Cloud Action Strip in Lab Tabs Bar */
+.lab-persistence-group {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.lab-persist-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  font-size: 0.73rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.lab-persist-btn:hover {
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+.lab-persist-btn.auth-btn {
+  border-color: rgba(59, 130, 246, 0.55);
+  background-color: rgba(59, 130, 246, 0.14);
+  color: #60a5fa;
+}
+[data-theme="light"] .lab-persist-btn.auth-btn {
+  color: #1d4ed8;
+}
+
+.lab-persist-btn.auth-btn.signed-in {
+  border-color: rgba(16, 185, 129, 0.55);
+  background-color: rgba(16, 185, 129, 0.14);
+  color: #34d399;
+}
+[data-theme="light"] .lab-persist-btn.auth-btn.signed-in {
+  color: #047857;
+}
+
+.lab-persist-btn.cloud-btn {
+  border-color: rgba(245, 158, 11, 0.55);
+  background-color: rgba(245, 158, 11, 0.14);
+  color: #fbbf24;
+}
+[data-theme="light"] .lab-persist-btn.cloud-btn {
+  color: #b45309;
+}
+
+.lab-persist-btn.vlab-btn {
+  border-color: rgba(14, 165, 233, 0.5);
+  background-color: rgba(14, 165, 233, 0.12);
+  color: #38bdf8;
+}
+[data-theme="light"] .lab-persist-btn.vlab-btn {
+  color: #0369a1;
+}
+
+.lab-persist-btn.reset-all-btn {
+  border-color: rgba(244, 63, 94, 0.45);
+  background-color: rgba(244, 63, 94, 0.1);
+  color: #fb7185;
+}
+[data-theme="light"] .lab-persist-btn.reset-all-btn {
+  color: #be123c;
+}
+
+/* 3-Layer Workspace Storage & Firebase Auth Modal */
+.storage-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(4px);
+  padding: 1rem;
+}
+
+.storage-modal-card {
+  width: 100%;
+  max-width: 540px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 1rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.storage-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.875rem 1.15rem;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-surface-alt);
+}
+
+.storage-modal-body {
+  padding: 1rem 1.15rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  font-size: 0.78rem;
+}
+
+.storage-section {
+  padding: 0.85rem 0.95rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.auth-tab-strip {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  padding: 0.25rem;
+  border-radius: 0.6rem;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+}
+
+.auth-tab-btn {
+  padding: 0.42rem 0.65rem;
+  border-radius: 0.45rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.auth-tab-btn.active {
+  background-color: var(--accent);
+  color: #ffffff;
+}
+
+.storage-input {
+  width: 100%;
+  padding: 0.48rem 0.7rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  font-size: 0.78rem;
+  outline: none;
+}
+
+.storage-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.storage-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.48rem 0.85rem;
+  border-radius: 0.55rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.storage-btn:hover {
+  border-color: var(--accent);
+}
+
+.storage-btn-primary {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.storage-btn-primary:hover {
+  opacity: 0.92;
+}
+
+.storage-btn-emerald {
+  background-color: #059669;
+  border-color: #10b981;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.storage-btn-amber {
+  background-color: #f59e0b;
+  border-color: #fbbf24;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.storage-btn-danger {
+  background-color: rgba(244, 63, 94, 0.14);
+  border-color: rgba(244, 63, 94, 0.5);
+  color: #fb7185;
+  font-weight: 600;
+}
+[data-theme="light"] .storage-btn-danger {
+  color: #be123c;
+}
+
+.storage-btn-google {
+  width: 100%;
+  padding: 0.52rem 0.85rem;
+  border-radius: 0.55rem;
+  border: 1px solid #cbd5e1;
+  background-color: #ffffff;
+  color: #0f172a;
+  font-size: 0.78rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.storage-btn-google:hover {
+  background-color: #f8fafc;
+}
+
+.storage-status-banner {
+  padding: 0.45rem 0.65rem;
+  border-radius: 0.5rem;
+  font-size: 0.73rem;
+  font-weight: 600;
+}
+
+.storage-status-banner.error {
+  background-color: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+}
+[data-theme="light"] .storage-status-banner.error {
+  color: #b91c1c;
+}
+
+.storage-status-banner.success {
+  background-color: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  color: #6ee7b7;
+}
+[data-theme="light"] .storage-status-banner.success {
+  color: #047857;
 }
 
 table {
