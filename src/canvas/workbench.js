@@ -377,8 +377,9 @@ export class LabWorkbenchCanvas {
       }
       const padX = it.kind === 'electrode' && it.dockedVesselId ? 4 : 8;
       const hw = spec.width / 2 + padX;
+      const extTop = it.kind === 'stand' ? Math.max(0, it.extendPx || 0) : 0;
       const hh = (it.renderHeight || spec.height) / 2 + 10;
-      return lx >= it.x - hw && lx <= it.x + hw && ly >= it.y - hh && ly <= it.y + hh;
+      return lx >= it.x - hw && lx <= it.x + hw && ly >= it.y - hh - extTop && ly <= it.y + hh;
     };
 
     for (let i = this.sim.items.length - 1; i >= 0; i--) {
@@ -388,6 +389,18 @@ export class LabWorkbenchCanvas {
     for (let i = this.sim.items.length - 1; i >= 0; i--) {
       const it = this.sim.items[i];
       if (!isPriorityTool(it) && matchItem(it)) return it;
+    }
+    return null;
+  }
+
+  findStandTipAt(lx, ly) {
+    for (let i = this.sim.items.length - 1; i >= 0; i--) {
+      const it = this.sim.items[i];
+      if (it.kind !== 'stand') continue;
+      const { rodX, rodTopY } = getStandGeometry(it);
+      if (Math.hypot(lx - rodX, ly - rodTopY) <= 15) {
+        return it;
+      }
     }
     return null;
   }
@@ -494,12 +507,7 @@ export class LabWorkbenchCanvas {
         } else if (created.kind === 'electrode' && hoverVessel) {
           const hvSpec = APPARATUS[hoverVessel.typeId];
           const side = clampedX >= hoverVessel.x ? 'right' : 'left';
-          const sideBlocked = hvSpec?.hasTwoEnds
-            ? side === 'left'
-              ? hoverVessel.leftStoppered
-              : hoverVessel.rightStoppered
-            : hoverVessel.isStoppered;
-          if (!hvSpec?.isHorizontalTube && !sideBlocked) {
+          if (!hvSpec?.isHorizontalTube) {
             created.dockedVesselId = hoverVessel.id;
             created.dockSide = side;
             syncDockedToolPositions(this.sim);
@@ -619,7 +627,7 @@ export class LabWorkbenchCanvas {
     for (const stand of this.sim.items) {
       if (stand.kind !== 'stand') continue;
       const sSpec = APPARATUS.retort_stand;
-      const standTop = stand.y - sSpec.height / 2;
+      const standTop = stand.y - sSpec.height / 2 - (stand.extendPx || 0);
       const targetX = getStandGeometry(stand).clampTargetX(item.kind);
       const distX = Math.abs(item.x - targetX);
       const maxPullDist = item.kind === 'gas_syringe' ? 88 : item.kind === 'burette' || item.kind === 'condenser' ? 68 : 58;
@@ -648,6 +656,24 @@ export class LabWorkbenchCanvas {
           this.callbacks.onPickStateChange?.(null);
           onPick?.(picked, pt);
         }
+        return;
+      }
+
+      // 0A. Check Retort Stand top finial cap handle for telescopic rod extension
+      const standTip = this.findStandTipAt(pt.x, pt.y);
+      if (standTip) {
+        this.sim.recordUndo?.();
+        this.setSelection([standTip.id], standTip.id);
+        this.standResizeState = {
+          standId: standTip.id,
+          startY: pt.y,
+          startExtendPx: standTip.extendPx || 0,
+        };
+        this.canvas.style.cursor = 'ns-resize';
+        this.canvas.setPointerCapture(e.pointerId);
+        soundEngine.playClampClick();
+        if (this.callbacks.onSelect) this.callbacks.onSelect(standTip);
+        this.sim.emitChange();
         return;
       }
 
@@ -863,6 +889,13 @@ export class LabWorkbenchCanvas {
         this.canvas.style.cursor = 'grabbing';
         return;
       }
+      if (this.standResizeState) {
+        const dy = this.standResizeState.startY - pt.y;
+        const nextExt = Math.max(0, Math.min(200, Math.round(this.standResizeState.startExtendPx + dy)));
+        this.sim.setStandExtension(this.standResizeState.standId, nextExt);
+        this.canvas.style.cursor = 'ns-resize';
+        return;
+      }
       if (this.pickState) {
         const candHover = this.hitTestItem(pt.x, pt.y, null, (it) => this.pickState.candidateIds.has(it.id));
         this.hoverItemId = candHover ? candHover.id : null;
@@ -911,6 +944,12 @@ export class LabWorkbenchCanvas {
         return;
       }
       if (!this.dragState) {
+        const standTipHover = this.findStandTipAt(pt.x, pt.y);
+        if (standTipHover) {
+          this.hoverItemId = standTipHover.id;
+          this.canvas.style.cursor = 'ns-resize';
+          return;
+        }
         const portHover = this.findCondenserPortAt(pt.x, pt.y);
         if (portHover) {
           this.hoverItemId = portHover.cond.id;
@@ -1216,6 +1255,17 @@ export class LabWorkbenchCanvas {
 
     const endDrag = (e) => {
       this.callbacks.onExternalTabDragHover?.(0, 0, null, null);
+      if (this.standResizeState) {
+        this.standResizeState = null;
+        this.canvas.style.cursor = 'default';
+        if (e?.pointerId != null && this.canvas.hasPointerCapture?.(e.pointerId)) {
+          try {
+            this.canvas.releasePointerCapture(e.pointerId);
+          } catch {}
+        }
+        this.sim.emitChange();
+        return;
+      }
       if (this.marqueeState) {
         this.marqueeState = null;
         this.canvas.style.cursor = 'default';
@@ -1341,9 +1391,7 @@ export class LabWorkbenchCanvas {
             const tgt = this.findVesselAt(item.x, item.y + 10, null, false);
             const tSpec = tgt ? APPARATUS[tgt.typeId] : null;
             const side = tgt && item.x >= tgt.x ? 'right' : 'left';
-            const sideBlocked =
-              tSpec?.hasTwoEnds ? (side === 'left' ? tgt.leftStoppered : tgt.rightStoppered) : tgt?.isStoppered;
-            if (tgt && !tSpec?.isHorizontalTube && !sideBlocked) {
+            if (tgt && !tSpec?.isHorizontalTube) {
               item.dockedVesselId = tgt.id;
               item.dockSide = side;
               syncDockedToolPositions(this.sim);

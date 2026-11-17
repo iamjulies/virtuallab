@@ -139,6 +139,15 @@ export class EnvironmentBar {
             <option value="mobile" ${deviceMode === 'mobile' ? 'selected' : ''}>📲 ${t('deviceMobile')}</option>
           </select>
 
+          <!-- Workspace Storage & Cloud Sync Button -->
+          <button type="button" id="btn-workspace-storage" title="${t('storageBtnTip')}" class="px-2.5 py-1.5 rounded-lg border ${
+            this.appState.cloudSignedIn
+              ? 'border-amber-500/60 bg-amber-500/15 text-amber-300'
+              : 'border-theme bg-surface-alt text-main'
+          } text-xs font-semibold hover:border-accent transition">
+            ${this.appState.cloudSignedIn ? '☁️' : '💾'} ${t('storageBtnLabel')}
+          </button>
+
           <!-- Sound Effects Toggle -->
           <button type="button" id="btn-sound-toggle" title="${t('soundToggleTip')}" class="px-2.5 py-1.5 rounded-lg border ${
             this.appState.soundEnabled !== false
@@ -207,6 +216,10 @@ export class EnvironmentBar {
 
     this.container.querySelector('#device-select')?.addEventListener('change', (e) => {
       this.callbacks.onDeviceChange?.(e.target.value);
+    });
+
+    this.container.querySelector('#btn-workspace-storage')?.addEventListener('click', () => {
+      this.callbacks.onOpenStorage?.();
     });
 
     this.container.querySelector('#btn-sound-toggle')?.addEventListener('click', () => {

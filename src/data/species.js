@@ -924,7 +924,11 @@ export const SPECIES = {
     molarMass: AW.Ba + 2 * AW.Cl,
     density: 3.86,
     cp: 75.1,
-    meltTempK: 1235.15,
+    phaseTransitionTempK: 1198.15, // 925 °C orthorhombic alpha-BaCl2 -> cubic beta-BaCl2
+    meltTempK: 1235.15,            // 962 °C
+    boilTempK: 1833.15,            // 1560 °C
+    noDecomp: true,                // Stable to >3000 K plasma
+    conductiveMelt: true,
     moltenColor: '#f1f5f9',
     color: '#f8fafc',
     highlightColor: '#cbd5e1',

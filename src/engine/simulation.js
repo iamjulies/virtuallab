@@ -627,6 +627,7 @@ export class LabSimulation {
     } else if (spec.kind === 'stand') {
       Object.assign(base, {
         clampY: y - 45,
+        extendPx: 0,
       });
     } else if (spec.kind === 'spoon') {
       Object.assign(base, {
@@ -804,6 +805,22 @@ export class LabSimulation {
     if (!item || !item.clampedToId) return false;
     item.clampedToId = null;
     item.fallStartY = item.y;
+    this.emitChange();
+    return true;
+  }
+
+  setStandExtension(standId, extendPx) {
+    const stand = this.getItem(standId);
+    if (!stand || stand.kind !== 'stand') return false;
+    stand.extendPx = Math.max(0, Math.min(200, Math.round(Number(extendPx) || 0)));
+    for (const child of this.items) {
+      if (child.clampedToId === stand.id) {
+        const cSpec = APPARATUS[child.typeId];
+        if (cSpec) {
+          child.y = clampItemToStandY(cSpec, stand, SIM_BENCH_FLOOR_Y, child.y, 6);
+        }
+      }
+    }
     this.emitChange();
     return true;
   }
@@ -1186,7 +1203,7 @@ export class LabSimulation {
         const bnTop = sup.y - supSpec.height / 2 + 10;
         const nestSink = supSpec.hasIntegratedTripod && spec.shape === 'crucible' ? 10 : 0;
         const candY = bnTop - spec.height / 2 + nestSink;
-        if (dx <= 46 && (alreadyOnSup || itemBottom <= bnTop + 18) && candY < bestCenterY) {
+        if (dx <= 46 && (alreadyOnSup || itemBottom <= bnTop + 65) && candY < bestCenterY) {
           bestCenterY = candY;
           bestSupport = sup;
         }
@@ -3420,7 +3437,7 @@ export class LabSimulation {
     const el = this.getItem(electrodeId);
     if (!el || el.kind !== 'electrode' || !el.dockedVesselId) return null;
     const parent = this.getItem(el.dockedVesselId);
-    if (!parent || parent.isShattered || parent.isStoppered) return null;
+    if (!parent || parent.isShattered) return null;
     const pSpec = APPARATUS[parent.typeId];
     const tSpec = APPARATUS.test_tube_50;
     const existing = this.items.find((i) => i.kind === 'vessel' && i.mountedOverElectrodeId === el.id && !i.isShattered);
@@ -3454,10 +3471,10 @@ export class LabSimulation {
     const vSpec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
     const packet = { [gasId]: mol };
 
-    // 1. Direct attached collector on the electrode (Gas Syringe or mounted/targeted inverted tube)
+    // 1. Direct attached collector on the electrode (Gas Syringe or mounted/targeted inverted or stoppered vessel)
     if (electrodeItem?.gasTargetId) {
       const col = this.getItem(electrodeItem.gasTargetId);
-      if (col && !col.isShattered && !col.isBroken && !col.isStoppered) {
+      if (col && !col.isShattered && !col.isBroken) {
         const routed = routeGasPacketToTarget(
           v,
           col,
@@ -3500,7 +3517,8 @@ export class LabSimulation {
       }
     }
 
-    if (v.isStoppered && (v.connectedTargetId || v.connectedSyringeId)) {
+    const anyStoppered = Boolean(v.isStoppered || (vSpec.hasTwoEnds && (v.leftStoppered || v.rightStoppered)));
+    if (anyStoppered && (v.connectedTargetId || v.connectedSyringeId)) {
       stepVesselGasAndPressure(v, packet, 0, this.environment, (id) => this.getItem(id));
     } else if (v.isStoppered) {
       v.headspaceGasMoles[gasId] = (v.headspaceGasMoles[gasId] || 0) + mol;
@@ -5410,7 +5428,7 @@ export class LabSimulation {
         frameActiveMap.has('na_acid') ||
         frameActiveMap.has('na_ethanol') ||
         frameActiveMap.has('na_ice');
-      const isDehydrating = frameActiveMap.has('dehydrate_cuso4_5h2o');
+      const isDehydrating = frameActiveMap.has('dehydrate_cuso4_5h2o') || frameActiveMap.has('dehydrate_bacl2_2h2o');
       if (naActive && (v.moles.Na_s || 0) > 1e-7) {
         const naMotionScale = (v.moles.H2O_l || 0) > 5e-4 ? 1.0 : 0.2;
         if (v.naPinned) {

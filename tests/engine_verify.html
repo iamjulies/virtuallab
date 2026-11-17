@@ -57,6 +57,16 @@
     import { ComparisonPanel } from '../src/ui/comparisonPanel.js';
     import { LabSoundEngine, soundEngine } from '../src/audio/soundEngine.js';
     import {
+      FIREBASE_CONFIG,
+      WORKSPACE_SCHEMA_VERSION,
+      serializeWorkspace,
+      deserializeWorkspace,
+      saveToLocalStorage,
+      loadFromLocalStorage,
+      resetAllBenches,
+      cloudSync,
+    } from '../src/storage/workspaceStorage.js';
+    import {
       computeCaOOptimizationScore,
       enforceDryPhaseBoundary,
       getEffectiveRateConstant,
@@ -2438,7 +2448,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.7';
+      const expectedBuild = 'virlab_beta_v3+build.8';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -5710,6 +5720,252 @@
         'Physical Web Audio Sound Engine synthesizes all discrete lab events, modulates continuous channels (flame, pour, boil, bubbles, Na fizz, stir hum), silences on pause & toggles mute cleanly',
         evClink && evDrop && evGran && evStir && evGrind && evH2Pop && evExpl && channelsActive && silencedOnPause && toggledMute,
         `discrete=${evClink && evDrop && evGran && evStir && evGrind && evH2Pop && evExpl}, channels=${JSON.stringify(ch)}, pauseSilence=${silencedOnPause}, muteToggle=${toggledMute}`
+      );
+    }
+
+    // TEST 120: Ba2+ Flame Test Loop (#84cc16 Apple-Green) + BaCl2.2H2O Dehydration (113 °C) + BaCl2 Thermal Properties (925 °C / 962 °C / 1560 °C)
+    {
+      const simBa = new LabSimulation();
+      const bBa = simBa.createApparatus('beaker_250', 220, 427);
+      simBa.addReagentToVessel(bBa.id, 'h2o', 40, { silentAnim: true, silentEmit: true });
+      simBa.addReagentToVessel(bBa.id, 'bacl2_2h2o', 2.44, { silentAnim: true, silentEmit: true });
+      const loop = simBa.createApparatus('flame_loop', 270, 427); // tip at x = 270 - 50 = 220 inside bBa
+      const burner = simBa.createApparatus('burner', 420, 426);
+      simBa.setBurnerFlame(burner.id, 3);
+      simBa.step(0.05);
+      const sampledIon = loop.sampledIon;
+      // Move flame loop over burner tip to excite Ba2+ emission
+      loop.x = 470;
+      loop.y = burner.y - APPARATUS.burner.height / 2 - 16;
+      simBa.step(0.05);
+      const glowingBa =
+        loop.sampledColor === '#84cc16' &&
+        burner.flameTestColor === '#84cc16' &&
+        burner.flameTestIon === 'Ba²⁺' &&
+        String(loop.sampleLabel).includes('Ba²⁺');
+
+      // Dehydration of BaCl2.2H2O at >= 113 °C (386.15 K) -> BaCl2(s) + 2 H2O(g)
+      const crucBa = simBa.createApparatus('crucible_porcelain', 580, 427);
+      crucBa.moles = { BaCl2_2H2O_s: 0.02 };
+      crucBa.tempK = 415.15; // 142 °C (> 113 °C)
+      for (let i = 0; i < 60; i++) {
+        crucBa.tempK = 415.15;
+        simBa.step(0.05);
+      }
+      const bacl2Anhydrous = crucBa.moles.BaCl2_s || 0;
+      const bacl2HydrateLeft = crucBa.moles.BaCl2_2H2O_s || 0;
+
+      // BaCl2_s thermal constants: alpha->beta 925 °C (1198.15 K), mp 962 °C (1235.15 K), bp 1560 °C (1833.15 K), noDecomp: true, conductiveMelt: true
+      const spBaCl2 = SPECIES.BaCl2_s;
+      const metaOk =
+        Math.abs(spBaCl2.phaseTransitionTempK - 1198.15) < 0.5 &&
+        Math.abs(spBaCl2.meltTempK - 1235.15) < 0.5 &&
+        Math.abs(spBaCl2.boilTempK - 1833.15) < 0.5 &&
+        spBaCl2.noDecomp === true &&
+        spBaCl2.conductiveMelt === true &&
+        !isSolidMoltenAtTemp(spBaCl2, 1200, { BaCl2_s: 0.02 }) &&
+        isSolidMoltenAtTemp(spBaCl2, 1260, { BaCl2_s: 0.02 });
+
+      assert(
+        'Flame test loop picks up Ba²⁺ giving apple-green (#84cc16, 524 nm) flame; BaCl₂·2H₂O dehydrates >=113 °C to BaCl₂(s); BaCl₂ transitions at 925 °C & melts at 962 °C without decomposition',
+        sampledIon === 'Ba²⁺' &&
+          glowingBa &&
+          bacl2Anhydrous > 0.015 &&
+          bacl2HydrateLeft < 0.005 &&
+          metaOk,
+        `ion=${sampledIon}, color=${burner.flameTestColor}, BaCl2_s=${bacl2Anhydrous.toFixed(4)}, hydrateLeft=${bacl2HydrateLeft.toFixed(4)}, metaOk=${metaOk}`
+      );
+    }
+
+    // TEST 121: Large Flasks Heatable (beaker_1000, erlenmeyer_1000, round_flask_250, round_flask_1000) + Telescopic Retort Stand Extension
+    {
+      const simH = new LabSimulation();
+      const heatableSpecsOk =
+        APPARATUS.beaker_1000.heatable === true &&
+        APPARATUS.erlenmeyer_1000.heatable === true &&
+        APPARATUS.round_flask_250.heatable === true &&
+        APPARATUS.round_flask_1000.heatable === true;
+
+      // Place round_flask_1000 over active Bunsen burner and verify it snaps onto burner support and heats up
+      const bn = simH.createApparatus('bunsen_burner', 260, 427);
+      simH.setBurnerFlame(bn.id, 3);
+      const rf1000 = simH.createApparatus('round_flask_1000', 260, 270);
+      simH.addReagentToVessel(rf1000.id, 'h2o', 120, { silentAnim: true, silentEmit: true });
+      simH.updateSupportAttachments();
+      const tStart = rf1000.tempK;
+      for (let i = 0; i < 40; i++) simH.step(0.05);
+      const heatedUp = rf1000.restingOnId === bn.id && rf1000.tempK > tStart + 2.0;
+
+      // Telescopic Retort Stand extension (0..200 px) raises rodTopY and allows clamping vessels higher
+      const stand = simH.createApparatus('retort_stand', 560, 427);
+      const geom0 = getStandGeometry(stand);
+      const clampY0 = clampItemToStandY(APPARATUS.round_flask_1000, stand, 482, 40);
+      simH.setStandExtension(stand.id, 150);
+      const geom150 = getStandGeometry(stand);
+      const clampY150 = clampItemToStandY(APPARATUS.round_flask_1000, stand, 482, 40);
+      const raisedBy150 =
+        stand.extendPx === 150 &&
+        Math.abs(geom0.rodTopY - geom150.rodTopY - 150) < 0.5 &&
+        clampY150 < clampY0 - 100;
+
+      assert(
+        'beaker_1000, erlenmeyer_1000, round_flask_250 & round_flask_1000 are heatable on burners, and retort_stand extends telescopically up to +200 px',
+        heatableSpecsOk && heatedUp && raisedBy150,
+        `heatable=${heatableSpecsOk}, dT=${(rf1000.tempK - tStart).toFixed(2)}K, rodTopY0=${geom0.rodTopY.toFixed(1)}->rodTopY150=${geom150.rodTopY.toFixed(1)}, clampY0=${clampY0.toFixed(1)}->clampY150=${clampY150.toFixed(1)}`
+      );
+    }
+
+    // TEST 122: Dynamic Rubber Stopper Sizing for Large Flasks & Stoppered Electrode / Salt Bridge Gas Collection
+    {
+      const simE = new LabSimulation();
+      const cell = simE.createApparatus('erlenmeyer_1000', 280, 427);
+      simE.addReagentToVessel(cell.id, 'h2o', 250, { silentAnim: true, silentEmit: true });
+      simE.addReagentToVessel(cell.id, 'nacl', 25, { silentAnim: true, silentEmit: true });
+
+      const collector = simE.createApparatus('erlenmeyer_250', 460, 427);
+      collector.isStoppered = true;
+
+      // Create graphite electrodes docked in cell, then stopper cell and route anode gas to stoppered collector
+      const anode = simE.createApparatus('electrode_rod', 268, 415);
+      const cathode = simE.createApparatus('electrode_rod', 292, 415);
+      anode.dockedVesselId = cell.id;
+      cathode.dockedVesselId = cell.id;
+      cell.isStoppered = true;
+      anode.gasTargetId = collector.id;
+
+      // Also attach a salt bridge between two stoppered vessels
+      const sb = simE.createApparatus('salt_bridge', 370, 390);
+
+      const dc = simE.createApparatus('dc_power', 140, 427);
+      dc.powerOn = true;
+      dc.voltageV = 9.0;
+      dc.posElectrodeId = anode.id;
+      dc.negElectrodeId = cathode.id;
+
+      for (let i = 0; i < 60; i++) simE.step(0.05);
+
+      const gasTargetIntact = anode.gasTargetId === collector.id;
+      const saltBridgeIntact = sb.vesselAId === cell.id && sb.vesselBId === collector.id;
+      const cl2Collected = (collector.headspaceGasMoles?.Cl2_g || 0) + (collector.moles?.Cl2_g || 0) > 1e-6;
+
+      // Verify erlenmeyer_1000 scaled pixel inner neck half-width > 20 px for dynamic rubber stopper scaling
+      const pts1000 = APPARATUS.erlenmeyer_1000.geometry.profilePoints;
+      const maxR1000 = Math.max(...pts1000.map((p) => p[1]));
+      const neckHalf1000 = (pts1000[pts1000.length - 2][1] / maxR1000) * (APPARATUS.erlenmeyer_1000.width / 2 - 2);
+
+      assert(
+        'Stoppered vessels retain electrode gasTargetId & salt_bridge connections, route electrolysis Cl₂ gas into stoppered collector, and scale rubber stopper width to large flask necks',
+        gasTargetIntact && saltBridgeIntact && cl2Collected && neckHalf1000 > 20,
+        `gasTargetIntact=${gasTargetIntact}, sbIntact=${saltBridgeIntact}, Cl2Collected=${((collector.headspaceGasMoles?.Cl2_g || 0)*1000).toFixed(3)}mmol, neckHalf1000=${neckHalf1000.toFixed(1)}px`
+      );
+    }
+
+    // TEST 123: 3-Layer Workspace Persistence (Pure Physical JSON Serialization, LocalStorage Auto-Save, Canonical Import & Classroom Share Code)
+    {
+      const lm1 = new LabManager();
+      const s1 = lm1.getActiveSim();
+      s1.setupPreset('clean');
+      const v1 = s1.createApparatus('erlenmeyer_1000', 310, 420);
+      s1.addReagentToVessel(v1.id, 'h2o', 120, { silentAnim: true, silentEmit: true });
+      s1.addReagentToVessel(v1.id, 'bacl2_2h2o', 4.88, { silentAnim: true, silentEmit: true });
+      stepSeconds(s1, 1.5, 0.05);
+      v1.tempK = 345.15;
+      v1.isStoppered = true;
+      const st1 = s1.createApparatus('retort_stand', 520, 427);
+      s1.setStandExtension(st1.id, 125);
+
+      // 1. Serialize & verify zero derived bloat + canonical vessels array
+      const snap = serializeWorkspace(lm1);
+      const rawJson = JSON.stringify(snap);
+      const noDerivedBloat =
+        !rawJson.includes('"renderColor"') &&
+        !rawJson.includes('"computedPh"') &&
+        !rawJson.includes('"hoveredActionLabel"') &&
+        snap.schemaVersion === WORKSPACE_SCHEMA_VERSION &&
+        Array.isArray(snap.vessels) &&
+        snap.vessels.length === 1 &&
+        snap.vessels[0].type === 'ERLENMEYER' &&
+        snap.vessels[0].hasStopper === true;
+
+      // 2. Round-trip via LocalStorage into a fresh LabManager
+      saveToLocalStorage(lm1);
+      const lm2 = new LabManager();
+      const loadedOk = loadFromLocalStorage(lm2);
+      const s2 = lm2.getActiveSim();
+      const v2 = s2.items.find((it) => it.typeId === 'erlenmeyer_1000');
+      const st2 = s2.items.find((it) => it.typeId === 'retort_stand');
+      const roundTripExact =
+        loadedOk &&
+        Boolean(v2) &&
+        Math.abs((v2.tempK || 0) - 345.15) < 0.1 &&
+        v2.isStoppered === true &&
+        ((v2.moles.Ba2_aq || 0) + (v2.moles.BaCl2_2H2O_s || 0)) > 0.015 &&
+        st2?.extendPx === 125;
+
+      // 3. Test pure canonical Prompt 27 JSON import (vessels + connections without internal items array)
+      const canonicalPayload = {
+        schemaVersion: '1.0.0',
+        vessels: [
+          {
+            id: 'v_101',
+            type: 'ERLENMEYER',
+            maxCapacity: 1000,
+            position: { x: 450, y: 320 },
+            temperatureK: 298.15,
+            pressureAtm: 1.0,
+            hasStopper: true,
+            isHeating: false,
+            species: [
+              { chemicalId: 'BaCl2_2H2O', phase: 's', moles: 0.15, particleSize: 0.5 },
+              { chemicalId: 'H2O', phase: 'l', moles: 5.55 },
+            ],
+          },
+          {
+            id: 'v_102',
+            type: 'BEAKER',
+            maxCapacity: 250,
+            position: { x: 640, y: 420 },
+            temperatureK: 298.15,
+            pressureAtm: 1.0,
+            hasStopper: false,
+            isHeating: false,
+            species: [{ chemicalId: 'H2O', phase: 'l', moles: 3.0 }],
+          },
+        ],
+        connections: [
+          {
+            type: 'DELIVERY_TUBE',
+            fromVesselId: 'v_101',
+            toVesselId: 'v_102',
+          },
+        ],
+      };
+      const lm3 = new LabManager();
+      const canonOk = deserializeWorkspace(lm3, canonicalPayload);
+      const s3 = lm3.getActiveSim();
+      const cv1 = s3.getItem('v_101');
+      const cv2 = s3.getItem('v_102');
+      const canonRestored =
+        canonOk &&
+        cv1?.typeId === 'erlenmeyer_1000' &&
+        cv1?.isStoppered === true &&
+        Math.abs((cv1?.moles?.BaCl2_2H2O_s || 0) - 0.15) < 1e-6 &&
+        cv1?.gasTargetId === 'v_102' &&
+        cv2?.typeId === 'beaker_250';
+
+      // 4. Test Share Code generation & loading + Reset All Benches + Firebase config
+      const shareCode = await cloudSync.createBenchShareCode(lm1);
+      const lm4 = new LabManager();
+      await cloudSync.loadBenchByShareCode(shareCode, lm4);
+      const sharedStand = lm4.getActiveSim().items.find((it) => it.typeId === 'retort_stand');
+      const shareCodeOk = /^LAB-\d{3}$/.test(shareCode) && sharedStand?.extendPx === 125;
+      resetAllBenches(lm2);
+      const firebaseConfigOk = FIREBASE_CONFIG.projectId === 'sos-app-1c5ff';
+
+      assert(
+        '3-Layer Workspace Persistence serializes pure physical state without bloat, restores via LocalStorage, imports canonical vessels+connections JSON, and shares benches via LAB-XXX codes',
+        noDerivedBloat && roundTripExact && canonRestored && shareCodeOk && firebaseConfigOk,
+        `noBloat=${noDerivedBloat}, roundTrip=${roundTripExact}, canon=${canonRestored}, shareCode=${shareCode}(ok=${shareCodeOk}), fb=${firebaseConfigOk}`
       );
     }
 

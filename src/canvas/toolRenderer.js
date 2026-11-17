@@ -1549,6 +1549,29 @@ export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFrom
   const { x, y } = item;
   const orient = item._attachOrient || 'top';
   const isHoled = (item.stopperMode || 'holed') !== 'solid';
+
+  // Dynamically match host vessel's actual glass neck inner width so large flasks (e.g. erlenmeyer_1000) seal flush
+  let neckHalfPx = 10;
+  if (connectedFromVessel) {
+    const vSpec = APPARATUS[connectedFromVessel.typeId];
+    if (vSpec) {
+      if (vSpec.isHorizontalTube) {
+        neckHalfPx = (vSpec.height || 30) * 0.42;
+      } else if (vSpec.isUTube) {
+        neckHalfPx = vSpec.tubeOuterR || 13;
+      } else if (vSpec.geometry?.profilePoints?.length >= 2) {
+        const pts = vSpec.geometry.profilePoints;
+        const maxR = Math.max(...pts.map((p) => p[1]), 0.1);
+        const neckCm = pts[pts.length - 2][1];
+        neckHalfPx = Math.max(9.5, (neckCm / maxR) * (vSpec.width / 2 - 2));
+      } else {
+        neckHalfPx = Math.max(9.5, (vSpec.neckRadius || 14) - 1.5);
+      }
+    }
+  }
+  const botHalf = Math.max(10, neckHalfPx + 0.8);
+  const topHalf = botHalf + 3.8;
+
   ctx.save();
   drawSelectionGlow(ctx, isSelected, false);
 
@@ -1563,10 +1586,10 @@ export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFrom
   ctx.strokeStyle = isSelected ? '#3b82f6' : '#0f172a';
   ctx.lineWidth = isSelected ? 2 : 1.25;
   ctx.beginPath();
-  ctx.moveTo(-14, -9);
-  ctx.lineTo(14, -9);
-  ctx.lineTo(10, 9);
-  ctx.lineTo(-10, 9);
+  ctx.moveTo(-topHalf, -9);
+  ctx.lineTo(topHalf, -9);
+  ctx.lineTo(botHalf, 9);
+  ctx.lineTo(-botHalf, 9);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
@@ -1575,8 +1598,8 @@ export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFrom
   ctx.strokeStyle = 'rgba(255,255,255,0.22)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(-12.5, -6.5);
-  ctx.lineTo(12.5, -6.5);
+  ctx.moveTo(-(topHalf - 1.5), -6.5);
+  ctx.lineTo(topHalf - 1.5, -6.5);
   ctx.stroke();
 
   if (isHoled) {

@@ -9,6 +9,18 @@ import { InspectorPanel } from './ui/inspectorPanel.js';
 import { DosingModal } from './ui/dosingModal.js';
 import { ComparisonPanel } from './ui/comparisonPanel.js';
 import { soundEngine } from './audio/soundEngine.js';
+import {
+  serializeWorkspace,
+  deserializeWorkspace,
+  saveToLocalStorage,
+  loadFromLocalStorage,
+  resetAllBenches,
+  exportWorkspaceToFile,
+  importWorkspaceFromFile,
+  cloudSync,
+  initWorkspacePersistence,
+} from './storage/workspaceStorage.js';
+import { WorkspaceStorageModal } from './ui/workspaceStorageModal.js';
 
 const STORAGE_LANG_KEY = 'virlab_lang';
 const STORAGE_THEME_KEY = 'virlab_theme';
@@ -98,6 +110,7 @@ function ensureLabSubscribed(lab) {
   subscribedSims.add(lab.sim);
   lab.sim.subscribe(() => {
     if (lab.sim === sim) refreshChrome();
+    workspacePersistence?.triggerDebouncedSave();
   });
 }
 ensureLabSubscribed(labManager.getActiveLab());
@@ -353,6 +366,10 @@ const envBar = new EnvironmentBar(headerEl, sim, appState, {
     appState.soundEnabled = soundEngine.toggleEnabled();
     refreshChrome(true);
   },
+  onOpenStorage: () => {
+    soundEngine.playUiClick();
+    storageModal.open();
+  },
   onDeviceChange: (mode) => {
     appState.deviceMode = mode;
     localStorage.setItem(STORAGE_DEVICE_KEY, mode);
@@ -547,6 +564,10 @@ function renderLabTabs(t) {
         return;
       }
       labManager.switchLab(Number(btn.dataset.labIndex));
+      workspacePersistence?.triggerDebouncedSave();
+      if (cloudSync.user && cloudSync.dirtySinceCloudSave) {
+        cloudSync.saveWorkspaceToCloud(labManager).catch(() => {});
+      }
     });
   });
 
@@ -704,14 +725,62 @@ window.addEventListener('keydown', (e) => {
       showToast(t('toastPastedApparatus').replace('{count}', String(pasted.length)));
       refreshChrome();
     }
+  } else if (key === 's') {
+    e.preventDefault();
+    soundEngine.playUiClick();
+    const t = getTranslator();
+    saveToLocalStorage(labManager);
+    storageModal.setLastAutoSaveTime(Date.now());
+    if (cloudSync.user) {
+      cloudSync
+        .saveWorkspaceToCloud(labManager)
+        .then(() => showToast(`☁️ ${t('toastCloudSaved')}`))
+        .catch(() => showToast(`💾 ${t('toastLocalSaved')}`));
+    } else {
+      showToast(`💾 ${t('toastLocalSaved')}`);
+    }
   }
 });
 
-// Expose LabManager, Workbench & SoundEngine hooks for automation / diagnostics
+const storageModal = new WorkspaceStorageModal(labManager, getTranslator, {
+  onNotify: (msg) => showToast(msg),
+  onRefresh: () => {
+    for (const lb of labManager.labs) ensureLabSubscribed(lb);
+    syncActiveLabRefs();
+    refreshChrome(true);
+  },
+  onAuthChange: (user) => {
+    appState.cloudSignedIn = Boolean(user);
+    refreshChrome(false);
+  },
+});
+
+const workspacePersistence = initWorkspacePersistence(labManager, {
+  onAutoSaved: (ts) => storageModal.setLastAutoSaveTime(ts),
+});
+
+// Restore auto-saved workspace from Browser LocalStorage if present
+if (loadFromLocalStorage(labManager)) {
+  for (const lb of labManager.labs) ensureLabSubscribed(lb);
+  syncActiveLabRefs();
+}
+
+// Expose LabManager, Workbench, SoundEngine & Storage hooks for automation / diagnostics
 if (typeof window !== 'undefined') {
   window.__LAB_MANAGER__ = labManager;
   window.__WORKBENCH__ = workbench;
   window.__SOUND_ENGINE__ = soundEngine;
+  window.__WORKSPACE_STORAGE__ = {
+    serializeWorkspace,
+    deserializeWorkspace,
+    saveToLocalStorage,
+    loadFromLocalStorage,
+    resetAllBenches,
+    exportWorkspaceToFile,
+    importWorkspaceFromFile,
+    cloudSync,
+    storageModal,
+  };
 }
 
 // Initial boot

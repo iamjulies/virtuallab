@@ -23,9 +23,16 @@ function getElectrodeLiquidInfo(items, elec) {
     (v.moles.NaCl_s || 0) > 1e-6 &&
     v.tempK >= 1073.85 &&
     (v.moles.H2O_l || 0) < 0.005;
-  if (hasMoltenNaCl && liqL <= 1e-5) {
-    const moltenVolL = Math.max(0.01, (v.moles.NaCl_s * 58.44) / 1556 / 1000);
-    return { vessel: v, liqL: moltenVolL, isMoltenNaCl: true };
+  const hasMoltenBaCl2 =
+    (v.moles.BaCl2_s || 0) > 1e-6 &&
+    v.tempK >= 1235.15 &&
+    (v.moles.H2O_l || 0) < 0.005;
+  if ((hasMoltenNaCl || hasMoltenBaCl2) && liqL <= 1e-5) {
+    const moltenVolL = Math.max(
+      0.01,
+      ((v.moles.NaCl_s || 0) * 58.44 + (v.moles.BaCl2_s || 0) * 208.23) / 1800 / 1000
+    );
+    return { vessel: v, liqL: moltenVolL, isMoltenNaCl: hasMoltenNaCl, isMoltenBaCl2: hasMoltenBaCl2 };
   }
   if (elec.immersedFrac !== undefined && elec.immersedFrac <= 0.01) return null;
   if (liqL <= 1e-5 || (v.moles.H2O_l || 0) <= 1e-5) return null;
@@ -161,7 +168,7 @@ export function stepElectrochemistry(sim, dt) {
   for (const sb of bridges) {
     sb.activeCurrentA = 0;
     const valid = items.filter(
-      (v) => v.kind === 'vessel' && !v.isShattered && !v.isStoppered && !APPARATUS[v.typeId]?.isMortar && Math.abs(v.y - sb.y) <= 150
+      (v) => v.kind === 'vessel' && !v.isShattered && !APPARATUS[v.typeId]?.isMortar && Math.abs(v.y - sb.y) <= 150
     );
     const leftCands = valid
       .filter((v) => v.x <= sb.x + 24 && Math.abs(v.x - sb.x) <= 145)
@@ -209,11 +216,13 @@ export function stepElectrochemistry(sim, dt) {
       }
 
       const isMoltenNaCl = Boolean(infoPos.isMoltenNaCl && infoNeg.isMoltenNaCl);
+      const isMoltenBaCl2 = Boolean(infoPos.isMoltenBaCl2 && infoNeg.isMoltenBaCl2);
+      const isMoltenSalt = isMoltenNaCl || isMoltenBaCl2;
       const cCu = ((v.moles.Cu2_aq || 0) + 0.65 * (v.moles.CuNH3_4_2_aq || 0)) / liqL;
       const cAg = (v.moles.Ag_aq || 0) / liqL;
       const cCl = (v.moles.Cl_aq || 0) / liqL;
       const hasPlatedAgAnode = elPos.platedMaterial === 'Ag' && (elPos.platedAgMol || 0) > 1e-8;
-      const decompV = isMoltenNaCl
+      const decompV = isMoltenSalt
         ? 3.6
         : hasPlatedAgAnode
         ? 0.12
@@ -224,7 +233,7 @@ export function stepElectrochemistry(sim, dt) {
         : cCu > 0.005
         ? 1.15
         : 1.55;
-      const ionConductivity = isMoltenNaCl
+      const ionConductivity = isMoltenSalt
         ? 1.0
         : Math.max(
             0.04,
@@ -258,7 +267,17 @@ export function stepElectrochemistry(sim, dt) {
 
       const neMol = (currentA * dt) / CONSTANTS.FARADAY_C_MOL;
 
-      if (isMoltenNaCl) {
+      if (isMoltenSalt) {
+        if (isMoltenBaCl2 && (v.moles.BaCl2_s || 0) > 1e-10) {
+          const dElectBa = Math.min(v.moles.BaCl2_s || 0, neMol / 2);
+          if (dElectBa > 1e-10) {
+            addMolSafe(v.moles, 'BaCl2_s', -dElectBa);
+            sim.emitElectrolysisGas(v, 'Cl2_g', dElectBa, elPos.x, elPos);
+            elPos.gasBubbleType = 'Cl2_g';
+            elPos.gasBubbleRate = dElectBa / Math.max(1e-4, dt);
+          }
+          continue;
+        }
         const dElect = Math.min(v.moles.NaCl_s || 0, neMol);
         if (dElect > 1e-10) {
           addMolSafe(v.moles, 'NaCl_s', -dElect);

@@ -917,6 +917,8 @@ export const APPARATUS = {
     width: 121,
     height: 167,
     neckRadius: 56,
+    heatable: true,
+    heatLossCoeffWK: 0.52,
     stopperable: false,
     invertible: false,
     supportsClamp: false,
@@ -954,6 +956,8 @@ export const APPARATUS = {
     width: 151,
     height: 247,
     neckRadius: 24.0,
+    heatable: true,
+    heatLossCoeffWK: 0.44,
     stopperable: true,
     invertible: true,
     supportsClamp: true,
@@ -994,6 +998,8 @@ export const APPARATUS = {
     width: 98,
     height: 161,
     neckRadius: 17.0,
+    heatable: true,
+    heatLossCoeffWK: 0.38,
     stopperable: true,
     invertible: true,
     supportsClamp: true,
@@ -1035,6 +1041,8 @@ export const APPARATUS = {
     width: 151,
     height: 230,
     neckRadius: 17.5,
+    heatable: true,
+    heatLossCoeffWK: 0.44,
     stopperable: true,
     invertible: true,
     supportsClamp: true,
@@ -1124,7 +1132,8 @@ export function getClampNeckOffsetY(spec) {
 export function clampItemToStandY(itemSpec, stand, floorY = 482, candidateY = 0, floorPad = 4) {
   const stSpec = APPARATUS.retort_stand;
   const neckOff = getClampNeckOffsetY(itemSpec);
-  const standTop = stand.y - stSpec.height / 2;
+  const extPx = Math.max(0, Math.min(220, stand?.extendPx || 0));
+  const standTop = stand.y - stSpec.height / 2 - extPx;
   const standBot = stand.y + stSpec.height / 2;
   const minItemY = standTop + 14 - neckOff;
   const maxItemY = Math.min(floorY - itemSpec.height / 2 - floorPad, standBot - 22 - neckOff);
@@ -1132,16 +1141,23 @@ export function clampItemToStandY(itemSpec, stand, floorY = 482, candidateY = 0,
 }
 
 /**
- * Shared Left-Right flip geometry helpers so Canvas rendering, port handles, and physics share exact coordinates.
+ * Shared Left-Right flip & telescopic extension geometry helpers for Retort Stand.
  */
 export function getStandGeometry(stand) {
   const rodSide = stand?.flippedX ? -1 : 1; // +1: rod on right, clamp reaches left (-1)
   const armDir = -rodSide;
   const rodX = (stand?.x || 0) + rodSide * 36;
+  const extPx = Math.max(0, Math.min(220, stand?.extendPx || 0));
+  const h = APPARATUS.retort_stand.height;
+  const rodTopY = (stand?.y || 0) - h / 2 - extPx + 8;
+  const rodBotY = (stand?.y || 0) + h / 2 - 14;
   return {
     rodSide,
     armDir,
     rodX,
+    extendPx: extPx,
+    rodTopY,
+    rodBotY,
     clampTargetX(kind) {
       return rodX + armDir * (kind === 'gas_syringe' ? 45 : 28);
     },

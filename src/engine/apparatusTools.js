@@ -703,19 +703,33 @@ export function checkFlameLoopInteractions(sim, loop) {
       const hasCa =
         (m.Ca2_aq || 0) + (m.CaCl2_s || 0) + (m.CaNO3_2_s || 0) + (m.CaCO3_s || 0) +
         (m.CaO_s || 0) + (m.CaOH2_s || 0) + (m.CaSO4_s || 0) > 1e-6;
+      const hasBa =
+        (m.Ba2_aq || 0) + (m.BaCl2_2H2O_s || 0) + (m.BaCl2_s || 0) + (m.BaNO3_2_s || 0) +
+        (m.BaOH2_s || 0) + (m.BaCO3_s || 0) + (m.BaSO4_s || 0) > 1e-6;
       const hasCu =
         (m.Cu2_aq || 0) + (m.CuCl4_2_aq || 0) + (m.CuNH3_4_2_aq || 0) + (m.CuOH4_2_aq || 0) +
         (m.CuSO4_5H2O_s || 0) + (m.CuSO4_s || 0) + (m.CuCl2_s || 0) + (m.CuNO3_2_s || 0) +
         (m.CuCO3_s || 0) + (m.CuO_s || 0) + (m.CuOH2_s || 0) > 1e-6;
+      const hasFe =
+        (m.Fe2_aq || 0) + (m.Fe3_aq || 0) + (m.FeCl2_s || 0) + (m.FeCl3_s || 0) +
+        (m.FeSO4_s || 0) + (m.FeNO3_2_s || 0) + (m.FeNO3_3_s || 0) > 1e-6;
       if (hasNa) {
-        // Exp 17: 589 nm Na D-doublet quantum emission overwhelms & masks weaker Cu2+ / Ca2+ bands
+        // Exp 17: 589 nm Na D-doublet quantum emission overwhelms & masks weaker Cu2+ / Ca2+ / Ba2+ bands
         loop.sampledIon = 'Na⁺';
         loop.sampledColor = '#facc15';
-        const maskedLabel =
-          hasCu && hasCa ? 'Na⁺ (che Ca²⁺, Cu²⁺)' : hasCu ? 'Na⁺ (che Cu²⁺)' : hasCa ? 'Na⁺ (che Ca²⁺)' : 'Na⁺';
+        const maskedList = [];
+        if (hasCa) maskedList.push('Ca²⁺');
+        if (hasBa) maskedList.push('Ba²⁺');
+        if (hasCu) maskedList.push('Cu²⁺');
+        const maskedLabel = maskedList.length > 0 ? `Na⁺ (che ${maskedList.join(', ')})` : 'Na⁺';
         loop.sampleLabel = maskedLabel;
-        loop.maskedCuByNa = hasCu || hasCa;
-        loop.maskedTargetName = hasCa && !hasCu ? 'Ca²⁺' : 'Cu²⁺';
+        loop.maskedCuByNa = maskedList.length > 0;
+        loop.maskedTargetName = maskedList[0] || 'Cu²⁺';
+      } else if (hasBa) {
+        loop.sampledIon = 'Ba²⁺';
+        loop.sampledColor = '#84cc16';
+        loop.sampleLabel = 'Ba²⁺ (Vàng lục · 524 nm)';
+        loop.maskedCuByNa = false;
       } else if (hasCa) {
         loop.sampledIon = 'Ca²⁺';
         loop.sampledColor = '#ef4444';
@@ -724,7 +738,12 @@ export function checkFlameLoopInteractions(sim, loop) {
       } else if (hasCu) {
         loop.sampledIon = 'Cu²⁺';
         loop.sampledColor = '#10b981';
-        loop.sampleLabel = 'Cu²⁺';
+        loop.sampleLabel = 'Cu²⁺ (Xanh lục · 515 nm)';
+        loop.maskedCuByNa = false;
+      } else if (hasFe) {
+        loop.sampledIon = 'Fe²⁺/Fe³⁺';
+        loop.sampledColor = '#f59e0b';
+        loop.sampleLabel = 'Fe (Vàng cam ánh sao)';
         loop.maskedCuByNa = false;
       }
     }

@@ -536,9 +536,9 @@ export function routeGasPacketToTarget(
     return { handled: false, maxedSyringe: target };
   }
 
-  if (target && target.kind === 'vessel' && target.isInverted && !target.isShattered) {
+  if (target && target.kind === 'vessel' && (target.isInverted || preferInvertedDirect || target.isStoppered) && !target.isShattered) {
     target.headspaceGasMoles = target.headspaceGasMoles || createEmptyGasMap();
-    const trough = target.submergedInTroughId ? getApparatusById(target.submergedInTroughId) : sourceVessel || null;
+    const trough = target.submergedInTroughId ? getApparatusById(target.submergedInTroughId) : target.isInverted ? sourceVessel || null : null;
     const targetSpec = APPARATUS[target.typeId] || APPARATUS.test_tube_50;
     const tgtT = target.tempK || env.tempK;
     let newPermMol = 0;

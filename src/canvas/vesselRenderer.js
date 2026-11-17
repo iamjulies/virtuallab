@@ -725,7 +725,9 @@ export function renderRetortStand(ctx, stand, isSelected, isDark) {
   const { x, y } = stand;
   const w = spec.width;
   const h = spec.height;
-  const top = y - h / 2;
+  const extPx = Math.max(0, Math.min(200, stand.extendPx || 0));
+  const top = y - h / 2 - extPx;
+  const baseTop = y - h / 2;
   const bottom = y + h / 2;
   const { rodX } = getStandGeometry(stand);
 
@@ -753,22 +755,33 @@ export function renderRetortStand(ctx, stand, isSelected, isDark) {
   ctx.fillStyle = isDark ? '#475569' : '#64748b';
   ctx.fillRect(rodX - 7, bottom - 22, 14, 10);
 
-  // 304 Stainless steel vertical rod
+  // 304 Stainless steel vertical rod (telescoping upper & lower shafts)
   const rodGrad = ctx.createLinearGradient(rodX - 3.5, 0, rodX + 3.5, 0);
   rodGrad.addColorStop(0, '#64748b');
   rodGrad.addColorStop(0.45, '#e2e8f0');
   rodGrad.addColorStop(1, '#475569');
   ctx.fillStyle = rodGrad;
-  ctx.fillRect(rodX - 3, top + 8, 6, h - 22);
+  ctx.fillRect(rodX - 3, top + 8, 6, h + extPx - 22);
 
-  // Finial cap at rod top
+  // Telescopic locking sleeve collar when extended
+  if (extPx > 2) {
+    ctx.fillStyle = isDark ? '#475569' : '#334155';
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 1;
+    ctx.fillRect(rodX - 5.5, baseTop + 10, 11, 9);
+    ctx.strokeRect(rodX - 5.5, baseTop + 10, 11, 9);
+  }
+
+  // Draggable finial cap handle at rod top (pull up/down to extend stand height)
   ctx.beginPath();
-  ctx.arc(rodX, top + 8, 4.5, 0, Math.PI * 2);
-  ctx.fillStyle = '#94a3b8';
+  ctx.arc(rodX, top + 8, 6.0, 0, Math.PI * 2);
+  ctx.fillStyle = isSelected || extPx > 0 ? '#f59e0b' : '#94a3b8';
+  ctx.strokeStyle = isDark ? '#0f172a' : '#ffffff';
+  ctx.lineWidth = 1.4;
   ctx.fill();
   ctx.stroke();
 
-  drawLabelPill(ctx, rodX, top - 16, stand.label, {
+  drawLabelPill(ctx, rodX, top - 16, extPx > 0 ? `${stand.label} · +${Math.round(extPx / 1.15)}mm` : stand.label, {
     pal,
     borderColor: isSelected ? '#3b82f6' : pal.badgeBorder,
     font: '600 10px system-ui, sans-serif',
@@ -781,7 +794,8 @@ export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
   if (!stand || !clampedItem || clampedItem.isShattered || clampedItem.isBroken) return;
   const stSpec = APPARATUS.retort_stand;
   const { rodX, rodSide, armDir } = getStandGeometry(stand);
-  const standTop = stand.y - stSpec.height / 2;
+  const extPx = Math.max(0, Math.min(200, stand.extendPx || 0));
+  const standTop = stand.y - stSpec.height / 2 - extPx;
   const standBot = stand.y + stSpec.height / 2;
   const spec = APPARATUS[clampedItem.typeId];
   const isSyr = clampedItem.kind === 'gas_syringe';
@@ -2647,8 +2661,15 @@ export function renderVessel(ctx, vessel, opts) {
   // Rubber stopper on narrow-neck vessels sized proportionally to neck ID (skip dual-ended quartz tubes handled above)
   if (vessel.isStoppered && !vessel.isShattered && !spec.hasTwoEnds) {
     if (!vessel._physStopperMain) {
-      const stopTop = Math.max(12, (spec.neckRadius || 18) + 1.5);
-      const stopBot = Math.max(9, (spec.neckRadius || 18) - 2.5);
+      let neckHalfPx = (spec.neckRadius || 16) - 1.5;
+      if (spec.geometry?.profilePoints?.length >= 2) {
+        const ptsP = spec.geometry.profilePoints;
+        const maxR = Math.max(...ptsP.map((p) => p[1]), 0.1);
+        const neckCm = ptsP[ptsP.length - 2][1];
+        neckHalfPx = Math.max(9.5, (neckCm / maxR) * (w / 2 - 2));
+      }
+      const stopBot = Math.max(9.5, neckHalfPx + 0.8);
+      const stopTop = stopBot + 3.8;
       ctx.fillStyle = '#334155';
       ctx.strokeStyle = '#1e293b';
       ctx.lineWidth = 1;

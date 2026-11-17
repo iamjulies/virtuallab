@@ -397,6 +397,8 @@ export class InspectorPanel {
     } else if (item.kind === 'stand') {
       const stSpec = APPARATUS.retort_stand;
       const clampedItems = this.sim.items.filter((i) => i.clampedToId === item.id);
+      const extPx = Math.round(item.extendPx || 0);
+      const extMm = Math.round(extPx / 1.15);
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
@@ -408,6 +410,14 @@ export class InspectorPanel {
               ${renderFlipButtonHtml(item, t)}
               <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
             </div>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-1.5">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-muted">${t('standExtendLabel')}</span>
+              <strong class="font-mono text-amber-400" id="live-stand-ext">${stSpec.heightMm + extMm} mm (+${extMm} mm)</strong>
+            </div>
+            <input id="stand-extend-slider" type="range" min="0" max="200" step="2" value="${extPx}" class="w-full accent-amber-500 cursor-pointer" />
+            <p class="text-[10px] text-muted">${t('standExtendHint')}</p>
           </div>
           <div class="flex flex-col gap-1.5">
             <div class="text-xs font-medium text-muted">${t('standClampedList')}</div>
@@ -1572,8 +1582,14 @@ export class InspectorPanel {
       });
       this.container.querySelector('#ins-clear-pipette')?.addEventListener('click', () => this.sim.clearPipette(item.id));
     } else if (item.kind === 'stand') {
+      this.container.querySelector('#stand-extend-slider')?.addEventListener('input', (e) => {
+        this.sim.setStandExtension(item.id, Number(e.target.value));
+      });
       this.container.querySelectorAll('.stand-detach-btn').forEach((btn) => {
-        btn.addEventListener('click', () => this.sim.detachFromStand(btn.dataset.cid));
+        btn.addEventListener('click', () => {
+          soundEngine.playClampClick();
+          this.sim.detachFromStand(btn.dataset.cid);
+        });
       });
     } else if (item.kind === 'gas_syringe') {
       this.container.querySelector('#ins-vent-syringe')?.addEventListener('click', () => this.sim.ventSyringe(item.id));
