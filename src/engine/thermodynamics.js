@@ -49,6 +49,19 @@ function computeHClVaporRatio(nHCl, nWater) {
   return rAz * Math.pow(wHCl / wAz, 1.35);
 }
 
+function computeHNO3VaporRatio(nHNO3, nWater) {
+  if (nHNO3 <= 1e-12 || nWater <= 1e-12) return 0;
+  const mHNO3 = nHNO3 * CONSTANTS.M_HNO3;
+  const mH2O = nWater * CONSTANTS.M_H2O;
+  const wHNO3 = mHNO3 / (mHNO3 + mH2O);
+  const wAz = CONSTANTS.HNO3_AZEOTROPE_WT_FRAC;
+  const rAz = (wAz / CONSTANTS.M_HNO3) / ((1 - wAz) / CONSTANTS.M_H2O);
+  if (wHNO3 >= wAz) {
+    return rAz * (1 + 6.5 * (wHNO3 - wAz));
+  }
+  return rAz * Math.pow(wHNO3 / wAz, 1.85);
+}
+
 /**
  * Compute realistic Newton-convection burner heating rate (W) that tapers as vessel
  * temperature approaches the spirit-lamp plume limit (~170 / 228 / 280 C dry steady state).
@@ -257,15 +270,17 @@ export function stepVesselThermodynamics(
       radCoeff * (Math.pow(tCurClamped, 4) - Math.pow(tEnv, 4))) *
     dt;
 
-  // Sub-boiling surface evaporation & concentrated HCl(g) / NH3(g) outgassing
+  // Sub-boiling surface evaporation & concentrated HCl(g) / HNO3(g) / NH3(g) outgassing
   let steamProducedMol = 0;
   let ethanolProducedMol = 0;
   let hclProducedMol = 0;
+  let hno3ProducedMol = 0;
   let nh3ProducedMol = 0;
   let evapCoolingJ = 0;
   const nWater = vessel.moles.H2O_l || 0;
   const nEthanol = vessel.moles.C2H5OH_l || 0;
   const nAmmonia = vessel.moles.NH3_aq || 0;
+  const nPureHNO3 = vessel.moles.HNO3_l || 0;
 
   const hasOpenTube = !!(vessel.connectedTargetId || vessel.connectedSyringeId);
   const effectivePressureBar =
@@ -285,7 +300,7 @@ export function stepVesselThermodynamics(
   const effTopAreaCm2 = strat.topAreaCm2 * (vessel.isStoppered && hasOpenTube ? 0.55 : 1.0);
   const aqCapFactor = strat.hasLightCover ? 0.06 : 1.0;
 
-  if ((nWater > 1e-7 || nEthanol > 1e-7 || nAmmonia > 1e-8 || strat.lightOrganicMl > 0.05) && (canSubBoilVent || canEtOHVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
+  if ((nWater > 1e-7 || nEthanol > 1e-7 || nAmmonia > 1e-8 || nPureHNO3 > 1e-7 || strat.lightOrganicMl > 0.05) && (canSubBoilVent || canEtOHVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
     const vle = computeEthanolWaterVLE(vessel.moles, vessel.tempK, false);
     const volMl = strat.totalLiqMl + computeSolidVolumeMl(vessel.moles);
     const areaCm2 = effTopAreaCm2;
@@ -348,6 +363,41 @@ export function stepVesselThermodynamics(
       }
     }
 
+    const nNO3 = vessel.moles.NO3_aq || 0;
+    const nHNO3Aq = Math.min(nH, nNO3);
+    const rVapHNO3 = computeHNO3VaporRatio(nHNO3Aq, nWater);
+    let subBoilHNO3 = 0;
+    if (!vessel.isFrozenSolid && nWater > 1e-7 && nHNO3Aq > 1e-12) {
+      const mHNO3 = nHNO3Aq * CONSTANTS.M_HNO3;
+      const mH2O = nWater * CONSTANTS.M_H2O;
+      const wHNO3 = mHNO3 / Math.max(1e-9, mHNO3 + mH2O);
+      // Concentrated HNO3 (>= 48% w/w, esp. 68% fuming in humid air) emits HNO3(g) acid mist
+      const fumeExcessHNO3 = Math.max(0, wHNO3 - 0.48);
+      const fumeMolHNO3 =
+        fumeExcessHNO3 > 0
+          ? 0.00018 * (fumeExcessHNO3 / 0.20) * Math.exp(0.036 * (vessel.tempK - CONSTANTS.T_STD_K)) * dt
+          : 0;
+      subBoilHNO3 = Math.min(nHNO3Aq, subBoilEvap * rVapHNO3 + fumeMolHNO3);
+      if (subBoilEvap >= nWater * 0.9999) {
+        subBoilHNO3 = nHNO3Aq;
+      }
+    }
+
+    // Pure anhydrous HNO3(l) fuming & surface evaporation (m.p. -42 °C, b.p. 83 °C)
+    let subBoilPureHNO3 = 0;
+    if (nPureHNO3 > 1e-7 && vessel.tempK >= CONSTANTS.T_FREEZE_PURE_HNO3_K && (canSubBoilVent || canVentFumingHCl)) {
+      const evapPureMolS = calcEvaporationRateMol(
+        SPECIES.HNO3_l || { molarMass: CONSTANTS.M_HNO3, boilTempK: CONSTANTS.T_BOIL_PURE_HNO3_K, dHVapJ: CONSTANTS.DELTA_H_VAP_HNO3_J },
+        1.0,
+        vessel.tempK,
+        effAreaCm2,
+        0,
+        isStirred,
+        1.0
+      );
+      subBoilPureHNO3 = Math.min(nPureHNO3, Math.max(evapPureMolS, 1.4e-4 * Math.exp(0.03 * (vessel.tempK - CONSTANTS.T_STD_K))) * dt);
+    }
+
     if (subBoilEvap > 1e-12) {
       vessel.moles.H2O_l -= subBoilEvap;
       if (vessel.moles.H2O_l < 1e-12) delete vessel.moles.H2O_l;
@@ -367,6 +417,20 @@ export function stepVesselThermodynamics(
       if (vessel.moles.Cl_aq < 1e-13) delete vessel.moles.Cl_aq;
       hclProducedMol += subBoilHCl;
       evapCoolingJ -= subBoilHCl * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
+    }
+    if (subBoilHNO3 > 1e-12) {
+      vessel.moles.H_aq = Math.max(0, (vessel.moles.H_aq || 0) - subBoilHNO3);
+      vessel.moles.NO3_aq = Math.max(0, (vessel.moles.NO3_aq || 0) - subBoilHNO3);
+      if (vessel.moles.H_aq < 1e-13) delete vessel.moles.H_aq;
+      if (vessel.moles.NO3_aq < 1e-13) delete vessel.moles.NO3_aq;
+      hno3ProducedMol += subBoilHNO3;
+      evapCoolingJ -= subBoilHNO3 * CONSTANTS.DELTA_H_VAP_HNO3_AQ_J;
+    }
+    if (subBoilPureHNO3 > 1e-12) {
+      vessel.moles.HNO3_l = Math.max(0, nPureHNO3 - subBoilPureHNO3);
+      if (vessel.moles.HNO3_l < 1e-13) delete vessel.moles.HNO3_l;
+      hno3ProducedMol += subBoilPureHNO3;
+      evapCoolingJ -= subBoilPureHNO3 * CONSTANTS.DELTA_H_VAP_HNO3_J;
     }
 
     // 1d) Group 4 volatile reactant outgassing: NH3(aq) -> NH3(g)
@@ -411,7 +475,7 @@ export function stepVesselThermodynamics(
     flameTempOverrideK &&
     flameTempOverrideK >= 850 &&
     effectiveBurnerW > 200 &&
-    (vessel.moles.H2O_l || 0) + (vessel.moles.C2H5OH_l || 0) < 0.004;
+    (vessel.moles.H2O_l || 0) + (vessel.moles.C2H5OH_l || 0) + (vessel.moles.HNO3_l || 0) < 0.004;
   const effHeatCapJK = isDryFocusedBunsen ? Math.max(16.0, cTotal * 0.28) : cTotal;
   const rawHeatJ = reactionHeatJ + effectiveBurnerW * dt + ambientExchangeJ + evapCoolingJ;
   const netHeatJ = Number.isFinite(rawHeatJ) ? rawHeatJ : 0;
@@ -419,22 +483,39 @@ export function stepVesselThermodynamics(
   if (!Number.isFinite(newTempK)) newTempK = tCurClamped;
   newTempK = Math.max(155, Math.min(1950, newTempK));
 
-  // Regime 2: Co-distillation boiling clamp for Water + Ethanol (including pure EtOH at 78.3 C!)
+  // Regime 2: Co-distillation boiling clamp for Water + Ethanol + Nitric acid (pure HNO3 at 83 C!)
   let isBoiling = false;
   const remainingWater = vessel.moles.H2O_l || 0;
   const remainingEtOH = vessel.moles.C2H5OH_l || 0;
-  if ((remainingWater > 1e-7 || remainingEtOH > 1e-7) && newTempK >= boilingPointK) {
+  const remainingPureHNO3 = vessel.moles.HNO3_l || 0;
+  if (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 > 1e-7 && newTempK >= boilingPointK) {
+    isBoiling = true;
+    const excessJ = (newTempK - boilingPointK) * cTotal;
+    const boilPureHNO3 = Math.min(remainingPureHNO3, excessJ / CONSTANTS.DELTA_H_VAP_HNO3_J);
+    if (boilPureHNO3 > 1e-12) {
+      vessel.moles.HNO3_l = Math.max(0, remainingPureHNO3 - boilPureHNO3);
+      if (vessel.moles.HNO3_l < 1e-13) delete vessel.moles.HNO3_l;
+      hno3ProducedMol += boilPureHNO3;
+    }
+    const leftoverJ = Math.max(0, excessJ - boilPureHNO3 * CONSTANTS.DELTA_H_VAP_HNO3_J);
+    newTempK = boilingPointK + leftoverJ / cTotal;
+  } else if ((remainingWater > 1e-7 || remainingEtOH > 1e-7) && newTempK >= boilingPointK) {
     isBoiling = true;
     const excessJ = (newTempK - boilingPointK) * cTotal;
     const nH = vessel.moles.H_aq || 0;
     const nCl = vessel.moles.Cl_aq || 0;
     const nHCl = Math.min(nH, nCl);
+    const nHNO3Aq = Math.min(nH, vessel.moles.NO3_aq || 0);
     const rVap = computeHClVaporRatio(nHCl, remainingWater);
+    const rVapHNO3 = computeHNO3VaporRatio(nHNO3Aq, remainingWater);
     const vleBoil = computeEthanolWaterVLE(vessel.moles, boilingPointK, true);
     const yE = remainingEtOH > 1e-7 ? (remainingWater > 1e-7 ? vleBoil.yE : 1.0) : 0;
     const yW = 1 - yE;
 
-    const effWaterHeat = CONSTANTS.DELTA_H_VAP_WATER_J + rVap * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
+    const effWaterHeat =
+      CONSTANTS.DELTA_H_VAP_WATER_J +
+      rVap * CONSTANTS.DELTA_H_VAP_HCL_AQ_J +
+      rVapHNO3 * CONSTANTS.DELTA_H_VAP_HNO3_AQ_J;
     const effDeltaH = Math.max(1000, yE * SPECIES.C2H5OH_l.dHVapJ + yW * effWaterHeat);
     const boilTot = excessJ / effDeltaH;
 
@@ -461,8 +542,14 @@ export function stepVesselThermodynamics(
           ? nHCl
           : Math.min(nHCl, boilMol * rVap)
         : 0;
+    const boilHNO3 =
+      nHNO3Aq > 1e-12
+        ? remainingWater - boilMol <= 1e-7
+          ? nHNO3Aq
+          : Math.min(nHNO3Aq, boilMol * rVapHNO3)
+        : 0;
 
-    if (boilMol > 1e-12 || boilHCl > 1e-12 || boilEtOH > 1e-12) {
+    if (boilMol > 1e-12 || boilHCl > 1e-12 || boilHNO3 > 1e-12 || boilEtOH > 1e-12) {
       if (boilMol > 1e-12) {
         vessel.moles.H2O_l = Math.max(0, remainingWater - boilMol);
         if (vessel.moles.H2O_l < 1e-12) delete vessel.moles.H2O_l;
@@ -479,6 +566,13 @@ export function stepVesselThermodynamics(
         if (vessel.moles.H_aq < 1e-13) delete vessel.moles.H_aq;
         if (vessel.moles.Cl_aq < 1e-13) delete vessel.moles.Cl_aq;
         hclProducedMol += boilHCl;
+      }
+      if (boilHNO3 > 1e-12) {
+        vessel.moles.H_aq = Math.max(0, (vessel.moles.H_aq || 0) - boilHNO3);
+        vessel.moles.NO3_aq = Math.max(0, (vessel.moles.NO3_aq || 0) - boilHNO3);
+        if (vessel.moles.H_aq < 1e-13) delete vessel.moles.H_aq;
+        if (vessel.moles.NO3_aq < 1e-13) delete vessel.moles.NO3_aq;
+        hno3ProducedMol += boilHNO3;
       }
       const nNH3Now = vessel.moles.NH3_aq || 0;
       if (nNH3Now > 1e-14) {
@@ -499,7 +593,8 @@ export function stepVesselThermodynamics(
       const actualUsedJ =
         boilMol * CONSTANTS.DELTA_H_VAP_WATER_J +
         boilEtOH * SPECIES.C2H5OH_l.dHVapJ +
-        boilHCl * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
+        boilHCl * CONSTANTS.DELTA_H_VAP_HCL_AQ_J +
+        boilHNO3 * CONSTANTS.DELTA_H_VAP_HNO3_AQ_J;
       const leftoverJ = Math.max(0, excessJ - actualUsedJ);
       newTempK = boilingPointK + leftoverJ / cTotal;
     } else {
@@ -512,7 +607,10 @@ export function stepVesselThermodynamics(
   newTempK = phaseRes.updatedTempK;
 
   vessel.tempK = newTempK;
-  const hasAnyLiquid = (vessel.moles.H2O_l || 0) > 1e-7 || (vessel.moles.C2H5OH_l || 0) > 1e-7;
+  const hasAnyLiquid =
+    (vessel.moles.H2O_l || 0) > 1e-7 ||
+    (vessel.moles.C2H5OH_l || 0) > 1e-7 ||
+    (vessel.moles.HNO3_l || 0) > 1e-7;
   const steamOpacity =
     hasAnyLiquid && !vessel.isFrozenSolid
       ? computeSteamOpacity(newTempK, env.tempK, CONSTANTS.RELATIVE_HUMIDITY)
@@ -522,6 +620,7 @@ export function stepVesselThermodynamics(
     steamProducedMol,
     ethanolProducedMol,
     hclProducedMol,
+    hno3ProducedMol,
     nh3ProducedMol,
     isBoiling,
     boilingPointK,

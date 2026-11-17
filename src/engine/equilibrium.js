@@ -105,6 +105,9 @@ export function calcEffectiveSoluteMoles(moles) {
  * Pure Ethanol without water freezes at 159.05 K (-114.1 C).
  */
 export function solutionFreezingPointK(moles, useBulkWaterIfFrozen = false) {
+  if ((moles?.HNO3_l || 0) > 1e-9 && (moles?.H2O_l || 0) <= 1e-6 && (moles?.H2O_s || 0) <= 1e-6 && (moles?.C2H5OH_l || 0) <= 1e-6) {
+    return CONSTANTS.T_FREEZE_PURE_HNO3_K;
+  }
   const nWater = moles?.H2O_l || 0;
   const nIce = moles?.H2O_s || 0;
   if (nWater <= 1e-12 && nIce <= 1e-12) {

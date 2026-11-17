@@ -1512,7 +1512,7 @@ export class LabWorkbenchCanvas {
 
     // Steady realistic gravity flow calibrated to neck width, tilt progression & smooth low-volume tail
     const isNarrowNeck =
-      srcSpec.shape === 'erlenmeyer' || srcSpec.shape === 'test_tube' || srcSpec.shape === 'cylinder';
+      srcSpec.shape === 'erlenmeyer' || srcSpec.shape === 'round_flask' || srcSpec.shape === 'test_tube' || srcSpec.shape === 'cylinder';
     const baseMaxRateMlS = isNarrowNeck ? 8.5 : 12.0;
     const tiltFrac = Math.pow(Math.min(1, (absTilt - 0.10) / 0.46), 1.35);
     const tailFactor = srcLiqMl < 5.0 ? Math.max(0.18, srcLiqMl / 5.0) : 1.0;

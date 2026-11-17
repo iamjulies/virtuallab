@@ -1859,11 +1859,11 @@
       const aqLeft = Object.entries(dryCheck).filter(([id, n]) => SPECIES[id]?.phase === 'aq' && n > 1e-10);
 
       assert(
-        'v2/v3 Registry & dry conservation: 11 starter reagents incl. nh3_25, h2o2_30 & caco3, dynamic nonVolatileSoluteMoles excludes NH3_aq, dry NH4Cl & H2O2 decomposition clean',
+        'v2/v3 Registry & dry conservation: 14 starter reagents incl. nh3_25, h2o2_30, caco3, hno3_68, fe & bacl2_2h2o, dynamic nonVolatileSoluteMoles excludes NH3_aq, dry NH4Cl & H2O2 decomposition clean',
         hasNh3 &&
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
-          STARTER_REAGENTS.length === 11 &&
+          STARTER_REAGENTS.length === 14 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2425,13 +2425,13 @@
       );
     }
 
-    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_beta_v3+build.4 Sync
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_beta_v3+build.5 Sync
     {
       const allTranslated = APPARATUS_ORDER.every((id) => {
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.4';
+      const expectedBuild = 'virlab_beta_v3+build.5';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2451,6 +2451,17 @@
         Boolean(I18N.vi.presetCuoH2Reduction && I18N.en.presetCuoH2Reduction) &&
         Boolean(I18N.vi.presetZnBurnO2 && I18N.en.presetZnBurnO2) &&
         Boolean(I18N.vi.reg_caco3 && I18N.en.reg_caco3) &&
+        Boolean(I18N.vi.reg_hno3_68 && I18N.en.reg_hno3_68) &&
+        Boolean(I18N.vi.reg_fe && I18N.en.reg_fe) &&
+        Boolean(I18N.vi.reg_bacl2_2h2o && I18N.en.reg_bacl2_2h2o) &&
+        Boolean(I18N.vi.eq_beaker_1000 && I18N.en.eq_beaker_1000) &&
+        Boolean(I18N.vi.eq_erlenmeyer_1000 && I18N.en.eq_erlenmeyer_1000) &&
+        Boolean(I18N.vi.eq_round_flask_250 && I18N.en.eq_round_flask_250) &&
+        Boolean(I18N.vi.eq_round_flask_1000 && I18N.en.eq_round_flask_1000) &&
+        Boolean(I18N.vi.badgeCaCo3Film && I18N.en.badgeCaCo3Film) &&
+        Boolean(I18N.vi.badgeFePassivated && I18N.en.badgeFePassivated) &&
+        Boolean(I18N.vi.ironNailForm && I18N.en.ironNailForm) &&
+        Boolean(I18N.vi.ironPowderForm && I18N.en.ironPowderForm) &&
         Boolean(I18N.vi.eq_bunsen_burner && I18N.en.eq_bunsen_burner) &&
         Boolean(I18N.vi.eq_crucible_porcelain && I18N.en.eq_crucible_porcelain) &&
         Boolean(I18N.vi.eq_quartz_tube && I18N.en.eq_quartz_tube) &&
@@ -2466,8 +2477,9 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v3+build.4 parity: All 35 apparatus translated in VI/EN, all beta_v3 keys present, IUPAC spellings enforced',
-        APPARATUS_ORDER.length === 35 &&
+        'Build virlab_beta_v3+build.5 parity: All 39 apparatus & 14 starter reagents translated in VI/EN, Prompt 25 keys present, IUPAC spellings enforced',
+        APPARATUS_ORDER.length === 39 &&
+          STARTER_REAGENTS.length === 14 &&
           !APPARATUS.clay_triangle &&
           allTranslated &&
           newKeysPresent &&
@@ -2476,7 +2488,7 @@
           I18N.vi.eq_burette_50.includes('Buret') &&
           !I18N.vi.platedAgDendrite.toLowerCase().includes('bạc') &&
           !I18N.vi.reg_na.toLowerCase().includes('natri'),
-        `count=${APPARATUS_ORDER.length}, allI18n=${allTranslated}, newKeys=${newKeysPresent}, sub=${I18N.vi.appSubtitle}`
+        `count=${APPARATUS_ORDER.length}, reagents=${STARTER_REAGENTS.length}, allI18n=${allTranslated}, newKeys=${newKeysPresent}, sub=${I18N.vi.appSubtitle}`
       );
     }
 
@@ -2718,7 +2730,7 @@
       assert(
         'Reagent filters work, Clean Bench clears 0 items, Quick Presets populate cleanly, and Zn + 0.125M NaOH evolves H2 & [Zn(OH)4]2-',
         REAGENT_CATEGORIES.length >= 5 &&
-          acidCount === 1 &&
+          acidCount === 2 &&
           cleanCount === 0 &&
           daniellCount >= 5 &&
           diffCount === 1 &&
@@ -5082,6 +5094,262 @@
           pourAnimDone &&
           finalZnB2 > znInB2 + scoopedMol * 0.99,
         `drop=${droppedS}, grip/rel=${isGripped}/${releasedOk}, scoop=${startedScoop}(tilt=${midScoopTilt}, ${(scoopedMol*1000).toFixed(1)}mmol), pour=${startedPour}(tilt=${midPourTilt}, finalZn=${(finalZnB2*1000).toFixed(1)}mmol)`
+      );
+    }
+
+    // TEST 109: Beaker 250 Label + 1000 mL Glassware & Round-Bottom Flasks ISO Specs + Canvas Rendering (Dark/Light)
+    {
+      const simG = new LabSimulation();
+      const bk250 = simG.createApparatus('beaker_250', 140, 420);
+      const bk1000 = simG.createApparatus('beaker_1000', 290, 400);
+      const erl1000 = simG.createApparatus('erlenmeyer_1000', 460, 360);
+      const rf250 = simG.createApparatus('round_flask_250', 620, 405);
+      const rf1000 = simG.createApparatus('round_flask_1000', 790, 368);
+      simG.addReagentToVessel(bk1000.id, 'h2o', 250, { silentAnim: true, silentEmit: true });
+      simG.addReagentToVessel(rf250.id, 'cuso4_5h2o', 2.5, { silentAnim: true, silentEmit: true });
+      simG.addReagentToVessel(rf250.id, 'h2o', 120, { silentAnim: true, silentEmit: true });
+
+      const drawnTexts = [];
+      const wrap109 = document.createElement('div');
+      wrap109.style.width = '1100px';
+      wrap109.style.height = '540px';
+      const cvs = document.createElement('canvas');
+      cvs.width = 1100;
+      cvs.height = 540;
+      wrap109.appendChild(cvs);
+      document.body.appendChild(wrap109);
+      const ctxSpy = cvs.getContext('2d');
+      const origFillText = ctxSpy.fillText.bind(ctxSpy);
+      ctxSpy.fillText = (text, ...rest) => {
+        drawnTexts.push(String(text));
+        return origFillText(text, ...rest);
+      };
+      const wb = new LabWorkbenchCanvas(cvs, simG, new ParticleSystem());
+      let renderErr = null;
+      try {
+        wb.resize();
+        wb.setTheme?.(true);
+        wb.render(1.0);
+        wb.setTheme?.(false);
+        wb.render(1.1);
+      } catch (err) {
+        renderErr = err?.message || String(err);
+      } finally {
+        wrap109.remove();
+      }
+
+      const specChecks =
+        APPARATUS.beaker_1000.maxVolumeMl === 1000 &&
+        APPARATUS.beaker_1000.geometry.maxVolumeMl * 0.96 >= 1000 &&
+        APPARATUS.erlenmeyer_1000.maxVolumeMl === 1000 &&
+        APPARATUS.erlenmeyer_1000.supportsClamp === true &&
+        APPARATUS.erlenmeyer_1000.geometry.maxVolumeMl * 0.96 >= 1000 &&
+        APPARATUS.round_flask_250.shape === 'round_flask' &&
+        APPARATUS.round_flask_250.isRoundBottom === true &&
+        APPARATUS.round_flask_250.maxVolumeMl === 250 &&
+        APPARATUS.round_flask_250.geometry.maxVolumeMl * 0.96 >= 250 &&
+        APPARATUS.round_flask_1000.shape === 'round_flask' &&
+        APPARATUS.round_flask_1000.isRoundBottom === true &&
+        APPARATUS.round_flask_1000.maxVolumeMl === 1000 &&
+        APPARATUS.round_flask_1000.geometry.maxVolumeMl * 0.96 >= 1000;
+
+      const label250Count = drawnTexts.filter((s) => s === '250').length;
+      const has1000Text = drawnTexts.includes('1000');
+
+      assert(
+        'Beaker 250 top 250 tick labeled + 1000 mL Beaker/Erlenmeyer & 250/1000 mL Round-Bottom Flasks ISO specs & Dark/Light render pass',
+        specChecks && label250Count >= 2 && has1000Text && renderErr === null,
+        `specs=${specChecks}, 250Count=${label250Count}, has1000=${has1000Text}, err=${renderErr}`
+      );
+    }
+
+    // TEST 110: HNO3 Complete Physical Properties (-42 C mp, 83 C bp pure, 121.2 C 68% azeotrope, fuming, UV/thermal yellow NO2(aq) & cold Fe passivation)
+    {
+      const fpPure = solutionFreezingPointK({ HNO3_l: 1.0 });
+      const bpPure = solutionBoilingPointK({ HNO3_l: 1.0 }, CONSTANTS.P_STD_BAR);
+
+      const simN = new LabSimulation();
+      const bAzeo = simN.createApparatus('beaker_250', 180, 427);
+      simN.addReagentToVessel(bAzeo.id, 'hno3_68', 40, { silentAnim: true, silentEmit: true });
+      const bp68 = solutionBoilingPointK(bAzeo.moles, CONSTANTS.P_STD_BAR);
+      const bUv = simN.createApparatus('erlenmeyer_250', 360, 405);
+      simN.addReagentToVessel(bUv.id, 'hno3_68', 30, { silentAnim: true, silentEmit: true });
+      bUv.tempK = 330.0;
+      simN.environment.uvLight = true;
+
+      // Cold conc HNO3 passivates Fe; hot conc reacts producing NO2(g)
+      const bFeCold = simN.createApparatus('beaker_250', 540, 427);
+      simN.addReagentToVessel(bFeCold.id, 'hno3_68', 35, { silentAnim: true, silentEmit: true });
+      simN.addReagentToVessel(bFeCold.id, 'fe', 1.4, { silentAnim: true, silentEmit: true, fine: false });
+      const feInitCold = bFeCold.moles.Fe_s || 0;
+
+      // Conc vs Dilute HNO3 + Cu -> NO2 vs NO
+      const bCuConc = simN.createApparatus('beaker_250', 700, 427);
+      simN.addReagentToVessel(bCuConc.id, 'hno3_68', 30, { silentAnim: true, silentEmit: true });
+      bCuConc.moles.Cu_s = 0.03;
+
+      const bCuDil = simN.createApparatus('beaker_250', 840, 427);
+      simN.addReagentToVessel(bCuDil.id, 'h2o', 120, { silentAnim: true, silentEmit: true });
+      simN.addReagentToVessel(bCuDil.id, 'hno3_68', 10, { silentAnim: true, silentEmit: true });
+      bCuDil.moles.Cu_s = 0.03;
+
+      stepSeconds(simN, 4.0, 0.05);
+      const fumingSeen = (bAzeo.escapedGasMoles?.HNO3_g || 0) > 1e-4;
+      const uvYellowNO2Aq = bUv.moles.NO2_aq || 0;
+      const visUv = computeSolutionVisuals(bUv.moles, 0.03, 0, 6.2);
+      const coldFePassivated = bFeCold.fePassivated === true && (bFeCold.moles.Fe_s || 0) > feInitCold * 0.99;
+
+      // Now heat the cold passivated HNO3 + Fe beaker above 55 C -> breaks passivation
+      bFeCold.tempK = 335.0;
+      stepSeconds(simN, 4.0, 0.05);
+      const hotFeReacted = !bFeCold.fePassivated && (bFeCold.moles.Fe_s || 0) < feInitCold * 0.9 && (bFeCold.moles.Fe3_aq || 0) > 0.001 && (bFeCold.escapedGasMoles?.NO2_g || 0) > 0.001;
+      const cuConcNO2 = bCuConc.escapedGasMoles?.NO2_g || 0;
+      const cuDilNO = bCuDil.escapedGasMoles?.NO_g || 0;
+
+      assert(
+        'HNO3 physical constants (-42 °C mp, 83 °C bp pure, 121.2 °C 68% azeotrope), fuming HNO3(g), UV/heat NO2 yellowing & Fe cold passivation/hot breakdown + Cu NO2/NO redox pass',
+        Math.abs(fpPure - 231.15) < 0.2 &&
+          Math.abs(bpPure - 356.15) < 0.2 &&
+          Math.abs(bp68 - 394.35) < 0.8 &&
+          fumingSeen &&
+          uvYellowNO2Aq > 1e-4 &&
+          visUv.r > visUv.b + 15 &&
+          coldFePassivated &&
+          hotFeReacted &&
+          cuConcNO2 > 0.001 &&
+          cuDilNO > 0.0005,
+        `fp=${(fpPure-273.15).toFixed(1)}C, bpPure=${(bpPure-273.15).toFixed(1)}C, bp68=${(bp68-273.15).toFixed(1)}C, fume=${fumingSeen}, no2aq=${(uvYellowNO2Aq*1000).toFixed(2)}mmol, rgb=${visUv.r},${visUv.g},${visUv.b}, passivCold=${coldFePassivated}, hotFe=${hotFeReacted}, cuNO2=${(cuConcNO2*1000).toFixed(2)}, cuNO=${(cuDilNO*1000).toFixed(2)}`
+      );
+    }
+
+    // TEST 111: Ca(OH)2 Open-Air Thin CaCO3 Surface Crust (Forms Calm in Air, Blocked in Inert N2, Clears on Stirring or Acid)
+    {
+      const simL = new LabSimulation();
+      simL.environment.atmosphereMode = 'air';
+      const bOpenAir = simL.createApparatus('beaker_250', 220, 427);
+      bOpenAir.moles = { H2O_l: 5.5, Ca2_aq: 0.002, OH_aq: 0.004 };
+      stepSeconds(simL, 14.0, 0.1);
+      const filmBuilt = bOpenAir.caCo3FilmFrac || 0;
+      const filmSolid = bOpenAir.moles.CaCO3_s || 0;
+
+      // Stir disperses surface film
+      simL.stirVessel(bOpenAir.id);
+      stepSeconds(simL, 1.5, 0.05);
+      const filmClearedByStir = (bOpenAir.caCo3FilmFrac || 0) < 0.15;
+
+      // Inert atmosphere prevents atmospheric CO2 film
+      const simInert = new LabSimulation();
+      simInert.environment.atmosphereMode = 'inert';
+      const bInert = simInert.createApparatus('beaker_250', 220, 427);
+      bInert.moles = { H2O_l: 5.5, Ca2_aq: 0.002, OH_aq: 0.004 };
+      stepSeconds(simInert, 12.0, 0.1);
+      const noInertFilm = (bInert.caCo3FilmFrac || 0) === 0 && (bInert.moles.CaCO3_s || 0) === 0;
+
+      assert(
+        'Open quiescent Ca(OH)2(aq) forms thin white CaCO3 crust in ambient air, stays clear in inert N2, and disperses cleanly upon stirring',
+        filmBuilt > 0.8 && filmSolid > 1e-4 && filmClearedByStir && noInertFilm,
+        `airFilm=${filmBuilt.toFixed(2)}, caco3=${(filmSolid*1000).toFixed(3)}mmol, clearedStir=${filmClearedByStir}, inertOk=${noInertFilm}`
+      );
+    }
+
+    // TEST 112: BaCl2·2H2O Hydrate Dissolution & Acid-Insoluble White BaSO4 vs Acid-Soluble BaCO3
+    {
+      const simB = new LabSimulation();
+      const bSulfate = simB.createApparatus('beaker_250', 220, 427);
+      simB.addReagentToVessel(bSulfate.id, 'h2o', 80, { silentAnim: true, silentEmit: true });
+      const tBefore = bSulfate.tempK;
+      simB.addReagentToVessel(bSulfate.id, 'bacl2_2h2o', 4.88, { silentAnim: true, silentEmit: true });
+      stepSeconds(simB, 3.0, 0.05);
+      const cooledEndo = bSulfate.tempK < tBefore - 0.15;
+      const baIon = bSulfate.moles.Ba2_aq || 0;
+
+      // Precipitate BaSO4 then try dissolving with excess HCl
+      bSulfate.moles.SO4_2_aq = 0.015;
+      bSulfate.moles.H_aq = 0.03;
+      stepSeconds(simB, 2.0, 0.05);
+      const baSO4Made = bSulfate.moles.BaSO4_s || 0;
+      simB.addReagentToVessel(bSulfate.id, 'hcl_37', 25, { silentAnim: true, silentEmit: true });
+      stepSeconds(simB, 4.0, 0.05);
+      const baSO4Insoluble = (bSulfate.moles.BaSO4_s || 0) >= baSO4Made * 0.999;
+
+      // Contrast with BaCO3 -> dissolves in HCl evolving CO2
+      const bCarb = simB.createApparatus('beaker_250', 460, 427);
+      simB.addReagentToVessel(bCarb.id, 'h2o', 80, { silentAnim: true, silentEmit: true });
+      simB.addReagentToVessel(bCarb.id, 'bacl2_2h2o', 4.88, { silentAnim: true, silentEmit: true });
+      stepSeconds(simB, 2.0, 0.05);
+      bCarb.moles.Na_aq = 0.04;
+      bCarb.moles.CO3_2_aq = 0.02;
+      stepSeconds(simB, 1.5, 0.05);
+      const baCO3Made = bCarb.moles.BaCO3_s || 0;
+      simB.addReagentToVessel(bCarb.id, 'hcl_37', 20, { silentAnim: true, silentEmit: true });
+      stepSeconds(simB, 5.0, 0.05);
+      const baCO3Dissolved = (bCarb.moles.BaCO3_s || 0) < baCO3Made * 0.05 && (bCarb.escapedGasMoles?.CO2_g || 0) > 0.01;
+
+      assert(
+        'BaCl2·2H2O dissolves endothermically releasing Ba²⁺, forms acid-insoluble BaSO4(s) with SO4²⁻ & acid-soluble BaCO3(s) (+ CO2) with CO3²⁻',
+        cooledEndo && baIon > 0.018 && baSO4Made > 0.014 && baSO4Insoluble && baCO3Dissolved,
+        `cooled=${cooledEndo}, Ba2=${(baIon*1000).toFixed(1)}mmol, BaSO4=${(baSO4Made*1000).toFixed(1)}mmol(insol=${baSO4Insoluble}), BaCO3diss=${baCO3Dissolved}`
+      );
+    }
+
+    // TEST 113: Iron (Nail vs Fine Powder) Reactions — Cu2+ Plating, Acid Powder vs Nail Rate, Fe(OH)2 Air Ox -> Fe(OH)3, H2O2 -> Fe3+, & O2 Combustion Sparks -> Fe3O4
+    {
+      const simF = new LabSimulation();
+      // 1) Nail vs Fine Powder count & acid dissolution rate comparison
+      const bNail = simF.createApparatus('beaker_250', 140, 427);
+      simF.addReagentToVessel(bNail.id, 'h2o', 60, { silentAnim: true, silentEmit: true });
+      simF.addReagentToVessel(bNail.id, 'hcl_37', 15, { silentAnim: true, silentEmit: true });
+      simF.addReagentToVessel(bNail.id, 'fe', 1.4, { fine: false, silentAnim: true, silentEmit: true });
+
+      const bPowd = simF.createApparatus('beaker_250', 300, 427);
+      simF.addReagentToVessel(bPowd.id, 'h2o', 60, { silentAnim: true, silentEmit: true });
+      simF.addReagentToVessel(bPowd.id, 'hcl_37', 15, { silentAnim: true, silentEmit: true });
+      simF.addReagentToVessel(bPowd.id, 'fe', 1.4, { fine: true, silentAnim: true, silentEmit: true });
+
+      const nailCnt = bNail.particleCounts.Fe_s || 0;
+      const powdCnt = bPowd.particleCounts.Fe_s || 0;
+
+      // 2) Fe nail displacing Cu2+ -> brick-red Cu(s) + pale green Fe2+
+      const bCu = simF.createApparatus('beaker_250', 460, 427);
+      simF.addReagentToVessel(bCu.id, 'h2o', 80, { silentAnim: true, silentEmit: true });
+      bCu.moles.Cu2_aq = 0.025;
+      bCu.moles.SO4_2_aq = 0.025;
+      simF.addReagentToVessel(bCu.id, 'fe', 1.4, { fine: false, silentAnim: true, silentEmit: true });
+
+      stepSeconds(simF, 4.0, 0.05);
+      const powderFaster = (bPowd.moles.Fe2_aq || 0) > (bNail.moles.Fe2_aq || 0) * 1.4 && (bPowd.escapedGasMoles?.H2_g || 0) > 0.002;
+      const cuDisplaced = (bCu.moles.Cu_s || 0) > 0.005 && (bCu.moles.Fe2_aq || 0) > 0.005;
+
+      // 3) Fe(II) + H2O2 + H+ -> golden Fe3+ + NaOH -> Fe(OH)3(s); & Fe(OH)2 air oxidation -> Fe(OH)3(s)
+      simF.addReagentToVessel(bPowd.id, 'h2o2_30', 5, { silentAnim: true, silentEmit: true });
+      stepSeconds(simF, 2.5, 0.05);
+      const fe3FromPeroxide = bPowd.moles.Fe3_aq || 0;
+      const bAirOx = simF.createApparatus('beaker_250', 620, 427);
+      bAirOx.moles = { H2O_l: 4.0, FeOH2_s: 0.01 };
+      stepSeconds(simF, 15.0, 0.1);
+      const airOxFeOH3 = bAirOx.moles.FeOH3_s || 0;
+
+      // 4) Red-hot Fe on Tongs burning in O2 jar -> Fe3O4(s) + sparks_fe
+      const bO2 = simF.createApparatus('erlenmeyer_250', 780, 405);
+      bO2.headspaceGasMoles.O2_g = 0.03;
+      const tongs = simF.createApparatus('crucible_tongs', 850, 380);
+      tongs.heldSample = { speciesId: 'Fe_s', moles: 0.012, tempK: 920 };
+      tongs.x = bO2.x + 64; // tipX is tongs.x - 64 -> inside bO2 headspace!
+      tongs.y = bO2.y - 25;
+      stepSeconds(simF, 3.0, 0.05);
+      const tongsBurnedFe = (bO2.moles.Fe3O4_s || 0) > 0.001 && tongs.heldFlameColor === 'sparks_fe';
+
+      assert(
+        'Iron Nail (<=4) vs Fine Powder (>=30), faster powder+acid H2, Fe+Cu2+->Cu+Fe2+, Fe2+->Fe3+ (H2O2) & Fe(OH)2->Fe(OH)3 (air) & O2 spark combustion -> Fe3O4 pass',
+        nailCnt >= 1 &&
+          nailCnt <= 4 &&
+          powdCnt >= 30 &&
+          powderFaster &&
+          cuDisplaced &&
+          fe3FromPeroxide > 0.005 &&
+          airOxFeOH3 > 0.002 &&
+          tongsBurnedFe,
+        `nail=${nailCnt}, powd=${powdCnt}, faster=${powderFaster}, cuDisp=${cuDisplaced}, Fe3=${(fe3FromPeroxide*1000).toFixed(1)}mmol, airFeOH3=${(airOxFeOH3*1000).toFixed(1)}mmol, o2Burn=${tongsBurnedFe}`
       );
     }
 

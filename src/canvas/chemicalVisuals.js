@@ -148,11 +148,13 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
 
     const pCntSp = vessel.particleCounts?.[spId] || 0;
     const isLimestoneChips = spId === 'CaCO3_s' && !vessel.groundPowderMap?.[spId] && pCntSp > 0 && pCntSp < 45;
+    const isFePowder = spId === 'Fe_s' && (Boolean(vessel.groundPowderMap?.Fe_s) || pCntSp >= 25);
     const isGroundPowder =
-      !isLimestoneChips &&
-      !sp.isDenseMetal &&
-      spId !== 'Na_s' &&
-      (Boolean(vessel.groundPowderMap?.[spId]) || pCntSp >= 120 || (spId === 'CaCO3_s' && pCntSp === 0));
+      isFePowder ||
+      (!isLimestoneChips &&
+        !sp.isDenseMetal &&
+        spId !== 'Na_s' &&
+        (Boolean(vessel.groundPowderMap?.[spId]) || pCntSp >= 120 || (spId === 'CaCO3_s' && pCntSp === 0)));
     const isFlattenedMetal = Boolean(vessel.flattenedMetalMap?.[spId]);
 
     if (
@@ -219,7 +221,10 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       continue;
     }
 
-    const grainCount = Math.min(isFlattenedMetal ? 28 : 22, Math.max(2, Math.round(2 + Math.sqrt(massG) * 5)));
+    const grainCount =
+      vType === 'iron_solid'
+        ? Math.min(4, Math.max(1, pCntSp || 1))
+        : Math.min(isFlattenedMetal ? 28 : 22, Math.max(2, Math.round(2 + Math.sqrt(massG) * 5)));
     const baseSize = Math.min(8.5, 3.2 + Math.cbrt(massG) * 2.2);
 
     for (let i = 0; i < grainCount; i++) {
@@ -232,7 +237,40 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       ctx.rotate(isFlattenedMetal ? (seeded(i, 53) - 0.5) * 0.35 : seeded(i, 53) * Math.PI);
       if (isFlattenedMetal) ctx.scale(1.38, 0.52);
 
-      if (vType === 'white_pellet' || vType === 'pellet') {
+      if (vType === 'iron_solid') {
+        const nailLen = Math.min(width * 0.42, Math.max(16, 15 + Math.cbrt(massG) * 5.5));
+        const hasCuCoat = (moles.Cu_s || 0) > 1e-6;
+        const isHot = vessel.tempK >= 720;
+        const nailGrad = ctx.createLinearGradient(-nailLen * 0.5, -3, nailLen * 0.5, 3);
+        if (isHot) {
+          nailGrad.addColorStop(0, '#fed7aa');
+          nailGrad.addColorStop(0.5, '#f97316');
+          nailGrad.addColorStop(1, '#991b1b');
+        } else if (hasCuCoat) {
+          nailGrad.addColorStop(0, '#d97706');
+          nailGrad.addColorStop(0.55, '#b45309');
+          nailGrad.addColorStop(1, '#92400e');
+        } else {
+          nailGrad.addColorStop(0, '#cbd5e1');
+          nailGrad.addColorStop(0.5, '#64748b');
+          nailGrad.addColorStop(1, '#334155');
+        }
+        ctx.fillStyle = nailGrad;
+        ctx.strokeStyle = hasCuCoat ? '#f59e0b' : '#475569';
+        ctx.lineWidth = 0.85;
+        // Nail head
+        ctx.fillRect(-nailLen * 0.5 - 2, -4.0, 3.0, 8.0);
+        // Tapered shaft & sharp tip
+        ctx.beginPath();
+        ctx.moveTo(-nailLen * 0.5 + 1, -2.1);
+        ctx.lineTo(nailLen * 0.32, -1.7);
+        ctx.lineTo(nailLen * 0.55, 0);
+        ctx.lineTo(nailLen * 0.32, 1.7);
+        ctx.lineTo(-nailLen * 0.5 + 1, 2.1);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      } else if (vType === 'white_pellet' || vType === 'pellet') {
         if (sp.id === 'NaOH_s' && (vessel.naohDeliquesceFrac || 0) > 0.08) {
           ctx.beginPath();
           ctx.arc(0, 0, r * (1.1 + vessel.naohDeliquesceFrac * 0.45), 0, Math.PI * 2);

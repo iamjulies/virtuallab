@@ -832,6 +832,20 @@ export function stepVesselGasAndPressure(
       } else if ((routeProduced.NH3_g || 0) > 0) {
         target.escapedGasMoles.NH3_g = (target.escapedGasMoles.NH3_g || 0) + routeProduced.NH3_g;
       }
+      let remHNO3 = routeProduced.HNO3_g || 0;
+      if (remHNO3 > 0 && (target.moles.H2O_l || 0) > 1e-4) {
+        target.moles.H_aq = (target.moles.H_aq || 0) + remHNO3;
+        target.moles.NO3_aq = (target.moles.NO3_aq || 0) + remHNO3;
+        heatAddedJ += remHNO3 * CONSTANTS.DELTA_H_VAP_HNO3_AQ_J;
+        remHNO3 = 0;
+      } else if (remHNO3 > 0 && target.tempK < CONSTANTS.T_BOIL_PURE_HNO3_K) {
+        target.moles.HNO3_l = (target.moles.HNO3_l || 0) + remHNO3;
+        heatAddedJ += remHNO3 * CONSTANTS.DELTA_H_VAP_HNO3_J;
+        addedCapJK += remHNO3 * (SPECIES.HNO3_l?.cp || 109.9);
+        remHNO3 = 0;
+      } else if (remHNO3 > 0) {
+        target.escapedGasMoles.HNO3_g = (target.escapedGasMoles.HNO3_g || 0) + remHNO3;
+      }
       if ((routeProduced.C2H5Cl_g || 0) > 0 && target.restingOnId) {
         target.recentHalogenGasTimer = 1.6;
       }
@@ -885,7 +899,7 @@ export function stepVesselGasAndPressure(
         }
       }
       for (const g of NON_STEAM_GASES) {
-        if (g !== 'HCl_g' && g !== 'NH3_g' && g !== 'C2H5OH_g' && g !== 'CO2_g' && g !== 'SO3_g' && routeProduced[g] > 0) {
+        if (g !== 'HCl_g' && g !== 'HNO3_g' && g !== 'NH3_g' && g !== 'C2H5OH_g' && g !== 'CO2_g' && g !== 'SO3_g' && routeProduced[g] > 0) {
           target.headspaceGasMoles[g] = (target.headspaceGasMoles[g] || 0) + routeProduced[g];
           target.gasFlushInMol = (target.gasFlushInMol || 0) + routeProduced[g];
           if ((target.moles.H2O_l || 0) > 1e-4) {
@@ -955,6 +969,17 @@ export function stepVesselGasAndPressure(
         vessel.headspaceGasMoles.HCl_g = Math.max(0, headHCl - dDissHCl);
         vessel.moles.H_aq = (vessel.moles.H_aq || 0) + dDissHCl;
         vessel.moles.Cl_aq = (vessel.moles.Cl_aq || 0) + dDissHCl;
+      }
+    }
+    const headHNO3 = vessel.headspaceGasMoles.HNO3_g || 0;
+    if (headHNO3 > 1e-9) {
+      const cNO3Now = (vessel.moles.NO3_aq || 0) / liqVolL;
+      const roomCapHNO3 = Math.max(0, 16.0 - cNO3Now) * liqVolL;
+      const dDissHNO3 = Math.min(headHNO3, roomCapHNO3, headHNO3 * 0.72 + 0.002);
+      if (dDissHNO3 > 1e-11) {
+        vessel.headspaceGasMoles.HNO3_g = Math.max(0, headHNO3 - dDissHNO3);
+        vessel.moles.H_aq = (vessel.moles.H_aq || 0) + dDissHNO3;
+        vessel.moles.NO3_aq = (vessel.moles.NO3_aq || 0) + dDissHNO3;
       }
     }
     const headSO3 = vessel.headspaceGasMoles.SO3_g || 0;

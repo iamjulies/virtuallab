@@ -1370,14 +1370,35 @@ export function renderCrucibleTongs(ctx, item, isSelected, isDark, timeNow = 0) 
     const burning = (item.heldBurnTimer || 0) > 0.05;
     if (burning) {
       const isCyanZn = item.heldFlameColor === 'cyan_zn';
+      const isFeSparks = item.heldFlameColor === 'sparks_fe';
       const fGrad = ctx.createRadialGradient(tipX, y, 2, tipX, y - 4, 24);
       fGrad.addColorStop(0, '#ffffff');
-      fGrad.addColorStop(0.45, isCyanZn ? 'rgba(103, 232, 249, 0.92)' : 'rgba(253, 224, 71, 0.95)');
+      fGrad.addColorStop(
+        0.45,
+        isCyanZn
+          ? 'rgba(103, 232, 249, 0.92)'
+          : isFeSparks
+          ? 'rgba(251, 146, 60, 0.95)'
+          : 'rgba(253, 224, 71, 0.95)'
+      );
       fGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
       ctx.fillStyle = fGrad;
       ctx.beginPath();
       ctx.arc(tipX, y - 4, 22 + Math.sin(timeNow * 24) * 3, 0, Math.PI * 2);
       ctx.fill();
+      if (isFeSparks) {
+        ctx.strokeStyle = '#fef08a';
+        ctx.lineWidth = 1.4;
+        for (let k = 0; k < 8; k++) {
+          const ang = k * 0.785 + Math.sin(timeNow * 17 + k) * 0.35;
+          const r1 = 6;
+          const r2 = 16 + ((timeNow * 55 + k * 7) % 14);
+          ctx.beginPath();
+          ctx.moveTo(tipX + Math.cos(ang) * r1, y + Math.sin(ang) * r1);
+          ctx.lineTo(tipX + Math.cos(ang) * r2, y + Math.sin(ang) * r2);
+          ctx.stroke();
+        }
+      }
     }
     const sp = SPECIES[smp.speciesId];
     ctx.fillStyle = sp?.color || '#94a3b8';
@@ -1463,11 +1484,14 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
 
     // Active combustion flame envelope above spoon bowl
     if ((item.burnTimer || 0) > 0.04) {
+      const isFeSparks = item.flameColor === 'sparks_fe';
       const fCol =
         item.flameColor === 'cyan_zn'
           ? 'rgba(103, 232, 249, 0.92)'
           : item.flameColor === 'emerald_cu'
           ? 'rgba(52, 211, 153, 0.90)'
+          : isFeSparks
+          ? 'rgba(251, 146, 60, 0.95)'
           : 'rgba(253, 224, 71, 0.95)';
       const fGrad = ctx.createRadialGradient(bowlX, bowlY - 4, 2, bowlX, bowlY - 10, 26);
       fGrad.addColorStop(0, '#ffffff');
@@ -1477,6 +1501,19 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
       ctx.beginPath();
       ctx.arc(bowlX, bowlY - 8, 23 + Math.sin(timeNow * 25) * 3, 0, Math.PI * 2);
       ctx.fill();
+      if (isFeSparks) {
+        ctx.strokeStyle = '#fef08a';
+        ctx.lineWidth = 1.4;
+        for (let k = 0; k < 9; k++) {
+          const ang = -Math.PI + (k / 8) * Math.PI * 1.4 + Math.sin(timeNow * 19 + k) * 0.25;
+          const r1 = 6;
+          const r2 = 16 + ((timeNow * 58 + k * 6) % 15);
+          ctx.beginPath();
+          ctx.moveTo(bowlX + Math.cos(ang) * r1, bowlY - 2 + Math.sin(ang) * r1);
+          ctx.lineTo(bowlX + Math.cos(ang) * r2, bowlY - 2 + Math.sin(ang) * r2);
+          ctx.stroke();
+        }
+      }
     }
 
     const moundH = Math.min(8.5, 3.2 + Math.cbrt(totalMol * 80) * 3.5);

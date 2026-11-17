@@ -304,6 +304,7 @@ export class ParticleSystem {
       H2_g: metrics.gasRateH2 || 0,
       O2_g: metrics.gasRateO2 || 0,
       HCl_g: metrics.gasRateHCl || 0,
+      HNO3_g: metrics.gasRateHNO3 || 0,
       Cl2_g: metrics.gasRateCl2 || 0,
       C2H5Cl_g: metrics.gasRateC2H5Cl || 0,
       NH3_g: metrics.gasRateNH3 || 0,
@@ -312,7 +313,9 @@ export class ParticleSystem {
     };
     const nH = vessel.moles.H_aq || 0;
     const nCl = vessel.moles.Cl_aq || 0;
+    const nNO3 = vessel.moles.NO3_aq || 0;
     const hConc = liqMl > 1 ? Math.min(nH, nCl) / (liqMl / 1000) : 0;
+    const hno3Conc = liqMl > 1 ? Math.min(nH, nNO3) / (liqMl / 1000) : 0;
     const steamRate = metrics.steamRate || 0;
     const steamVis = metrics.isBoiling
       ? Math.max(0.88, metrics.steamOpacity || 0)
@@ -329,6 +332,10 @@ export class ParticleSystem {
       const active =
         gId === 'HCl_g'
           ? !vessel.isStoppered && ((hConc > 6.5 && vessel.tempK >= 268.15) || (rateMap[gId] || 0) > rateMin)
+          : gId === 'HNO3_g'
+          ? !vessel.isStoppered &&
+            (((hno3Conc > 9.5 || (vessel.moles.HNO3_l || 0) > 1e-5) && vessel.tempK >= 268.15) ||
+              (rateMap[gId] || 0) > rateMin)
           : (rateMap[gId] || 0) > rateMin;
       if (active) {
         plumeSignalSum += p.signal || 0.25;
@@ -545,6 +552,31 @@ export class ParticleSystem {
       }
     }
 
+    // 4c. Iron sparkling combustion inside O2 atmosphere (3Fe + 2O2 -> Fe3O4)
+    if (
+      (vessel.moles.Fe_s || 0) > 1e-8 &&
+      (vessel.headspaceGasMoles?.O2_g || 0) > 1e-5 &&
+      vessel.tempK >= ((vessel.particleCounts?.Fe_s || 0) >= 18 ? 610 : 760)
+    ) {
+      for (let i = 0; i < 3; i++) {
+        if (Math.random() < 0.72) {
+          const ang = Math.random() * Math.PI * 2;
+          const spd = 48 + Math.random() * 88;
+          this.particles.push({
+            kind: 'spark',
+            x: vessel.x + (Math.random() - 0.5) * 14,
+            y: bottomY - 8,
+            vx: Math.cos(ang) * spd,
+            vy: Math.sin(ang) * spd - 20,
+            r: 1.5 + Math.random() * 1.6,
+            life: 0,
+            maxLife: 0.32 + Math.random() * 0.22,
+            color: i % 2 === 0 ? '#fef08a' : '#fb923c',
+          });
+        }
+      }
+    }
+
     // 4b. Dry Sodium auto-ignition in Air/O2: 589 nm vivid yellow flame & white peroxide mist
     if (metrics.naDryBurning && !vessel.isStoppered) {
       if (Math.random() < 0.85) {
@@ -614,7 +646,9 @@ export class ParticleSystem {
       const rate = Math.min(75, 18 + metrics.overflowRateMlS * 0.45);
       const dropCount = Math.floor(rate * dt) + (Math.random() < (rate * dt) % 1 ? 1 : 0);
       const topY = vessel.y - spec.height / 2 + 2;
-      const rimX = vessel.x - (spec.shape === 'erlenmeyer' ? spec.neckRadius || 18.5 : spec.width / 2);
+      const rimX =
+        vessel.x -
+        (spec.shape === 'erlenmeyer' || spec.shape === 'round_flask' ? spec.neckRadius || 18.5 : spec.width / 2);
       const col = metrics.overflowColor || 'rgba(186, 230, 253, 0.85)';
 
       for (let i = 0; i < dropCount; i++) {

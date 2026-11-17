@@ -35,6 +35,12 @@ export const CONSTANTS = {
   HCL_AZEOTROPE_WT_FRAC: 0.2024,     // 20.24% w/w HCl-H2O azeotrope (~108.6 C at 1 bar)
   M_H2O: 18.01528,                   // g/mol
   M_HCL: 36.46094,                   // g/mol
+  M_HNO3: 63.01284,                  // g/mol
+  DELTA_H_VAP_HNO3_J: 39100,         // J/mol pure anhydrous HNO3 (83 °C)
+  DELTA_H_VAP_HNO3_AQ_J: 66200,      // J/mol HNO3(aq) -> HNO3(g) + hydration release
+  HNO3_AZEOTROPE_WT_FRAC: 0.68,      // Maximum-boiling HNO3/H2O azeotrope at 68% w/w (121.2 °C)
+  T_FREEZE_PURE_HNO3_K: 231.15,      // -42 °C freezing point of anhydrous HNO3
+  T_BOIL_PURE_HNO3_K: 356.15,        // +83 °C normal boiling point of anhydrous HNO3
   CP_H2O_J_MOL_K: 75.38,             // J/(mol·K)
 
   // Antoine coefficients for water vapor pressure (log10(P_mmHg) = A - B / (C + T_C))
@@ -205,12 +211,38 @@ export function waterBoilingPointK(P_bar) {
  */
 export function solutionBoilingPointK(moles, P_bar) {
   const baseK = waterBoilingPointK(P_bar);
+  const pSafe = Math.max(0.05, Math.min(20, P_bar || CONSTANTS.P_STD_BAR));
+  const pureHno3BpK =
+    1 /
+    (1 / CONSTANTS.T_BOIL_PURE_HNO3_K -
+      (CONSTANTS.R_J_MOL_K / CONSTANTS.DELTA_H_VAP_HNO3_J) * Math.log(pSafe / CONSTANTS.P_STD_BAR));
+  const nPureHNO3 = moles.HNO3_l || 0;
+  if (nPureHNO3 > 1e-10 && (moles.H2O_l || 0) <= 1e-9 && (moles.C2H5OH_l || 0) <= 1e-9) {
+    return Math.max(295, pureHno3BpK);
+  }
   const nH2O = moles.H2O_l || 0;
   const nEtOH = moles.C2H5OH_l || 0;
   if (nH2O <= 1e-10 && nEtOH <= 1e-10) return baseK;
 
   const mH2O = nH2O * CONSTANTS.M_H2O;
   const nHCl = Math.min(moles.H_aq || 0, moles.Cl_aq || 0);
+  const nHNO3Aq = Math.min(moles.H_aq || 0, moles.NO3_aq || 0);
+  const nHNO3Tot = nHNO3Aq + nPureHNO3;
+
+  // Aqueous HNO3 (including residual anhydrous HNO3_l): rises from 100 °C -> 121.2 °C (68% azeotrope) -> 83 °C (100%)
+  if ((nH2O > 1e-10 || nPureHNO3 > 1e-10) && nEtOH <= 1e-9 && nHNO3Tot > 1e-9 && nHNO3Tot >= nHCl * 0.5) {
+    const mHNO3 = nHNO3Tot * CONSTANTS.M_HNO3;
+    const wHNO3 = Math.min(1, mHNO3 / Math.max(1e-9, mHNO3 + mH2O));
+    const wAz = CONSTANTS.HNO3_AZEOTROPE_WT_FRAC;
+    const azBoilK = baseK + 21.2; // 373.15 + 21.20 = 394.35 K (121.2 °C at 1 atm)
+    if (wHNO3 <= wAz) {
+      const frac = wHNO3 / wAz;
+      const deltaK = 21.2 * Math.pow(frac, 1.45);
+      return Math.max(295, baseK + deltaK);
+    }
+    const u = (wHNO3 - wAz) / Math.max(1e-6, 1 - wAz);
+    return Math.max(295, azBoilK + (pureHno3BpK - azBoilK) * Math.pow(u, 1.25));
+  }
 
   if (nH2O > 1e-10 && nEtOH <= 1e-9 && nHCl > 1e-9) {
     const mHCl = nHCl * CONSTANTS.M_HCL;

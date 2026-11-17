@@ -624,17 +624,24 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
 
   if (rxn.type === 'metal_combustion_gas') {
     const solidId = rxn.solidId || 'Zn_s';
-    const minTK = solidId === 'Zn_s' ? getZnIgnitionTempK(vessel, options.environment) : (rxn.minTempK || 585);
+    const pCount = vessel.particleCounts?.[solidId] ?? 6;
+    const isFineMetal = Boolean(vessel.groundPowderMap?.[solidId]) || pCount >= 20;
+    const minTK =
+      solidId === 'Zn_s'
+        ? getZnIgnitionTempK(vessel, options.environment)
+        : solidId === 'Fe_s'
+        ? (isFineMetal ? 610 : rxn.minTempK || 760)
+        : (rxn.minTempK || 585);
     if (T < minTK) return 0;
     const pO2 = getVesselEffectiveO2Bar(vessel, options.environment);
-    if (pO2 <= 0.015) return 0;
+    if (pO2 <= (solidId === 'Fe_s' && !isFineMetal ? 0.35 : 0.015)) return 0;
     const nSolid = moles[solidId] || 0;
     if (nSolid <= 1e-10) return 0;
-    const pCount = vessel.particleCounts?.[solidId] ?? 6;
     const area = computeSolidSurfaceAreaM2(solidId, nSolid, pCount);
     const o2Drive = Math.min(4.8, pO2 / CONSTANTS.AIR_O2_FRAC);
     const k = (rxn.kAtThreshold || 0.65) * arrheniusFactor(rxn.eaJ || 48000, T - minTK + CONSTANTS.T_STD_K);
-    return Math.min(nSolid * 0.9, k * Math.max(1e-4, area) * o2Drive * 24.0);
+    const stoichS = rxn.reactants?.[solidId] || 1;
+    return Math.min((nSolid / stoichS) * 0.9, k * Math.max(1e-4, area) * o2Drive * (24.0 / stoichS));
   }
 
   if (rxn.type === 'sodium_combustion_gas') {
@@ -773,6 +780,122 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     return Math.min(nH2, nCl2) * (rxn.k298 || 3.8);
   }
 
+  if (rxn.type === 'acid_dissolve_solid') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nSolid = moles[rxn.solidId] || 0;
+    const stoichH = rxn.reactants?.H_aq || 2;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    if (nSolid <= 1e-10 || cH < 1e-4) return 0;
+    const pCount = vessel.particleCounts?.[rxn.solidId] ?? 24;
+    const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, pCount);
+    const k = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
+    return Math.min(nSolid, (moles.H_aq || 0) / stoichH, k * Math.max(1e-5, area) * Math.min(8.0, cH) * 5.0 * iceMob);
+  }
+
+  if (rxn.type === 'hno3_hydrate') {
+    if ((moles.HNO3_l || 0) <= 1e-10 || (moles.H2O_l || 0) < 0.01 || iceMob <= 0) return 0;
+    return moles.HNO3_l * 14.0 * iceMob;
+  }
+
+  if (rxn.type === 'hno3_photothermal') {
+    const uvOn = Boolean(options.uvLight);
+    if (rxn.isPure) {
+      const nPure = moles.HNO3_l || 0;
+      if (nPure <= 1e-9) return 0;
+      if (!uvOn && T < (rxn.minTempK || 313.15)) return 0;
+      const thermalDrive = T >= (rxn.minTempK || 313.15) ? arrheniusFactor(rxn.eaJ || 32000, T - 313.15 + 298.15) : 0;
+      const uvDrive = uvOn ? 1.45 : 0;
+      return (nPure / 4) * (rxn.k298 || 0.14) * (thermalDrive + uvDrive);
+    }
+    if (!hasWater || iceMob <= 0) return 0;
+    const nAcid = Math.min(moles.H_aq || 0, moles.NO3_aq || 0);
+    if (nAcid <= 1e-7) return 0;
+    const mHNO3 = nAcid * CONSTANTS.M_HNO3;
+    const mWater = (moles.H2O_l || 0) * CONSTANTS.M_H2O;
+    const wHNO3 = mHNO3 / Math.max(1e-9, mHNO3 + mWater);
+    if (wHNO3 < 0.32) return 0;
+    if (!uvOn && T < (rxn.minTempK || 323.15)) return 0;
+    const concScale = Math.min(2.4, Math.pow((wHNO3 - 0.25) / 0.43, 1.35));
+    const thermalDrive = T >= (rxn.minTempK || 323.15) ? arrheniusFactor(rxn.eaJ || 36000, T - 323.15 + 298.15) : 0;
+    const uvDrive = uvOn ? 1.35 : 0;
+    return (nAcid / 4) * (rxn.k298 || 0.085) * concScale * (thermalDrive + uvDrive) * iceMob;
+  }
+
+  if (rxn.type === 'metal_nonox_acid') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const solidId = rxn.solidId || 'Fe_s';
+    const nSolid = moles[solidId] || 0;
+    const nH = moles.H_aq || 0;
+    if (nSolid <= 1e-10 || nH <= 1e-10) return 0;
+    const cH = nH / liquidVolL;
+    const cNO3 = (moles.NO3_aq || 0) / liquidVolL;
+    if (cH < 0.015 || cNO3 >= (rxn.maxNO3Conc ?? 0.25)) return 0;
+    const pCount = vessel.particleCounts?.[solidId] ?? 4;
+    const isFine = Boolean(vessel.groundPowderMap?.[solidId]) || pCount >= 18;
+    const area = computeSolidSurfaceAreaM2(solidId, nSolid, isFine ? Math.max(pCount, 65) : pCount);
+    const fineBoost = isFine ? 2.4 : 1.0;
+    const kEff = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
+    return kEff * area * fineBoost * Math.min(8.0, cH) * 2.8 * iceMob;
+  }
+
+  if (rxn.type === 'metal_hno3_redox') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const solidId = rxn.solidId || 'Cu_s';
+    const nSolid = moles[solidId] || 0;
+    if (nSolid <= 1e-10) return 0;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    const cNO3 = (moles.NO3_aq || 0) / liquidVolL;
+    const cCl = (moles.Cl_aq || 0) / liquidVolL;
+    if (cH < 0.08 || cNO3 < (rxn.minNO3Conc ?? 0.05)) return 0;
+    if (rxn.maxNO3Conc && cNO3 >= rxn.maxNO3Conc) return 0;
+    if (cCl >= 4.0 && (solidId === 'Cu_s' || solidId === 'Ag_s')) return 0;
+    if (solidId === 'Fe_s' && cNO3 >= 5.5) {
+      const mAcid = Math.min(moles.H_aq || 0, moles.NO3_aq || 0) * CONSTANTS.M_HNO3;
+      const mW = (moles.H2O_l || 0) * CONSTANTS.M_H2O;
+      const wHNO3 = mAcid / Math.max(1e-9, mAcid + mW);
+      if ((wHNO3 >= 0.50 || cNO3 >= 8.5) && T < 318.15) {
+        vessel.fePassivated = true;
+        return 0;
+      }
+      vessel.fePassivated = false;
+    }
+    const pCount = vessel.particleCounts?.[solidId] ?? 8;
+    const isFine = Boolean(vessel.groundPowderMap?.[solidId]) || pCount >= 18;
+    const area = computeSolidSurfaceAreaM2(solidId, nSolid, isFine ? Math.max(pCount, 60) : pCount);
+    const fineBoost = isFine ? 1.85 : 1.0;
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ || 30000, T);
+    const drive = Math.min(5.0, cH / 2.5) * Math.min(4.0, cNO3 / 2.0);
+    return k * area * fineBoost * drive * stirBoost * iceMob * 4.5;
+  }
+
+  if (rxn.type === 'metal_displacement') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const solidId = rxn.solidId || 'Fe_s';
+    const aqId = rxn.aqueousId || 'Cu2_aq';
+    const nSolid = moles[solidId] || 0;
+    const nAq = moles[aqId] || 0;
+    if (nSolid <= 1e-10 || nAq <= 1e-10) return 0;
+    if (solidId === 'Fe_s' && (moles.NO3_aq || 0) / liquidVolL >= 8.5 && T < 318.15) return 0;
+    const cAq = nAq / liquidVolL;
+    const pCount = vessel.particleCounts?.[solidId] ?? 4;
+    const isFine = Boolean(vessel.groundPowderMap?.[solidId]) || pCount >= 18;
+    const area = computeSolidSurfaceAreaM2(solidId, nSolid, isFine ? Math.max(pCount, 60) : pCount);
+    const fineBoost = isFine ? 2.2 : 1.0;
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ || 25000, T);
+    return k * area * fineBoost * Math.min(4.5, cAq * 4.0) * stirBoost * iceMob * 32.0;
+  }
+
+  if (rxn.type === 'moist_precipitate_air_ox') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nFeOH2 = moles.FeOH2_s || 0;
+    if (nFeOH2 <= 1e-10) return 0;
+    const pO2 = getVesselEffectiveO2Bar(vessel, options.environment);
+    if (pO2 <= 0.015) return 0;
+    const o2Drive = Math.min(3.5, pO2 / CONSTANTS.AIR_O2_FRAC);
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ || 22000, T);
+    return (nFeOH2 / 4) * k * o2Drive * (vessel.stirTimer > 0 ? 2.4 : 1.0) * iceMob;
+  }
+
   return 0;
 }
 
@@ -863,6 +986,14 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
   // 2. Remaining soluble salts ordered from least soluble to most soluble
   const crystallizePairs = [
     { cat: 'Ca2_aq', cCat: 1, an: 'OH_aq', cAn: 2, solid: 'CaOH2_s', formula: 'Ca(OH)₂', sol298: 0.0235, coeff: -0.0075, etohRel: 0.01, crystHeatJ: 16200 },
+    { cat: 'Ba2_aq', cCat: 1, an: 'OH_aq', cAn: 2, solid: 'BaOH2_s', formula: 'Ba(OH)₂', sol298: 0.24, coeff: 0.028, etohRel: 0.01, crystHeatJ: 51800 },
+    { cat: 'Ba2_aq', cCat: 1, an: 'NO3_aq', cAn: 2, solid: 'BaNO3_2_s', formula: 'Ba(NO₃)₂', sol298: 0.39, coeff: 0.022, etohRel: 0.01, crystHeatJ: -40200 },
+    { cat: 'Ba2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'BaCl2_s', formula: 'BaCl₂', sol298: 1.79, coeff: 0.011, etohRel: 0.01, crystHeatJ: -8800 },
+    { cat: 'Fe2_aq', cCat: 1, an: 'SO4_2_aq', cAn: 1, solid: 'FeSO4_s', formula: 'FeSO₄', sol298: 1.9, coeff: 0.015, etohRel: 0.02, crystHeatJ: 8000 },
+    { cat: 'Fe3_aq', cCat: 1, an: 'NO3_aq', cAn: 3, solid: 'FeNO3_3_s', formula: 'Fe(NO₃)₃', sol298: 3.5, coeff: 0.018, etohRel: 0.04, crystHeatJ: 8000 },
+    { cat: 'Fe2_aq', cCat: 1, an: 'NO3_aq', cAn: 2, solid: 'FeNO3_2_s', formula: 'Fe(NO₃)₂', sol298: 3.8, coeff: 0.016, etohRel: 0.04, crystHeatJ: 8000 },
+    { cat: 'Fe2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'FeCl2_s', formula: 'FeCl₂', sol298: 5.1, coeff: 0.012, etohRel: 0.25, crystHeatJ: 8000 },
+    { cat: 'Fe3_aq', cCat: 1, an: 'Cl_aq', cAn: 3, solid: 'FeCl3_s', formula: 'FeCl₃', sol298: 5.6, coeff: 0.014, etohRel: 0.30, crystHeatJ: 8000 },
     { cat: 'Na_aq', cCat: 1, an: 'HCO3_aq', cAn: 1, solid: 'NaHCO3_s', formula: 'NaHCO₃', sol298: 1.15, coeff: 0.016, etohRel: 0.01, crystHeatJ: -17500 },
     { cat: 'Na_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'Na2SO4_s', formula: 'Na₂SO₄', sol298: 1.98, coeff: 0.032, etohRel: 0.02, crystHeatJ: 8000 },
     { cat: 'Na_aq', cCat: 2, an: 'CO3_2_aq', cAn: 1, solid: 'Na2CO3_s', formula: 'Na₂CO₃', sol298: 2.9, coeff: 0.015, etohRel: 0.01, crystHeatJ: 26700 },
@@ -1603,12 +1734,27 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   H2O2_aq: { H2O_g: 1, O2_g: 0.5 },
   H2CO3_aq: { H2O_g: 1, CO2_g: 1 },
   NH3_aq: { NH3_g: 1 },
+  NO2_aq: { NO2_g: 1 },
 };
 
 export const DRY_SALT_PAIRINGS = [
   ['Ag_aq', 1, 'Cl_aq', 1, 'AgCl_s', 1, false],
   ['Ag_aq', 2, 'CO3_2_aq', 1, 'Ag2CO3_s', 1, false],
   ['Ag_aq', 1, 'NO3_aq', 1, 'AgNO3_s', 1, false],
+  ['Ba2_aq', 1, 'SO4_2_aq', 1, 'BaSO4_s', 1, false],
+  ['Ba2_aq', 1, 'CO3_2_aq', 1, 'BaCO3_s', 1, false],
+  ['Ba2_aq', 1, 'OH_aq', 2, 'BaOH2_s', 1, false],
+  ['Ba2_aq', 1, 'Cl_aq', 2, 'BaCl2_s', 1, false],
+  ['Ba2_aq', 1, 'NO3_aq', 2, 'BaNO3_2_s', 1, false],
+  ['Fe3_aq', 1, 'OH_aq', 3, 'FeOH3_s', 1, false],
+  ['Fe3_aq', 2, 'SO4_2_aq', 3, 'Fe2SO4_3_s', 1, false],
+  ['Fe3_aq', 1, 'Cl_aq', 3, 'FeCl3_s', 1, false],
+  ['Fe3_aq', 1, 'NO3_aq', 3, 'FeNO3_3_s', 1, false],
+  ['Fe2_aq', 1, 'CO3_2_aq', 1, 'FeCO3_s', 1, false],
+  ['Fe2_aq', 1, 'OH_aq', 2, 'FeOH2_s', 1, false],
+  ['Fe2_aq', 1, 'SO4_2_aq', 1, 'FeSO4_s', 1, false],
+  ['Fe2_aq', 1, 'Cl_aq', 2, 'FeCl2_s', 1, false],
+  ['Fe2_aq', 1, 'NO3_aq', 2, 'FeNO3_2_s', 1, false],
   ['Ca2_aq', 1, 'CO3_2_aq', 1, 'CaCO3_s', 1, false],
   ['Ca2_aq', 1, 'OH_aq', 2, 'CaOH2_s', 1, false],
   ['Ca2_aq', 1, 'SO4_2_aq', 1, 'CaSO4_s', 1, false],
@@ -1647,7 +1793,12 @@ export const DRY_SALT_PAIRINGS = [
 export function enforceDryPhaseBoundary(vessel) {
   const moles = vessel.moles;
   const gasProduced = createZeroGasMap();
-  if ((moles.H2O_l || 0) > 1e-7 || (moles.C2H5OH_l || 0) > 1e-7 || (moles.H2O_s || 0) > 1e-7) {
+  if (
+    (moles.H2O_l || 0) > 1e-7 ||
+    (moles.C2H5OH_l || 0) > 1e-7 ||
+    (moles.HNO3_l || 0) > 1e-7 ||
+    (moles.H2O_s || 0) > 1e-7
+  ) {
     return { gasProduced };
   }
 
@@ -2265,6 +2416,74 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   } else if (!(vessel.moles.NaOH_s > 1e-6) || vessel.tempK >= 375) {
     vessel.naohAirExposeSec = 0;
     vessel.naohDeliquesceFrac = 0;
+  }
+
+  const moles = vessel.moles;
+  const liqV = computeLiquidVolumeL(moles, vessel.tempK);
+
+  // Clear Fe passivation flag once outside cold concentrated HNO3
+  if (vessel.fePassivated) {
+    const cNO3Check = liqV > 1e-5 ? (moles.NO3_aq || 0) / liqV : 0;
+    if ((moles.Fe_s || 0) <= 1e-10 || cNO3Check < 5.5 || vessel.tempK >= 318.15) {
+      vessel.fePassivated = false;
+    }
+  }
+
+  // Outgassing of dissolved NO2(aq) -> brown NO2(g) above threshold or when warmed/stirred
+  const nNO2Aq = moles.NO2_aq || 0;
+  if (nNO2Aq > 1e-8 && !vessel.isFrozenSolid && liqV > 1e-5) {
+    const cNO2 = nNO2Aq / liqV;
+    const satC = Math.max(0.015, 0.22 * Math.exp(-0.042 * (vessel.tempK - CONSTANTS.T_STD_K)));
+    if (cNO2 > satC || vessel.tempK >= 325.15) {
+      const excessNO2 = Math.max(nNO2Aq * (vessel.tempK >= 338.15 ? 0.35 : 0.12), nNO2Aq - satC * liqV);
+      const dOutNO2 = Math.min(nNO2Aq, excessNO2 * Math.min(1, 1.4 * dt * ((vessel.stirTimer || 0) > 0 ? 2.2 : 1.0)));
+      if (dOutNO2 > 1e-10) {
+        moles.NO2_aq = nNO2Aq - dOutNO2;
+        if (moles.NO2_aq < 1e-12) delete moles.NO2_aq;
+        gasProduced.NO2_g = (gasProduced.NO2_g || 0) + dOutNO2;
+      }
+    }
+  }
+
+  // Thin white CaCO3(s) crust across calm open Ca(OH)2(aq) limewater meniscus exposed to ambient CO2
+  const hasLimewater =
+    (moles.Ca2_aq || 0) > 1e-5 &&
+    (moles.OH_aq || 0) > 1e-5 &&
+    (moles.H2O_l || 0) > 1e-4 &&
+    (moles.H_aq || 0) <= 1e-5;
+  const isAcidPresent = (moles.H_aq || 0) > 1e-4;
+  const isDisturbed = (vessel.stirTimer || 0) > 0 || (vessel.magStirRpm || 0) > 0 || isAcidPresent;
+  if (
+    atmMode === 'air' &&
+    hasLimewater &&
+    !vessel.isStoppered &&
+    !vessel.isInverted &&
+    !vessel.isFrozenSolid &&
+    !isDisturbed
+  ) {
+    vessel.caCo3FilmFrac = Math.min(1.0, (vessel.caCo3FilmFrac || 0) + 0.085 * dt);
+    const dFilm = Math.min(moles.Ca2_aq, moles.OH_aq / 2, 1.4e-4 * dt);
+    if (dFilm > 1e-10) {
+      moles.Ca2_aq -= dFilm;
+      moles.OH_aq -= 2 * dFilm;
+      if (moles.Ca2_aq < 1e-13) delete moles.Ca2_aq;
+      if (moles.OH_aq < 1e-13) delete moles.OH_aq;
+      moles.CaCO3_s = (moles.CaCO3_s || 0) + dFilm;
+      moles.H2O_l = (moles.H2O_l || 0) + dFilm;
+      activeReactions.push({
+        id: 'caoh2_air_surface_crust',
+        equation: 'Ca(OH)₂(aq) + CO₂(không khí) → CaCO₃(s)↓ + H₂O(l)',
+        nameVi: 'Tạo màng mỏng CaCO₃ trắng trên bề mặt nước vôi trong',
+        nameEn: 'Surface CaCO₃ crystalline crust on open Ca(OH)₂(aq) exposed to air',
+        descVi: 'CO₂ trong không khí tác dụng nhẹ ở mặt thoáng nước vôi trong tạo lớp váng trắng mỏng CaCO₃ nổi trên bề mặt (vỡ tan khi khuấy hoặc thêm acid).',
+        descEn: 'Atmospheric CO₂ slowly forms a delicate floating white CaCO₃ film across quiescent open limewater (dispersed upon stirring or acidifying).',
+        dXi: dFilm,
+        rateMolS: dFilm / Math.max(1e-4, dt),
+        vigorousGas: false,
+      });
+    }
+  } else if (isDisturbed || !hasLimewater || vessel.isFrozenSolid) {
+    vessel.caCo3FilmFrac = isAcidPresent || !hasLimewater ? 0 : Math.max(0, (vessel.caCo3FilmFrac || 0) - 2.8 * dt);
   }
 
   return {

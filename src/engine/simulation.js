@@ -1269,7 +1269,7 @@ export class LabSimulation {
     const tongs = this.getItem(tongsId);
     const v = this.getItem(vesselId);
     if (!tongs || tongs.kind !== 'tongs' || !v || v.kind !== 'vessel' || v.isShattered) return false;
-    for (const spId of ['Zn_s', 'Na_s', 'Cu_s']) {
+    for (const spId of ['Zn_s', 'Na_s', 'Fe_s', 'Cu_s']) {
       const avail = v.moles?.[spId] || 0;
       if (avail > 1e-6) {
         const take = Math.min(avail, spId === 'Na_s' ? 0.015 : 0.02);
@@ -1317,7 +1317,7 @@ export class LabSimulation {
     const spoon = this.getItem(spoonId);
     const v = this.getItem(vesselId);
     if (!spoon || spoon.kind !== 'spoon' || !v || v.kind !== 'vessel' || v.isShattered) return false;
-    const priorityOrder = ['Zn_s', 'Na_s', 'CaCO3_s', 'CuO_s', 'CuSO4_5H2O_s', 'Cu_s', 'CaO_s'];
+    const priorityOrder = ['Zn_s', 'Na_s', 'CaCO3_s', 'CuO_s', 'CuSO4_5H2O_s', 'Fe_s', 'Cu_s', 'CaO_s'];
     const allSolidKeys = [
       ...priorityOrder.filter((k) => (v.moles?.[k] || 0) > 1e-8),
       ...Object.keys(v.moles || {}).filter(
@@ -2534,12 +2534,20 @@ export class LabSimulation {
       v.moles[reg.speciesId] = (v.moles[reg.speciesId] || 0) + addMol;
       addedHeatCap += addMol * (sp.cp || 30);
 
-      const particleCount = options.fine ? (reg.id === 'caco3' ? 400 : 30) : reg.id === 'na' ? 1 : reg.id === 'caco3' ? Math.max(2, Math.round(amt * 2)) : 6;
+      const particleCount = options.fine
+        ? (reg.id === 'caco3' ? 400 : reg.id === 'fe' ? 48 : 30)
+        : reg.id === 'na'
+        ? 1
+        : reg.id === 'fe'
+        ? 2
+        : reg.id === 'caco3'
+        ? Math.max(2, Math.round(amt * 2))
+        : 6;
       v.particleCounts[reg.speciesId] =
         (v.particleCounts[reg.speciesId] || 0) + particleCount;
-      if (options.fine && reg.id === 'caco3') {
+      if (options.fine && (reg.id === 'caco3' || reg.id === 'fe')) {
         v.groundPowderMap = v.groundPowderMap || {};
-        v.groundPowderMap.CaCO3_s = true;
+        v.groundPowderMap[reg.speciesId] = true;
       }
     }
 
@@ -4854,6 +4862,7 @@ export class LabSimulation {
           combinedGas[gId] = (chemRes.gasProduced[gId] || 0) + (dryRes.gasProduced[gId] || 0);
         }
         combinedGas.HCl_g += thermRes.hclProducedMol || 0;
+        combinedGas.HNO3_g += thermRes.hno3ProducedMol || 0;
         combinedGas.NH3_g += thermRes.nh3ProducedMol || 0;
         combinedGas.C2H5OH_g += thermRes.ethanolProducedMol || 0;
 
@@ -5407,6 +5416,7 @@ export class LabSimulation {
           gasRateO2: rateMap.O2_g,
           gasRateCO2: (rateMap.CO2_g || 0) + tubeBubbleRate,
           gasRateHCl: rateMap.HCl_g,
+          gasRateHNO3: rateMap.HNO3_g,
           gasRateCl2: rateMap.Cl2_g,
           gasRateC2H5Cl: rateMap.C2H5Cl_g,
           gasRateNH3: rateMap.NH3_g,

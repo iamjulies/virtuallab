@@ -5,11 +5,18 @@ import { drawReagentBottle } from '../canvas/reagentRenderer.js';
 function apparatusSvg(typeId) {
   switch (typeId) {
     case 'beaker_250':
-      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 10l3 2.5v14.5a3 3 0 003 3h14a3 3 0 003-3V12l2-2"/><path d="M12 16h5M12 21h7M12 26h5" opacity="0.6"/></svg>`;
     case 'beaker_tall_250':
-      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6l3 2.5v18.5a3 3 0 003 3h8a3 3 0 003-3V8.5l2-2.5"/><path d="M14 13h4M14 18h6M14 23h4" opacity="0.6"/></svg>`;
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 10l3 2.5v14.5a3 3 0 003 3h14a3 3 0 003-3V12l2-2"/><path d="M12 16h5M12 21h7M12 26h5" opacity="0.6"/></svg>`;
+    case 'beaker_1000':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8l3 2.5v16.5a3 3 0 003 3h18a3 3 0 003-3V10.5l3-2.5"/><path d="M10 14h6M10 19h8M10 24h6" opacity="0.6"/><text x="22" y="25" text-anchor="middle" font-size="6.5" fill="currentColor" stroke="none" font-weight="bold">1L</text></svg>`;
     case 'erlenmeyer_250':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 6h10M14.5 6v6.5l-7 13.5a3 3 0 002.6 4h15.8a3 3 0 002.6-4l-7-13.5V6"/><path d="M12 23h12" opacity="0.5"/></svg>`;
+    case 'erlenmeyer_1000':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 5h10M14.5 5v6l-9 15.5a3 3 0 002.6 4h19.8a3 3 0 002.6-4l-9-15.5V5"/><path d="M10 24h16" opacity="0.45"/><text x="18" y="21" text-anchor="middle" font-size="6.5" fill="currentColor" stroke="none" font-weight="bold">1L</text></svg>`;
+    case 'round_flask_250':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 5h8M15 5v7.5a8.5 8.5 0 106 0V5"/><path d="M12 29.5h12" stroke="#d97706" stroke-width="2" stroke-linecap="round"/></svg>`;
+    case 'round_flask_1000':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14.5 4h7M15.5 4v5.5a10.2 10.2 0 105 0V4"/><path d="M11 30.5h14" stroke="#d97706" stroke-width="2.2" stroke-linecap="round"/><text x="18" y="21.5" text-anchor="middle" font-size="6.2" fill="currentColor" stroke="none" font-weight="bold">1L</text></svg>`;
     case 'test_tube_50':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 6h10M14 6v19a4 4 0 008 0V6"/><path d="M15 18h6" opacity="0.5"/></svg>`;
     case 'cylinder_100':

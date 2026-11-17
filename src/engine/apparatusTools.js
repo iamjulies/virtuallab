@@ -1342,7 +1342,55 @@ function stepCrucibleTongs(sim, tongs, dt) {
   if (sample && sample.moles > 1e-8) {
     sample.tempK = (sample.tempK ?? 298.15) + (flameTargetK - (sample.tempK ?? 298.15)) * Math.min(1, kHeat * dt);
     const atmMode = sim.environment.atmosphereMode || 'air';
-    if (atmMode === 'air') {
+    let o2Jar = null;
+    for (const v of sim.items) {
+      if (v.kind !== 'vessel' || v.isShattered || v.isStoppered || (v.headspaceGasMoles?.O2_g || 0) <= 1e-4) continue;
+      const vSpec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+      if (
+        Math.abs(tipX - v.x) <= vSpec.width * 0.48 &&
+        tipY >= v.y - vSpec.height * 0.56 &&
+        tipY <= v.y + vSpec.height * 0.46
+      ) {
+        o2Jar = v;
+        break;
+      }
+    }
+    if (sample.speciesId === 'Fe_s' && sample.tempK >= 760.0 && (o2Jar || (atmMode === 'air' && sample.tempK >= 1050.0))) {
+      const availO2 = o2Jar ? o2Jar.headspaceGasMoles.O2_g || 0 : sample.moles;
+      const dFe = Math.min(sample.moles, availO2 * 1.5, Math.max(2e-5, sample.moles * 0.95 * dt));
+      if (dFe > 1e-8) {
+        sample.moles -= dFe;
+        if (o2Jar?.headspaceGasMoles) {
+          o2Jar.headspaceGasMoles.O2_g = Math.max(0, (o2Jar.headspaceGasMoles.O2_g || 0) - (2 / 3) * dFe);
+          o2Jar.moles.Fe3O4_s = (o2Jar.moles.Fe3O4_s || 0) + dFe / 3;
+          o2Jar.tempK = Math.min(1900, (o2Jar.tempK || 298.15) + (dFe / 3) * 1800);
+        }
+        tongs.heldBurnTimer = 1.0;
+        tongs.heldFlameColor = 'sparks_fe';
+        sample.tempK = Math.max(sample.tempK, 1480);
+        if ((sim.timeSec - (tongs.seenReactions?.fe_tongs_o2 ?? -99)) > 4.0) {
+          tongs.seenReactions = tongs.seenReactions || {};
+          tongs.seenReactions.fe_tongs_o2 = sim.timeSec;
+          sim.addLog({
+            type: 'reaction',
+            equation: '3Fe(s) + 2O₂(g) —(t°)→ Fe₃O₄(s) (bắn tia lửa sáng)',
+            nameVi: 'Đốt dây Iron nóng đỏ trong Oxygen (bắn tia lửa sáng → Fe₃O₄)',
+            nameEn: 'Combustion of red-hot Iron on tongs in O₂ (golden sparks → Fe₃O₄)',
+            descVi: 'Iron nung đỏ đưa vào bình O₂ cháy sáng chói, bắn ra nhiều tia lửa và tạo hạt rắn nâu đen Fe₃O₄.',
+            descEn: 'Red-hot Iron glows intensely inside O₂ gas emitting brilliant golden sparks and molten Fe₃O₄ droplets.',
+            vesselLabel: o2Jar?.label || tongs.label,
+          });
+        }
+        if (sample.moles < 1e-7) {
+          if (o2Jar) {
+            tongs.heldSample = null;
+          } else {
+            sample.speciesId = 'Fe3O4_s';
+            sample.moles = dFe / 3;
+          }
+        }
+      }
+    } else if (atmMode === 'air') {
       if (sample.speciesId === 'Na_s' && sample.tempK >= 393.15) {
         const dBurn = Math.min(sample.moles, Math.max(1e-5, sample.moles * 1.4 * dt));
         sample.moles -= dBurn;
@@ -1537,6 +1585,43 @@ function stepIronSpoon(sim, spoon, dt) {
     if (inBurnerFlame && spoon.tempK >= 820) {
       spoon.burnTimer = Math.max(spoon.burnTimer || 0, 0.35);
       spoon.flameColor = 'emerald_cu';
+    }
+  }
+
+  // C2. Iron combustion in O2(g) jar on deflagrating spoon: 3Fe + 2O2 -> Fe3O4 (sparks!)
+  const nFeSpoon = moles.Fe_s || 0;
+  const feSpoonFine = Boolean(spoon.groundPowderMap?.Fe_s) || (spoon.particleCounts?.Fe_s || 0) >= 18;
+  const feSpoonIgnK = feSpoonFine ? 610 : 760;
+  if (nFeSpoon > 1e-8 && spoon.tempK >= feSpoonIgnK && (inO2Jar || (inOpenAir && spoon.tempK >= 1050))) {
+    const rateScale = inO2Jar ? 1.55 : 0.45;
+    const maxByO2 = inO2Jar ? headO2 * 1.5 : nFeSpoon;
+    const dBurn = Math.min(nFeSpoon, maxByO2, Math.max(2e-5, nFeSpoon * rateScale * dt));
+    if (dBurn > 1e-10) {
+      moles.Fe_s -= dBurn;
+      if (moles.Fe_s < 1e-10) delete moles.Fe_s;
+      const dOxide = dBurn / 3;
+      if (inO2Jar && hostV?.headspaceGasMoles) {
+        hostV.headspaceGasMoles.O2_g = Math.max(0, (hostV.headspaceGasMoles.O2_g || 0) - (2 / 3) * dBurn);
+        moles.Fe3O4_s = (moles.Fe3O4_s || 0) + dOxide;
+      } else {
+        moles.Fe3O4_s = (moles.Fe3O4_s || 0) + dOxide;
+      }
+      spoon.burnTimer = 0.95;
+      spoon.flameColor = 'sparks_fe';
+      spoon.tempK = Math.max(spoon.tempK, 1460);
+      if ((sim.timeSec - (spoon.seenReactions?.fe_spoon_burn ?? -99)) > 4.0) {
+        spoon.seenReactions = spoon.seenReactions || {};
+        spoon.seenReactions.fe_spoon_burn = sim.timeSec;
+        sim.addLog({
+          type: 'reaction',
+          equation: '3Fe(s) + 2O₂(g) —(t°)→ Fe₃O₄(s)',
+          nameVi: 'Đốt cháy Iron trên muôi sắt trong Oxygen (tia lửa sáng → Fe₃O₄)',
+          nameEn: 'Iron combustion on spoon in Oxygen yielding dark brown-black Fe₃O₄',
+          descVi: 'Iron nung đỏ cháy sáng rực trong khí O₂, bắn tia lửa vàng và tạo oxit Fe₃O₄ nâu đen.',
+          descEn: 'Red-hot Iron burns intensely in O₂ gas emitting bright sparks and forming dark Fe₃O₄.',
+          vesselLabel: spoon.label,
+        });
+      }
     }
   }
 

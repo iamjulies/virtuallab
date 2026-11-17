@@ -13,6 +13,9 @@ function formatReagentMolPreview(reg, amount) {
   if (reg.previewMode === 'acid_hcl') {
     return `HCl: ${(reg.perMl.H_aq * amount * 1000).toFixed(2)} mmol (~12.06 M)`;
   }
+  if (reg.previewMode === 'acid_hno3') {
+    return `HNO₃: ${(reg.perMl.NO3_aq * amount * 1000).toFixed(2)} mmol (~15.17 M)`;
+  }
   if (reg.previewMode === 'solvent_water') {
     return `H₂O: ${(reg.perMl.H2O_l * amount).toFixed(3)} mol (${(amount * reg.densityGPerMl).toFixed(2)} g)`;
   }
@@ -263,10 +266,10 @@ export class DosingModal {
                 <div class="flex gap-1.5">
                   <button type="button" id="gran-coarse" class="px-2.5 py-1 rounded border ${
                     !st.fine ? 'border-accent bg-accent/15 font-semibold' : 'border-theme bg-surface-alt text-muted'
-                  }">${t('coarseLump')}</button>
+                  }">${st.reagentId === 'fe' ? t('ironNailForm') : t('coarseLump')}</button>
                   <button type="button" id="gran-fine" class="px-2.5 py-1 rounded border ${
                     st.fine ? 'border-accent bg-accent/15 font-semibold' : 'border-theme bg-surface-alt text-muted'
-                  }">${t('fineGranules')}</button>
+                  }">${st.reagentId === 'fe' ? t('ironPowderForm') : t('fineGranules')}</button>
                 </div>
               </div>
               `

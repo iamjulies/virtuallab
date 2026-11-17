@@ -1742,6 +1742,38 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.shadowBlur = 12;
   }
 
+  // Cork support ring nested underneath Round-Bottom Flasks when sitting upright on bench or scale
+  if (
+    spec.isRoundBottom &&
+    !vessel.isInverted &&
+    !vessel.clampedToId &&
+    !vessel.isDragging &&
+    !vessel.isShattered &&
+    Math.abs(vessel.vy || 0) < 4
+  ) {
+    const ringY = y + h / 2 - 2;
+    const rx = Math.max(18, w * 0.27);
+    ctx.save();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = isDark ? '#78350f' : '#92400e';
+    ctx.beginPath();
+    ctx.ellipse(x, ringY - 2, rx, 6.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    const corkGrad = ctx.createLinearGradient(x - rx, 0, x + rx, 0);
+    corkGrad.addColorStop(0, '#92400e');
+    corkGrad.addColorStop(0.35, '#d97706');
+    corkGrad.addColorStop(0.7, '#b45309');
+    corkGrad.addColorStop(1, '#78350f');
+    ctx.fillStyle = corkGrad;
+    ctx.strokeStyle = isDark ? '#fbbf24' : '#78350f';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(x, ringY, rx, 5.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // Draw porcelain opaque interior glaze for dishes/mortars/crucibles, or glass interior fill
   ctx.save();
   traceVesselInteriorClip(ctx, spec, x, y, sagFrac);
@@ -1973,6 +2005,31 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.restore();
   }
 
+  // Delicate white CaCO3(s) crystalline crust on quiescent open Ca(OH)2(aq) exposed to air CO2
+  if ((vessel.caCo3FilmFrac || 0) > 0.03 && hasWater && !hasIce && surfaceY < interiorBottom - 3) {
+    const fFrac = Math.min(1, vessel.caCo3FilmFrac || 0);
+    const filmSpan = Math.max(8, surfaceHalfWPx - 1.5);
+    const filmLeft = x - filmSpan * Math.min(1, 0.35 + 0.65 * fFrac);
+    const filmRight = x + filmSpan * Math.min(1, 0.35 + 0.65 * fFrac);
+    ctx.save();
+    ctx.fillStyle = `rgba(248, 250, 252, ${(0.88 * fFrac).toFixed(2)})`;
+    ctx.strokeStyle = isDark
+      ? `rgba(203, 213, 225, ${(0.72 * fFrac).toFixed(2)})`
+      : `rgba(100, 116, 139, ${(0.72 * fFrac).toFixed(2)})`;
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.roundRect(filmLeft, surfaceY - 1.2, filmRight - filmLeft, 2.6, 1.2);
+    ctx.fill();
+    ctx.stroke();
+    const plateCount = Math.max(4, Math.round(9 * fFrac));
+    for (let i = 0; i < plateCount; i++) {
+      const px = filmLeft + 3 + ((i + 0.5) / plateCount) * Math.max(4, filmRight - filmLeft - 6);
+      ctx.fillStyle = i % 2 === 0 ? '#ffffff' : '#e2e8f0';
+      ctx.fillRect(px - 1.4, surfaceY - 1.5, 2.8, 1.6);
+    }
+    ctx.restore();
+  }
+
   // Draw rotating PTFE magnetic stir bar on vessel bottom
   if (vessel.hasStirBar) {
     const spinHalf = 11 * Math.max(0.28, Math.abs(Math.cos(vessel.stirBarPhase || 0)));
@@ -2083,7 +2140,10 @@ export function renderVessel(ctx, vessel, opts) {
 
       ctx.globalAlpha = condAlpha;
       ctx.fillStyle = isDark ? 'rgba(224, 242, 254, 0.85)' : 'rgba(56, 189, 248, 0.65)';
-      const halfSpan = spec.shape === 'erlenmeyer' ? Math.max(8, (spec.neckRadius || 18) * 1.1) : w * 0.38;
+      const halfSpan =
+        spec.shape === 'erlenmeyer' || spec.shape === 'round_flask'
+          ? Math.max(8, (spec.neckRadius || 18) * 1.1)
+          : w * 0.38;
       for (let i = 0; i < 12; i++) {
         const dx = x + (((i * 0.618 + 0.17) % 1) - 0.5) * 2 * halfSpan;
         const dy = top + 12 + (((i * 0.37 + 0.09) % 1) * (upperLimitY - top - 14));
@@ -2110,7 +2170,10 @@ export function renderVessel(ctx, vessel, opts) {
     // Microscopic snowflake/rime needles on glass walls
     ctx.strokeStyle = isDark ? `rgba(248, 250, 252, ${0.62 * fAlpha})` : `rgba(14, 165, 233, ${0.52 * fAlpha})`;
     ctx.lineWidth = 0.85;
-    const spanW = spec.shape === 'erlenmeyer' ? Math.max(12, (spec.neckRadius || 18) * 1.4) : w * 0.42;
+    const spanW =
+      spec.shape === 'erlenmeyer' || spec.shape === 'round_flask'
+        ? Math.max(12, (spec.neckRadius || 18) * 1.4)
+        : w * 0.42;
     for (let i = 0; i < 14; i++) {
       const fx = x + (((i * 0.618 + 0.13) % 1) - 0.5) * 2 * spanW;
       const fy = top + 12 + (((i * 0.41 + 0.07) % 1) * Math.max(12, interiorBottom - top - 20));
@@ -2312,10 +2375,13 @@ export function renderVessel(ctx, vessel, opts) {
   ctx.textBaseline = 'middle';
   ctx.font = '600 8px system-ui, sans-serif';
   if (spec.shape === 'beaker') {
-    const marks = [25, 50, 75, 100, 125, 150, 175, 200, 225, 250];
+    const isLargeBeaker = (spec.maxVolumeMl || 250) >= 900;
+    const marks = isLargeBeaker
+      ? [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+      : [25, 50, 75, 100, 125, 150, 175, 200, 225, 250];
     for (const ml of marks) {
       const ty = volumeMlToY(ml);
-      const isMajor = ml % 50 === 0;
+      const isMajor = isLargeBeaker ? ml % 200 === 0 : ml % 50 === 0;
       const tickX = x - w * 0.32;
       const tickLen = isMajor ? 9 : 5;
       ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
@@ -2324,14 +2390,14 @@ export function renderVessel(ctx, vessel, opts) {
       ctx.moveTo(tickX, ty);
       ctx.lineTo(tickX + tickLen, ty);
       ctx.stroke();
-      if (isMajor && ml < 250) {
+      if (isMajor) {
         ctx.fillStyle = pal.enamelText;
         ctx.textAlign = 'left';
         ctx.fillText(String(ml), tickX + 11, ty + 0.5);
       }
     }
     // Frosted write-on enamel label patch
-    const patchW = spec.formVariant === 'tall' ? 17 : 19;
+    const patchW = (spec.maxVolumeMl || 250) >= 900 ? 27 : spec.formVariant === 'tall' ? 17 : 19;
     const patchH = spec.formVariant === 'tall' ? 23 : 20;
     const patchX = x + w * 0.17;
     const patchY = top + h * 0.28;
@@ -2345,31 +2411,34 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.fillStyle = pal.enamelText;
     ctx.textAlign = 'center';
     ctx.font = 'bold 7.5px system-ui, sans-serif';
-    ctx.fillText('250', patchX + patchW / 2, patchY + 7);
+    ctx.fillText(String(spec.maxVolumeMl || 250), patchX + patchW / 2, patchY + 7);
     ctx.font = '600 6.5px system-ui, sans-serif';
     ctx.fillText('mL', patchX + patchW / 2, patchY + 15);
   } else if (spec.shape === 'erlenmeyer') {
     // Non-linear conical graduations directly from VesselGeometry radial-volume slices
-    const marks = [50, 100, 150, 200, 250];
+    const isLargeFlask = (spec.maxVolumeMl || 250) >= 900;
+    const marks = isLargeFlask ? [200, 400, 600, 800, 1000] : [50, 100, 150, 200, 250];
     for (const ml of marks) {
       const st = volumeMlToState(ml);
       const ty = st.cy;
       const tickX = x - st.halfWPx * 0.72;
-      const tickLen = ml === 250 ? 6 : ml === 100 || ml === 200 ? 9 : 5.5;
+      const isTopMark = ml === (isLargeFlask ? 1000 : 250);
+      const isMajor = isLargeFlask ? ml % 400 === 0 || ml === 200 || ml === 1000 : ml === 100 || ml === 200 || ml === 250;
+      const tickLen = isTopMark ? 6 : isMajor ? 9 : 5.5;
       ctx.strokeStyle = pal.tickStroke;
       ctx.lineWidth = 1.1;
       ctx.beginPath();
       ctx.moveTo(tickX, ty);
       ctx.lineTo(tickX + tickLen, ty);
       ctx.stroke();
-      if (ml === 100 || ml === 200 || ml === 250) {
+      if (isMajor) {
         ctx.fillStyle = pal.enamelText;
         ctx.textAlign = 'left';
         ctx.fillText(String(ml), tickX + tickLen + 2, ty + 0.5);
       }
     }
     // Frosted write-on enamel patch on slanted conical shoulder
-    const patchW = 20;
+    const patchW = (spec.maxVolumeMl || 250) >= 900 ? 27 : 20;
     const patchH = 22;
     const patchX = x + 9;
     const patchY = bottom - 46;
@@ -2383,9 +2452,48 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.fillStyle = pal.enamelText;
     ctx.textAlign = 'center';
     ctx.font = 'bold 7.5px system-ui, sans-serif';
-    ctx.fillText('250', patchX + patchW / 2, patchY + 7.5);
+    ctx.fillText(String(spec.maxVolumeMl || 250), patchX + patchW / 2, patchY + 7.5);
     ctx.font = '600 6.5px system-ui, sans-serif';
     ctx.fillText('ISO', patchX + patchW / 2, patchY + 15.5);
+  } else if (spec.shape === 'round_flask') {
+    // NS 29/32 ground-glass joint neck band + nominal shoulder mark + ceramic capacity badge
+    const neckHalfPx = spec.neckRadius || 17;
+    ctx.fillStyle = isDark ? 'rgba(226, 232, 240, 0.22)' : 'rgba(148, 163, 184, 0.25)';
+    ctx.fillRect(x - neckHalfPx + 1.5, top + 2, (neckHalfPx - 1.5) * 2, 16);
+    ctx.strokeStyle = pal.tickMinor;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x - neckHalfPx + 1.5, top + 18);
+    ctx.lineTo(x + neckHalfPx - 1.5, top + 18);
+    ctx.stroke();
+
+    const nomY = volumeMlToY(spec.maxVolumeMl || 250);
+    const nomSt = volumeMlToState(spec.maxVolumeMl || 250);
+    const tickX = x - Math.max(12, nomSt.rx * 0.55);
+    ctx.strokeStyle = pal.tickStroke;
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(tickX, nomY);
+    ctx.lineTo(tickX + 10, nomY);
+    ctx.stroke();
+
+    const patchW = (spec.maxVolumeMl || 250) >= 900 ? 28 : 22;
+    const patchH = 22;
+    const patchX = x - patchW / 2;
+    const patchY = y + h * 0.08;
+    ctx.fillStyle = pal.writePatchBg;
+    ctx.strokeStyle = pal.writePatchBorder;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.roundRect(patchX, patchY, patchW, patchH, 2.5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = pal.enamelText;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 7.5px system-ui, sans-serif';
+    ctx.fillText(String(spec.maxVolumeMl || 250), patchX + patchW / 2, patchY + 7.5);
+    ctx.font = '600 6.5px system-ui, sans-serif';
+    ctx.fillText('mL', patchX + patchW / 2, patchY + 15.5);
   } else if (spec.shape === 'cylinder') {
     for (let ml = 10; ml <= 100; ml += 10) {
       const ty = volumeMlToY(ml);
