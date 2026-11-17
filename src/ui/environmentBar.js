@@ -139,6 +139,15 @@ export class EnvironmentBar {
             <option value="mobile" ${deviceMode === 'mobile' ? 'selected' : ''}>📲 ${t('deviceMobile')}</option>
           </select>
 
+          <!-- Sound Effects Toggle -->
+          <button type="button" id="btn-sound-toggle" title="${t('soundToggleTip')}" class="px-2.5 py-1.5 rounded-lg border ${
+            this.appState.soundEnabled !== false
+              ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+              : 'border-theme bg-surface-alt text-muted'
+          } text-xs font-semibold hover:border-accent transition">
+            ${this.appState.soundEnabled !== false ? `🔊 ${t('soundOn')}` : `🔇 ${t('soundMuted')}`}
+          </button>
+
           <!-- Theme Toggle -->
           <button type="button" id="btn-theme-toggle" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-semibold hover:border-accent transition">
             ${theme === 'dark' ? `🌙 ${t('themeDark')}` : `☀️ ${t('themeLight')}`}
@@ -198,6 +207,10 @@ export class EnvironmentBar {
 
     this.container.querySelector('#device-select')?.addEventListener('change', (e) => {
       this.callbacks.onDeviceChange?.(e.target.value);
+    });
+
+    this.container.querySelector('#btn-sound-toggle')?.addEventListener('click', () => {
+      this.callbacks.onSoundToggle?.();
     });
 
     this.container.querySelector('#btn-theme-toggle')?.addEventListener('click', () => {

@@ -55,6 +55,7 @@
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
     import { DosingModal } from '../src/ui/dosingModal.js';
     import { ComparisonPanel } from '../src/ui/comparisonPanel.js';
+    import { LabSoundEngine, soundEngine } from '../src/audio/soundEngine.js';
     import {
       computeCaOOptimizationScore,
       enforceDryPhaseBoundary,
@@ -2431,13 +2432,13 @@
       );
     }
 
-    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_beta_v3+build.6 Sync
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_beta_v3+build.7 Sync
     {
       const allTranslated = APPARATUS_ORDER.every((id) => {
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.6';
+      const expectedBuild = 'virlab_beta_v3+build.7';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2463,6 +2464,8 @@
         Boolean(I18N.vi.reg_nacl && I18N.en.reg_nacl) &&
         Boolean(I18N.vi.toastDeletedApparatus && I18N.en.toastDeletedApparatus) &&
         Boolean(I18N.vi.toastUndoSuccess && I18N.en.toastUndoSuccess) &&
+        Boolean(I18N.vi.soundOn && I18N.en.soundOn) &&
+        Boolean(I18N.vi.soundMuted && I18N.en.soundMuted) &&
         Boolean(I18N.vi.eq_beaker_1000 && I18N.en.eq_beaker_1000) &&
         Boolean(I18N.vi.eq_erlenmeyer_1000 && I18N.en.eq_erlenmeyer_1000) &&
         Boolean(I18N.vi.eq_round_flask_250 && I18N.en.eq_round_flask_250) &&
@@ -5649,6 +5652,64 @@
         'Streamlined bench-pick flow opens DosingModal once pre-targeted to the picked vessel for both Reagent addition and <Rót sang bình khác>',
         transferTargetedB3 && reagentTargetedB2,
         `transferTarget=${dm.state?.targetVesselId}, b3=${b3.id}, reagentTarget=${reagentTargetedB2}`
+      );
+    }
+
+    // TEST 119: Physical Web Audio Sound Engine (Discrete Events, Continuous Physics Channels & Mute/Unmute Toggle)
+    {
+      const se = new LabSoundEngine();
+      se.setEnabled(true);
+      se.playGlassClink('round_flask_250', 0.9);
+      const evClink = se.lastPlayedEvent?.name === 'glass_clink';
+      se.playDropPlink();
+      const evDrop = se.lastPlayedEvent?.name === 'drop_plink';
+      se.playGranuleCascade(6);
+      const evGran = se.lastPlayedEvent?.name === 'granule_cascade';
+      se.playStirSwirl();
+      const evStir = se.lastPlayedEvent?.name === 'stir_swirl';
+      se.playMortarGrind();
+      const evGrind = se.lastPlayedEvent?.name === 'mortar_grind';
+      se.playAlertSound('h2_pop');
+      const evH2Pop = se.lastPlayedEvent?.name === 'alert_h2_pop';
+      se.playAlertSound('explosion');
+      const evExpl = se.lastPlayedEvent?.name === 'alert_explosion';
+
+      const simS = new LabSimulation();
+      const burn = simS.createApparatus('bunsen_burner', 220, 427);
+      simS.setBurnerPower(burn.id, 500);
+      const bBoil = simS.createApparatus('beaker_250', 360, 427);
+      bBoil.moles = { H2O_l: 4.0, Na_s: 0.02 };
+      bBoil.tempK = 374.0;
+      bBoil.lastTotalRateMolS = 0.004;
+      bBoil.hasStirBar = true;
+      bBoil.magStirRpm = 900;
+      simS.activePourStream = { fromX: 300, fromY: 280, toX: 360, toY: 360 };
+
+      se.stepContinuous(simS, 0.05);
+      const ch = se.activeChannels;
+      const channelsActive =
+        ch.flame > 0.7 &&
+        ch.pour > 0.5 &&
+        ch.boil > 0.7 &&
+        ch.bubbleRate > 0.001 &&
+        ch.naFizz > 0.7 &&
+        ch.stirHum > 0.5;
+
+      // Pausing simulation silences all continuous channels immediately
+      simS.environment.paused = true;
+      se.stepContinuous(simS, 0.05);
+      const silencedOnPause =
+        se.activeChannels.flame === 0 &&
+        se.activeChannels.pour === 0 &&
+        se.activeChannels.boil === 0 &&
+        se.activeChannels.naFizz === 0;
+
+      const toggledMute = se.toggleEnabled() === false && se.toggleEnabled() === true;
+
+      assert(
+        'Physical Web Audio Sound Engine synthesizes all discrete lab events, modulates continuous channels (flame, pour, boil, bubbles, Na fizz, stir hum), silences on pause & toggles mute cleanly',
+        evClink && evDrop && evGran && evStir && evGrind && evH2Pop && evExpl && channelsActive && silencedOnPause && toggledMute,
+        `discrete=${evClink && evDrop && evGran && evStir && evGrind && evH2Pop && evExpl}, channels=${JSON.stringify(ch)}, pauseSilence=${silencedOnPause}, muteToggle=${toggledMute}`
       );
     }
 

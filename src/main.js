@@ -8,6 +8,7 @@ import { ShelfPanel } from './ui/shelfPanel.js';
 import { InspectorPanel } from './ui/inspectorPanel.js';
 import { DosingModal } from './ui/dosingModal.js';
 import { ComparisonPanel } from './ui/comparisonPanel.js';
+import { soundEngine } from './audio/soundEngine.js';
 
 const STORAGE_LANG_KEY = 'virlab_lang';
 const STORAGE_THEME_KEY = 'virlab_theme';
@@ -17,6 +18,7 @@ const appState = {
   lang: localStorage.getItem(STORAGE_LANG_KEY) || 'vi',
   theme: localStorage.getItem(STORAGE_THEME_KEY) || 'dark',
   deviceMode: localStorage.getItem(STORAGE_DEVICE_KEY) || 'auto',
+  soundEnabled: soundEngine.isEnabled(),
   mobileTab: 'bench', // 'shelf' | 'bench' | 'inspector'
 };
 
@@ -70,6 +72,15 @@ const labManager = new LabManager({
   onAlert: (_idx, type, vessel, meta) => {
     handleVisualAlert(type, vessel, meta);
   },
+  onReagentDispense: (_v, reg, amt) => {
+    if (reg?.kind === 'solid') {
+      soundEngine.playGranuleCascade(Math.min(12, Math.max(4, Math.round(amt * 3))));
+    } else if (amt <= 0.25) {
+      soundEngine.playDropPlink();
+    } else {
+      soundEngine.playUiClick();
+    }
+  },
   onBackgroundAlert: () => {
     renderLabTabs(getTranslator());
   },
@@ -102,6 +113,7 @@ function handleVisualAlert(type, vessel, meta) {
       ? 'h2_pop'
       : type;
   particles.emitBurst(burstType, vessel.x, vessel.y, meta);
+  soundEngine.playAlertSound(type);
   if (type === 'explosion') {
     workbench.triggerShake(13, 0.45);
     const latest = sim.logs[0];
@@ -333,17 +345,24 @@ const envBar = new EnvironmentBar(headerEl, sim, appState, {
   onThemeChange: () => {
     appState.theme = appState.theme === 'dark' ? 'light' : 'dark';
     localStorage.setItem(STORAGE_THEME_KEY, appState.theme);
+    soundEngine.playUiClick();
     applyThemeAndDevice();
+    refreshChrome(true);
+  },
+  onSoundToggle: () => {
+    appState.soundEnabled = soundEngine.toggleEnabled();
     refreshChrome(true);
   },
   onDeviceChange: (mode) => {
     appState.deviceMode = mode;
     localStorage.setItem(STORAGE_DEVICE_KEY, mode);
+    soundEngine.playUiClick();
     applyThemeAndDevice();
     setTimeout(() => workbench.resize(), 40);
   },
   onPreset: (presetName) => {
     particles.clear();
+    soundEngine.playGlassClink('beaker_250', 0.7);
     sim.setupPreset(presetName);
     if (presetName === 'compare_rate_factors' || presetName === 'compare_corrosion') {
       comparisonPanel?.setOpen(true);
@@ -363,6 +382,7 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
     const x = 140 + ((count * 125) % 740);
     const y = BENCH_FLOOR_Y - spec.height / 2 + 2;
     sim.createApparatus(typeId, x, y);
+    soundEngine.playGlassClink(typeId, 0.85);
     if (isMobileViewActive()) {
       setMobileTab('bench');
     }
@@ -637,6 +657,7 @@ window.addEventListener('keydown', (e) => {
     const deletedCount = sim.deleteSelectedItems ? sim.deleteSelectedItems() : 0;
     if (deletedCount > 0) {
       e.preventDefault();
+      soundEngine.playTrashCrumple();
       workbench.setSelection([], null);
       const t = getTranslator();
       showToast(t('toastDeletedApparatus').replace('{count}', String(deletedCount)));
@@ -651,6 +672,7 @@ window.addEventListener('keydown', (e) => {
     const ok = labManager.undo(sim);
     const t = getTranslator();
     if (ok) {
+      soundEngine.playUndoWhoosh();
       workbench.setSelection(Array.from(sim.selectedIds || []), sim.selectedId);
       showToast(t('toastUndoSuccess'));
       refreshChrome(true);
@@ -659,6 +681,7 @@ window.addEventListener('keydown', (e) => {
     }
   } else if (key === 'a') {
     e.preventDefault();
+    soundEngine.playUiClick();
     const allIds = sim.items.map((it) => it.id);
     sim.selectedIds = new Set(allIds);
     sim.selectedId = allIds[allIds.length - 1] || null;
@@ -668,6 +691,7 @@ window.addEventListener('keydown', (e) => {
     const count = labManager.copyItems(sim.selectedIds?.size > 0 ? sim.selectedIds : sim.selectedId ? [sim.selectedId] : [], sim);
     if (count > 0) {
       e.preventDefault();
+      soundEngine.playUiClick();
       const t = getTranslator();
       showToast(t('toastCopiedApparatus').replace('{count}', String(count)));
     }
@@ -675,6 +699,7 @@ window.addEventListener('keydown', (e) => {
     const pasted = labManager.pasteItems(sim);
     if (pasted.length > 0) {
       e.preventDefault();
+      soundEngine.playGlassClink(pasted[0]?.typeId || 'beaker_250', 0.75);
       const t = getTranslator();
       showToast(t('toastPastedApparatus').replace('{count}', String(pasted.length)));
       refreshChrome();
@@ -682,10 +707,11 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Expose LabManager & Workbench hooks for automation / diagnostics
+// Expose LabManager, Workbench & SoundEngine hooks for automation / diagnostics
 if (typeof window !== 'undefined') {
   window.__LAB_MANAGER__ = labManager;
   window.__WORKBENCH__ = workbench;
+  window.__SOUND_ENGINE__ = soundEngine;
 }
 
 // Initial boot
@@ -704,6 +730,7 @@ function frame(nowMs) {
 
   workbench.tickInteractivePour(dt);
   labManager.stepAllLabs(dt, () => renderLabTabs(getTranslator()));
+  soundEngine.stepContinuous(sim, dt);
   workbench.render(nowMs / 1000);
 
   // Sync live telemetry numbers at ~15 Hz so UI is snappy without over-rendering

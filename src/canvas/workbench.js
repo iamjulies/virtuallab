@@ -20,6 +20,7 @@ import {
   syncDockedToolPositions,
 } from '../engine/apparatusTools.js';
 import { renderActiveReagentTransfer } from './reagentRenderer.js';
+import { soundEngine } from '../audio/soundEngine.js';
 import {
   beginCanvasLabelFrame,
   flushCanvasLabelFrame,
@@ -789,6 +790,7 @@ export class LabWorkbenchCanvas {
           groupMembers,
         };
         this.canvas.setPointerCapture(e.pointerId);
+        soundEngine.playGlassClink(hit.typeId, 0.55);
         if (this.callbacks.onSelect) this.callbacks.onSelect(hit);
         this.sim.emitChange();
       } else if (this.zoomScale > 1.02) {
@@ -813,18 +815,25 @@ export class LabWorkbenchCanvas {
       if (hit && hit.kind === 'electrode') {
         const order = ['C', 'Cu', 'Zn'];
         const nextMat = order[(order.indexOf(hit.material) + 1) % order.length];
+        soundEngine.playUiClick();
         this.sim.setElectrodeMaterial(hit.id, nextMat);
       } else if (hit && hit.kind === 'vessel' && APPARATUS[hit.typeId]?.hasLid) {
+        soundEngine.playGlassClink(hit.typeId, 0.7);
         this.sim.cycleCrucibleLid(hit.id);
       } else if (hit && hit.kind === 'rubber_stopper') {
+        soundEngine.playStopperPop(hit.stopperMode === 'solid');
         this.sim.setStopperMode(hit.id, hit.stopperMode === 'solid' ? 'holed' : 'solid');
       } else if (hit && hit.typeId === 'bunsen_burner') {
+        soundEngine.playFlameWhoosh(!hit.airHoleOpen);
         this.sim.toggleBurnerAirHole(hit.id);
       } else if (hit && hit.kind === 'tongs') {
+        soundEngine.playClampClick();
         this.sim.tongsToggleGripVessel(hit.id);
       } else if (hit && hit.kind === 'vessel' && hit.hasStirBar) {
+        soundEngine.playUiClick();
         this.sim.toggleMagneticStir(hit.id);
       } else if (hit && hit.kind === 'stir_bar' && hit.inVesselId) {
+        soundEngine.playUiClick();
         this.sim.toggleMagneticStir(hit.inVesselId);
       } else if (!hit && this.zoomScale > 1.02) {
         this.resetZoom();
@@ -1355,6 +1364,11 @@ export class LabWorkbenchCanvas {
               ? null
               : item.y;
           item.vy = 0;
+          if (this.dragState.undoRecorded) {
+            if (item.clampedToId) soundEngine.playClampClick();
+            else if (item.attachedToId && item.kind === 'rubber_stopper') soundEngine.playStopperPop(false);
+            else soundEngine.playGlassClink(item.typeId, 0.72);
+          }
         }
         if (item && (item.kind === 'vessel' || item.kind === 'pipette' || item.kind === 'spoon')) {
           item.tiltAngle = 0;
@@ -1379,6 +1393,7 @@ export class LabWorkbenchCanvas {
           if (pipTargetId) {
             const tgt = this.sim.getItem(pipTargetId);
             if (tgt && tgt.kind === 'vessel' && !tgt.isShattered && !tgt.isStoppered) {
+              soundEngine.playDropPlink(0.95);
               if ((item.volumeMl || 0) <= 0.05) {
                 this.sim.pipetteDrawFromVessel(tgt.id, item.capacityMl || 10.0, item);
               } else {

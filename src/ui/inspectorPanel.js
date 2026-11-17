@@ -17,6 +17,7 @@ import {
 } from '../engine/gasNetwork.js';
 import { computeWashBottleStreamArc } from '../engine/apparatusTools.js';
 import { computeCaOOptimizationScore } from '../engine/chemistry.js';
+import { soundEngine } from '../audio/soundEngine.js';
 
 function renderFlipButtonHtml(item, t) {
   if (!APPARATUS[item.typeId]?.flippable) return '';
@@ -1532,24 +1533,38 @@ export class InspectorPanel {
     });
 
     this.container.querySelector('#ins-delete')?.addEventListener('click', () => {
+      soundEngine.playTrashCrumple();
       this.sim.removeApparatus(item.id);
     });
     this.container.querySelector('#ins-flip-x')?.addEventListener('click', () => {
+      soundEngine.playGlassClink(item.typeId, 0.65);
       this.sim.toggleItemFlipX(item.id);
     });
 
     if (item.kind === 'scale') {
-      this.container.querySelector('#ins-tare')?.addEventListener('click', () => this.sim.tareScale(item.id));
-      this.container.querySelector('#ins-clear-tare')?.addEventListener('click', () => this.sim.clearTare(item.id));
+      this.container.querySelector('#ins-tare')?.addEventListener('click', () => {
+        soundEngine.playTareBeep();
+        this.sim.tareScale(item.id);
+      });
+      this.container.querySelector('#ins-clear-tare')?.addEventListener('click', () => {
+        soundEngine.playTareBeep();
+        this.sim.clearTare(item.id);
+      });
     } else if (item.kind === 'burner') {
       this.container.querySelector('#ins-bunsen-air-toggle')?.addEventListener('click', () => {
+        soundEngine.playFlameWhoosh(!item.airHoleOpen);
         this.sim.toggleBurnerAirHole(item.id);
       });
       this.container.querySelector('#burner-power-slider')?.addEventListener('input', (e) => {
         this.sim.setBurnerPower(item.id, Number(e.target.value));
       });
       this.container.querySelectorAll('.flame-btn').forEach((btn) => {
-        btn.addEventListener('click', () => this.sim.setBurnerFlame(item.id, Number(btn.dataset.flame)));
+        btn.addEventListener('click', () => {
+          const fl = Number(btn.dataset.flame);
+          if (fl > 0) soundEngine.playFlameWhoosh(item.typeId === 'bunsen_burner' && item.airHoleOpen !== false);
+          else soundEngine.playUiClick();
+          this.sim.setBurnerFlame(item.id, fl);
+        });
       });
     } else if (item.kind === 'pipette') {
       this.container.querySelectorAll('.pip-dose-btn').forEach((btn) => {
@@ -1602,21 +1617,44 @@ export class InspectorPanel {
         }
         this.callbacks.onOpenTransfer?.(item.id);
       });
-      this.container.querySelector('#ins-stir')?.addEventListener('click', () => this.sim.stirVessel(item.id));
-      this.container.querySelector('#ins-rinse')?.addEventListener('click', () => this.sim.rinseVessel(item.id));
-      this.container.querySelector('#ins-crucible-lid')?.addEventListener('click', () => this.sim.cycleCrucibleLid(item.id));
+      this.container.querySelector('#ins-stir')?.addEventListener('click', () => {
+        soundEngine.playStirSwirl();
+        this.sim.stirVessel(item.id);
+      });
+      this.container.querySelector('#ins-rinse')?.addEventListener('click', () => {
+        soundEngine.playWaterRinse();
+        this.sim.rinseVessel(item.id);
+      });
+      this.container.querySelector('#ins-crucible-lid')?.addEventListener('click', () => {
+        soundEngine.playGlassClink(item.typeId, 0.7);
+        this.sim.cycleCrucibleLid(item.id);
+      });
       this.container.querySelector('#ins-toggle-compare')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
         this.sim.toggleCompareVessel(item.id);
         this.callbacks.onOpenCompare?.();
       });
-      this.container.querySelector('#ins-invert')?.addEventListener('click', () => this.sim.toggleVesselInverted(item.id));
-      this.container.querySelector('#ins-fountain-primer')?.addEventListener('click', () => this.sim.injectFountainPrimer(item.id));
-      this.container.querySelector('#ins-grind')?.addEventListener('click', () => this.sim.grindMortar(item.id));
+      this.container.querySelector('#ins-invert')?.addEventListener('click', () => {
+        soundEngine.playGlassClink(item.typeId, 0.75);
+        this.sim.toggleVesselInverted(item.id);
+      });
+      this.container.querySelector('#ins-fountain-primer')?.addEventListener('click', () => {
+        soundEngine.playDropPlink(0.9, 1.2);
+        this.sim.injectFountainPrimer(item.id);
+      });
+      this.container.querySelector('#ins-grind')?.addEventListener('click', () => {
+        soundEngine.playMortarGrind();
+        this.sim.grindMortar(item.id);
+      });
       this.container.querySelector('#ins-solid-xfer')?.addEventListener('click', () => this.callbacks.onOpenSolidTransfer?.(item.id));
       this.container.querySelectorAll('.mag-rpm-btn').forEach((btn) => {
-        btn.addEventListener('click', () => this.sim.toggleMagneticStir(item.id, Number(btn.dataset.rpm)));
+        btn.addEventListener('click', () => {
+          soundEngine.playUiClick();
+          this.sim.toggleMagneticStir(item.id, Number(btn.dataset.rpm));
+        });
       });
       this.container.querySelector('#ins-toggle-clamp')?.addEventListener('click', () => {
+        soundEngine.playClampClick();
         if (item.clampedToId) {
           this.sim.detachFromStand(item.id);
         } else {
@@ -1630,12 +1668,14 @@ export class InspectorPanel {
       });
       this.container.querySelector('#ins-tube')?.addEventListener('click', () => {
         if (item.connectedTargetId || item.connectedSyringeId) {
+          soundEngine.playTubeSnap(false);
           this.sim.disconnectSyringe(item.id);
         } else {
           const targets = this.sim.getTubeTargetsForVessel(item.id);
           if (targets.length === 0) {
             this.callbacks.onNotify?.(t('alertConnectNeedSyringe'));
           } else if (targets.length === 1) {
+            soundEngine.playTubeSnap(true);
             this.sim.connectTube(item.id, targets[0].id);
           } else {
             this.callbacks.onOpenTubeTarget?.(item.id);

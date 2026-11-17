@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v3+build.6',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v3+build.7',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -17,6 +17,9 @@ export const I18N = {
     pause: 'Tạm dừng',
     resume: 'Tiếp tục',
     resetBench: 'Dọn bàn Lab',
+    soundOn: 'Âm thanh',
+    soundMuted: 'Tắt tiếng',
+    soundToggleTip: 'Bật / Tắt âm thanh hiệu ứng vật lý phòng thí nghiệm (Web Audio API)',
     themeLight: 'Sáng',
     themeDark: 'Tối',
     deviceAuto: 'Tự động',
@@ -482,7 +485,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v3+build.6',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v3+build.7',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -494,6 +497,9 @@ export const I18N = {
     pause: 'Pause',
     resume: 'Resume',
     resetBench: 'Reset Bench',
+    soundOn: 'Sound',
+    soundMuted: 'Muted',
+    soundToggleTip: 'Toggle real-time physical laboratory sound effects (Web Audio API)',
     themeLight: 'Light',
     themeDark: 'Dark',
     deviceAuto: 'Auto',

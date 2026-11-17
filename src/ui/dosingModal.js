@@ -2,6 +2,7 @@ import { APPARATUS } from '../data/apparatus.js';
 import { SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { computeLiquidVolumeL } from '../engine/equilibrium.js';
 import { computeSyringeTotalVolumeMl, computeTubingGeometry } from '../engine/gasNetwork.js';
+import { soundEngine } from '../audio/soundEngine.js';
 
 function formatReagentMolPreview(reg, amount) {
   if (!reg) return '';
@@ -575,7 +576,10 @@ export class DosingModal {
       if (counter) counter.textContent = `+${this.state.pouredLive.toFixed(2)} mL`;
     };
 
-    this.container.querySelector('#btn-single-drop')?.addEventListener('click', () => addIncrement(0.05));
+    this.container.querySelector('#btn-single-drop')?.addEventListener('click', () => {
+      soundEngine.playDropPlink();
+      addIncrement(0.05);
+    });
 
     const holdBtn = this.container.querySelector('#btn-hold-pour');
     if (holdBtn) {
@@ -594,18 +598,21 @@ export class DosingModal {
     }
 
     this.container.querySelector('#btn-draw-pipette')?.addEventListener('click', () => {
+      soundEngine.playDropPlink(0.85);
       this.sim.pipetteDrawFromReagent(this.state.reagentId, 2.0);
       this.close();
     });
 
     this.container.querySelectorAll('.tube-pick-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
+        soundEngine.playTubeSnap(true);
         this.sim.connectTube(this.state.sourceVesselId, btn.dataset.tid);
         this.close();
       });
     });
 
     this.container.querySelector('#dosing-confirm')?.addEventListener('click', () => {
+      soundEngine.playUiClick();
       if (this.state.mode === 'reagent') {
         this.sim.startTimedReagentPour(this.state.targetVesselId, this.state.reagentId, this.state.amount, {
           fine: this.state.fine,
