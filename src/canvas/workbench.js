@@ -35,7 +35,6 @@ import {
 } from './vesselRenderer.js';
 import {
   renderBurette,
-  renderClayTriangle,
   renderCrucibleTongs,
   renderDcPowerAndWires,
   renderDiffusionTube,
@@ -442,7 +441,9 @@ export class LabWorkbenchCanvas {
       this.dropTargetVesselId = tgt ? tgt.id : null;
     } else if (payloadId === 'pipette_10' || payloadId === 'stir_bar' || payloadId === 'electrode_rod' || payloadId === 'filter_funnel') {
       const tgt = this.findVesselAt(pt.x, pt.y, null, false);
-      this.dropTargetVesselId = tgt ? tgt.id : null;
+      const tSpec = tgt ? APPARATUS[tgt.typeId] : null;
+      const valid = tgt && (payloadId !== 'electrode_rod' || !tSpec?.isHorizontalTube);
+      this.dropTargetVesselId = valid ? tgt.id : null;
     } else if (payloadId === 'rubber_stopper') {
       const mTgt = this.findMouthTargetAt(pt.x, pt.y, 'stopper');
       this.dropTargetVesselId = mTgt ? mTgt.vessel.id : null;
@@ -489,9 +490,20 @@ export class LabWorkbenchCanvas {
         } else if (created.kind === 'stir_bar' && hoverVessel && !hoverVessel.isStoppered) {
           this.sim.insertStirBarIntoVessel(created.id, hoverVessel.id, 800);
         } else if (created.kind === 'electrode' && hoverVessel) {
-          created.dockedVesselId = hoverVessel.id;
-          created.dockSide = clampedX >= hoverVessel.x ? 'right' : 'left';
-          syncDockedToolPositions(this.sim);
+          const hvSpec = APPARATUS[hoverVessel.typeId];
+          const side = clampedX >= hoverVessel.x ? 'right' : 'left';
+          const sideBlocked = hvSpec?.hasTwoEnds
+            ? side === 'left'
+              ? hoverVessel.leftStoppered
+              : hoverVessel.rightStoppered
+            : hoverVessel.isStoppered;
+          if (!hvSpec?.isHorizontalTube && !sideBlocked) {
+            created.dockedVesselId = hoverVessel.id;
+            created.dockSide = side;
+            syncDockedToolPositions(this.sim);
+          } else {
+            created.fallStartY = created.y;
+          }
         } else if (created.kind === 'filter_funnel' && hoverVessel && !hoverVessel.isStoppered) {
           created.mountedOnVesselId = hoverVessel.id;
           syncDockedToolPositions(this.sim);
@@ -618,7 +630,7 @@ export class LabWorkbenchCanvas {
 
   bindEvents() {
     this.ro = new ResizeObserver(() => this.resize());
-    this.ro.observe(this.canvas.parentElement);
+    if (this.canvas.parentElement) this.ro.observe(this.canvas.parentElement);
 
     // Unified pointer events for Mouse + Touch + Pen
     this.canvas.addEventListener('pointerdown', (e) => {
@@ -632,7 +644,7 @@ export class LabWorkbenchCanvas {
           this.hoverItemId = null;
           this.canvas.style.cursor = 'default';
           this.callbacks.onPickStateChange?.(null);
-          onPick?.(picked);
+          onPick?.(picked, pt);
         }
         return;
       }
@@ -706,11 +718,28 @@ export class LabWorkbenchCanvas {
           this.sim.selectedId = hit.id;
         }
         const activeGroupIds = Array.from(this.getSelectedIdSet());
-        hit.isDragging = true;
-        hit.vy = 0;
-        hit.fallStartY = hit.y;
-        hit.restingOnId = null;
-        if (hit.kind === 'electrode') hit.dockedVesselId = null;
+        const activeIdSet = new Set(activeGroupIds);
+        const groupMembers = activeGroupIds
+          .map((gid) => this.sim.getItem(gid))
+          .filter(Boolean)
+          .map((g) => ({ item: g, startX: g.x, startY: g.y }));
+        for (const member of groupMembers) {
+          const g = member.item;
+          g.isDragging = true;
+          g.vy = 0;
+          g.fallStartY = g.y;
+          g.restingOnId = null;
+          if (g.kind === 'spoon') {
+            g.spoonAnim = null;
+            g.tiltAngle = 0;
+          }
+          if (g.kind === 'electrode' && (!g.dockedVesselId || !activeIdSet.has(g.dockedVesselId))) {
+            g.dockedVesselId = null;
+          }
+          if (g.kind === 'filter_funnel' && g.id !== hit.id && (!g.mountedOnVesselId || !activeIdSet.has(g.mountedOnVesselId))) {
+            g.mountedOnVesselId = null;
+          }
+        }
         const wasMountedId = hit.kind === 'filter_funnel' ? hit.mountedOnVesselId : null;
         if (hit.kind === 'filter_funnel') hit.mountedOnVesselId = null;
         if (hit.kind === 'wash_bottle' && (hit.waterMl || 0) > 0.1) {
@@ -738,10 +767,6 @@ export class LabWorkbenchCanvas {
           this.sim.items = this.sim.items.filter((i) => i.id !== hit.id);
           this.sim.items.push(hit);
         }
-        const groupMembers = activeGroupIds
-          .map((gid) => this.sim.getItem(gid))
-          .filter(Boolean)
-          .map((g) => ({ item: g, startX: g.x, startY: g.y }));
         this.dragState = {
           itemId: hit.id,
           offsetX: pt.x - hit.x,
@@ -922,15 +947,43 @@ export class LabWorkbenchCanvas {
 
       // Move all multi-selected peers along with dragged item when dragging a multi-selection
       if (this.dragState.groupMembers && this.dragState.groupMembers.length > 1) {
+        const activeIdSet = new Set(this.dragState.groupMembers.map((m) => m.item?.id).filter(Boolean));
         for (const member of this.dragState.groupMembers) {
           const peer = member.item;
           if (!peer || peer.id === item.id) continue;
+          peer.isDragging = true;
+          peer.vy = 0;
+          peer.restingOnId = null;
+          if (peer.clampedToId && activeIdSet.has(peer.clampedToId)) {
+            peer.fallStartY = null;
+            continue;
+          }
+          if (peer.dockedVesselId && activeIdSet.has(peer.dockedVesselId)) {
+            peer.fallStartY = null;
+            continue;
+          }
+          if (peer.mountedOnVesselId && activeIdSet.has(peer.mountedOnVesselId)) {
+            peer.fallStartY = null;
+            continue;
+          }
+          if (peer.attachedToId && activeIdSet.has(peer.attachedToId)) {
+            peer.fallStartY = null;
+            continue;
+          }
           const pSpec = APPARATUS[peer.typeId] || { height: 60 };
           peer.x = Math.max(40, Math.min(BENCH_LOGICAL_W - 40, peer.x + dxMove));
           peer.y = Math.max(45, Math.min(BENCH_FLOOR_Y - (pSpec.height || 60) / 2 + 4, peer.y + dyMove));
-          peer.vy = 0;
           peer.fallStartY = peer.y;
-          peer.restingOnId = null;
+          if (peer.kind === 'stand') {
+            for (const child of this.sim.items) {
+              if (child.clampedToId !== peer.id || child.id === item.id) continue;
+              const cSpec = APPARATUS[child.typeId];
+              child.x = Math.max(50, Math.min(BENCH_LOGICAL_W - 50, child.x + dxMove));
+              child.y = clampItemToStandY(cSpec, peer, BENCH_FLOOR_Y, child.y + dyMove, 4);
+              child.vy = 0;
+              child.fallStartY = null;
+            }
+          }
         }
       }
 
@@ -1228,9 +1281,22 @@ export class LabWorkbenchCanvas {
           ? this.dragState.groupMembers.map((m) => m.item).filter(Boolean)
           : item ? [item] : [];
         if (item && this.callbacks.onDropToLabTab?.(e.clientX, e.clientY, item, dropItemsList)) {
+          for (const member of this.dragState.groupMembers || []) {
+            if (member.item) member.item.isDragging = false;
+          }
           item.isDragging = false;
           if (item.tiltAngle !== undefined) item.tiltAngle = 0;
           return;
+        }
+        for (const member of this.dragState.groupMembers || []) {
+          const mItem = member.item;
+          if (!mItem || mItem.id === item?.id) continue;
+          mItem.isDragging = false;
+          mItem.vy = 0;
+          mItem.fallStartY =
+            mItem.clampedToId || mItem.dockedVesselId || mItem.inVesselId || mItem.mountedOnVesselId || mItem.attachedToId
+              ? null
+              : mItem.y;
         }
         if (item) {
           item.isDragging = false;
@@ -1251,9 +1317,13 @@ export class LabWorkbenchCanvas {
             }
           } else if (item.kind === 'electrode') {
             const tgt = this.findVesselAt(item.x, item.y + 10, null, false);
-            if (tgt && !tgt.isStoppered) {
+            const tSpec = tgt ? APPARATUS[tgt.typeId] : null;
+            const side = tgt && item.x >= tgt.x ? 'right' : 'left';
+            const sideBlocked =
+              tSpec?.hasTwoEnds ? (side === 'left' ? tgt.leftStoppered : tgt.rightStoppered) : tgt?.isStoppered;
+            if (tgt && !tSpec?.isHorizontalTube && !sideBlocked) {
               item.dockedVesselId = tgt.id;
-              item.dockSide = item.x >= tgt.x ? 'right' : 'left';
+              item.dockSide = side;
               syncDockedToolPositions(this.sim);
             }
           } else if (item.kind === 'filter_funnel' && !this.dragState.pourTargetId) {
@@ -1657,7 +1727,7 @@ export class LabWorkbenchCanvas {
 
     const ordered = [
       ...this.sim.items.filter((i) => i.kind === 'stand' || i.kind === 'dc_power' || i.kind === 'volt_ammeter'),
-      ...this.sim.items.filter((i) => i.kind === 'scale' || i.kind === 'burner' || i.kind === 'clay_triangle' || i.kind === 'diffusion_tube'),
+      ...this.sim.items.filter((i) => i.kind === 'scale' || i.kind === 'burner' || i.kind === 'diffusion_tube'),
       ...this.sim.items.filter((i) => i.kind === 'gas_syringe' || i.kind === 'condenser' || i.kind === 'burette'),
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
       ...this.sim.items.filter((i) => i.kind === 'rubber_stopper' || i.kind === 'phen_cotton'),
@@ -1680,8 +1750,6 @@ export class LabWorkbenchCanvas {
         renderScale(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'burner') {
         renderBurner(ctx, item, isSelected, this.isDark, timeNow);
-      } else if (item.kind === 'clay_triangle') {
-        renderClayTriangle(ctx, item, isSelected, this.isDark);
       } else if (item.kind === 'diffusion_tube') {
         renderDiffusionTube(ctx, item, isSelected, isDropTgt, this.isDark, this.langCode);
       } else if (item.kind === 'gas_syringe') {

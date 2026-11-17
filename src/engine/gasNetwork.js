@@ -144,6 +144,8 @@ export function computeTubingGeometry(vessel, target) {
       ? { x: p3.x - condPorts.dir * 28, y: p3.y - 34 }
       : target.isInverted
       ? { x: p3.x - 16, y: p3.y + 38 }
+      : tSpec.isHorizontalTube
+      ? { x: p3.x + (tSide === 'left' ? -28 : 28), y: archTopY }
       : { x: p3.x, y: archTopY };
 
   const steps = 28;
@@ -659,21 +661,46 @@ export function stepVesselGasAndPressure(
   }
 
   let effectiveSealed = Boolean(vessel.isStoppered);
+  let flowThroughVentOnly = false;
   if (spec.hasTwoEnds) {
     const connSide = vessel.connectedPortSide || (vessel.flippedX ? 'left' : 'right');
-    const hasTube = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);
-    const lClosed = Boolean(vessel.leftStoppered || (hasTube && connSide === 'left'));
-    const rClosed = Boolean(vessel.rightStoppered || (hasTube && connSide === 'right'));
+    const hasOutTube = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);
+    const hasInTube = Boolean(vessel.connectedFromId);
+    const inSide = vessel.incomingPortSide || (vessel.flippedX ? 'right' : 'left');
+    const lClosed = Boolean(vessel.leftStoppered || (hasOutTube && connSide === 'left') || (hasInTube && inSide === 'left'));
+    const rClosed = Boolean(vessel.rightStoppered || (hasOutTube && connSide === 'right') || (hasInTube && inSide === 'right'));
     effectiveSealed = lClosed && rClosed;
     vessel._openLeftEnd = !lClosed;
     vessel._openRightEnd = !rClosed;
+    // Open holed outlet stopper on a dual-ended tube receiving upstream gas (without downstream tubing) still vents excess flow
+    if (effectiveSealed && hasInTube && !hasOutTube && vessel.stopperMode !== 'solid') {
+      flowThroughVentOnly = true;
+    }
   } else {
     vessel._openLeftEnd = false;
     vessel._openRightEnd = false;
   }
 
   // Porcelain crucible with fitted lid (`lidState === 'closed'`) or open vessel / partially-open dual-ended tube vents to room
-  if (!effectiveSealed) {
+  if (!effectiveSealed || flowThroughVentOnly) {
+    if (flowThroughVentOnly) {
+      const liqMlF = computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000;
+      const solMlF = computeSolidVolumeMl(vessel.moles);
+      const headLF = Math.max(0.015, (spec.maxVolumeMl - Math.min(spec.maxVolumeMl * 0.94, liqMlF + solMlF)) / 1000);
+      const keepMol = Math.max(0.0025, (env.pressureBar * headLF) / (CONSTANTS.R_L_BAR_MOL_K * Math.max(250, vessel.tempK)));
+      vessel.headspaceGasMoles = vessel.headspaceGasMoles || createEmptyGasMap();
+      for (const g of NON_STEAM_GASES) {
+        const cur = vessel.headspaceGasMoles[g] || 0;
+        if (cur > keepMol) {
+          const ex = cur - keepMol;
+          vessel.headspaceGasMoles[g] = keepMol;
+          vessel.escapedGasMoles[g] = (vessel.escapedGasMoles[g] || 0) + ex;
+          vessel._stepGasOutMol = (vessel._stepGasOutMol || 0) + ex;
+        }
+      }
+      ventToRoom();
+      return events;
+    }
     if (spec.hasLid && vessel.lidState === 'closed' && (produced.CO2_g || 0) > 0) {
       vessel.headspaceGasMoles = vessel.headspaceGasMoles || createEmptyGasMap();
       const headNow = vessel.headspaceGasMoles.CO2_g || 0;
@@ -704,20 +731,56 @@ export function stepVesselGasAndPressure(
   const solMl = computeSolidVolumeMl(vessel.moles);
   const headspaceL = Math.max(0.015, (spec.maxVolumeMl - Math.min(spec.maxVolumeMl * 0.94, liqMl + solMl)) / 1000);
 
+  // If a sealed dual-ended flow tube receives upstream gas AND feeds downstream tubing, flush excess carrier gas downstream!
+  let routeProduced = produced;
+  const targetId = vessel.connectedTargetId || vessel.connectedSyringeId;
+  if (spec.hasTwoEnds && vessel.connectedFromId && targetId) {
+    const keepMol = Math.max(0.0025, (env.pressureBar * headspaceL) / (CONSTANTS.R_L_BAR_MOL_K * Math.max(250, vessel.tempK)));
+    vessel.headspaceGasMoles = vessel.headspaceGasMoles || createEmptyGasMap();
+    const swept = { ...produced };
+    let totalHeadNonSteam = 0;
+    for (const g of NON_STEAM_GASES) totalHeadNonSteam += vessel.headspaceGasMoles[g] || 0;
+    if (totalHeadNonSteam > keepMol) {
+      const sweepRatio = (totalHeadNonSteam - keepMol) / totalHeadNonSteam;
+      for (const g of NON_STEAM_GASES) {
+        const cur = vessel.headspaceGasMoles[g] || 0;
+        if (cur > 1e-10) {
+          const ex = cur * sweepRatio;
+          vessel.headspaceGasMoles[g] = cur - ex;
+          swept[g] = (swept[g] || 0) + ex;
+        }
+      }
+    }
+    routeProduced = swept;
+  }
+
   // Connected to another apparatus (Gas Syringe OR receiving Vessel) via rubber tubing
   let maxedSyringe = null;
-  const targetId = vessel.connectedTargetId || vessel.connectedSyringeId;
   if (targetId) {
     const target = getApparatusById(targetId);
+    const tSpec = target ? APPARATUS[target.typeId] : null;
+    const canAcceptTargetVessel =
+      target &&
+      target.kind === 'vessel' &&
+      !target.isShattered &&
+      (!target.isStoppered ||
+        Boolean(
+          tSpec?.hasTwoEnds &&
+            (!target.leftStoppered ||
+              !target.rightStoppered ||
+              target.connectedTargetId ||
+              target.connectedSyringeId ||
+              target.stopperMode !== 'solid')
+        ));
     if (target && (target.kind === 'gas_syringe' || (target.kind === 'vessel' && target.isInverted))) {
-      const routed = routeGasPacketToTarget(vessel, target, produced, totalSteam, env, getApparatusById);
+      const routed = routeGasPacketToTarget(vessel, target, routeProduced, totalSteam, env, getApparatusById);
       if (routed.handled) return events;
       if (routed.maxedSyringe) maxedSyringe = routed.maxedSyringe;
     } else if (target && target.kind === 'condenser' && !target.isBroken) {
       target.vaporInMoles = target.vaporInMoles || createEmptyGasMap();
       for (const g of NON_STEAM_GASES) {
-        if (produced[g] > 0) {
-          target.vaporInMoles[g] = (target.vaporInMoles[g] || 0) + produced[g];
+        if (routeProduced[g] > 0) {
+          target.vaporInMoles[g] = (target.vaporInMoles[g] || 0) + routeProduced[g];
         }
       }
       if (totalSteam > 0) {
@@ -725,7 +788,7 @@ export function stepVesselGasAndPressure(
       }
       vessel.internalPressureBar = env.pressureBar;
       return events;
-    } else if (target && target.kind === 'vessel' && !target.isShattered && !target.isStoppered) {
+    } else if (canAcceptTargetVessel) {
       // Condense steam, scrub HCl(g) onto dry CuSO4(s) or water, dissolve NH3(g) into water, vent permanent gases
       let heatAddedJ = 0;
       let addedCapJK = 0;
@@ -743,7 +806,7 @@ export function stepVesselGasAndPressure(
           target.escapedGasMoles.H2O_g = (target.escapedGasMoles.H2O_g || 0) + totalSteam;
         }
       }
-      let remHCl = produced.HCl_g || 0;
+      let remHCl = routeProduced.HCl_g || 0;
       if (remHCl > 0 && (target.moles.CuSO4_s || 0) > 1e-8 && (target.moles.H2O_l || 0) < 0.025 && target.tempK < 410) {
         // Chemisorption: CuSO4(s, white) + 2 HCl(g) -> CuSO4·2HCl(s, golden brown)
         const dAdduct = Math.min(target.moles.CuSO4_s, remHCl / 2);
@@ -762,18 +825,18 @@ export function stepVesselGasAndPressure(
       } else if (remHCl > 0) {
         target.escapedGasMoles.HCl_g = (target.escapedGasMoles.HCl_g || 0) + remHCl;
       }
-      if ((produced.NH3_g || 0) > 0 && (target.moles.H2O_l || 0) > 1e-4) {
-        const dNH3 = produced.NH3_g;
+      if ((routeProduced.NH3_g || 0) > 0 && (target.moles.H2O_l || 0) > 1e-4) {
+        const dNH3 = routeProduced.NH3_g;
         target.moles.NH3_aq = (target.moles.NH3_aq || 0) + dNH3;
         heatAddedJ += dNH3 * 35400;
-      } else if ((produced.NH3_g || 0) > 0) {
-        target.escapedGasMoles.NH3_g = (target.escapedGasMoles.NH3_g || 0) + produced.NH3_g;
+      } else if ((routeProduced.NH3_g || 0) > 0) {
+        target.escapedGasMoles.NH3_g = (target.escapedGasMoles.NH3_g || 0) + routeProduced.NH3_g;
       }
-      if ((produced.C2H5Cl_g || 0) > 0 && target.restingOnId) {
+      if ((routeProduced.C2H5Cl_g || 0) > 0 && target.restingOnId) {
         target.recentHalogenGasTimer = 1.6;
       }
-      if ((produced.C2H5OH_g || 0) > 0) {
-        const dEt = produced.C2H5OH_g;
+      if ((routeProduced.C2H5OH_g || 0) > 0) {
+        const dEt = routeProduced.C2H5OH_g;
         if (target.tempK < SPECIES.C2H5OH_l.boilTempK) {
           target.moles.C2H5OH_l = (target.moles.C2H5OH_l || 0) + dEt;
           heatAddedJ += dEt * SPECIES.C2H5OH_l.dHVapJ;
@@ -782,7 +845,7 @@ export function stepVesselGasAndPressure(
           target.escapedGasMoles.C2H5OH_g = (target.escapedGasMoles.C2H5OH_g || 0) + dEt;
         }
       }
-      let remSO3 = produced.SO3_g || 0;
+      let remSO3 = routeProduced.SO3_g || 0;
       if (remSO3 > 0 && (target.moles.H2O_l || 0) > 1e-4) {
         const dSO3 = Math.min(remSO3, Math.max(0, target.moles.H2O_l - 1e-4));
         if (dSO3 > 1e-12) {
@@ -799,8 +862,8 @@ export function stepVesselGasAndPressure(
         target.escapedGasMoles.SO3_g = (target.escapedGasMoles.SO3_g || 0) + remSO3;
       }
       target.headspaceGasMoles = target.headspaceGasMoles || createEmptyGasMap();
-      if ((produced.CO2_g || 0) > 0) {
-        const dCo2 = produced.CO2_g;
+      if ((routeProduced.CO2_g || 0) > 0) {
+        const dCo2 = routeProduced.CO2_g;
         const hasWaterTgt = (target.moles.H2O_l || 0) > 1e-4;
         if (hasWaterTgt) {
           const hasAlkaliTgt =
@@ -822,11 +885,11 @@ export function stepVesselGasAndPressure(
         }
       }
       for (const g of NON_STEAM_GASES) {
-        if (g !== 'HCl_g' && g !== 'NH3_g' && g !== 'C2H5OH_g' && g !== 'CO2_g' && g !== 'SO3_g' && produced[g] > 0) {
-          target.headspaceGasMoles[g] = (target.headspaceGasMoles[g] || 0) + produced[g];
-          target.gasFlushInMol = (target.gasFlushInMol || 0) + produced[g];
+        if (g !== 'HCl_g' && g !== 'NH3_g' && g !== 'C2H5OH_g' && g !== 'CO2_g' && g !== 'SO3_g' && routeProduced[g] > 0) {
+          target.headspaceGasMoles[g] = (target.headspaceGasMoles[g] || 0) + routeProduced[g];
+          target.gasFlushInMol = (target.gasFlushInMol || 0) + routeProduced[g];
           if ((target.moles.H2O_l || 0) > 1e-4) {
-            target._tubeBubbleGasMol = (target._tubeBubbleGasMol || 0) + produced[g];
+            target._tubeBubbleGasMol = (target._tubeBubbleGasMol || 0) + routeProduced[g];
           }
         }
       }
@@ -1044,6 +1107,7 @@ export function stepOpenGasBuoyancy(vessel, env, dt) {
     vessel.wallCondenseLevel = Math.min(1.0, (vessel.wallCondenseLevel || 0) + 0.55 * dt);
   }
 
+  const vSpecB = APPARATUS[vessel.typeId];
   for (const gId of ALL_GASES) {
     const n = head[gId] || 0;
     if (n <= 1e-10) {
@@ -1056,7 +1120,10 @@ export function stepOpenGasBuoyancy(vessel, env, dt) {
       // Inverted in open air (not in water trough): light gases (H2, NH3) float upward inside the inverted dome;
       // heavy gases (Cl2, NO2, O2, HCl, CO2) pour downward out of the mouth
       leakRateS = relD < 0.96 ? 0.032 * Math.sqrt(relD) : 0.35 + 1.35 * (relD - 0.95);
-    } else if (APPARATUS[vessel.typeId]?.hasLid && vessel.lidState === 'closed' && !vessel.isStoppered) {
+    } else if (vSpecB?.isHorizontalTube && vessel.connectedFromId) {
+      // Flowing plug-flow stream through open-ended horizontal quartz tube retains reactive carrier concentration briefly
+      leakRateS = relD < 0.96 ? 0.55 + 0.35 * (1 - relD) : 0.16 / Math.max(0.55, relD);
+    } else if (vSpecB?.hasLid && vessel.lidState === 'closed' && !vessel.isStoppered) {
       // Closed porcelain crucible lid strongly impedes CO2 escape (raises inner P_CO2)
       leakRateS = 0.09;
     } else {

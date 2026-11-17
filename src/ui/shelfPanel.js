@@ -59,9 +59,7 @@ function apparatusSvg(typeId) {
     case 'salt_bridge':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M9 28V14a9 9 0 0118 0v14"/></svg>`;
     case 'bunsen_burner':
-      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 30h18M15 30v-5h6v5M16 25V14h4v11"/><circle cx="18" cy="22" r="1.4" fill="currentColor"/><path d="M18 4c-2.5 3.5-3 6.5 0 9 3-2.5 2.5-5.5 0-9z" fill="#38bdf8" stroke="none"/></svg>`;
-    case 'clay_triangle':
-      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2"><polygon points="8,16 28,16 18,26"/><path d="M5 14l4 2M31 14l-4 2M18 31v-5" opacity="0.7"/></svg>`;
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 30h18M15 30v-5h6v5M16 25V14h4v11"/><path d="M7 30l4-18h14l4 18M9 12h18" opacity="0.72"/><circle cx="18" cy="22" r="1.4" fill="currentColor"/><path d="M18 4c-2.5 3.5-3 6.5 0 9 3-2.5 2.5-5.5 0-9z" fill="#38bdf8" stroke="none"/></svg>`;
     case 'crucible_porcelain':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10 14h16l-2.5 14h-11z"/><path d="M9 11h18"/><circle cx="18" cy="8.5" r="2"/></svg>`;
     case 'quartz_tube':

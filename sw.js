@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v3-build-3';
+const CACHE_NAME = 'virlab-beta-v3-build-4';
 const ASSETS = [
   './',
   './index.html',
@@ -54,6 +54,14 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)).catch(() => {});
+        }
+        return res;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

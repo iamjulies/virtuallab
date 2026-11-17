@@ -733,6 +733,77 @@ export class ParticleSystem {
       return;
     }
 
+    if (type === 'spoon_scoop') {
+      const sx = meta?.x ?? x;
+      const sy = meta?.y ?? y;
+      const col = meta?.color || '#cbd5e1';
+      for (let i = 0; i < 12; i++) {
+        const ang = -Math.PI * (0.15 + Math.random() * 0.7);
+        const spd = 25 + Math.random() * 48;
+        this.particles.push({
+          kind: 'drip',
+          x: sx + (Math.random() - 0.5) * 16,
+          y: sy + (Math.random() - 0.5) * 8,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          r: 1.8 + Math.random() * 1.4,
+          stopY: sy + 14,
+          life: 0,
+          maxLife: 0.45 + Math.random() * 0.2,
+          color: col,
+          splashed: false,
+        });
+      }
+      this.particles.push({
+        kind: 'shockwave',
+        x: sx,
+        y: sy,
+        vx: 0,
+        vy: 0,
+        r: 4,
+        maxR: 22,
+        life: 0,
+        maxLife: 0.30,
+        color: col,
+      });
+      return;
+    }
+
+    if (type === 'spoon_pour') {
+      const fx = meta?.fromX ?? x;
+      const fy = meta?.fromY ?? y - 40;
+      const ty = meta?.toY ?? y;
+      const col = meta?.color || '#e2e8f0';
+      for (let i = 0; i < 16; i++) {
+        this.particles.push({
+          kind: 'drip',
+          x: fx + (Math.random() - 0.5) * 10,
+          y: fy + (Math.random() - 0.5) * 6,
+          vx: (x - fx) * 1.4 + (Math.random() - 0.5) * 20,
+          vy: 70 + Math.random() * 65,
+          r: 1.9 + Math.random() * 1.5,
+          stopY: ty + 6,
+          life: 0,
+          maxLife: 0.55 + Math.random() * 0.25,
+          color: col,
+          splashed: false,
+        });
+      }
+      this.particles.push({
+        kind: 'shockwave',
+        x,
+        y: ty,
+        vx: 0,
+        vy: 0,
+        r: 4,
+        maxR: 24,
+        life: 0,
+        maxLife: 0.34,
+        color: col,
+      });
+      return;
+    }
+
     if (type === 'drop_spill') {
       const vw = meta?.vesselWidth || 72;
       const vh = meta?.vesselHeight || 110;

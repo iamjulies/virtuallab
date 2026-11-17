@@ -431,6 +431,17 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
   }
 
   if (isBunsen) {
+    // Integrated forged-iron tripod frame reaching up to top + 10 (50 px above burner nozzle)
+    ctx.strokeStyle = pal.burnerMetal;
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x - 38, top + 12);
+    ctx.lineTo(x - 50, bottom);
+    ctx.moveTo(x + 38, top + 12);
+    ctx.lineTo(x + 50, bottom);
+    ctx.stroke();
+
     // Cast-iron heavy octagonal pedestal base + side brass gas hose barb
     ctx.fillStyle = isDark ? '#334155' : '#475569';
     ctx.strokeStyle = isDark ? '#64748b' : '#1e293b';
@@ -533,6 +544,26 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
         height: 18,
       });
     }
+
+    // Integrated tripod ring bar & glowing ceramic-center gauze drawn across top + 10
+    ctx.strokeStyle = pal.burnerMetal;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(x - 46, top + 10);
+    ctx.lineTo(x + 46, top + 10);
+    ctx.stroke();
+
+    ctx.fillStyle =
+      powerW > 0
+        ? `rgba(249, 115, 22, ${0.24 + powerFrac * 0.56})`
+        : isDark ? 'rgba(226, 232, 240, 0.48)' : 'rgba(148, 163, 184, 0.52)';
+    ctx.strokeStyle = isDark ? 'rgba(148, 163, 184, 0.5)' : 'rgba(100, 116, 139, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x - 32, top + 6.5, 64, 5.5, 2);
+    ctx.fill();
+    ctx.stroke();
+
     ctx.restore();
     return;
   }
@@ -2136,13 +2167,27 @@ export function renderVessel(ctx, vessel, opts) {
       const dxU = spec.limbSpacingX || 28;
       const rOut = spec.tubeOuterR || 13;
       const topY = y - h / 2 + 2;
+      const bendCy = y + h / 2 - 2 - (dxU + rOut);
+      // Rolled glass lip caps at both open U-tube limbs
+      ctx.strokeStyle = pal.glassStroke;
+      ctx.lineWidth = 2.0;
+      for (const armSign of [-1, 1]) {
+        const cxArm = x + armSign * dxU;
+        ctx.beginPath();
+        ctx.ellipse(cxArm, topY, rOut + 1.5, 2.2, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      // Curved outer specular highlights following U-arms smoothly into the lower bend (never cutting straight across bottom!)
       ctx.strokeStyle = pal.glassHighlight;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.moveTo(x - dxU - rOut + 3, topY + 6);
-      ctx.lineTo(x - dxU - rOut + 3, y);
-      ctx.moveTo(x + dxU + rOut - 3, topY + 6);
-      ctx.lineTo(x + dxU + rOut - 3, y);
+      ctx.moveTo(x - dxU - rOut + 3.2, topY + 6);
+      ctx.lineTo(x - dxU - rOut + 3.2, bendCy);
+      ctx.arc(x, bendCy, dxU + rOut - 3.2, Math.PI, Math.PI * 0.56, true);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x + dxU + rOut - 3.2, topY + 6);
+      ctx.lineTo(x + dxU + rOut - 3.2, bendCy);
       ctx.stroke();
     }
 
@@ -2244,19 +2289,24 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.restore();
   }
 
-  // Glass vertical specular highlight & bottom heavy-base tint
-  ctx.strokeStyle = pal.glassHighlight;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  if (spec.shape === 'erlenmeyer') {
-    const shoulderY = interiorBottom - spec.geometry.profilePoints[3][0] * scaleY;
-    ctx.moveTo(x - neckHalf + 4, shoulderY + 2);
-    ctx.lineTo(x - w * 0.36, bottom - 15);
-  } else {
-    ctx.moveTo(x - w * 0.33, top + 12);
-    ctx.lineTo(x - w * 0.33, bottom - 14);
+  // Glass vertical specular highlight & bottom heavy-base tint (skip dual/horizontal tubes & opaque porcelain)
+  if (!spec.isUTube && !spec.isHorizontalTube && spec.shape !== 'dish' && spec.shape !== 'mortar' && spec.shape !== 'crucible') {
+    ctx.strokeStyle = pal.glassHighlight;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (spec.shape === 'erlenmeyer') {
+      const shoulderY = interiorBottom - spec.geometry.profilePoints[3][0] * scaleY;
+      ctx.moveTo(x - neckHalf + 4, shoulderY + 2);
+      ctx.lineTo(x - w * 0.36, bottom - 15);
+    } else if (spec.shape === 'trough') {
+      ctx.moveTo(x - w * 0.38, top + 12);
+      ctx.lineTo(x - w * 0.35, bottom - 12);
+    } else {
+      ctx.moveTo(x - w * 0.33, top + 12);
+      ctx.lineTo(x - w * 0.33, bottom - 14);
+    }
+    ctx.stroke();
   }
-  ctx.stroke();
 
   // White ceramic enamel ISO graduations + frosted write-on patch
   ctx.textBaseline = 'middle';
@@ -2355,8 +2405,77 @@ export function renderVessel(ctx, vessel, opts) {
         ctx.fillText(String(ml), tickX + 11.5, ty + 0.5);
       }
     }
-  } else {
-    // ISO 4142 / DIN 12395 Ceramic enamel white graduations every 5 mL (10..50 mL)
+  } else if (spec.isUTube) {
+    // U-Tube arm ceramic enamel graduations along outside of LEFT limb (never in center gap or colliding with docked electrode)
+    const dxU = spec.limbSpacingX || 28;
+    const rOut = spec.tubeOuterR || 13;
+    const armTickX = x - dxU - rOut + 2.5;
+    for (let ml = 20; ml <= 80; ml += 10) {
+      const frac = ml / Math.max(1, spec.maxVolumeMl || 100);
+      const ty = interiorBottom - frac * Math.max(12, interiorBottom - top - 10);
+      const isMajor = ml === 40 || ml === 80;
+      const tickLen = isMajor ? 5.5 : 3.2;
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.0 : 0.75;
+      ctx.beginPath();
+      ctx.moveTo(armTickX, ty);
+      ctx.lineTo(armTickX + tickLen, ty);
+      ctx.stroke();
+      if (isMajor) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'right';
+        ctx.font = '600 6.8px system-ui, sans-serif';
+        ctx.fillText(String(ml), armTickX - 3.5, ty + 0.5);
+      }
+    }
+  } else if (spec.isHorizontalTube) {
+    // Sparse horizontal graduation marks along quartz combustion barrel (omit cramped 40 label)
+    const marks = [
+      { fracX: -0.28, label: '20' },
+      { fracX: -0.14, label: null },
+      { fracX: 0.0, label: '60' },
+      { fracX: 0.14, label: null },
+      { fracX: 0.28, label: '100' },
+    ];
+    for (const mk of marks) {
+      const tx = x + w * mk.fracX;
+      const isMajor = Boolean(mk.label);
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.0 : 0.75;
+      ctx.beginPath();
+      ctx.moveTo(tx, top + 3);
+      ctx.lineTo(tx, top + (isMajor ? 8 : 5.5));
+      ctx.stroke();
+      if (mk.label) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'center';
+        ctx.font = '600 6.8px system-ui, sans-serif';
+        ctx.fillText(mk.label, tx, top + 14.5);
+      }
+    }
+  } else if (spec.shape === 'trough') {
+    // Calibrated 1500 mL Glass Bath graduations every 250 mL (major ticks at 500 & 1000 mL)
+    for (let ml = 250; ml <= 1250; ml += 250) {
+      const ty = volumeMlToY(ml);
+      if (ty < top + 6 || ty > bottom - 7) continue;
+      const isMajor = ml % 500 === 0;
+      const tickX = x - w * 0.36;
+      const tickLen = isMajor ? 9.5 : 5.5;
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.05 : 0.75;
+      ctx.beginPath();
+      ctx.moveTo(tickX, ty);
+      ctx.lineTo(tickX + tickLen, ty);
+      ctx.stroke();
+      if (isMajor) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'left';
+        ctx.font = '600 7.2px system-ui, sans-serif';
+        ctx.fillText(String(ml), tickX + tickLen + 2.5, ty + 0.5);
+      }
+    }
+  } else if (spec.shape === 'test_tube') {
+    // ISO 4142 Test Tube ceramic enamel white graduations every 5 mL (10, 30, 50 mL labels for clean spacing)
     for (let ml = 10; ml <= 50; ml += 5) {
       const ty = volumeMlToY(ml);
       const isMajor = ml % 10 === 0;
@@ -2368,7 +2487,7 @@ export function renderVessel(ctx, vessel, opts) {
       ctx.moveTo(tickX, ty);
       ctx.lineTo(tickX + tickLen, ty);
       ctx.stroke();
-      if (isMajor && ml % 20 === 0 || ml === 50) {
+      if (ml === 10 || ml === 30 || ml === 50) {
         ctx.fillStyle = pal.enamelText;
         ctx.textAlign = 'left';
         ctx.font = '600 6.8px system-ui, sans-serif';

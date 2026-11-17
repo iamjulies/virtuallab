@@ -872,44 +872,73 @@ export function syncDockedToolPositions(sim) {
         }
         const vSpec = APPARATUS[v.typeId];
         const eSpec = APPARATUS[it.typeId];
-        const neckHalfPx = vSpec.neckRadius ? vSpec.neckRadius * 0.65 : vSpec.width * 0.31;
-        const maxDx = Math.min(26, vSpec.width * 0.31, neckHalfPx);
-        const dxOff = it.dockSide === 'right' ? maxDx : -maxDx;
-
-        const rimY = v.y - vSpec.height / 2;
-        const vInteriorBottomY = v.y + vSpec.height / 2 - 7;
-        const targetTopY = rimY - 18;
-        const targetBotY = vInteriorBottomY - 3;
-        const effHeight = Math.max(44, targetBotY - targetTopY);
-
-        it.x = v.x + dxOff;
-        it.y = 0.5 * (targetTopY + targetBotY);
-        it.renderHeight = effHeight;
-        it.vy = 0;
-        it.fallStartY = null;
-        if (eSpec) it.restingOnId = null;
-
-        // Exact tip immersion vs current liquid surface level inside parent vessel
-        const liqMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
-        const solMl = computeSolidVolumeMl(v.moles);
-        if (liqMl <= 0.15) {
-          it.immersedHeightPx = 0;
-          it.immersedFrac = 0;
-        } else if (vSpec.geometry) {
-          const footH = vSpec.shape === 'cylinder' ? 9 : 3.5;
-          const baseBottom = v.y + vSpec.height / 2 - footH;
-          const topGlass = rimY + 4;
-          const spanH = Math.max(10, baseBottom - topGlass);
-          const st = vSpec.geometry.getLiquidState(liqMl + solMl);
-          const surfaceY = baseBottom - st.fillRatio * spanH;
-          const immPx = Math.max(0, Math.min(effHeight - 14, targetBotY - surfaceY));
-          it.immersedHeightPx = immPx;
-          it.immersedFrac = immPx <= 1.0 ? 0 : Math.min(1, immPx / Math.max(20, effHeight - 14));
+        if (vSpec.isUTube) {
+          const dxU = vSpec.limbSpacingX || 28;
+          const dxOff = it.dockSide === 'right' ? dxU : -dxU;
+          const vTop = v.y - vSpec.height / 2;
+          const vInteriorBot = v.y + vSpec.height / 2 - 4;
+          const armBotY = v.y + vSpec.height / 2 - dxU * 0.85;
+          const targetTopY = vTop - 16;
+          const effHeight = Math.max(76, armBotY - targetTopY);
+          it.renderHeight = effHeight;
+          it.x = v.x + dxOff;
+          it.y = armBotY - effHeight / 2;
+          it.vy = 0;
+          it.fallStartY = null;
+          if (eSpec) it.restingOnId = null;
+          const liqMl = computeLiquidVolumeL(v.moles || {}, v.tempK || 298.15) * 1000;
+          const solMl = computeSolidVolumeMl(v.moles || {});
+          const totMl = liqMl + solMl;
+          if (liqMl <= 0.15 || totMl <= 0.1) {
+            it.immersedHeightPx = 0;
+            it.immersedFrac = 0;
+          } else {
+            const uFillFrac = Math.min(0.92, Math.max(0.08, totMl / Math.max(1, vSpec.maxVolumeMl || 100)));
+            const surfY = vInteriorBot - uFillFrac * Math.max(12, vInteriorBot - vTop - 10);
+            const immersedPx = Math.max(0, Math.min(effHeight - 14, armBotY - surfY));
+            it.immersedHeightPx = immersedPx;
+            it.immersedFrac = immersedPx <= 1.0 ? 0 : Math.min(1, immersedPx / Math.max(20, effHeight - 14));
+          }
         } else {
-          const fillFrac = Math.max(0, Math.min(1, (liqMl + solMl) / Math.max(1, vSpec.maxVolumeMl)));
-          const liqH = fillFrac * (vSpec.height - 14);
-          it.immersedHeightPx = liqH;
-          it.immersedFrac = liqH <= 1.0 ? 0 : Math.min(1, liqH / Math.max(20, effHeight - 14));
+          const neckHalfPx = vSpec.neckRadius ? vSpec.neckRadius * 0.65 : vSpec.width * 0.31;
+          const maxDx = Math.min(26, vSpec.width * 0.31, neckHalfPx);
+          const dxOff = it.dockSide === 'right' ? maxDx : -maxDx;
+
+          const rimY = v.y - vSpec.height / 2;
+          const vInteriorBottomY = v.y + vSpec.height / 2 - 7;
+          const targetTopY = rimY - 18;
+          const targetBotY = vInteriorBottomY - 3;
+          const effHeight = Math.max(44, targetBotY - targetTopY);
+
+          it.x = v.x + dxOff;
+          it.y = 0.5 * (targetTopY + targetBotY);
+          it.renderHeight = effHeight;
+          it.vy = 0;
+          it.fallStartY = null;
+          if (eSpec) it.restingOnId = null;
+
+          // Exact tip immersion vs current liquid surface level inside parent vessel
+          const liqMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
+          const solMl = computeSolidVolumeMl(v.moles);
+          if (liqMl <= 0.15) {
+            it.immersedHeightPx = 0;
+            it.immersedFrac = 0;
+          } else if (vSpec.geometry) {
+            const footH = vSpec.shape === 'cylinder' ? 9 : 3.5;
+            const baseBottom = v.y + vSpec.height / 2 - footH;
+            const topGlass = rimY + 4;
+            const spanH = Math.max(10, baseBottom - topGlass);
+            const st = vSpec.geometry.getLiquidState(liqMl + solMl);
+            const surfaceY = baseBottom - st.fillRatio * spanH;
+            const immPx = Math.max(0, Math.min(effHeight - 14, targetBotY - surfaceY));
+            it.immersedHeightPx = immPx;
+            it.immersedFrac = immPx <= 1.0 ? 0 : Math.min(1, immPx / Math.max(20, effHeight - 14));
+          } else {
+            const fillFrac = Math.max(0, Math.min(1, (liqMl + solMl) / Math.max(1, vSpec.maxVolumeMl)));
+            const liqH = fillFrac * (vSpec.height - 14);
+            it.immersedHeightPx = liqH;
+            it.immersedFrac = liqH <= 1.0 ? 0 : Math.min(1, liqH / Math.max(20, effHeight - 14));
+          }
         }
       } else {
         it.renderHeight = null;

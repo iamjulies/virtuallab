@@ -234,9 +234,6 @@ export class InspectorPanel {
       const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered).length;
       return `tg|${item.id}|${item.grippedVesselId || ''}|${sampleFlag}|${vCnt}|${langCode}|${logLen}`;
     }
-    if (item.kind === 'clay_triangle') {
-      return `ct|${item.id}|${langCode}|${logLen}`;
-    }
     if (item.kind === 'spoon') {
       const spKeys = Object.keys(item.moles || {})
         .filter((k) => item.moles[k] > 1e-10)
@@ -967,20 +964,6 @@ export class InspectorPanel {
           }
         </div>
       `;
-    } else if (item.kind === 'clay_triangle') {
-      const cSpec = APPARATUS.clay_triangle;
-      topSection = `
-        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
-          <div class="flex items-center justify-between">
-            <div>
-              <div class="text-sm font-bold">🔺 ${t('eq_clay_triangle')} ${item.label}</div>
-              <div class="text-[11px] text-muted">${cSpec.materialSpec} · ${cSpec.isoStandard}</div>
-            </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
-          </div>
-          <p class="text-xs text-muted leading-relaxed">${t('clayTriangleHint')}</p>
-        </div>
-      `;
     } else if (item.kind === 'tongs') {
       const tgSpec = APPARATUS.crucible_tongs;
       const gv = item.grippedVesselId ? this.sim.getItem(item.grippedVesselId) : null;
@@ -1005,9 +988,19 @@ export class InspectorPanel {
           </div>
           <div class="flex flex-col gap-1.5">
             <button type="button" id="ins-tongs-sample" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent text-left">${t('tongsGripSampleBtn')}</button>
+            ${
+              sample
+                ? `<button type="button" id="ins-tongs-drop-sample" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent text-left">${t('tongsDropSampleBtn')}</button>`
+                : ''
+            }
             <button type="button" id="ins-tongs-grip" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent text-left">${t('tongsGripCrucibleBtn')}</button>
             ${
-              gv || sample
+              gv
+                ? `<button type="button" id="ins-tongs-release-crucible" class="py-1.5 px-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:bg-amber-500/20 text-left">${t('tongsReleaseCrucibleBtn')}</button>`
+                : ''
+            }
+            ${
+              gv && sample
                 ? `<button type="button" id="ins-tongs-release" class="py-1.5 px-2.5 rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 text-xs font-semibold hover:bg-red-500/20 text-left">${t('tongsReleaseBtn')}</button>`
                 : ''
             }
@@ -1822,14 +1815,38 @@ export class InspectorPanel {
           (v) =>
             v.kind === 'vessel' &&
             !v.isShattered &&
+            !v.isStoppered &&
             ((v.moles?.Zn_s || 0) > 1e-6 || (v.moles?.Na_s || 0) > 1e-6 || (v.moles?.Cu_s || 0) > 1e-6)
         );
         if (candidates.length === 0) return;
-        const nearest = candidates.sort((a, b) => Math.hypot(a.x - item.x, a.y - item.y) - Math.hypot(b.x - item.x, b.y - item.y))[0];
-        this.sim.tongsPickSampleFromVessel(item.id, nearest.id);
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: candidates.map((v) => v.id),
+          promptText: `${t('tongsGripSampleBtn')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.tongsPickSampleFromVessel(item.id, picked.id),
+        });
+      });
+      this.container.querySelector('#ins-tongs-drop-sample')?.addEventListener('click', () => {
+        const candidates = this.sim.items.filter((v) => v.kind === 'vessel' && !v.isShattered && !v.isStoppered);
+        if (candidates.length === 0) return;
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: candidates.map((v) => v.id),
+          promptText: `${t('tongsDropSampleBtn')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.tongsDropSampleIntoVessel(item.id, picked.id),
+        });
       });
       this.container.querySelector('#ins-tongs-grip')?.addEventListener('click', () => {
-        this.sim.tongsToggleGripVessel(item.id);
+        const candidates = this.sim.items.filter(
+          (v) => v.kind === 'vessel' && !v.isShattered && (v.typeId === 'crucible_porcelain' || v.typeId === 'porcelain_dish')
+        );
+        if (candidates.length === 0) return;
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: candidates.map((v) => v.id),
+          promptText: `${t('tongsGripCrucibleBtn')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.tongsGripVessel(item.id, picked.id),
+        });
+      });
+      this.container.querySelector('#ins-tongs-release-crucible')?.addEventListener('click', () => {
+        this.sim.tongsReleaseCrucible(item.id);
       });
       this.container.querySelector('#ins-tongs-release')?.addEventListener('click', () => {
         this.sim.tongsReleaseAll(item.id);
@@ -1840,21 +1857,32 @@ export class InspectorPanel {
           (v) =>
             v.kind === 'vessel' &&
             !v.isShattered &&
+            !v.isStoppered &&
             Object.entries(v.moles || {}).some(([k, n]) => SPECIES[k]?.phase === 's' && n > 1e-8)
         );
         if (candidates.length === 0) return;
-        const nearest = candidates.sort(
-          (a, b) => Math.hypot(a.x - item.x, a.y - item.y) - Math.hypot(b.x - item.x, b.y - item.y)
-        )[0];
-        this.sim.spoonScoopFromVessel(item.id, nearest.id);
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: candidates.map((v) => v.id),
+          promptText: `${t('spoonScoopBtn')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => {
+            if (!this.sim.startSpoonAction(item.id, 'scoop', picked.id)) {
+              this.sim.spoonScoopFromVessel(item.id, picked.id);
+            }
+          },
+        });
       });
       this.container.querySelector('#ins-spoon-pour')?.addEventListener('click', () => {
         const candidates = this.sim.items.filter((v) => v.kind === 'vessel' && !v.isShattered && !v.isStoppered);
         if (candidates.length === 0) return;
-        const nearest = candidates.sort(
-          (a, b) => Math.hypot(a.x - item.x, a.y - item.y) - Math.hypot(b.x - item.x, b.y - item.y)
-        )[0];
-        this.sim.spoonPourIntoVessel(item.id, nearest.id);
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: candidates.map((v) => v.id),
+          promptText: `${t('spoonPourBtn')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => {
+            if (!this.sim.startSpoonAction(item.id, 'pour', picked.id)) {
+              this.sim.spoonPourIntoVessel(item.id, picked.id);
+            }
+          },
+        });
       });
       this.container.querySelector('#ins-spoon-rinse')?.addEventListener('click', () => {
         this.sim.rinseSpoon(item.id);
@@ -1870,14 +1898,27 @@ export class InspectorPanel {
         this.sim.detachRubberStopper(item.id);
       });
       this.container.querySelector('#ins-stopper-attach')?.addEventListener('click', () => {
-        const candidates = this.sim.items.filter(
-          (v) => v.kind === 'vessel' && !v.isShattered && APPARATUS[v.typeId]?.stopperable
-        );
+        const candidates = this.sim.items.filter((v) => {
+          if (v.kind !== 'vessel' || v.isShattered) return false;
+          const vSpec = APPARATUS[v.typeId];
+          if (!vSpec?.stopperable) return false;
+          return vSpec.hasTwoEnds ? !v.leftStoppered || !v.rightStoppered : !v.isStoppered;
+        });
         if (candidates.length === 0) return;
-        const nearest = candidates.sort((a, b) => Math.hypot(a.x - item.x, a.y - item.y) - Math.hypot(b.x - item.x, b.y - item.y))[0];
-        const nSpec = APPARATUS[nearest.typeId];
-        const side = nSpec?.hasTwoEnds ? (item.x < nearest.x ? 'left' : 'right') : 'main';
-        this.sim.attachRubberStopper(item.id, nearest.id, side);
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: candidates.map((v) => v.id),
+          promptText: `${t('stopperAttachBtn')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked, clickPt) => {
+            const pSpec = APPARATUS[picked.typeId];
+            let side = 'main';
+            if (pSpec?.hasTwoEnds) {
+              if (!picked.leftStoppered && picked.rightStoppered) side = 'left';
+              else if (!picked.rightStoppered && picked.leftStoppered) side = 'right';
+              else side = clickPt && clickPt.x < picked.x ? 'left' : 'right';
+            }
+            this.sim.attachRubberStopper(item.id, picked.id, side);
+          },
+        });
       });
     } else if (item.kind === 'phen_cotton') {
       this.container.querySelector('#ins-cotton-damp')?.addEventListener('input', (e) => {
@@ -1901,12 +1942,26 @@ export class InspectorPanel {
         this.sim.detachPhenCotton(item.id);
       });
       this.container.querySelector('#ins-cotton-attach')?.addEventListener('click', () => {
-        const candidates = this.sim.items.filter((v) => v.kind === 'vessel' && !v.isShattered && !v.isStoppered);
+        const candidates = this.sim.items.filter((v) => {
+          if (v.kind !== 'vessel' || v.isShattered) return false;
+          const vSpec = APPARATUS[v.typeId];
+          return vSpec?.hasTwoEnds ? !v.leftStoppered || !v.rightStoppered : !v.isStoppered;
+        });
         if (candidates.length === 0) return;
-        const nearest = candidates.sort((a, b) => Math.hypot(a.x - item.x, a.y - item.y) - Math.hypot(b.x - item.x, b.y - item.y))[0];
-        const nSpec = APPARATUS[nearest.typeId];
-        const side = nSpec?.hasTwoEnds ? (item.x < nearest.x ? 'left' : 'right') : 'main';
-        this.sim.attachPhenCotton(item.id, nearest.id, side);
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: candidates.map((v) => v.id),
+          promptText: `${t('cottonAttachBtn')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked, clickPt) => {
+            const pSpec = APPARATUS[picked.typeId];
+            let side = 'main';
+            if (pSpec?.hasTwoEnds) {
+              if (!picked.leftStoppered && picked.rightStoppered) side = 'left';
+              else if (!picked.rightStoppered && picked.leftStoppered) side = 'right';
+              else side = clickPt && clickPt.x < picked.x ? 'left' : 'right';
+            }
+            this.sim.attachPhenCotton(item.id, picked.id, side);
+          },
+        });
       });
     }
   }

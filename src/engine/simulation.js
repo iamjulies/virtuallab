@@ -312,7 +312,7 @@ export class LabSimulation {
         troughOverfillRate: 0,
       });
       if (typeId === 'water_trough') {
-        base.moles.H2O_l = (650 * 0.997) / CONSTANTS.M_H2O;
+        base.moles.H2O_l = (800 * 0.997) / CONSTANTS.M_H2O;
       }
     } else if (spec.kind === 'scale') {
       Object.assign(base, {
@@ -335,8 +335,6 @@ export class LabSimulation {
         heldBurnTimer: 0,
         heldFlameColor: null,
       });
-    } else if (spec.kind === 'clay_triangle') {
-      Object.assign(base, {});
     } else if (spec.kind === 'filter_funnel') {
       Object.assign(base, {
         moles: {},
@@ -966,8 +964,11 @@ export class LabSimulation {
       const bnCruc = this.createApparatus('bunsen_burner', 200, SIM_BENCH_FLOOR_Y - APPARATUS.bunsen_burner.height / 2 + 2);
       bnCruc.airHoleOpen = true;
       this.setBurnerFlame(bnCruc.id, 3);
-      const tri = this.createApparatus('clay_triangle', 200, SIM_BENCH_FLOOR_Y - APPARATUS.clay_triangle.height / 2 + 2);
-      const cruc = this.createApparatus('crucible_porcelain', 200, tri.y - APPARATUS.clay_triangle.height / 2 + 6);
+      const cruc = this.createApparatus(
+        'crucible_porcelain',
+        200,
+        bnCruc.y - APPARATUS.bunsen_burner.height / 2 + 10 - APPARATUS.crucible_porcelain.height / 2 + 12
+      );
       this.addReagentToVessel(cruc.id, 'caco3', 3.0, { fine: true, silentAnim: true, silentEmit: true });
       cruc.particleCounts.CaCO3_s = 800;
       cruc.groundPowderMap.CaCO3_s = true;
@@ -1037,7 +1038,6 @@ export class LabSimulation {
     if (
       item.kind === 'scale' ||
       item.kind === 'burner' ||
-      item.kind === 'clay_triangle' ||
       item.kind === 'stand' ||
       item.kind === 'splint' ||
       item.kind === 'flame_loop' ||
@@ -1063,18 +1063,11 @@ export class LabSimulation {
           bestCenterY = candY;
           bestSupport = sup;
         }
-      } else if (sup.kind === 'clay_triangle' && spec.heatable && item.kind === 'vessel') {
-        const ringY = sup.y - supSpec.height / 2 + 6;
-        const nestSink = spec.shape === 'crucible' ? 14 : 2;
-        const candY = ringY - spec.height / 2 + nestSink;
-        if (dx <= 44 && (alreadyOnSup || itemBottom <= ringY + 24) && candY < bestCenterY) {
-          bestCenterY = candY;
-          bestSupport = sup;
-        }
       } else if (sup.kind === 'burner' && spec.heatable && item.kind === 'vessel') {
         const bnTop = sup.y - supSpec.height / 2 + 10;
-        const candY = bnTop - spec.height / 2;
-        if (dx <= 46 && (alreadyOnSup || itemBottom <= bnTop + 16) && candY < bestCenterY) {
+        const nestSink = supSpec.hasIntegratedTripod && spec.shape === 'crucible' ? 10 : 0;
+        const candY = bnTop - spec.height / 2 + nestSink;
+        if (dx <= 46 && (alreadyOnSup || itemBottom <= bnTop + 18) && candY < bestCenterY) {
           bestCenterY = candY;
           bestSupport = sup;
         }
@@ -1099,7 +1092,6 @@ export class LabSimulation {
       if (
         it.kind === 'scale' ||
         it.kind === 'burner' ||
-        it.kind === 'clay_triangle' ||
         it.kind === 'stand' ||
         it.kind === 'tongs'
       )
@@ -1397,6 +1389,8 @@ export class LabSimulation {
   rinseSpoon(spoonId) {
     const spoon = this.getItem(spoonId);
     if (!spoon || spoon.kind !== 'spoon') return false;
+    spoon.spoonAnim = null;
+    spoon.tiltAngle = 0;
     spoon.moles = {};
     spoon.particleCounts = {};
     spoon.groundPowderMap = {};
@@ -1405,6 +1399,179 @@ export class LabSimulation {
     spoon.tempK = this.environment.tempK;
     this.emitChange();
     return true;
+  }
+
+  tongsDropSampleIntoVessel(tongsId, vesselId) {
+    const tongs = this.getItem(tongsId);
+    const v = this.getItem(vesselId);
+    if (!tongs || tongs.kind !== 'tongs' || !v || v.kind !== 'vessel' || v.isShattered || v.isStoppered) {
+      return false;
+    }
+    const sample = tongs.heldSample;
+    if (!sample || !(sample.moles > 1e-9)) return false;
+    const spId = sample.speciesId;
+    v.moles[spId] = (v.moles[spId] || 0) + sample.moles;
+    v.particleCounts = v.particleCounts || {};
+    v.particleCounts[spId] = Math.max(v.particleCounts[spId] || 0, 1);
+    tongs.heldSample = null;
+    tongs.heldBurnTimer = 0;
+    tongs.heldFlameColor = null;
+    if (this.visualHooks.onAlert) {
+      const vSpec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+      this.visualHooks.onAlert('spoon_pour', v, {
+        color: SPECIES[spId]?.color || '#cbd5e1',
+        fromX: v.x,
+        fromY: v.y - vSpec.height / 2 - 12,
+        toY: v.y,
+      });
+    }
+    this.recomputeScaleReadings();
+    this.recordHistorySnapshot(v, true);
+    this.emitChange();
+    return true;
+  }
+
+  tongsGripVessel(tongsId, vesselId) {
+    const tongs = this.getItem(tongsId);
+    const v = this.getItem(vesselId);
+    if (!tongs || tongs.kind !== 'tongs' || !v || v.kind !== 'vessel' || v.isShattered) return false;
+    if (v.typeId !== 'crucible_porcelain' && v.typeId !== 'porcelain_dish') return false;
+    tongs.grippedVesselId = v.id;
+    v.restingOnId = null;
+    v.vy = 0;
+    v.fallStartY = v.y;
+    const dir = tongs.flippedX ? 1 : -1;
+    tongs.x = v.x - dir * 58;
+    tongs.y = v.y;
+    tongs.vy = 0;
+    tongs.fallStartY = null;
+    this.emitChange();
+    return true;
+  }
+
+  tongsReleaseCrucible(tongsId) {
+    const tongs = this.getItem(tongsId);
+    if (!tongs || tongs.kind !== 'tongs' || !tongs.grippedVesselId) return false;
+    const gv = this.getItem(tongs.grippedVesselId);
+    tongs.grippedVesselId = null;
+    if (gv) gv.fallStartY = gv.y;
+    this.updateSupportAttachments();
+    this.emitChange();
+    return true;
+  }
+
+  startSpoonAction(spoonId, action, vesselId, targetG = 1.5) {
+    const spoon = this.getItem(spoonId);
+    const v = this.getItem(vesselId);
+    if (!spoon || spoon.kind !== 'spoon' || !v || v.kind !== 'vessel' || v.isShattered || v.isStoppered) {
+      return false;
+    }
+    if (action === 'scoop') {
+      const hasSolids = Object.entries(v.moles || {}).some(([k, n]) => SPECIES[k]?.phase === 's' && n > 1e-8);
+      if (!hasSolids) return false;
+    } else if (action === 'pour') {
+      const hasSpoonSolids = Object.values(spoon.moles || {}).some((n) => n > 1e-9);
+      if (!hasSpoonSolids) return false;
+    } else {
+      return false;
+    }
+    spoon.restingOnId = null;
+    spoon.vy = 0;
+    spoon.spoonAnim = {
+      action,
+      vesselId: v.id,
+      targetG,
+      phase: 0,
+      duration: 0.72,
+      startX: spoon.x,
+      startY: spoon.y,
+      transferred: false,
+    };
+    this.emitChange();
+    return true;
+  }
+
+  stepSpoonAnimations(dt) {
+    if (!dt || dt <= 0) return;
+    const smoothstep = (u) => {
+      const c = Math.max(0, Math.min(1, u));
+      return c * c * (3 - 2 * c);
+    };
+    for (const spoon of this.items) {
+      if (spoon.kind !== 'spoon' || !spoon.spoonAnim || spoon.isDragging) continue;
+      const anim = spoon.spoonAnim;
+      const v = this.getItem(anim.vesselId);
+      if (!v || v.isShattered || v.isStoppered) {
+        spoon.spoonAnim = null;
+        spoon.tiltAngle = 0;
+        spoon.fallStartY = spoon.y;
+        continue;
+      }
+      const vSpec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+      const spoonDir = v.x >= anim.startX ? 1 : -1;
+      spoon.flippedX = spoonDir > 0;
+      const hoverX = v.x - spoonDir * 48;
+      const hoverTopY = v.y - vSpec.height / 2 - 20;
+      const scoopDipY = Math.min(v.y + 6, v.y - vSpec.height / 2 + 26);
+
+      anim.phase = Math.min(1.0, anim.phase + dt / (anim.duration || 0.72));
+      const p = anim.phase;
+
+      if (p < 0.36) {
+        const u = smoothstep(p / 0.36);
+        spoon.x = anim.startX + (hoverX - anim.startX) * u;
+        spoon.y = anim.startY + (hoverTopY - anim.startY) * u;
+        spoon.tiltAngle = 0;
+      } else if (p < 0.72) {
+        const uAct = (p - 0.36) / 0.36;
+        spoon.x = hoverX;
+        if (anim.action === 'scoop') {
+          const dip = Math.sin(uAct * Math.PI);
+          spoon.y = hoverTopY + (scoopDipY - hoverTopY) * dip;
+          spoon.tiltAngle = spoonDir * -0.28 * dip;
+        } else {
+          const pourCurve = Math.sin(uAct * Math.PI);
+          spoon.y = hoverTopY - 2;
+          spoon.tiltAngle = spoonDir * 0.52 * pourCurve;
+        }
+        if (p >= 0.52 && !anim.transferred) {
+          anim.transferred = true;
+          const solidKeys = Object.entries(
+            anim.action === 'scoop' ? v.moles || {} : spoon.moles || {}
+          )
+            .filter(([k, n]) => SPECIES[k]?.phase === 's' && n > 1e-9)
+            .sort((a, b) => b[1] - a[1]);
+          const spCol = solidKeys[0] ? SPECIES[solidKeys[0][0]]?.color : '#e2e8f0';
+          if (anim.action === 'scoop') {
+            this.spoonScoopFromVessel(spoon.id, v.id, anim.targetG);
+            this.visualHooks.onAlert?.('spoon_scoop', v, { color: spCol, x: v.x, y: v.y });
+          } else {
+            this.spoonPourIntoVessel(spoon.id, v.id);
+            this.visualHooks.onAlert?.('spoon_pour', v, {
+              color: spCol,
+              fromX: v.x,
+              fromY: hoverTopY + 8,
+              toY: v.y,
+            });
+          }
+        }
+      } else {
+        const uBack = smoothstep((p - 0.72) / 0.28);
+        spoon.x = hoverX + (anim.startX - hoverX) * uBack;
+        spoon.y = hoverTopY + (anim.startY - hoverTopY) * uBack;
+        spoon.tiltAngle = 0;
+      }
+
+      spoon.vy = 0;
+      spoon.restingOnId = null;
+      if (p >= 1.0) {
+        spoon.spoonAnim = null;
+        spoon.tiltAngle = 0;
+        spoon.fallStartY = spoon.y;
+        this.updateSupportAttachments();
+        this.emitChange();
+      }
+    }
   }
 
   getTubeTargetsForVessel(vesselId) {
@@ -1810,13 +1977,17 @@ export class LabSimulation {
     }
 
     if (spec.hasTwoEnds) {
-      const side = opts.side || v.connectedPortSide || (v.flippedX ? 'left' : 'right');
+      const inSide = v.connectedFromId ? v.incomingPortSide || (v.flippedX ? 'right' : 'left') : null;
+      const side =
+        opts.side ||
+        v.connectedPortSide ||
+        (inSide ? (inSide === 'left' ? 'right' : 'left') : v.flippedX ? 'left' : 'right');
       v.connectedPortSide = side;
       if (side === 'left') v.leftStoppered = true;
       else v.rightStoppered = true;
-      // When invoked without explicit side (e.g. preset workflow) and opposite end wasn't explicitly set, seal both so gas drives downstream cleanly
-      if (!opts.side && !v.leftStoppered && side === 'right') v.leftStoppered = true;
-      if (!opts.side && !v.rightStoppered && side === 'left') v.rightStoppered = true;
+      // When invoked without explicit side (e.g. preset workflow) and not part of an active flow-through train, seal opposite end so gas drives downstream cleanly
+      if (!opts.side && !v.connectedFromId && !v.leftStoppered && side === 'right') v.leftStoppered = true;
+      if (!opts.side && !v.connectedFromId && !v.rightStoppered && side === 'left') v.rightStoppered = true;
       v.isStoppered = Boolean(v.leftStoppered && v.rightStoppered);
     } else {
       v.isStoppered = true;
@@ -1825,8 +1996,8 @@ export class LabSimulation {
     v.wasOverflowing = false;
     v.connectedTargetId = target.id;
     v.connectedSyringeId = target.kind === 'gas_syringe' ? target.id : null;
-    if (opts.targetSide && APPARATUS[target.typeId]?.hasTwoEnds) {
-      target.incomingPortSide = opts.targetSide;
+    if (APPARATUS[target.typeId]?.hasTwoEnds) {
+      target.incomingPortSide = opts.targetSide || target.incomingPortSide || (target.flippedX ? 'right' : 'left');
     }
     target.connectedFromId = v.id;
 
@@ -1863,6 +2034,7 @@ export class LabSimulation {
       const target = this.getItem(tid);
       if (target && target.connectedFromId === v.id) {
         target.connectedFromId = null;
+        target.incomingPortSide = null;
       }
       // Any liquid trapped in disconnected rubber tubing drains out visually
       const tubeVolMl = computeLiquidVolumeL(v.tubeMoles || {}, v.tubeTempK || v.tempK) * 1000;
@@ -4149,11 +4321,11 @@ export class LabSimulation {
 
     // 2. Step vertical gravitational fall (process support bases before items resting/clamped on them)
     const gravityOrder = [
-      ...this.items.filter((it) => it.kind === 'scale' || it.kind === 'burner' || it.kind === 'clay_triangle' || it.kind === 'stand'),
-      ...this.items.filter((it) => it.kind !== 'scale' && it.kind !== 'burner' && it.kind !== 'clay_triangle' && it.kind !== 'stand'),
+      ...this.items.filter((it) => it.kind === 'scale' || it.kind === 'burner' || it.kind === 'stand'),
+      ...this.items.filter((it) => it.kind !== 'scale' && it.kind !== 'burner' && it.kind !== 'stand'),
     ];
     for (const item of gravityOrder) {
-      if (item.isDragging) {
+      if (item.isDragging || item.spoonAnim) {
         item.vy = 0;
         item.fallStartY = item.y;
         continue;
@@ -4244,7 +4416,7 @@ export class LabSimulation {
 
   /**
    * Determine active Alcohol Burner OR Bunsen Burner heating source for a vessel:
-   * - Direct contact (`vessel.restingOnId`) or seated on `clay_triangle` over burner delivers 100% wattage
+   * - Direct contact on tripod (`vessel.restingOnId`) delivers 100% wattage (and oxidizing cone focus on Bunsen)
    * - Clamped or held vessels positioned over a lit burner's flame plume receive geometric convective coupling
    */
   getBurnerHeatingSource(vessel) {
@@ -4269,22 +4441,11 @@ export class LabSimulation {
       const sup = this.getItem(vessel.restingOnId);
       if (sup && sup.kind === 'burner') {
         const p = getBurnerSpecParams(sup);
-        return { burner: sup, flameLevel: p.fl, powerW: p.rawW, flameTempK: p.flameTempK };
-      }
-      if (sup && sup.kind === 'clay_triangle') {
-        // Check if clay triangle straddles an active burner / Bunsen burner directly below it!
-        for (const b of this.items) {
-          if (b.kind !== 'burner') continue;
-          const p = getBurnerSpecParams(b);
-          if (p.rawW <= 0) continue;
-          if (Math.abs(sup.x - b.x) <= 44) {
-            const focusedTempK =
-              p.isBunsen && p.airOpen && p.flameTempK
-                ? Math.min(1833.15, p.flameTempK + 60) // Centered right at hottest oxidizing cone tip (~1560 °C peak)
-                : p.flameTempK;
-            return { burner: b, flameLevel: p.fl, powerW: p.rawW, flameTempK: focusedTempK };
-          }
-        }
+        const focusedTempK =
+          p.isBunsen && p.airOpen && p.flameTempK
+            ? Math.min(1833.15, p.flameTempK + 60) // Integrated tripod gauze positions vessel at hottest oxidizing blue cone (~1560 °C)
+            : p.flameTempK;
+        return { burner: sup, flameLevel: p.fl, powerW: p.rawW, flameTempK: focusedTempK };
       }
     }
 
@@ -4806,7 +4967,11 @@ export class LabSimulation {
       }
 
       // Open horizontal quartz tube loses liquids out open end(s) immediately by gravity (solids stay inside!)
-      if (specV.isHorizontalTube && (!v.leftStoppered || !v.rightStoppered)) {
+      const inTubeSideH = v.connectedFromId ? v.incomingPortSide || (v.flippedX ? 'right' : 'left') : null;
+      const outTubeSideH = v.connectedTargetId || v.connectedSyringeId ? v.connectedPortSide || (v.flippedX ? 'left' : 'right') : null;
+      const leftOpenH = !v.leftStoppered && inTubeSideH !== 'left' && outTubeSideH !== 'left';
+      const rightOpenH = !v.rightStoppered && inTubeSideH !== 'right' && outTubeSideH !== 'right';
+      if (specV.isHorizontalTube && (leftOpenH || rightOpenH)) {
         const drainL = computeLiquidVolumeL(v.moles, v.tempK);
         const drainMl = drainL * 1000;
         if (drainMl > 0.05) {
@@ -4819,8 +4984,8 @@ export class LabSimulation {
             v.phenBleachFrac,
             v.phenIrrevFrac || 0
           );
-          const leftOpen = !v.leftStoppered;
-          const rightOpen = !v.rightStoppered;
+          const leftOpen = leftOpenH;
+          const rightOpen = rightOpenH;
           const drainedMoles = {};
           for (const [spId, n] of Object.entries(v.moles)) {
             const sp = SPECIES[spId];
@@ -5395,6 +5560,7 @@ export class LabSimulation {
       }
     }
 
+    this.stepSpoonAnimations(realDeltaSec);
     stepApparatusTools(this, scaledDt, realDeltaSec);
     this.syncAttachedMouthTools();
     stepElectrochemistry(this, scaledDt);

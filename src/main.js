@@ -162,11 +162,11 @@ function startBenchPick(opts = {}) {
   workbench.startItemPick({
     candidateIds: opts.candidateIds || [],
     promptText: opts.promptText || getTranslator()('pickBenchPrompt'),
-    onPick: (picked) => {
+    onPick: (picked, pt) => {
       if (prevMobileTab && prevMobileTab !== 'bench') {
         setMobileTab(prevMobileTab);
       }
-      opts.onPick?.(picked);
+      opts.onPick?.(picked, pt);
       refreshChrome(true);
     },
     onCancel: () => {

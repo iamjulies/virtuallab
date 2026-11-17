@@ -2425,13 +2425,13 @@
       );
     }
 
-    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_v2+build.10 Sync
+    // TEST 62: Full Apparatus Registry, IUPAC Nomenclature, Category & virlab_beta_v3+build.4 Sync
     {
       const allTranslated = APPARATUS_ORDER.every((id) => {
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.3';
+      const expectedBuild = 'virlab_beta_v3+build.4';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2458,14 +2458,17 @@
         Boolean(I18N.vi.eq_rubber_stopper && I18N.en.eq_rubber_stopper) &&
         Boolean(I18N.vi.eq_phen_cotton && I18N.en.eq_phen_cotton) &&
         Boolean(I18N.vi.eq_crucible_tongs && I18N.en.eq_crucible_tongs) &&
+        Boolean(I18N.vi.tongsDropSampleBtn && I18N.en.tongsDropSampleBtn) &&
+        Boolean(I18N.vi.tongsReleaseCrucibleBtn && I18N.en.tongsReleaseCrucibleBtn) &&
         Boolean(I18N.vi.eq_iron_spoon && I18N.en.eq_iron_spoon) &&
         Boolean(I18N.vi.alertGlassSoftenMelt && I18N.en.alertGlassSoftenMelt) &&
         Boolean(I18N.vi.alertCo2Extinguish && I18N.en.alertCo2Extinguish) &&
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v3+build.3 parity: All 36 apparatus translated in VI/EN, all beta_v3 keys present, IUPAC spellings enforced',
-        APPARATUS_ORDER.length === 36 &&
+        'Build virlab_beta_v3+build.4 parity: All 35 apparatus translated in VI/EN, all beta_v3 keys present, IUPAC spellings enforced',
+        APPARATUS_ORDER.length === 35 &&
+          !APPARATUS.clay_triangle &&
           allTranslated &&
           newKeysPresent &&
           I18N.vi.appSubtitle.includes(expectedBuild) &&
@@ -4002,7 +4005,7 @@
 
       // B: Shallow water trough -> electrode shaft shortens so tip stays STRICTLY above glass bottom (never pokes through)
       const trough = sim.createApparatus('water_trough', 650, 482 - APPARATUS.water_trough.height / 2 + 2);
-      trough.moles = { H2O_l: 22.0, H_aq: 0.1, Cl_aq: 0.1 };
+      trough.moles = { H2O_l: 42.0, H_aq: 0.1, Cl_aq: 0.1 };
       const elTrough = sim.createApparatus('electrode_rod', trough.x - 20, trough.y - 10);
       elTrough.dockedVesselId = trough.id;
       elTrough.dockSide = 'left';
@@ -4035,7 +4038,8 @@
           tallBotY < tallGlassBot &&
           (elTall.immersedFrac || 0) > 0.05 &&
           elDry.immersedFrac === 0 &&
-          (elTrough.renderHeight || 999) < 95 &&
+          (elTrough.renderHeight || 999) < (elTall.renderHeight || 0) &&
+          (elTrough.renderHeight || 999) <= APPARATUS.water_trough.height + 16 &&
           trBotY < trGlassBot - 2 &&
           (elTrough.immersedFrac || 0) > 0.25 &&
           err === null,
@@ -4209,11 +4213,10 @@
 
       // A: Ground CaCO3 in ajar porcelain crucible heated on roaring blue Bunsen converts rapidly to CaO
       const simA = new LabSimulation();
-      const bn = simA.createApparatus('bunsen_burner', 220, 428);
+      const bn = simA.createApparatus('bunsen_burner', 220, 420);
       bn.airHoleOpen = true;
       simA.setBurnerFlame(bn.id, 3);
-      simA.createApparatus('clay_triangle', 220, 396);
-      const crucFine = simA.createApparatus('crucible_porcelain', 220, 366);
+      const crucFine = simA.createApparatus('crucible_porcelain', 220, 350);
       crucFine.lidState = 'ajar';
       simA.addReagentToVessel(crucFine.id, 'caco3', 3.0, { fine: true, silentAnim: true, silentEmit: true });
       crucFine.groundPowderMap.CaCO3_s = true;
@@ -4626,11 +4629,10 @@
       const hInBeaker = bWater.moles.H_aq || 0;
 
       // B: Dry NaOH in Porcelain Crucible over roaring Blue Bunsen reaches >=1665 K, melts cleanly >318 °C without premature boil, then forms Na2O(s)
-      const bnNaOH = simT.createApparatus('bunsen_burner', 740, 428);
+      const bnNaOH = simT.createApparatus('bunsen_burner', 740, 420);
       bnNaOH.airHoleOpen = true;
       simT.setBurnerFlame(bnNaOH.id, 3);
-      simT.createApparatus('clay_triangle', 740, 396);
-      const crucNaOH = simT.createApparatus('crucible_porcelain', 740, 366);
+      const crucNaOH = simT.createApparatus('crucible_porcelain', 740, 350);
       crucNaOH.moles = { NaOH_s: 0.04 };
       const naohSolid25 = !isSolidMoltenAtTemp(SPECIES.NaOH_s, 300, crucNaOH.moles);
       const naohMolten350 = isSolidMoltenAtTemp(SPECIES.NaOH_s, 623.15, crucNaOH.moles);
@@ -4844,6 +4846,242 @@
           validateVesselInvariants(pBeaker).valid &&
           validateVesselInvariants(pU).valid,
         `copied=${copiedN}, pasted=${pastedList.length}, cleanChems=${noChemsCopied}, selSize=${simM.selectedIds.size}`
+      );
+    }
+
+    // TEST 104: Horizontal Quartz Tube H2 Reduction Flow (Open Opposite End + Downstream Connected Pipe)
+    {
+      // A: H2 generator -> Horizontal Quartz Tube (CuO_s, heated ~590 K, opposite Right end OPEN)
+      const simA = new LabSimulation();
+      const genA = simA.createApparatus('erlenmeyer_250', 180, 405);
+      genA.moles = { H2O_l: 3.0, H_aq: 0.3, Cl_aq: 0.3, Zn_s: 0.1 };
+      const qA = simA.createApparatus('quartz_tube', 460, 340);
+      qA.moles = { CuO_s: 0.03 };
+      simA.connectTube(genA.id, qA.id, { targetSide: 'left' });
+      qA.tempK = 590;
+      for (let i = 0; i < 200; i++) {
+        qA.tempK = 590;
+        simA.step(0.05);
+      }
+      const cuMadeOpen = qA.moles.Cu_s || 0;
+      const steamEscOpen = qA.escapedGasMoles.H2O_g || 0;
+
+      // B: H2 generator -> Horizontal Quartz Tube (CuO_s, heated ~590 K) -> Cool Downstream Beaker (neither pops stopper!)
+      const simB = new LabSimulation();
+      const genB = simB.createApparatus('erlenmeyer_250', 160, 405);
+      genB.moles = { H2O_l: 3.0, H_aq: 0.35, Cl_aq: 0.35, Zn_s: 0.12 };
+      const qB = simB.createApparatus('quartz_tube', 440, 340);
+      qB.moles = { CuO_s: 0.03 };
+      const recvB = simB.createApparatus('beaker_250', 700, 427);
+      simB.connectTube(genB.id, qB.id, { targetSide: 'left' });
+      simB.connectTube(qB.id, recvB.id, { side: 'right' });
+      qB.tempK = 590;
+      for (let i = 0; i < 220; i++) {
+        qB.tempK = 590;
+        simB.step(0.05);
+      }
+      const cuMadePipe = qB.moles.Cu_s || 0;
+      const h2oCondensedDown = recvB.moles.H2O_l || 0;
+      const h2Downstream = (recvB.headspaceGasMoles.H2_g || 0) + (recvB.escapedGasMoles.H2_g || 0);
+
+      assert(
+        'Horizontal Quartz Tube conducts flowing H2(g) over CuO(s)->Cu(s)+H2O(g) cleanly with BOTH open far end & downstream piped vent',
+        cuMadeOpen > 0.015 &&
+          steamEscOpen > 0.01 &&
+          qA._openRightEnd === true &&
+          cuMadePipe > 0.015 &&
+          genB.isStoppered &&
+          !genB.isShattered &&
+          !qB.isShattered &&
+          h2oCondensedDown > 0.01 &&
+          h2Downstream > 0.005,
+        `openCu=${(cuMadeOpen*1000).toFixed(1)}mmol(H2O=${(steamEscOpen*1000).toFixed(1)}), pipedCu=${(cuMadePipe*1000).toFixed(1)}mmol, downH2O=${(h2oCondensedDown*1000).toFixed(1)}, downH2=${(h2Downstream*1000).toFixed(1)}`
+      );
+    }
+
+    // TEST 105: Integrated Bunsen Tripod (clay_triangle removed) + Calibrated 1500 mL Water Trough & Canvas Graduations
+    {
+      const simT = new LabSimulation();
+      const bn = simT.createApparatus('bunsen_burner', 260, 420);
+      bn.airHoleOpen = true;
+      simT.setBurnerFlame(bn.id, 3);
+      const cruc = simT.createApparatus('crucible_porcelain', 260, 350);
+      simT.updateSupportAttachments();
+      const tr = simT.createApparatus('water_trough', 560, 439);
+      const qTube = simT.createApparatus('quartz_tube', 260, 260);
+      const uTube = simT.createApparatus('quartz_u_tube', 790, 360);
+
+      const wrap105 = document.createElement('div');
+      wrap105.style.cssText = 'position:fixed;left:0;top:0;width:1000px;height:560px;pointer-events:none;opacity:0.01;';
+      const cvs = document.createElement('canvas');
+      cvs.width = 1000;
+      cvs.height = 560;
+      cvs.style.cssText = 'width:1000px;height:560px;display:block;';
+      wrap105.appendChild(cvs);
+      document.body.appendChild(wrap105);
+      const wb = new LabWorkbenchCanvas(cvs, simT, new ParticleSystem());
+      let renderErr = null;
+      try {
+        wb.resize();
+        wb.render(1.5);
+      } catch (err) {
+        renderErr = err?.message || String(err);
+      } finally {
+        wrap105.remove();
+      }
+
+      assert(
+        'clay_triangle removed (-1 apparatus); Bunsen integrated tripod seats crucible & delivers 1500 °C flame; Water Trough 1500 mL calibrated & renders cleanly',
+        !APPARATUS.clay_triangle &&
+          !APPARATUS_ORDER.includes('clay_triangle') &&
+          APPARATUS.bunsen_burner.hasIntegratedTripod === true &&
+          APPARATUS.bunsen_burner.height === 128 &&
+          cruc.restingOnId === bn.id &&
+          APPARATUS.water_trough.maxVolumeMl === 1500 &&
+          APPARATUS.water_trough.surfaceAreaCm2 === 189.0 &&
+          (tr.moles.H2O_l || 0) > 40 &&
+          renderErr === null,
+        `orderLen=${APPARATUS_ORDER.length}, crucSup=${cruc.restingOnId}, trVol=${APPARATUS.water_trough.maxVolumeMl}, err=${renderErr}`
+      );
+    }
+
+    // TEST 106: Multi-Select Group Drag Gravity Suppression Fix
+    {
+      const simG = new LabSimulation();
+      const b1 = simG.createApparatus('beaker_250', 220, 427);
+      const b2 = simG.createApparatus('erlenmeyer_250', 380, 405);
+      const b3 = simG.createApparatus('test_tube_50', 520, 418);
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'position:fixed;left:0;top:0;width:1000px;height:560px;pointer-events:none;opacity:0.01;';
+      const cvs = document.createElement('canvas');
+      cvs.width = 1000;
+      cvs.height = 560;
+      cvs.style.cssText = 'width:1000px;height:560px;display:block;';
+      wrap.appendChild(cvs);
+      document.body.appendChild(wrap);
+      const wb = new LabWorkbenchCanvas(cvs, simG, new ParticleSystem());
+      wb.resize();
+      wb.setSelection([b1.id, b2.id, b3.id], b1.id);
+
+      const startY2 = b2.y;
+      const startY3 = b3.y;
+      wb.canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: b1.x, clientY: b1.y, pointerId: 1 }));
+      wb.canvas.dispatchEvent(new PointerEvent('pointermove', { clientX: b1.x + 20, clientY: b1.y - 140, pointerId: 1 }));
+      const liftedY2 = b2.y;
+      const liftedY3 = b3.y;
+      const allMarkedDragging = Boolean(b1.isDragging && b2.isDragging && b3.isDragging);
+
+      // Step gravity physics multiple frames while still holding mouse button -> peer items must NOT fall!
+      stepSeconds(simG, 0.5, 0.05);
+      const stayedLiftedY2 = Math.abs(b2.y - liftedY2) < 0.05;
+      const stayedLiftedY3 = Math.abs(b3.y - liftedY3) < 0.05;
+
+      wb.canvas.dispatchEvent(new PointerEvent('pointerup', { clientX: b1.x + 20, clientY: b1.y - 140, pointerId: 1 }));
+      const clearedDragFlags = !b1.isDragging && !b2.isDragging && !b3.isDragging;
+      stepSeconds(simG, 1.2, 0.05);
+      const fellAfterRelease = b2.y > liftedY2 + 60 && Math.abs(b2.y - startY2) < 2;
+      wrap.remove();
+
+      assert(
+        'Multi-Select group drag sets isDragging on all selected items (no mid-drag gravity drop) and releases gravity cleanly on drop',
+        allMarkedDragging && liftedY2 < startY2 - 120 && liftedY3 < startY3 - 120 && stayedLiftedY2 && stayedLiftedY3 && clearedDragFlags && fellAfterRelease,
+        `dragFlags=${allMarkedDragging}, liftedY2=${liftedY2.toFixed(1)}, afterStep=${b2.y.toFixed(1)}, fellBack=${fellAfterRelease}`
+      );
+    }
+
+    // TEST 107: quartz_u_tube Electrolysis Cell (CuSO4 with Inert Carbon C Electrodes -> Cathode Cu Plating & Anode O2 Bubbles)
+    {
+      const simU = new LabSimulation();
+      const uTube = simU.createApparatus('quartz_u_tube', 360, 360);
+      uTube.moles = { H2O_l: 3.3, Cu2_aq: 0.03, SO4_2_aq: 0.03 }; // ~60 mL 0.5 M CuSO4(aq)
+      const elL = simU.createApparatus('electrode_rod', 332, 340);
+      elL.material = 'C';
+      elL.dockedVesselId = uTube.id;
+      elL.dockSide = 'left';
+      const elR = simU.createApparatus('electrode_rod', 388, 340);
+      elR.material = 'C';
+      elR.dockedVesselId = uTube.id;
+      elR.dockSide = 'right';
+      syncDockedToolPositions(simU);
+
+      const dc = simU.createApparatus('dc_power', 600, 410);
+      dc.voltageV = 9.0;
+      dc.powerOn = true;
+      dc.posElectrodeId = elL.id;
+      dc.negElectrodeId = elR.id;
+
+      const limbDx = APPARATUS.quartz_u_tube.limbSpacingX;
+      const uBrimOk = APPARATUS.quartz_u_tube.geometry.maxVolumeMl >= 95 && !uTube.overflowRateMlS;
+      const limbsAligned = Math.abs(elL.x - (uTube.x - limbDx)) < 0.5 && Math.abs(elR.x - (uTube.x + limbDx)) < 0.5;
+      const immersedOk = (elL.immersedFrac || 0) > 0.25 && (elR.immersedFrac || 0) > 0.25;
+
+      stepSeconds(simU, 12.0, 0.05);
+      const curA = dc.measuredCurrentA || 0;
+      const cuPlated = elR.platedMaterial === 'Cu';
+      const o2Anode = elL.gasBubbleType === 'O2_g' && (uTube.escapedGasMoles.O2_g || 0) > 2e-5;
+      const hAcidMade = (uTube.moles.H_aq || 0) > 1e-4;
+
+      assert(
+        'quartz_u_tube operates as Electrolysis Cell: Left/Right C electrodes dock cleanly in U-arms, plate Cu(s) on cathode & evolve O2(g) + H+ at anode',
+        uBrimOk && limbsAligned && immersedOk && curA > 0.1 && cuPlated && o2Anode && hAcidMade && validateVesselInvariants(uTube).valid,
+        `limbsOK=${limbsAligned}, imm=${(elL.immersedFrac||0).toFixed(2)}, I=${curA.toFixed(2)}A, plated=${elR.platedMaterial}, gas=${elL.gasBubbleType}, H+=${((uTube.moles.H_aq||0)*1000).toFixed(1)}mmol`
+      );
+    }
+
+    // TEST 108: Target-Pick Tools — Crucible Tongs (Sample Drop & Crucible Grip/Release) + Iron Spoon Animated Scoop/Pour
+    {
+      const simT = new LabSimulation();
+      const b1 = simT.createApparatus('beaker_250', 220, 427);
+      simT.addReagentToVessel(b1.id, 'zn', 4.0, { silentAnim: true, silentEmit: true });
+      const b2 = simT.createApparatus('beaker_250', 440, 427);
+      const cruc = simT.createApparatus('crucible_porcelain', 620, 455);
+      const tongs = simT.createApparatus('crucible_tongs', 760, 440);
+      const spoon = simT.createApparatus('iron_spoon', 120, 450);
+
+      // 1) Tongs pick sample -> drop into chosen beaker b2; grip crucible -> release crucible
+      const pickedS = simT.tongsPickSampleFromVessel(tongs.id, b1.id);
+      const heldMol0 = tongs.heldSample?.moles || 0;
+      const droppedS = simT.tongsDropSampleIntoVessel(tongs.id, b2.id);
+      const znInB2 = b2.moles.Zn_s || 0;
+      const grippedC = simT.tongsGripVessel(tongs.id, cruc.id);
+      const isGripped = tongs.grippedVesselId === cruc.id;
+      const releasedC = simT.tongsReleaseCrucible(tongs.id);
+      const releasedOk = tongs.grippedVesselId === null;
+
+      // 2) Iron Spoon animated scoop from b1 and animated pour into b2
+      const startedScoop = simT.startSpoonAction(spoon.id, 'scoop', b1.id, 1.0);
+      stepSeconds(simT, 0.38, 0.05);
+      const midScoopTilt = Math.abs(spoon.tiltAngle || 0) > 0.01 && Boolean(spoon.spoonAnim);
+      stepSeconds(simT, 0.45, 0.05);
+      const scoopedMol = spoon.moles.Zn_s || 0;
+      const scoopAnimDone = spoon.spoonAnim === null;
+
+      const startedPour = simT.startSpoonAction(spoon.id, 'pour', b2.id);
+      stepSeconds(simT, 0.38, 0.05);
+      const midPourTilt = Math.abs(spoon.tiltAngle || 0) > 0.01 && Boolean(spoon.spoonAnim);
+      stepSeconds(simT, 0.45, 0.05);
+      const finalZnB2 = b2.moles.Zn_s || 0;
+      const pourAnimDone = spoon.spoonAnim === null && (spoon.moles.Zn_s || 0) < 1e-9;
+
+      assert(
+        'Tongs pick/drop sample & grip/release crucible reliably; Iron Spoon animates scoop/pour hover-and-tilt cleanly transferring solid to chosen vessel',
+        pickedS &&
+          heldMol0 > 0.01 &&
+          droppedS &&
+          Math.abs(znInB2 - heldMol0) < 1e-6 &&
+          grippedC &&
+          isGripped &&
+          releasedC &&
+          releasedOk &&
+          startedScoop &&
+          midScoopTilt &&
+          scoopAnimDone &&
+          scoopedMol > 0.005 &&
+          startedPour &&
+          midPourTilt &&
+          pourAnimDone &&
+          finalZnB2 > znInB2 + scoopedMol * 0.99,
+        `drop=${droppedS}, grip/rel=${isGripped}/${releasedOk}, scoop=${startedScoop}(tilt=${midScoopTilt}, ${(scoopedMol*1000).toFixed(1)}mmol), pour=${startedPour}(tilt=${midPourTilt}, finalZn=${(finalZnB2*1000).toFixed(1)}mmol)`
       );
     }
 
