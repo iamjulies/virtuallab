@@ -473,17 +473,99 @@ export function resetAllBenches(labManager) {
 }
 
 // ============================================================================
-// LAYER 2: Local File Export (.vlab) & Import (.vlab / .json)
+// LAYER 2: Single-Bench File Export (.vlab) & Append-Tab Import (.vlab / .json)
 // ============================================================================
 
+/**
+ * Serialize ONLY the single currently active lab bench for `.vlab` export.
+ * Each `.vlab` file represents exactly 1 lab bench (never overwrites other benches on import).
+ */
+export function serializeActiveBench(target) {
+  if (!target) return null;
+  const activeLab = Array.isArray(target.labs) ? target.getActiveLab() : { id: 'lab_1', number: 1, sim: target };
+  const activeSim = activeLab?.sim || target;
+  const single = serializeBench(activeSim, {
+    id: activeLab?.id || 'lab_1',
+    number: activeLab?.number || 1,
+  });
+  if (!single) return null;
+  return {
+    schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    savedAt: Date.now(),
+    benchNumber: single.number,
+    timeSec: single.timeSec,
+    nextId: single.nextId,
+    environment: single.environment,
+    vessels: single.vessels,
+    connections: single.connections,
+    items: single.items,
+  };
+}
+
+/**
+ * Import a single-bench `.vlab` / `.json` payload by OPENING A NEW LAB BENCH TAB
+ * (preserving all existing open benches instead of overwriting them!).
+ */
+export function importBenchIntoNewTab(target, rawData) {
+  if (!target || !rawData) return null;
+  const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+  if (!data || typeof data !== 'object') return null;
+
+  // Extract single bench payload (even if user imports a file that had a `benches` array or `bench` wrapper)
+  let benchPayload = data.bench || data;
+  if (Array.isArray(data.benches) && data.benches.length > 0) {
+    const idx = Math.max(0, Math.min(data.benches.length - 1, Number(data.activeBenchIndex) || 0));
+    benchPayload = {
+      ...data.benches[idx],
+      vessels: data.vessels || data.benches[idx].vessels,
+      connections: data.connections || data.benches[idx].connections,
+    };
+  }
+
+  if (!Array.isArray(benchPayload.items) && !Array.isArray(benchPayload.vessels)) {
+    return null;
+  }
+
+  if (Array.isArray(target.labs)) {
+    let targetLab = null;
+    let openedNewTab = false;
+    if (target.labs.length < (target.maxLabs || 10)) {
+      const added = target.addLab('clean', { silent: true });
+      if (added?.ok && added.lab) {
+        targetLab = added.lab;
+        openedNewTab = true;
+      }
+    }
+    if (!targetLab) {
+      targetLab = target.getActiveLab();
+    }
+    deserializeBench(targetLab.sim, benchPayload);
+    targetLab.unreadAlerts = 0;
+    target.hooks?.onChange?.();
+    saveToLocalStorage(target);
+    return {
+      ok: true,
+      openedNewTab,
+      labNumber: targetLab.number,
+      benchIndex: target.labs.indexOf(targetLab),
+      lab: targetLab,
+    };
+  }
+
+  // Fallback if target is a standalone LabSimulation instance
+  const ok = deserializeBench(target, benchPayload);
+  return ok ? { ok: true, openedNewTab: false, labNumber: 1, benchIndex: 0 } : null;
+}
+
 export function exportWorkspaceToFile(labManager, customFilename = null) {
-  const payload = serializeWorkspace(labManager);
+  const payload = serializeActiveBench(labManager);
   if (!payload) return false;
   const jsonString = JSON.stringify(payload, null, 2);
   const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-  const filename = customFilename || `chemlab-workspace-${stamp}.vlab`;
+  const benchNum = payload.benchNumber || 1;
+  const filename = customFilename || `chemlab-ban-${benchNum}-${stamp}.vlab`;
 
   const a = document.createElement('a');
   a.href = url;
@@ -506,12 +588,11 @@ export function importWorkspaceFromFile(file, labManager) {
       try {
         const text = String(e.target?.result || '');
         const data = JSON.parse(text);
-        const ok = deserializeWorkspace(labManager, data);
-        if (ok) {
-          saveToLocalStorage(labManager);
-          resolve(data);
+        const res = importBenchIntoNewTab(labManager, data);
+        if (res && res.ok) {
+          resolve(res);
         } else {
-          reject(new Error('Invalid workspace schema'));
+          reject(new Error('Invalid .vlab bench schema'));
         }
       } catch (err) {
         reject(err);
@@ -748,11 +829,8 @@ class CloudSyncController {
       throw new Error('SHARE_CODE_NOT_FOUND');
     }
 
-    const activeSim = labManager?.getActiveSim ? labManager.getActiveSim() : labManager;
-    deserializeBench(activeSim, record.bench);
-    saveToLocalStorage(labManager);
-    labManager?.hooks?.onChange?.();
-    return { shareCode, record };
+    const res = importBenchIntoNewTab(labManager, record.bench);
+    return { shareCode, record, importResult: res };
   }
 }
 

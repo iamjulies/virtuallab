@@ -61,6 +61,8 @@
       WORKSPACE_SCHEMA_VERSION,
       serializeWorkspace,
       deserializeWorkspace,
+      serializeActiveBench,
+      importBenchIntoNewTab,
       saveToLocalStorage,
       loadFromLocalStorage,
       resetAllBenches,
@@ -2448,7 +2450,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.9';
+      const expectedBuild = 'virlab_beta_v3+build.10';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -5953,19 +5955,32 @@
         cv1?.gasTargetId === 'v_102' &&
         cv2?.typeId === 'beaker_250';
 
-      // 4. Test Share Code generation & loading + Reset All Benches + Firebase config
+      // 4. Test Single-Bench .vlab Export & Append-Tab Import + Share Code (never overwrites existing benches!)
+      const singleVlab = serializeActiveBench(lm1);
+      const isSingleBenchVlab = !singleVlab.benches && Array.isArray(singleVlab.items) && singleVlab.vessels.length === 1;
+      const lmAppend = new LabManager();
+      const firstBenchItemsBefore = lmAppend.labs[0].sim.items.length;
+      const impRes = importBenchIntoNewTab(lmAppend, singleVlab);
+      const appendedNewTab =
+        impRes?.ok === true &&
+        impRes?.openedNewTab === true &&
+        lmAppend.labs.length === 2 &&
+        lmAppend.activeIndex === 1 &&
+        lmAppend.labs[0].sim.items.length === firstBenchItemsBefore &&
+        lmAppend.getActiveSim().items.some((it) => it.typeId === 'retort_stand' && it.extendPx === 125);
+
       const shareCode = await cloudSync.createBenchShareCode(lm1);
       const lm4 = new LabManager();
       await cloudSync.loadBenchByShareCode(shareCode, lm4);
       const sharedStand = lm4.getActiveSim().items.find((it) => it.typeId === 'retort_stand');
-      const shareCodeOk = /^LAB-\d{3}$/.test(shareCode) && sharedStand?.extendPx === 125;
+      const shareCodeOk = /^LAB-\d{3}$/.test(shareCode) && lm4.labs.length === 2 && sharedStand?.extendPx === 125;
       resetAllBenches(lm2);
       const firebaseConfigOk = FIREBASE_CONFIG.projectId === 'sos-app-1c5ff';
 
       assert(
-        '3-Layer Workspace Persistence serializes pure physical state without bloat, restores via LocalStorage, imports canonical vessels+connections JSON, and shares benches via LAB-XXX codes',
-        noDerivedBloat && roundTripExact && canonRestored && shareCodeOk && firebaseConfigOk,
-        `noBloat=${noDerivedBloat}, roundTrip=${roundTripExact}, canon=${canonRestored}, shareCode=${shareCode}(ok=${shareCodeOk}), fb=${firebaseConfigOk}`
+        '3-Layer Workspace Persistence serializes pure physical state without bloat, exports single-bench .vlab & appends new tab on import without overwriting existing benches, and shares via LAB-XXX codes',
+        noDerivedBloat && roundTripExact && canonRestored && isSingleBenchVlab && appendedNewTab && shareCodeOk && firebaseConfigOk,
+        `noBloat=${noDerivedBloat}, roundTrip=${roundTripExact}, canon=${canonRestored}, singleVlab=${isSingleBenchVlab}, appendTab=${appendedNewTab}(labs=${lmAppend.labs.length}), shareCode=${shareCode}(ok=${shareCodeOk}), fb=${firebaseConfigOk}`
       );
     }
 

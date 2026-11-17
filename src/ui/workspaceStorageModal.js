@@ -326,6 +326,8 @@ export class WorkspaceStorageModal {
         this.close();
       } catch (err) {
         this.callbacks.onNotify?.(`⚠️ ${t('toastImportFailed')}: ${err.message}`);
+      } finally {
+        e.target.value = '';
       }
     });
 

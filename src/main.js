@@ -12,6 +12,8 @@ import { soundEngine } from './audio/soundEngine.js';
 import {
   serializeWorkspace,
   deserializeWorkspace,
+  serializeActiveBench,
+  importBenchIntoNewTab,
   saveToLocalStorage,
   loadFromLocalStorage,
   resetAllBenches,
@@ -629,6 +631,8 @@ function renderLabTabs(t) {
       showToast(`📥 ${t('toastImportedVlab')}`);
     } catch (err) {
       showToast(`⚠️ ${t('toastImportFailed')}: ${err.message}`);
+    } finally {
+      e.target.value = '';
     }
   });
 
@@ -865,6 +869,8 @@ if (typeof window !== 'undefined') {
   window.__WORKSPACE_STORAGE__ = {
     serializeWorkspace,
     deserializeWorkspace,
+    serializeActiveBench,
+    importBenchIntoNewTab,
     saveToLocalStorage,
     loadFromLocalStorage,
     resetAllBenches,
