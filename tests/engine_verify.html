@@ -113,6 +113,7 @@
     import { InspectorPanel } from '../src/ui/inspectorPanel.js';
     import { LabWorkbenchCanvas } from '../src/canvas/workbench.js';
     import { I18N } from '../src/data/i18n.js';
+    import { findClipYForVolume, getInnerPolygonPx, getVesselHoldVolumeMl } from '../src/data/vesselGeometry.js';
     import {
       NON_STEAM_GASES,
       computeSyringeDischargeArc,
@@ -120,6 +121,7 @@
       computeSyringeLiquidVolumeMl,
       computeSyringeTotalVolumeMl,
       computeTubingGeometry,
+      isTubeTipSubmerged,
     } from '../src/engine/gasNetwork.js';
 
     const results = [];
@@ -2456,7 +2458,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.11';
+      const expectedBuild = 'virlab_beta_v3+build.12';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2508,7 +2510,7 @@
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
         'Build virlab_beta_v3+build.6 parity: All 39 apparatus & 15 starter reagents translated in VI/EN, Prompt 26 keys present, IUPAC spellings enforced',
-        APPARATUS_ORDER.length === 39 &&
+        APPARATUS_ORDER.length === 40 &&
           STARTER_REAGENTS.length === 15 &&
           !APPARATUS.clay_triangle &&
           allTranslated &&
@@ -6218,6 +6220,268 @@
         propOk && closedLidBlockedO2 && na2o2DecompAndLidPopped,
         `prop=${propOk}, closedZnO=${((crZn.moles.ZnO_s||0)*1000).toFixed(2)}mmol(${crZn.lidState}), popNa2O=${((crPop.moles.Na2O_s||0)*1000).toFixed(1)}mmol(lid=${crPop.lidState})`
       );
+    }
+
+    // TEST 129: Prompt 29 — 2D Cross-Section Pouring Physics V_hold(theta) & Real Tilted Transfer
+    {
+      const vHoldErl0 = getVesselHoldVolumeMl(APPARATUS.erlenmeyer_250, 0);
+      const vHoldErl90 = getVesselHoldVolumeMl(APPARATUS.erlenmeyer_250, 90);
+      const vHoldErl125 = getVesselHoldVolumeMl(APPARATUS.erlenmeyer_250, 125);
+      const vHoldRbf90 = getVesselHoldVolumeMl(APPARATUS.round_flask_250, 90);
+      const vHoldRbf155 = getVesselHoldVolumeMl(APPARATUS.round_flask_250, 155);
+      const vHoldCruc80 = getVesselHoldVolumeMl(APPARATUS.crucible_porcelain, 80);
+      const { vertices: erlVerts, totalAreaPx: erlAreaPx } = getInnerPolygonPx(APPARATUS.erlenmeyer_250);
+      const clipTestY = findClipYForVolume(erlVerts, erlAreaPx, 75, 250);
+
+      const simP = new LabSimulation();
+      const erlSrc = simP.createApparatus('erlenmeyer_250', 240, 390);
+      const recDst = simP.createApparatus('beaker_250', 325, 438);
+      simP.addReagentToVessel(erlSrc.id, 'h2o', 150, { silentAnim: true });
+
+      simP.setVesselTiltDeg(erlSrc.id, 95, 1);
+      stepSeconds(simP, 2.2);
+      const pouredAt95 = computeLiquidVolumeL(recDst.moles, recDst.tempK) * 1000;
+      const heldAt95 = computeLiquidVolumeL(erlSrc.moles, erlSrc.tempK) * 1000;
+
+      simP.setVesselTiltDeg(erlSrc.id, 130, 1);
+      stepSeconds(simP, 2.5);
+      const leftAt130 = computeLiquidVolumeL(erlSrc.moles, erlSrc.tempK) * 1000;
+
+      const erlRatio90 = vHoldErl90 / (vHoldErl0 || 1);
+      const rbfRatio90 = vHoldRbf90 / 250;
+      assert(
+        '2D V_hold(theta) cross-section preserves neck-retained fluid (~25–45% in Erlenmeyer / ~35–60% in Round Flask at 90°) and drains completely at steep tilt',
+        Number.isFinite(clipTestY) &&
+          erlRatio90 >= 0.22 &&
+          erlRatio90 <= 0.48 &&
+          vHoldErl125 < 2.0 &&
+          rbfRatio90 >= 0.32 &&
+          rbfRatio90 <= 0.65 &&
+          vHoldRbf155 < 2.0 &&
+          vHoldCruc80 < 2.0 &&
+          pouredAt95 > 40 &&
+          heldAt95 > 18 &&
+          leftAt130 < 8,
+        `erl90=${(erlRatio90*100).toFixed(0)}%, rbf90=${(rbfRatio90*100).toFixed(0)}%, cruc80=${vHoldCruc80.toFixed(1)}, poured95=${pouredAt95.toFixed(1)}, held95=${heldAt95.toFixed(1)}, left130=${leftAt130.toFixed(1)}`
+      );
+    }
+
+    // TEST 130: Prompt 29 — Submerged Delivery Tubing Depth, CO2 Telemetry & Real Vacuum Suck-Back
+    {
+      const simT = new LabSimulation();
+      const gen = simT.createApparatus('erlenmeyer_250', 220, 412);
+      const rec = simT.createApparatus('beaker_250', 400, 427);
+      simT.addReagentToVessel(rec.id, 'h2o', 110, { silentAnim: true });
+      simT.connectTube(gen.id, rec.id);
+
+      const defaultSub = gen.tubeSubmersionRatio === 0.72 && isTubeTipSubmerged(gen, rec);
+      simT.setTubeSubmersionRatio(gen.id, 0.02);
+      const raisedAboveLiq = !isTubeTipSubmerged(gen, rec);
+
+      // Raised tip (0.02): cooling vacuum must NOT trigger liquid suck-back
+      gen.tempK = 365;
+      simT.step(0.05);
+      gen.tempK = 280;
+      stepSeconds(simT, 0.6);
+      const noSuckWhenRaised = !simT.logs.some((l) => l.key === 'alertTubeSuckBack');
+
+      // Submerged tip (0.85): sealing hot (375 K) then cooling (278 K) drops P below atm -> MUST trigger real liquid suck-back
+      const gen2 = simT.createApparatus('erlenmeyer_250', 620, 412);
+      const rec2 = simT.createApparatus('beaker_250', 800, 427);
+      simT.addReagentToVessel(rec2.id, 'h2o', 110, { silentAnim: true });
+      gen2.tempK = 375;
+      simT.connectTube(gen2.id, rec2.id);
+      simT.setTubeSubmersionRatio(gen2.id, 0.85);
+      simT.step(0.05);
+      gen2.tempK = 278;
+      const beforeGen2Mol = gen2.moles.H2O_l || 0;
+      stepSeconds(simT, 0.8);
+      const suckedWhenSubmerged =
+        simT.logs.some((l) => l.key === 'alertTubeSuckBack') && (gen2.moles.H2O_l || 0) > beforeGen2Mol + 0.01;
+
+      // Live gas-tubing telemetry populated during CO2 evolution
+      simT.addReagentToVessel(gen.id, 'caco3', 0.05, { solidMassG: 5, silentAnim: true });
+      simT.addReagentToVessel(gen.id, 'hcl_37', 40, { silentAnim: true });
+      simT.setTubeSubmersionRatio(gen.id, 0.82);
+      stepSeconds(simT, 1.5);
+      const flowTelemetryOk =
+        Boolean(gen._liveTubeFlow) &&
+        gen._liveTubeFlow.rateMlS > 0 &&
+        Array.isArray(gen._liveTubeFlow.composition) &&
+        gen._liveTubeFlow.composition.length >= 1;
+
+      assert(
+        'Tubing submersionRatio gates bubbling vs raised tip; vacuum suck-back only triggers when submerged & _liveTubeFlow tracks live gas telemetry',
+        defaultSub && raisedAboveLiq && noSuckWhenRaised && suckedWhenSubmerged && flowTelemetryOk,
+        `defSub=${defaultSub}, raised=${raisedAboveLiq}, noSuck=${noSuckWhenRaised}, sucked=${suckedWhenSubmerged}, flowRate=${gen._liveTubeFlow?.rateMlS?.toFixed(2)}`
+      );
+    }
+
+    // TEST 131: Prompt 29 — Ice Bath (0 °C / -10 °C Ice+NaCl) Newton's Law of Cooling
+    {
+      const simB = new LabSimulation();
+      const bath = simB.createApparatus('ice_bath', 320, 448);
+      const beakerHot = simB.createApparatus('beaker_250', 320, 425);
+      simB.addReagentToVessel(beakerHot.id, 'h2o', 80, { silentAnim: true });
+      beakerHot.tempK = 363.15; // 90 °C
+      simB.updateSupportAttachments();
+      const nestedOk = beakerHot.submergedInBathId === bath.id;
+
+      // Newton Law of Cooling: gradual drop, NO instant snap
+      stepSeconds(simB, 0.2);
+      const tempAt02 = beakerHot.tempK;
+      const noInstantSnap = tempAt02 > 345.0 && tempAt02 < 363.0;
+      stepSeconds(simB, 14.0);
+      const cooledNearZero = beakerHot.tempK < 305.0;
+
+      // Ice+NaCl mode (-10 °C) chills concentrated brine below 0 °C cleanly
+      simB.setBathMode(bath.id, 'ice_salt');
+      const brine = simB.createApparatus('beaker_250', 320, 425);
+      simB.items = simB.items.filter((i) => i.id !== beakerHot.id);
+      simB.addReagentToVessel(brine.id, 'h2o', 40, { silentAnim: true });
+      brine.moles.Na_aq = 0.25;
+      brine.moles.Cl_aq = 0.25;
+      brine.tempK = 278.15;
+      simB.updateSupportAttachments();
+      stepSeconds(simB, 20.0);
+      const subzeroOk = bath.bathMode === 'ice_salt' && brine.tempK < 273.15 && brine.tempK >= 263.0;
+
+      assert(
+        'Ice Bath supports 0°C Pure Ice & -10°C Ice+NaCl with smooth Newton Law of Cooling (no instant snap) and chills brine sub-zero',
+        nestedOk && noInstantSnap && cooledNearZero && subzeroOk,
+        `nested=${nestedOk}, t0.2=${tempAt02.toFixed(1)}, subzeroT=${brine.tempK.toFixed(1)}`
+      );
+    }
+
+    // TEST 132: Prompt 29 — Live Gas-Pour Splint Extinguish, H2 Flash Ignition & Bunsen Carbon Soot Cycle
+    {
+      const simF = new LabSimulation();
+      // 1) CO2 dense gas cascade extinguishes lit splint below without liquid
+      const standF = simF.createApparatus('retort_stand', 180, 355);
+      const bCo2 = simF.createApparatus('beaker_250', 220, 345);
+      bCo2.clampedToId = standF.id;
+      bCo2.headspaceGasMoles.CO2_g = 0.12;
+      simF.setVesselTiltDeg(bCo2.id, 108, 1);
+      const splint = simF.createApparatus('splint', 330, 440);
+      splint.mode = 'burning';
+      stepSeconds(simF, 1.5);
+      const co2Extinguished =
+        splint.mode === 'unlit' && simF.logs.some((l) => l.key === 'alertGasExtinguishedSplint');
+
+      // 2) H2 escaping/poured onto lit burner causes flash ignition
+      const bH2 = simF.createApparatus('beaker_250', 420, 395);
+      bH2.headspaceGasMoles.H2_g = 0.08;
+      simF.setVesselTiltDeg(bH2.id, 100, 1);
+      const litBurner = simF.createApparatus('burner', 505, 442);
+      litBurner.powerW = 360;
+      litBurner.flameLevel = 2;
+      stepSeconds(simF, 1.2);
+      const h2Flashed =
+        simF.logs.some((l) => l.key === 'alertGasFlashIgnition') && (bH2.headspaceGasMoles.H2_g || 0) < 0.08;
+
+      // 3) Bunsen yellow luminous flame deposits carbon soot, blue roaring flame burns it clean
+      const buns = simF.createApparatus('bunsen_burner', 700, 418);
+      simF.setBunsenAirHole(buns.id, false);
+      buns.powerW = 820;
+      buns.flameLevel = 3;
+      const bSoot = simF.createApparatus('beaker_250', 700, 315);
+      simF.addReagentToVessel(bSoot.id, 'h2o', 60, { silentAnim: true });
+      bSoot.restingOnId = buns.id;
+      stepSeconds(simF, 3.0);
+      const sootPeak = bSoot.sootLevel || 0;
+
+      simF.setBunsenAirHole(buns.id, true);
+      buns.powerW = 1100;
+      bSoot.tempK = 460;
+      stepSeconds(simF, 12.0);
+      const sootAfterBlue = bSoot.sootLevel || 0;
+
+      assert(
+        'Tilted CO2 gas cascade extinguishes lit splint without liquid; H2 triggers flash ignition near burner flame; yellow Bunsen flame deposits soot & blue flame burns soot clean',
+        co2Extinguished && h2Flashed && sootPeak > 0.15 && sootAfterBlue < sootPeak * 0.5,
+        `ext=${co2Extinguished}, h2=${h2Flashed}, sootPeak=${sootPeak.toFixed(2)}, sootEnd=${sootAfterBlue.toFixed(2)}`
+      );
+    }
+
+    // TEST 133: Prompt 29 — Mouse Wheel Discrete Detent (Trackpad Anti-Jitter), Pipette 150ms Cooldown & Continuous Controls
+    {
+      const simW = new LabSimulation();
+      const wrapW = document.createElement('div');
+      wrapW.style.width = '1000px';
+      wrapW.style.height = '560px';
+      const cvsW = document.createElement('canvas');
+      cvsW.width = 1000;
+      cvsW.height = 560;
+      wrapW.appendChild(cvsW);
+      document.body.appendChild(wrapW);
+      const wbW = new LabWorkbenchCanvas(cvsW, simW, new ParticleSystem());
+
+      const crucW = simW.createApparatus('crucible_porcelain', 140, 430);
+      const bathW = simW.createApparatus('ice_bath', 300, 448);
+      const elW = simW.createApparatus('electrode_rod', 460, 420);
+      const vmW = simW.createApparatus('volt_ammeter', 600, 420);
+      const condW = simW.createApparatus('liebig_condenser', 740, 340);
+      const burW = simW.createApparatus('burette_50', 840, 300);
+      const dcW = simW.createApparatus('dc_power', 840, 430);
+      const dcV0 = dcW.voltageV ?? 6;
+      const pipW = simW.createApparatus('pipette_10', 140, 260);
+      const recW = simW.createApparatus('beaker_250', 140, 355);
+      pipW.volumeMl = 5.0;
+      pipW.moles = { H2O_l: 5.0 / 18.015 };
+
+      // 1) Discrete detent anti-jitter: deltaY=30 must NOT flip mode until cumulative |deltaY| >= 80
+      wbW.handleCanvasWheel({ x: bathW.x, y: bathW.y }, 30);
+      const bathStillIce = bathW.bathMode === 'ice';
+      wbW.handleCanvasWheel({ x: bathW.x, y: bathW.y }, 30);
+      wbW.handleCanvasWheel({ x: bathW.x, y: bathW.y }, 30); // cumulative 90 >= 80
+      const bathToggledOnce = bathW.bathMode === 'ice_salt';
+
+      const lid0 = crucW.lidState;
+      wbW.handleCanvasWheel({ x: crucW.x, y: crucW.y }, 25);
+      const lidNoJitter = crucW.lidState === lid0;
+      wbW.handleCanvasWheel({ x: crucW.x, y: crucW.y }, 60); // 85 >= 80
+      const lidStepped = crucW.lidState !== lid0;
+
+      wbW.handleCanvasWheel({ x: elW.x, y: elW.y }, 85);
+      const elStepped = elW.material !== 'C';
+
+      wbW.handleCanvasWheel({ x: vmW.x, y: vmW.y }, 85);
+      const vmStepped = vmW.mode !== 'voltmeter';
+
+      // 2) Continuous scroll controls
+      wbW.handleCanvasWheel({ x: condW.x, y: condW.y }, 100);
+      wbW.handleCanvasWheel({ x: burW.x, y: burW.y }, 100);
+      wbW.handleCanvasWheel({ x: dcW.x, y: dcW.y }, -100);
+      const contOk =
+        condW.rotationDeg > 0 && burW.valveRateMlS > 0 && dcW.voltageV > dcV0;
+
+      // 3) Pipette 150ms cooldown: two instant wheels -> only first dispenses 1.0 mL
+      wbW.handleCanvasWheel({ x: pipW.x, y: pipW.y }, 100);
+      const afterFirstPip = pipW.volumeMl;
+      wbW.handleCanvasWheel({ x: pipW.x, y: pipW.y }, 100);
+      const blockedByCooldown = Math.abs(pipW.volumeMl - afterFirstPip) < 0.01 && Math.abs(afterFirstPip - 4.0) < 0.05;
+
+      // 4) Vessel tilt & auto-reset on hover-away
+      wbW.handleCanvasWheel({ x: recW.x, y: recW.y }, 120);
+      const tiltedOk = recW.tiltDeg > 0;
+      wbW.handleCanvasWheel({ x: 960, y: 100 }, 50); // away from vessel
+      const autoResetOk = (recW.tiltDeg || 0) === 0;
+
+      assert(
+        'Mouse wheel discrete detent ignores trackpad jitter (<80), continuous tools adjust smoothly, pipette enforces 150ms cooldown, and tilted vessel resets when unhovered',
+        bathStillIce &&
+          bathToggledOnce &&
+          lidNoJitter &&
+          lidStepped &&
+          elStepped &&
+          vmStepped &&
+          contOk &&
+          blockedByCooldown &&
+          tiltedOk &&
+          autoResetOk,
+        `bath=${bathStillIce}->${bathToggledOnce}, lid=${lidNoJitter}->${lidStepped}, el=${elStepped}, vm=${vmStepped}, cont=${contOk}, pip=${afterFirstPip.toFixed(2)}/${pipW.volumeMl.toFixed(2)}, tilt=${tiltedOk}->${autoResetOk}`
+      );
+      wrapW.remove();
     }
 
     // Render test report

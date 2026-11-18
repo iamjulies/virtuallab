@@ -411,6 +411,9 @@ button:disabled {
 .hidden.bench-pick-banner,
 .hidden.canvas-zoom-controls,
 .hidden.comparison-panel,
+.storage-modal-backdrop.hidden,
+#storage-cabinet-modal.hidden,
+#chemlab-quick-dialog.hidden,
 #dosing-modal-root.hidden,
 #workspace-storage-modal.hidden {
   display: none !important;

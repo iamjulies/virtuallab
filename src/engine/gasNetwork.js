@@ -99,6 +99,19 @@ export function cubicBezierPoint(t, p0, p1, p2, p3) {
   };
 }
 
+export function isTubeTipSubmerged(sourceVessel, targetVessel) {
+  if (!targetVessel || targetVessel.kind !== 'vessel' || targetVessel.isShattered) return false;
+  const liqMl = computeLiquidVolumeL(targetVessel.moles || {}, targetVessel.tempK || 298.15) * 1000;
+  if (liqMl <= 0.05) return false;
+  const tSpec = APPARATUS[targetVessel.typeId] || APPARATUS.beaker_250;
+  if (targetVessel.isInverted) return true;
+  const subRatio = Math.max(0, Math.min(1, sourceVessel?.tubeSubmersionRatio ?? 0.72));
+  const fillFrac = tSpec.geometry
+    ? tSpec.geometry.getLiquidState(liqMl).fillRatio
+    : Math.min(1, liqMl / Math.max(1, tSpec.maxVolumeMl || 250));
+  return subRatio >= Math.max(0.06, 1.0 - fillFrac);
+}
+
 /**
  * Measure exact geometric rubber tubing length along its live cubic Bezier path
  * (1.15 px/mm calibrated to ISO glassware scale) with fixed inner bore diameter (6.0 mm)
@@ -118,6 +131,9 @@ export function computeTubingGeometry(vessel, target) {
     : { x: vessel.x, y: vessel.y - vSpec.height / 2 - 8 };
   const tEnds = tSpec.hasTwoEnds ? getVesselEndPorts(target) : null;
   const tSide = target.incomingPortSide || (target.flippedX ? 'right' : 'left');
+  const subRatio = Math.max(0, Math.min(1, vessel?.tubeSubmersionRatio ?? 0.72));
+  const uprightMouthY = target.y - tSpec.height / 2 + 2;
+  const uprightTipY = uprightMouthY + subRatio * Math.max(16, tSpec.height - 12);
   const p3 =
     target.kind === 'gas_syringe'
       ? { x: syrNozzle.nozzleX, y: syrNozzle.nozzleY }
@@ -127,7 +143,7 @@ export function computeTubingGeometry(vessel, target) {
       ? { x: tEnds[tSide].x, y: tEnds[tSide].y + (tSpec.isUTube ? 8 : 0) }
       : target.isInverted
       ? { x: target.x, y: target.y + tSpec.height / 2 - 4 }
-      : { x: target.x, y: target.y - tSpec.height / 2 + (target.isStoppered ? -8 : 12) };
+      : { x: target.x, y: target.isStoppered && subRatio < 0.08 ? uprightMouthY - 10 : uprightTipY };
 
   const archTopY = vessel.isInverted
     ? Math.max(p0.y, p3.y) + 34
@@ -738,6 +754,33 @@ export function stepVesselGasAndPressure(
   let maxedSyringe = null;
   if (targetId) {
     const target = getApparatusById(targetId);
+    // Record live gas stream composition, volumetric flow (mL/s) & stream temp (°C) for tubing hover tooltip
+    let outTotalMol = totalSteam;
+    const compList = [];
+    for (const g of NON_STEAM_GASES) {
+      const m = routeProduced[g] || 0;
+      if (m > 1e-12) {
+        outTotalMol += m;
+        compList.push({ id: g, formula: SPECIES[g]?.formula || g, mol: m });
+      }
+    }
+    if (totalSteam > 1e-12) {
+      compList.push({ id: 'H2O_g', formula: 'H₂O(g)', mol: totalSteam });
+    }
+    if (outTotalMol > 1e-10) {
+      compList.sort((a, b) => b.mol - a.mol);
+      const tGas = Math.max(200, vessel.tempK || env.tempK || 298.15);
+      const stepDtApprox = 0.025;
+      const volMlS = (((outTotalMol * CONSTANTS.R_L_BAR_MOL_K * tGas) / Math.max(0.2, env.pressureBar)) * 1000) / stepDtApprox;
+      vessel._liveTubeFlow = {
+        composition: compList.slice(0, 3).map((c) => ({ ...c, pct: Math.round((c.mol / outTotalMol) * 100) })),
+        rateMlS: Number.isFinite(volMlS) ? volMlS : 0,
+        totalMlS: Number.isFinite(volMlS) ? volMlS : 0,
+        tempC: tGas - 273.15,
+        updatedAt: Date.now(),
+      };
+    }
+
     // Delivery tube delivers liquid, vapor, and gas through any receiver stopper (both holed and solid bungs)
     const canAcceptTargetVessel = Boolean(target && target.kind === 'vessel' && !target.isShattered);
     if (target && (target.kind === 'gas_syringe' || (target.kind === 'vessel' && target.isInverted))) {
@@ -853,15 +896,16 @@ export function stepVesselGasAndPressure(
       if (remSO3 > 0) {
         storeUnabsorbedGas('SO3_g', remSO3);
       }
+      const tipSubmerged = isTubeTipSubmerged(vessel, target);
       if ((routeProduced.CO2_g || 0) > 0) {
         const dCo2 = routeProduced.CO2_g;
         const hasWaterTgt = (target.moles.H2O_l || 0) > 1e-4;
-        if (hasWaterTgt) {
+        if (hasWaterTgt && tipSubmerged) {
           const hasAlkaliTgt =
             (target.moles.OH_aq || 0) > 1e-5 ||
             (target.moles.CaOH2_s || 0) > 1e-5 ||
             (target.moles.CO3_2_aq || 0) > 1e-5;
-          const absFrac = hasAlkaliTgt ? 0.92 : 0.45;
+          const absFrac = hasAlkaliTgt ? 0.94 : 0.52;
           const dAbs = dCo2 * absFrac;
           target.moles.H2CO3_aq = (target.moles.H2CO3_aq || 0) + dAbs;
           const dHeadCo2 = dCo2 - dAbs;
@@ -879,7 +923,7 @@ export function stepVesselGasAndPressure(
         if (g !== 'HCl_g' && g !== 'HNO3_g' && g !== 'NH3_g' && g !== 'C2H5OH_g' && g !== 'CO2_g' && g !== 'SO3_g' && routeProduced[g] > 0) {
           target.headspaceGasMoles[g] = (target.headspaceGasMoles[g] || 0) + routeProduced[g];
           target.gasFlushInMol = (target.gasFlushInMol || 0) + routeProduced[g];
-          if ((target.moles.H2O_l || 0) > 1e-4) {
+          if (tipSubmerged && (target.moles.H2O_l || 0) > 1e-4) {
             target._tubeBubbleGasMol = (target._tubeBubbleGasMol || 0) + routeProduced[g];
           }
         }
@@ -892,11 +936,30 @@ export function stepVesselGasAndPressure(
         }
         target.tempK = Math.min(waterBoilingPointK(env.pressureBar), target.tempK + heatAddedJ / Math.max(40, cTarget + addedCapJK));
       }
-      // If forward gas/steam is actively pushing downstream and no internal Ammonia/HCl fountain dissolution is occurring, stay at atmospheric pressure
+      if (vessel.sealedAirMoles === null || vessel.sealedAirMoles === undefined) {
+        const nHead1Bar = (env.pressureBar * headspaceL) / (CONSTANTS.R_L_BAR_MOL_K * Math.max(200, vessel.tempK || env.tempK));
+        let preCollectedGas = 0;
+        for (const g of NON_STEAM_GASES) preCollectedGas += vessel.headspaceGasMoles[g] || 0;
+        vessel.sealedAirMoles = Math.max(nHead1Bar * 0.04, nHead1Bar - preCollectedGas);
+        vessel.sealedAirO2Moles =
+          (env?.atmosphereMode || 'air') === 'air'
+            ? vessel.sealedAirMoles * CONSTANTS.AIR_O2_FRAC * (vessel.airO2PurgeFrac ?? 1.0)
+            : 0;
+      }
+      // If forward gas/steam is actively pushing downstream and no internal Ammonia/HCl fountain dissolution or cooling vacuum is occurring, stay at atmospheric pressure
       const hasFountainSoluble =
         ((vessel.headspaceGasMoles?.NH3_g || 0) > 1e-7 || (vessel.headspaceGasMoles?.HCl_g || 0) > 1e-7) &&
         (vessel.moles.H2O_l || 0) > 1e-4;
-      if (!hasFountainSoluble && (vessel.internalPressureBar ?? env.pressureBar) >= env.pressureBar - 0.02) {
+      let headSumMol = 0;
+      for (const g of NON_STEAM_GASES) headSumMol += vessel.headspaceGasMoles[g] || 0;
+      const projectedThermalP =
+        (((vessel.sealedAirMoles || 0) + headSumMol) * CONSTANTS.R_L_BAR_MOL_K * Math.max(180, vessel.tempK || env.tempK)) /
+        Math.max(0.005, headspaceL);
+      if (
+        !hasFountainSoluble &&
+        projectedThermalP >= env.pressureBar - 0.02 &&
+        (vessel.internalPressureBar ?? env.pressureBar) >= env.pressureBar - 0.02
+      ) {
         vessel.internalPressureBar = env.pressureBar;
         return events;
       }
@@ -1070,7 +1133,7 @@ export function stepVesselGasAndPressure(
 
   const connectedTarget = vessel.connectedTargetId ? getApparatusById(vessel.connectedTargetId) : null;
   const hasLiquidSuctionRelief = Boolean(
-    connectedTarget && connectedTarget.kind === 'vessel' && !connectedTarget.isShattered && (connectedTarget.moles?.H2O_l || 0) > 1e-4
+    connectedTarget && isTubeTipSubmerged(vessel, connectedTarget)
   );
 
   if (

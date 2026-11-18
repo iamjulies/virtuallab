@@ -412,6 +412,23 @@ export const APPARATUS = {
       3: 1073.15,
     },
   },
+  ice_bath: {
+    id: 'ice_bath',
+    kind: 'bath',
+    category: 'thermal',
+    breakable: false,
+    i18nKey: 'eq_ice_bath',
+    isoStandard: 'Thermostatic Ice / Ice-NaCl Cooling Bath (0 °C / -10 °C)',
+    materialSpec: 'Insulated Double-Wall Borosilicate + Cooling Jacket',
+    width: 146,
+    height: 68,
+    maxVolumeMl: 1500,
+    tareMassG: 420.0,
+    coolingK: 0.28,
+    bathTempIceK: 273.15,
+    bathTempSaltK: 263.15,
+    fragilityDropPx: Infinity,
+  },
   crucible_porcelain: {
     id: 'crucible_porcelain',
     kind: 'vessel',
@@ -1103,6 +1120,7 @@ export const APPARATUS_ORDER = [
   'scale',
   'burner',
   'bunsen_burner',
+  'ice_bath',
   'crucible_tongs',
   'iron_spoon',
   'gas_syringe',
@@ -1168,12 +1186,19 @@ export function getStandGeometry(stand) {
 export function getCondenserPorts(cond) {
   const halfW = (APPARATUS.liebig_condenser?.width || 152) / 2;
   const dir = cond?.flippedX ? -1 : 1; // +1: left inlet -> right outlet tilted +0.14 rad
+  const baseAngle = dir * 0.14 + ((Number(cond?.rotationDeg) || 0) * Math.PI) / 180;
+  const cos = Math.cos(baseAngle);
+  const sin = Math.sin(baseAngle);
+  const rot = (dx, dy) => ({
+    x: cond.x + dx * cos - dy * sin,
+    y: cond.y + dx * sin + dy * cos,
+  });
   return {
     dir,
-    tiltAngle: dir * 0.14,
-    inlet: { x: cond.x - dir * halfW * 0.94, y: cond.y - 10 },
-    outlet: { x: cond.x + dir * halfW * 0.94, y: cond.y + 11 },
-    spout: { x: cond.x + dir * 68, y: cond.y + 18 },
+    tiltAngle: baseAngle,
+    inlet: rot(-dir * halfW * 0.94, 0),
+    outlet: rot(dir * halfW * 0.94, 0),
+    spout: rot(dir * 68, 8),
   };
 }
 

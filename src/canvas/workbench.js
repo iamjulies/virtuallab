@@ -11,7 +11,7 @@ import {
 import { CONSTANTS } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computePH, computeSolutionVisuals } from '../engine/equilibrium.js';
-import { computeSyringeDischargeArc, computeSyringeLiquidVolumeMl } from '../engine/gasNetwork.js';
+import { computeSyringeDischargeArc, computeSyringeLiquidVolumeMl, computeTubingGeometry } from '../engine/gasNetwork.js';
 import {
   checkFlameLoopInteractions,
   checkIndicatorStripInteractions,
@@ -43,6 +43,7 @@ import {
   renderElectrodeRod,
   renderFilterFunnel,
   renderFlameLoop,
+  renderIceBath,
   renderIndicatorStrip,
   renderIronSpoon,
   renderLiebigCondenser,
@@ -71,9 +72,14 @@ export class LabWorkbenchCanvas {
     this.langCode = 'vi';
     this.dragState = null; // { itemId, offsetX, offsetY, startX, startY, pourTargetId, pouredMl }
     this.portDragState = null;
+    this.tubeTipDragState = null;
+    this.hoveredTubeInfo = null;
     this.marqueeState = null;
     this.pickState = null; // { candidateIds: Set<string>, promptText, onPick, onCancel }
     this.hoverItemId = null;
+    this._wheelAccum = { key: '', sum: 0 };
+    this._pipetteWheelTs = 0;
+    this._wheelTiltVesselId = null;
     this.dropTargetVesselId = null;
     this.scaleX = 1;
     this.scaleY = 1;
@@ -405,6 +411,224 @@ export class LabWorkbenchCanvas {
     return null;
   }
 
+  findTubeTipHandleAt(lx, ly) {
+    for (let i = this.sim.items.length - 1; i >= 0; i--) {
+      const v = this.sim.items[i];
+      if (v.kind !== 'vessel' || v.isShattered || !v.connectedTargetId) continue;
+      const dst = this.sim.getItem(v.connectedTargetId);
+      if (!dst || dst.kind !== 'vessel' || dst.isInverted || dst.isShattered) continue;
+      const geom = computeTubingGeometry(v, dst);
+      if (geom?.p3 && Math.hypot(lx - geom.p3.x, ly - geom.p3.y) <= 14) {
+        return { srcVessel: v, dstVessel: dst, p3: geom.p3 };
+      }
+    }
+    return null;
+  }
+
+  findTubeHoverAt(lx, ly) {
+    const ptSegDist = (px, py, ax, ay, bx, by) => {
+      const vx = bx - ax;
+      const vy = by - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 <= 1e-6) return Math.hypot(px - ax, py - ay);
+      const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / len2));
+      return Math.hypot(px - (ax + t * vx), py - (ay + t * vy));
+    };
+    for (let i = this.sim.items.length - 1; i >= 0; i--) {
+      const v = this.sim.items[i];
+      if (v.kind !== 'vessel' || v.isShattered) continue;
+      const tid = v.connectedTargetId || v.connectedSyringeId;
+      if (!tid) continue;
+      const dst = this.sim.getItem(tid);
+      if (!dst || dst.isShattered || dst.isBroken) continue;
+      const geom = computeTubingGeometry(v, dst);
+      const pts = geom?.points || [];
+      let minDist = Infinity;
+      for (let k = 0; k < pts.length - 1; k++) {
+        const d = ptSegDist(lx, ly, pts[k].x, pts[k].y, pts[k + 1].x, pts[k + 1].y);
+        if (d < minDist) minDist = d;
+      }
+      if (minDist <= 12) {
+        return { srcVessel: v, dstVessel: dst, x: lx, y: ly, flow: v._liveTubeFlow || null };
+      }
+    }
+    return null;
+  }
+
+  resetWheelTiltedVessel(exceptId = null) {
+    if (!this._wheelTiltVesselId || this._wheelTiltVesselId === exceptId) return;
+    const prev = this.sim.getItem(this._wheelTiltVesselId);
+    if (prev && prev.kind === 'vessel' && (prev.tiltDeg || 0) > 0) {
+      this.sim.setVesselTiltDeg(prev.id, 0);
+    }
+    this._wheelTiltVesselId = null;
+  }
+
+  handleCanvasWheel(pt, deltaY, shiftKey = false) {
+    const hit = this.hitTestItem(pt.x, pt.y);
+    if (!hit) {
+      this.resetWheelTiltedVessel(null);
+      return false;
+    }
+    if (this._wheelTiltVesselId && this._wheelTiltVesselId !== hit.id) {
+      this.resetWheelTiltedVessel(hit.id);
+    }
+
+    const clamp = (lo, hi, val) => Math.max(lo, Math.min(hi, val));
+    const stepDiscrete = (key, dy, cb) => {
+      if (this._wheelAccum.key !== key) this._wheelAccum = { key, sum: 0 };
+      this._wheelAccum.sum += dy;
+      if (Math.abs(this._wheelAccum.sum) < 80) return true;
+      const dir = this._wheelAccum.sum > 0 ? 1 : -1;
+      this._wheelAccum.sum = 0;
+      cb(dir);
+      return true;
+    };
+
+    if (hit.kind === 'bath') {
+      return stepDiscrete(`bath:${hit.id}`, deltaY, () => {
+        soundEngine.playUiClick();
+        this.sim.setBathMode(hit.id, hit.bathMode === 'ice_salt' ? 'ice' : 'ice_salt');
+      });
+    }
+
+    if (hit.kind === 'electrode') {
+      return stepDiscrete(`el:${hit.id}`, deltaY, (dir) => {
+        const order = ['C', 'Cu', 'Zn'];
+        const curIdx = Math.max(0, order.indexOf(hit.material));
+        const nextMat = order[(curIdx + (dir > 0 ? 1 : order.length - 1)) % order.length];
+        soundEngine.playUiClick();
+        this.sim.setElectrodeMaterial(hit.id, nextMat);
+      });
+    }
+
+    if (hit.kind === 'volt_ammeter') {
+      return stepDiscrete(`vm:${hit.id}`, deltaY, (dir) => {
+        const modes = ['voltmeter', 'ammeter', 'short'];
+        const curIdx = Math.max(0, modes.indexOf(hit.mode));
+        const nextMode = modes[(curIdx + (dir > 0 ? 1 : modes.length - 1)) % modes.length];
+        soundEngine.playUiClick();
+        this.sim.setVoltAmmeterState(hit.id, { mode: nextMode });
+      });
+    }
+
+    if (hit.kind === 'stir_bar') {
+      if (!hit.inVesselId) return false;
+      const host = this.sim.getItem(hit.inVesselId);
+      const curRpm = host?.magStirRpm || 0;
+      const nextRpm = clamp(0, 1200, curRpm + (deltaY < 0 ? 100 : -100));
+      this.sim.toggleMagneticStir(hit.inVesselId, nextRpm);
+      return true;
+    }
+
+    if (hit.kind === 'dc_power') {
+      const curV = hit.voltageV ?? 6;
+      const nextV = Math.round(clamp(0, 12, curV + (deltaY < 0 ? 0.5 : -0.5)) * 2) / 2;
+      this.sim.setDcPowerState(hit.id, { voltageV: nextV });
+      return true;
+    }
+
+    if (hit.kind === 'stand') {
+      const curExt = hit.extendPx || 0;
+      const nextExt = clamp(0, 200, Math.round(curExt + (deltaY < 0 ? 10 : -10)));
+      this.sim.setStandExtension(hit.id, nextExt);
+      return true;
+    }
+
+    if (hit.kind === 'wash_bottle') {
+      const nextAng = clamp(-45, 45, Math.round((hit.sprayAngleDeg || 0) + (deltaY > 0 ? 5 : -5)));
+      this.sim.setWashBottleAngle(hit.id, nextAng);
+      return true;
+    }
+
+    if (hit.kind === 'condenser') {
+      const nextRot = clamp(-45, 45, Math.round((hit.rotationDeg || 0) + (deltaY > 0 ? 5 : -5)));
+      this.sim.setCondenserRotation(hit.id, nextRot);
+      return true;
+    }
+
+    if (hit.kind === 'burette') {
+      const curRate = hit.valveRateMlS || 0;
+      const nextRate = Math.round(clamp(0, 5.0, curRate + (deltaY > 0 ? 0.25 : -0.25)) * 100) / 100;
+      this.sim.setBuretteValveRate(hit.id, nextRate);
+      return true;
+    }
+
+    if (hit.kind === 'burner') {
+      if (hit.typeId === 'bunsen_burner' && (shiftKey || pt.y >= hit.y + 8)) {
+        return stepDiscrete(`bunsen-air:${hit.id}`, deltaY, () => {
+          soundEngine.playFlameWhoosh(!hit.airHoleOpen);
+          this.sim.toggleBurnerAirHole(hit.id);
+        });
+      }
+      const bSpec = APPARATUS[hit.typeId] || APPARATUS.burner;
+      const airOpen = hit.typeId === 'bunsen_burner' ? hit.airHoleOpen !== false : true;
+      const maxW = hit.typeId === 'bunsen_burner' && !airOpen ? (bSpec.yellowPowerLevelsW?.[3] || 820) : (bSpec.maxPowerW || 650);
+      const nextW = clamp(0, maxW, Math.round((hit.powerW ?? 0) + (deltaY < 0 ? 40 : -40)));
+      this.sim.setBurnerPower(hit.id, nextW);
+      return true;
+    }
+
+    if (hit.kind === 'pipette') {
+      const now = performance.now();
+      if (now - this._pipetteWheelTs < 150) return true;
+      this._pipetteWheelTs = now;
+      const doseMl = deltaY > 0 ? 1.0 : 0.5;
+      const spec = APPARATUS[hit.typeId] || APPARATUS.pipette_10;
+      const tgt = this.findVesselAt(hit.x, hit.y + spec.height / 2 + 18, hit.id, false);
+      if (tgt && tgt.kind === 'vessel' && !tgt.isShattered && !tgt.isStoppered && (hit.volumeMl || 0) > 0.01) {
+        soundEngine.playDropPlink(0.95);
+        this.sim.pipetteDispenseToVessel(tgt.id, doseMl, hit);
+      } else {
+        this.sim.setPipetteDropDose(hit.id, doseMl);
+      }
+      return true;
+    }
+
+    if (hit.kind === 'gas_syringe') {
+      if (deltaY > 0) {
+        const arc = computeSyringeDischargeArc(hit, this.sim.items, BENCH_FLOOR_Y, CONSTANTS.GRAVITY_PX_S2 || 1800);
+        if (arc?.hitTargetVessel) {
+          this.sim.pumpSyringeToVessel(hit.id, arc.hitTargetVessel.id, 5.0);
+        } else if (!hit.connectedFromId) {
+          hit.autoDischargeTimer = 0.22;
+          this.sim.setSyringeDischarge(hit.id, true, 'both');
+        }
+      } else {
+        this.sim.setSyringeDischarge(hit.id, false);
+        hit.autoDischargeTimer = 0;
+        hit.wheelRetractMl = Math.min(100, (hit.wheelRetractMl || 0) + 5);
+        this.sim.emitChange();
+      }
+      return true;
+    }
+
+    if (hit.kind === 'vessel') {
+      const spec = APPARATUS[hit.typeId] || {};
+      if (spec.hasLid && !shiftKey) {
+        return stepDiscrete(`lid:${hit.id}`, deltaY, () => {
+          soundEngine.playGlassClink(hit.typeId, 0.7);
+          this.sim.cycleCrucibleLid(hit.id);
+        });
+      }
+      if (spec.isMortar && !shiftKey) {
+        return stepDiscrete(`mortar:${hit.id}`, deltaY, () => {
+          soundEngine.playMortarGrind();
+          this.sim.grindMortar(hit.id);
+        });
+      }
+      const stepDeg = (deltaY > 0 ? 1 : -1) * Math.min(14, Math.max(5, Math.abs(deltaY) * 0.09));
+      const curDeg = hit.tiltDeg || 0;
+      const nextDeg = clamp(0, 180, curDeg + stepDeg);
+      const dir = hit.flippedX ? -1 : 1;
+      this.sim.setVesselTiltDeg(hit.id, nextDeg, dir);
+      this._wheelTiltVesselId = nextDeg > 0 ? hit.id : null;
+      return true;
+    }
+
+    return false;
+  }
+
   findVesselAt(lx, ly, excludeId = null, includeTools = false) {
     if (includeTools) {
       for (let i = this.sim.items.length - 1; i >= 0; i--) {
@@ -677,6 +901,21 @@ export class LabWorkbenchCanvas {
         return;
       }
 
+      // 0B. Check draggable submerged tubing tip handle inside upright receiving vessel
+      const tubeTipHit = this.findTubeTipHandleAt(pt.x, pt.y);
+      if (tubeTipHit) {
+        this.setSelection([tubeTipHit.srcVessel.id], tubeTipHit.srcVessel.id);
+        this.tubeTipDragState = {
+          srcVesselId: tubeTipHit.srcVessel.id,
+          dstVesselId: tubeTipHit.dstVessel.id,
+        };
+        this.canvas.style.cursor = 'ns-resize';
+        this.canvas.setPointerCapture(e.pointerId);
+        if (this.callbacks.onSelect) this.callbacks.onSelect(tubeTipHit.srcVessel);
+        this.sim.emitChange();
+        return;
+      }
+
       // 0. Check direct tubing port handles on Liebig Condenser (Inlet Left / Outlet Right)
       const portHit = this.findCondenserPortAt(pt.x, pt.y);
       if (portHit) {
@@ -868,6 +1107,8 @@ export class LabWorkbenchCanvas {
 
     this.canvas.addEventListener('pointerleave', () => {
       this.pointerLogical = null;
+      this.hoveredTubeInfo = null;
+      this.resetWheelTiltedVessel(null);
       if (!this.dragState && !this.portDragState && !this.panDragState) {
         this.hoverItemId = null;
       }
@@ -905,6 +1146,18 @@ export class LabWorkbenchCanvas {
         const dy = this.standResizeState.startY - pt.y;
         const nextExt = Math.max(0, Math.min(200, Math.round(this.standResizeState.startExtendPx + dy)));
         this.sim.setStandExtension(this.standResizeState.standId, nextExt);
+        this.canvas.style.cursor = 'ns-resize';
+        return;
+      }
+      if (this.tubeTipDragState) {
+        const dstV = this.sim.getItem(this.tubeTipDragState.dstVesselId);
+        const dstSpec = dstV ? APPARATUS[dstV.typeId] : null;
+        if (dstV && dstSpec) {
+          const topY = dstV.y - dstSpec.height / 2 + 6;
+          const botY = dstV.y + dstSpec.height / 2 - 14;
+          const ratio = Math.max(0, Math.min(1, (pt.y - topY) / Math.max(12, botY - topY)));
+          this.sim.setTubeSubmersionRatio(this.tubeTipDragState.srcVesselId, ratio);
+        }
         this.canvas.style.cursor = 'ns-resize';
         return;
       }
@@ -955,6 +1208,13 @@ export class LabWorkbenchCanvas {
         return;
       }
       if (!this.dragState) {
+        this.hoveredTubeInfo = this.findTubeHoverAt(pt.x, pt.y);
+        const tubeTipHover = this.findTubeTipHandleAt(pt.x, pt.y);
+        if (tubeTipHover) {
+          this.hoverItemId = tubeTipHover.srcVessel.id;
+          this.canvas.style.cursor = 'ns-resize';
+          return;
+        }
         const standTipHover = this.findStandTipAt(pt.x, pt.y);
         if (standTipHover) {
           this.hoverItemId = standTipHover.id;
@@ -969,6 +1229,9 @@ export class LabWorkbenchCanvas {
         }
         const hit = this.hitTestItem(pt.x, pt.y);
         this.hoverItemId = hit ? hit.id : null;
+        if (!hit || hit.id !== this._wheelTiltVesselId) {
+          this.resetWheelTiltedVessel(null);
+        }
         if (this.zoomMode && this.zoomScale <= 1.02) {
           this.canvas.style.cursor = 'zoom-in';
         } else if (this.zoomScale > 1.02) {
@@ -1277,6 +1540,17 @@ export class LabWorkbenchCanvas {
         this.sim.emitChange();
         return;
       }
+      if (this.tubeTipDragState) {
+        this.tubeTipDragState = null;
+        this.canvas.style.cursor = 'default';
+        if (e?.pointerId != null && this.canvas.hasPointerCapture?.(e.pointerId)) {
+          try {
+            this.canvas.releasePointerCapture(e.pointerId);
+          } catch {}
+        }
+        this.sim.emitChange();
+        return;
+      }
       if (this.marqueeState) {
         this.marqueeState = null;
         this.canvas.style.cursor = 'default';
@@ -1431,7 +1705,9 @@ export class LabWorkbenchCanvas {
         }
         if (item && (item.kind === 'vessel' || item.kind === 'pipette' || item.kind === 'spoon')) {
           item.tiltAngle = 0;
+          if (item.kind === 'vessel') item.tiltDeg = 0;
         }
+        this.resetWheelTiltedVessel(null);
         if (item && item.kind === 'wash_bottle') {
           item.isSpraying = false;
           item.manualSprayHold = false;
@@ -1506,7 +1782,13 @@ export class LabWorkbenchCanvas {
     this.canvas.addEventListener(
       'wheel',
       (e) => {
-        if (!this.zoomMode && this.zoomScale <= 1.01 && !e.ctrlKey && !e.metaKey) return;
+        const pt = this.clientToLogical(e.clientX, e.clientY);
+        if (!this.zoomMode && this.zoomScale <= 1.01 && !e.ctrlKey && !e.metaKey) {
+          if (this.handleCanvasWheel(pt, e.deltaY, Boolean(e.shiftKey))) {
+            e.preventDefault();
+          }
+          return;
+        }
         e.preventDefault();
         const factor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
         const nextScale = Math.max(1.0, Math.min(4.2, this.zoomScale * factor));
@@ -1515,7 +1797,6 @@ export class LabWorkbenchCanvas {
         const cy = e.clientY - rect.top;
         const baseX = (cx - this.viewOffsetX) / this.viewScale;
         const baseY = (cy - this.viewOffsetY) / this.viewScale;
-        const pt = this.clientToLogical(e.clientX, e.clientY);
         const nextCx = pt.x - (baseX - BENCH_LOGICAL_W * 0.5) / nextScale;
         const nextCy = pt.y - (baseY - BENCH_LOGICAL_H * 0.5) / nextScale;
         if (nextScale > 1.01 && !this.zoomMode) this.zoomMode = true;
@@ -1814,7 +2095,7 @@ export class LabWorkbenchCanvas {
 
     const ordered = [
       ...this.sim.items.filter((i) => i.kind === 'stand' || i.kind === 'dc_power' || i.kind === 'volt_ammeter'),
-      ...this.sim.items.filter((i) => i.kind === 'scale' || i.kind === 'burner' || i.kind === 'diffusion_tube'),
+      ...this.sim.items.filter((i) => i.kind === 'scale' || i.kind === 'burner' || i.kind === 'bath' || i.kind === 'diffusion_tube'),
       ...this.sim.items.filter((i) => i.kind === 'gas_syringe' || i.kind === 'condenser' || i.kind === 'burette'),
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
       ...this.sim.items.filter((i) => i.kind === 'rubber_stopper' || i.kind === 'phen_cotton'),
@@ -1837,6 +2118,8 @@ export class LabWorkbenchCanvas {
         renderScale(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'burner') {
         renderBurner(ctx, item, isSelected, this.isDark, timeNow);
+      } else if (item.kind === 'bath') {
+        renderIceBath(ctx, item, isSelected, this.isDark, timeNow, this.langCode);
       } else if (item.kind === 'diffusion_tube') {
         renderDiffusionTube(ctx, item, isSelected, isDropTgt, this.isDark, this.langCode);
       } else if (item.kind === 'gas_syringe') {
@@ -2084,9 +2367,42 @@ export class LabWorkbenchCanvas {
       ctx.restore();
     }
 
-    // 7. Render hovered/dragged Canvas tooltip pills on the very top layer above vapor/steam/smoke!
+    // 7. Render hovered/dragged Canvas tooltip pills & live gas-tubing hover telemetry on top layer
     if (includeLabels) {
       flushCanvasLabelFrame(ctx);
+      if (this.hoveredTubeInfo && !this.dragState) {
+        const ht = this.hoveredTubeInfo;
+        const flow = ht.srcVessel?._liveTubeFlow || ht.flow;
+        const compText = flow?.composition?.length
+          ? flow.composition.map((c) => `${c.formula} ${c.pct}%`).join(', ')
+          : this.langCode === 'en'
+          ? 'No active flow'
+          : 'Chưa có dòng khí';
+        const rateTxt = `${(flow?.rateMlS || 0).toFixed(2)} mL/s · ${(flow?.tempC ?? 25).toFixed(1)}°C`;
+        const line1 = `${ht.srcVessel.label} → ${ht.dstVessel.label}: ${compText}`;
+        const line2 = `${rateTxt}`;
+        ctx.save();
+        ctx.font = '600 11px system-ui, sans-serif';
+        const boxW = Math.max(175, Math.min(340, Math.max(ctx.measureText(line1).width, ctx.measureText(line2).width) + 22));
+        const boxH = 40;
+        const bx = Math.max(8, Math.min(BENCH_LOGICAL_W - boxW - 8, ht.x + 12));
+        const by = Math.max(8, ht.y - boxH - 12);
+        ctx.fillStyle = this.isDark ? 'rgba(15, 23, 42, 0.94)' : 'rgba(255, 255, 255, 0.96)';
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.roundRect(bx, by, boxW, boxH, 8);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = this.isDark ? '#e0f2fe' : '#0f172a';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(line1, bx + 10, by + 6);
+        ctx.fillStyle = this.isDark ? '#38bdf8' : '#0369a1';
+        ctx.font = '600 10.5px ui-monospace, monospace';
+        ctx.fillText(line2, bx + 10, by + 22);
+        ctx.restore();
+      }
     }
   }
 }

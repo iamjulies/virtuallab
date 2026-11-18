@@ -62,8 +62,13 @@ export function computeWashBottleStreamArc(
   gravityPxS2 = CONSTANTS.GRAVITY_PX_S2 || 1800
 ) {
   const { x: spoutX, y: spoutY, dir } = getProbeTipPos(wb);
-  const vx0 = dir * 195;
-  const vy0 = -515;
+  const angleRad = ((Number(wb.sprayAngleDeg) || 0) * Math.PI) / 180;
+  const rawVx = dir * 195;
+  const rawVy = -515;
+  const cosA = Math.cos(angleRad);
+  const sinA = Math.sin(angleRad);
+  const vx0 = rawVx * cosA - rawVy * sinA;
+  const vy0 = rawVx * sinA + rawVy * cosA;
   const dtStep = 0.004;
   const points = [{ x: spoutX, y: spoutY }];
   let hitTarget = null;

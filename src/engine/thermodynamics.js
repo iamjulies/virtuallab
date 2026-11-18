@@ -234,7 +234,8 @@ export function stepVesselThermodynamics(
   reactionHeatJ,
   burnerPowerW,
   flameLevel = 0,
-  flameTempOverrideK = null
+  flameTempOverrideK = null,
+  bathSrc = null
 ) {
   const spec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
   const cTotal = Math.max(15.0, computeHeatCapacityJK(vessel));
@@ -266,10 +267,14 @@ export function stepVesselThermodynamics(
   const radCoeff = baseHLoss * lidLossScale * bunsenRadFactor;
   const tEnv = Math.max(150, env.tempK);
   const tCurClamped = Math.max(150, Math.min(1950, vessel.tempK));
+  const bathCoolingJ = bathSrc
+    ? -cTotal * (bathSrc.coolingK || 0.28) * (tCurClamped - bathSrc.tempK) * dt
+    : 0;
   const ambientExchangeJ =
     (-hLoss * (tCurClamped - env.tempK) -
       radCoeff * (Math.pow(tCurClamped, 4) - Math.pow(tEnv, 4))) *
-    dt;
+      dt +
+    bathCoolingJ;
 
   // Sub-boiling surface evaporation & concentrated HCl(g) / HNO3(g) / NH3(g) outgassing
   let steamProducedMol = 0;

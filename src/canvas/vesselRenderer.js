@@ -8,6 +8,7 @@ import {
   getVesselTubingPort,
 } from '../data/apparatus.js';
 import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
+import { findClipYForVolume, getInnerPolygonPx } from '../data/vesselGeometry.js';
 import { SPECIES } from '../data/species.js';
 import {
   computeLiquidVolumeL,
@@ -1540,6 +1541,20 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
       ctx.restore();
     }
 
+    // Draggable depth tip bead on upright receiving vessel tubing outlet
+    if (target.kind === 'vessel' && !target.isInverted && !target.isShattered) {
+      const isSubmerged = (v.tubeSubmersionRatio ?? 0.72) >= 0.4;
+      ctx.save();
+      ctx.fillStyle = isSubmerged ? '#0284c7' : '#f59e0b';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(p3.x, p3.y, 4.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Animated steam/gas flow pulses & tubing geometry/temperature label
     const isGasFlowing = (v.tubeFlowBannerTimer || 0) > 0 && v.tubeFlowFormula;
     if (isGasFlowing) {
@@ -1860,6 +1875,32 @@ export function renderVessel(ctx, vessel, opts) {
       if (hCl2 > 1e-6 || hNO2 > 1e-6) {
         ctx.fillStyle = hNO2 >= hCl2 ? 'rgba(217, 119, 6, 0.34)' : 'rgba(190, 242, 100, 0.32)';
         ctx.fillRect(x - w / 2, divY, w, interiorBottom - divY + 4);
+      }
+    } else if (Math.abs(effTilt) > 0.015) {
+      // Horizontally clipped liquid surface computed from rotated 2D vessel cross-section polygon
+      const { vertices, totalAreaPx } = getInnerPolygonPx(spec);
+      const radT = effTilt;
+      const cosT = Math.cos(radT);
+      const sinT = Math.sin(radT);
+      const rotatedPoly = vertices.map((p) => ({
+        x: p.x * cosT - p.y * sinT,
+        y: p.x * sinT + p.y * cosT,
+      }));
+      const clipLocalY = findClipYForVolume(rotatedPoly, totalAreaPx, liqMl + solMl, spec.maxVolumeMl || 250);
+      if (Number.isFinite(clipLocalY)) {
+        const bigSpan = Math.max(w, h) * 2.2;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(-effTilt);
+        ctx.fillStyle = vis.css;
+        ctx.fillRect(-bigSpan, clipLocalY, bigSpan * 2, bigSpan);
+        ctx.beginPath();
+        ctx.moveTo(-bigSpan, clipLocalY);
+        ctx.lineTo(bigSpan, clipLocalY);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        ctx.restore();
       }
     } else {
       if (strat.isMultiPhase && strat.layers.length >= 2) {
@@ -2742,6 +2783,22 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.globalAlpha = 0.62;
     ctx.beginPath();
     ctx.ellipse(rimX - 10, bottom - 1, 14 + Math.min(18, vessel.overflowRateMlS * 0.12), 4.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Exterior amorphous Carbon soot deposit from incomplete yellow Bunsen flame
+  if ((vessel.sootLevel || 0) > 0.02 && !vessel.isShattered) {
+    const sFrac = Math.min(1, vessel.sootLevel || 0);
+    ctx.save();
+    const sootSpan = Math.max(12, w * 0.42);
+    const sGrad = ctx.createRadialGradient(x, bottom - 1, 3, x, bottom - 1, sootSpan);
+    sGrad.addColorStop(0, `rgba(15, 23, 42, ${(0.88 * sFrac).toFixed(2)})`);
+    sGrad.addColorStop(0.55, `rgba(30, 41, 59, ${(0.55 * sFrac).toFixed(2)})`);
+    sGrad.addColorStop(1, 'rgba(15, 23, 42, 0)');
+    ctx.fillStyle = sGrad;
+    ctx.beginPath();
+    ctx.ellipse(x, bottom - 1, sootSpan, Math.max(8, h * 0.18), 0, Math.PI, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }

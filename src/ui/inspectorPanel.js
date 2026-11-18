@@ -157,11 +157,16 @@ export class InspectorPanel {
       const phenFlags = `${item.isSupersaturated ? 1 : 0}${(item.znPassivationFrac || 0) > 0.35 ? 1 : 0}${(item.pickeringFoamMl || 0) > 0.5 ? 1 : 0}${(item.langmuirCoverage || 0) > 0.55 ? 1 : 0}`;
       const cmpFlag = Array.isArray(this.sim.compareVesselIds) && this.sim.compareVesselIds.includes(item.id) ? 1 : 0;
       const softenFlag = (item.softenGlowFrac || 0) > 0.1 || (item.softenSagFrac || 0) > 0.05 ? 1 : 0;
+      const sootFlag = (item.sootLevel || 0) > 0.05 ? 1 : 0;
       const caoScore = computeCaOOptimizationScore(item);
       const caoSig = caoScore
         ? `${caoScore.points}:${caoScore.groundFine ? 1 : 0}${caoScore.ventedWhileHeating ? 1 : 0}${caoScore.roaringBlueZone ? 1 : 0}${caoScore.cooledProtected ? 1 : 0}`
         : 'n';
-      return `v|${atmMode}|${labSig}|${airFlags}|${item.id}|${item.isStoppered}|${item.lidState || 'open'}|${cmpFlag}|${softenFlag}|${caoSig}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
+      return `v|${atmMode}|${labSig}|${airFlags}|${item.id}|${item.isStoppered}|${item.lidState || 'open'}|${cmpFlag}|${softenFlag}|${sootFlag}|${caoSig}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'bath') {
+      const nestedCnt = this.sim.items.filter((i) => i.submergedInBathId === item.id).length;
+      return `bath|${item.id}|${item.bathMode || 'ice'}|${nestedCnt}|${langCode}|${logLen}`;
     }
     if (item.kind === 'burner') {
       return `b|${item.id}|${item.typeId}|${item.airHoleOpen !== false ? 1 : 0}|${langCode}|${logLen}`;
@@ -267,6 +272,42 @@ export class InspectorPanel {
         <div class="p-4 rounded-xl border border-theme bg-surface-alt text-center">
           <div class="text-sm font-semibold">${t('noSelection')}</div>
           <p class="text-xs text-muted mt-1 leading-relaxed">${t('selectVesselTip')}</p>
+        </div>
+      `;
+    } else if (item.kind === 'bath') {
+      const isIceSalt = item.bathMode === 'ice_salt';
+      const bathC = isIceSalt ? -10 : 0;
+      const nestedVessels = this.sim.items.filter((i) => i.kind === 'vessel' && i.submergedInBathId === item.id && !i.isShattered);
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">🧊 ${t('eq_ice_bath')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${APPARATUS.ice_bath?.materialSpec || ''}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex items-center justify-between">
+            <span class="text-muted">${t('metricTemp')}</span>
+            <strong class="font-mono text-sky-400">${(bathC + 273.15).toFixed(1)} K (${bathC}°C)</strong>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <span class="text-xs text-muted font-medium">${t('bathModeLabel')}</span>
+            <div class="grid grid-cols-2 gap-1.5">
+              <button type="button" id="bath-mode-ice" class="py-1.5 px-2 rounded-lg border text-xs font-semibold ${
+                !isIceSalt ? 'border-sky-500 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface text-muted'
+              }">${t('bathIceMode')}</button>
+              <button type="button" id="bath-mode-ice-salt" class="py-1.5 px-2 rounded-lg border text-xs font-semibold ${
+                isIceSalt ? 'border-cyan-400 bg-cyan-500/15 text-cyan-300' : 'border-theme bg-surface text-muted'
+              }">${t('bathIceSaltMode')}</button>
+            </div>
+          </div>
+          <p class="text-[11px] text-muted leading-relaxed">${t('bathHint')}</p>
+          ${
+            nestedVessels.length > 0
+              ? `<div class="text-xs text-sky-300 font-mono">📥 ${nestedVessels.map((v) => `${v.label} (${kelvinToCelsius(v.tempK).toFixed(1)}°C)`).join(', ')}</div>`
+              : ''
+          }
         </div>
       `;
     } else if (item.kind === 'scale') {
@@ -1332,10 +1373,31 @@ export class InspectorPanel {
 
         ${
           tubeGeom
-            ? `<div class="px-3 py-1.5 rounded-lg border border-sky-500/35 bg-sky-500/10 text-[11px] flex items-center justify-between gap-2">
-                <span class="text-muted">${t('tubeStatsNote')} · ${connTarget.label}</span>
-                <strong class="font-mono text-sky-400" id="live-tube-stats">${tubeGeom.arcLengthCm.toFixed(1)} cm · ${Math.min(tubeVolMl, tubeGeom.capacityMl).toFixed(2)}/${tubeGeom.capacityMl.toFixed(2)} mL</strong>
+            ? `<div class="px-3 py-1.5 rounded-lg border border-sky-500/35 bg-sky-500/10 text-[11px] flex flex-col gap-1.5">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-muted">${t('tubeStatsNote')} · ${connTarget.label}</span>
+                  <strong class="font-mono text-sky-400" id="live-tube-stats">${tubeGeom.arcLengthCm.toFixed(1)} cm · ${Math.min(tubeVolMl, tubeGeom.capacityMl).toFixed(2)}/${tubeGeom.capacityMl.toFixed(2)} mL</strong>
+                </div>
+                ${
+                  connTarget.kind === 'vessel' && !connTarget.isInverted
+                    ? `<label class="flex flex-col gap-1 border-t border-sky-500/20 pt-1">
+                         <div class="flex justify-between text-[11px]">
+                           <span class="text-muted">${t('tubeDepthLabel')}</span>
+                           <strong class="font-mono text-sky-300" id="live-tube-depth-pct">${Math.round((item.tubeSubmersionRatio ?? 0.72) * 100)}%</strong>
+                         </div>
+                         <input type="range" id="ins-tube-depth-slider" min="0" max="100" step="2" value="${Math.round((item.tubeSubmersionRatio ?? 0.72) * 100)}" class="w-full accent-sky-500 cursor-pointer" />
+                       </label>`
+                    : ''
+                }
               </div>`
+            : ''
+        }
+        ${
+          (item.sootLevel || 0) > 0.05
+            ? `<div class="px-3 py-1.5 rounded-lg border border-slate-500/50 bg-slate-800/40 text-xs flex items-center justify-between">
+                 <span class="text-slate-300">🖤 ${t('sootLevelLabel')}</span>
+                 <strong class="font-mono text-amber-300" id="live-soot-pct">${Math.round((item.sootLevel || 0) * 100)}%</strong>
+               </div>`
             : ''
         }
         ${
@@ -1562,6 +1624,15 @@ export class InspectorPanel {
         soundEngine.playTareBeep();
         this.sim.clearTare(item.id);
       });
+    } else if (item.kind === 'bath') {
+      this.container.querySelector('#bath-mode-ice')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        this.sim.setBathMode(item.id, 'ice');
+      });
+      this.container.querySelector('#bath-mode-ice-salt')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        this.sim.setBathMode(item.id, 'ice_salt');
+      });
     } else if (item.kind === 'burner') {
       this.container.querySelector('#ins-bunsen-air-toggle')?.addEventListener('click', () => {
         soundEngine.playFlameWhoosh(!item.airHoleOpen);
@@ -1705,6 +1776,9 @@ export class InspectorPanel {
             this.callbacks.onOpenTubeTarget?.(item.id);
           }
         }
+      });
+      this.container.querySelector('#ins-tube-depth-slider')?.addEventListener('input', (e) => {
+        this.sim.setTubeSubmersionRatio(item.id, Number(e.target.value) / 100);
       });
     } else if (item.kind === 'filter_funnel' || item.kind === 'condenser' || item.kind === 'burette') {
       this.container.querySelector('#ins-toggle-clamp')?.addEventListener('click', () => {
@@ -2241,6 +2315,12 @@ export class InspectorPanel {
         tubeEl.textContent = `${g.arcLengthCm.toFixed(1)} cm · ${Math.min(tMl, g.capacityMl).toFixed(2)}/${g.capacityMl.toFixed(2)} mL`;
       }
     }
+    const depthPctEl = this.container.querySelector('#live-tube-depth-pct');
+    const depthSlider = this.container.querySelector('#ins-tube-depth-slider');
+    if (depthPctEl) depthPctEl.textContent = `${Math.round((item.tubeSubmersionRatio ?? 0.72) * 100)}%`;
+    if (depthSlider) depthSlider.value = String(Math.round((item.tubeSubmersionRatio ?? 0.72) * 100));
+    const sootPctEl = this.container.querySelector('#live-soot-pct');
+    if (sootPctEl) sootPctEl.textContent = `${Math.round((item.sootLevel || 0) * 100)}%`;
 
     const colEl = this.container.querySelector('#live-collected-gas');
     const colCondEl = this.container.querySelector('#live-collected-cond');

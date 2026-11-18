@@ -1669,3 +1669,123 @@ export function renderPhenCotton(ctx, item, isSelected, isDark) {
   });
   ctx.restore();
 }
+
+export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCode = 'vi') {
+  const pal = getThemePalette(isDark);
+  const spec = APPARATUS[item.typeId] || { width: 144, height: 68 };
+  const w = spec.width;
+  const h = spec.height;
+  const left = item.x - w / 2;
+  const top = item.y - h / 2;
+  const isIceSalt = item.bathMode === 'ice_salt';
+  const bathC = isIceSalt ? -10 : 0;
+
+  ctx.save();
+  drawSelectionGlow(ctx, isSelected, false);
+
+  // Outer insulated polypropylene / stainless tub
+  const tubGrad = ctx.createLinearGradient(left, top, left + w, top);
+  if (isDark) {
+    tubGrad.addColorStop(0, '#1e293b');
+    tubGrad.addColorStop(0.5, '#334155');
+    tubGrad.addColorStop(1, '#1e293b');
+  } else {
+    tubGrad.addColorStop(0, '#cbd5e1');
+    tubGrad.addColorStop(0.5, '#f1f5f9');
+    tubGrad.addColorStop(1, '#cbd5e1');
+  }
+
+  ctx.fillStyle = tubGrad;
+  ctx.strokeStyle = isSelected ? '#3b82f6' : isIceSalt ? '#0284c7' : '#64748b';
+  ctx.lineWidth = isSelected ? 2.4 : 1.6;
+  ctx.beginPath();
+  ctx.roundRect(left, top + 6, w, h - 6, [6, 6, 12, 12]);
+  ctx.fill();
+  ctx.stroke();
+
+  // Inner chilled water / brine bath cavity
+  const liqGrad = ctx.createLinearGradient(0, top + 12, 0, top + h - 4);
+  if (isIceSalt) {
+    liqGrad.addColorStop(0, 'rgba(56, 189, 248, 0.55)');
+    liqGrad.addColorStop(1, 'rgba(30, 64, 175, 0.65)');
+  } else {
+    liqGrad.addColorStop(0, 'rgba(186, 230, 253, 0.55)');
+    liqGrad.addColorStop(1, 'rgba(125, 211, 252, 0.62)');
+  }
+  ctx.fillStyle = liqGrad;
+  ctx.beginPath();
+  ctx.roundRect(left + 6, top + 12, w - 12, h - 18, [3, 3, 9, 9]);
+  ctx.fill();
+
+  // Floating translucent ice cubes inside bath
+  for (let i = 0; i < 6; i++) {
+    const cx = left + 18 + i * 21 + Math.sin(timeNow * 1.4 + i) * 1.5;
+    const cy = top + 17 + (i % 2) * 5 + Math.cos(timeNow * 1.1 + i * 2) * 1.2;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate((i % 3 - 1) * 0.22);
+    ctx.fillStyle = isIceSalt ? 'rgba(224, 242, 254, 0.85)' : 'rgba(255, 255, 255, 0.84)';
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(-7, -5, 14, 10, 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Rim bevel highlight
+  ctx.strokeStyle = isDark ? 'rgba(226, 232, 240, 0.45)' : 'rgba(100, 116, 139, 0.55)';
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.roundRect(left - 2, top + 3, w + 4, 8, 4);
+  ctx.stroke();
+
+  // Condensation fog wisps & subzero frost crystals when Ice+NaCl (-10°C)
+  if (isIceSalt) {
+    ctx.fillStyle = 'rgba(224, 242, 254, 0.28)';
+    for (let f = 0; f < 4; f++) {
+      const fx = left + 22 + f * 32 + Math.sin(timeNow * 0.9 + f) * 4;
+      const fy = top + 4 - ((timeNow * 6 + f * 3) % 10);
+      ctx.beginPath();
+      ctx.arc(fx, fy, 8 + (f % 2) * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(240, 249, 255, 0.85)';
+    ctx.lineWidth = 1.1;
+    for (let c = 0; c < 4; c++) {
+      const fx = left + 18 + c * 34;
+      const fy = top + h - 10;
+      ctx.beginPath();
+      ctx.moveTo(fx - 3, fy);
+      ctx.lineTo(fx + 3, fy);
+      ctx.moveTo(fx, fy - 3);
+      ctx.lineTo(fx, fy + 3);
+      ctx.stroke();
+    }
+  }
+
+  // Front temp badge
+  ctx.fillStyle = isDark ? 'rgba(15, 23, 42, 0.82)' : 'rgba(255, 255, 255, 0.86)';
+  ctx.strokeStyle = isIceSalt ? '#38bdf8' : '#0ea5e9';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(item.x - 32, item.y + 4, 64, 16, 5);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = isIceSalt ? '#0284c7' : isDark ? '#e0f2fe' : '#0369a1';
+  ctx.font = 'bold 10px ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(isIceSalt ? '-10°C NaCl' : '0°C Ice', item.x, item.y + 12);
+
+  const labelMode = isIceSalt ? (langCode === 'en' ? 'Ice+NaCl (-10°C)' : 'Đá+Muối (-10°C)') : (langCode === 'en' ? 'Pure Ice (0°C)' : 'Nước đá (0°C)');
+  drawLabelPill(ctx, item.x, top - 14, `${item.label} · ${bathC}°C · ${labelMode}`, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : '#0ea5e9',
+    font: '600 10px system-ui, sans-serif',
+    height: 17,
+    itemId: item.id,
+  });
+  ctx.restore();
+}

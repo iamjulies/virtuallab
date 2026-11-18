@@ -6,6 +6,7 @@ import {
   STARTER_REAGENTS,
 } from '../data/species.js';
 import { APPARATUS, clampItemToStandY, getProbeTipPos, getStandGeometry, getSyringeGeometry, getVesselEndPorts } from '../data/apparatus.js';
+import { getVesselHoldVolumeMl } from '../data/vesselGeometry.js';
 import {
   calcSolidTransferRatio,
   computeContentsMassG,
@@ -45,6 +46,7 @@ import {
   computeSyringeTotalVolumeMl,
   computeTubingGeometry,
   getSyringeNozzlePos,
+  isTubeTipSubmerged,
   routeGasPacketToTarget,
   stepOpenGasBuoyancy,
   stepSyringeThermodynamics,
@@ -356,6 +358,12 @@ export class LabSimulation {
         isShattered: false,
         stirTimer: 0,
         tiltAngle: 0,
+        tiltDeg: 0,
+        tiltDir: 1,
+        sootLevel: 0,
+        tubeSubmersionRatio: 0.72,
+        submergedInBathId: null,
+        tiltPourRateMlS: 0,
         activeReactions: [],
         seenReactions: {},
         history: [], // [{ t, moles: {...}, tempK, ph }]
@@ -422,6 +430,11 @@ export class LabSimulation {
       if (typeId === 'water_trough') {
         base.moles.H2O_l = (800 * 0.997) / CONSTANTS.M_H2O;
       }
+    } else if (spec.kind === 'bath') {
+      Object.assign(base, {
+        bathMode: 'ice', // 'ice' (0 C) | 'ice_salt' (-10 C)
+        bathTempK: spec.bathTempIceK || 273.15,
+      });
     } else if (spec.kind === 'scale') {
       Object.assign(base, {
         tareG: 0,
@@ -463,6 +476,7 @@ export class LabSimulation {
     } else if (spec.kind === 'wash_bottle') {
       Object.assign(base, {
         waterMl: 250,
+        sprayAngleDeg: 0,
         isSpraying: false,
         manualSprayHold: false,
         sprayTargetId: null,
@@ -473,6 +487,7 @@ export class LabSimulation {
     } else if (spec.kind === 'condenser') {
       Object.assign(base, {
         waterFlowOn: true,
+        rotationDeg: 0,
         connectedFromId: null,
         outletTargetId: null,
         vaporInMoles: createEmptyGasMap(),
@@ -1199,6 +1214,13 @@ export class LabSimulation {
           bestCenterY = candY;
           bestSupport = sup;
         }
+      } else if (sup.kind === 'bath' && item.kind === 'vessel' && spec.shape !== 'trough') {
+        const bathBasinBottom = sup.y + supSpec.height / 2 - 12;
+        const candY = bathBasinBottom - spec.height / 2;
+        if (dx <= 54 && (alreadyOnSup || itemBottom <= bathBasinBottom + 24) && candY < bestCenterY) {
+          bestCenterY = candY;
+          bestSupport = sup;
+        }
       } else if (sup.kind === 'burner' && spec.heatable && item.kind === 'vessel') {
         const bnTop = sup.y - supSpec.height / 2 + 10;
         const nestSink = supSpec.hasIntegratedTripod && spec.shape === 'crucible' ? 10 : 0;
@@ -1247,10 +1269,14 @@ export class LabSimulation {
 
       const prevSupId = it.restingOnId;
       it.restingOnId = null;
+      if (it.kind === 'vessel') it.submergedInBathId = null;
       const { centerY, support } = this.getSupportSurfaceForItem(it);
       const snapTolY = it.kind === 'spoon' ? 34 : 22;
       if (support && Math.abs(it.y - centerY) <= snapTolY) {
         it.restingOnId = support.id;
+        if (it.kind === 'vessel' && support.kind === 'bath') {
+          it.submergedInBathId = support.id;
+        }
         it.y = centerY;
         if (it.kind === 'spoon') {
           const dir = it.flippedX ? 1 : -1;
@@ -4795,10 +4821,10 @@ export class LabSimulation {
     const target = this.getItem(v.connectedTargetId);
     if (!target || target.kind !== 'vessel' || target.isShattered) return;
 
-    const dpVac = this.environment.pressureBar - (v.internalPressureBar ?? this.environment.pressureBar);
+      const dpVac = this.environment.pressureBar - (v.internalPressureBar ?? this.environment.pressureBar);
     const tLiqL = computeLiquidVolumeL(target.moles, target.tempK);
     const tLiqMl = tLiqL * 1000;
-    if (dpVac <= 0.045 || tLiqMl <= 0.05) return;
+    if (dpVac <= 0.045 || tLiqMl <= 0.05 || !isTubeTipSubmerged(v, target)) return;
 
     const spec = APPARATUS[v.typeId];
     const vLiqMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
@@ -4830,17 +4856,205 @@ export class LabSimulation {
     v.fountainFlowColor = fountainVis.css;
     if (!v._fountainLogged) {
       v._fountainLogged = true;
-      this.addLog({
-        type: 'reaction',
-        equation: 'NH₃(g) + H₂O(l) ⇌ NH₃(aq) (P_bình ≪ P_kq ⇒ Phun trào chân không!)',
-        nameVi: 'Thí nghiệm Phun nước Ammonia (Chân không áp suất khí quyển)',
-        nameEn: 'Ammonia Vacuum Fountain (atmospheric pressure surge)',
-        descVi: 'NH₃ hòa tan mãnh liệt vào nước (~700 L khí / 1 L nước) làm áp suất bình tụt sâu, hút mạnh nước chỉ thị phun trào thành tia.',
-        descEn: 'Ultra-high Ammonia solubility collapses internal pressure, forcing indicator water violently up the fountain tube.',
-        vesselLabel: `${target.label} ⟹ ${v.label}`,
-      });
-      if (this.visualHooks.onAlert) {
-        this.visualHooks.onAlert('ammonia_fountain', v, { liquidColor: fountainVis.css });
+      if (!v.isShattered) {
+        const hadNH3Vacuum = (v.moles.NH3_aq || 0) > 1e-4 && (v.headspaceGasMoles?.NH3_g || 0) <= 1e-5;
+        this.addLog(
+          hadNH3Vacuum
+            ? {
+                type: 'reaction',
+                equation: 'NH₃(g) + H₂O(l) ⇌ NH₃(aq) (P_bình ≪ P_kq ⇒ Phun trào chân không!)',
+                nameVi: 'Thí nghiệm Phun nước Ammonia (Chân không áp suất khí quyển)',
+                nameEn: 'Ammonia Vacuum Fountain (atmospheric pressure surge)',
+                descVi: 'NH₃ hòa tan mãnh liệt vào nước (~700 L khí / 1 L nước) làm áp suất bình tụt sâu, hút mạnh nước chỉ thị phun trào thành tia.',
+                descEn: 'Ultra-high Ammonia solubility collapses internal pressure, forcing indicator water violently up the fountain tube.',
+                vesselLabel: `${target.label} ⟹ ${v.label}`,
+              }
+            : {
+                type: 'alert',
+                key: 'alertTubeSuckBack',
+                vesselLabel: `${target.label} ⟹ ${v.label}`,
+              }
+        );
+        if (this.visualHooks.onAlert) {
+          this.visualHooks.onAlert('ammonia_fountain', v, { liquidColor: fountainVis.css });
+        }
+      }
+    }
+  }
+
+  setBathMode(bathId, mode = 'ice') {
+    const b = this.getItem(bathId);
+    if (!b || b.kind !== 'bath') return false;
+    const spec = APPARATUS[b.typeId] || APPARATUS.ice_bath;
+    b.bathMode = mode === 'ice_salt' ? 'ice_salt' : 'ice';
+    b.bathTempK = b.bathMode === 'ice_salt' ? spec.bathTempSaltK || 263.15 : spec.bathTempIceK || 273.15;
+    this.emitChange();
+    return true;
+  }
+
+  setBunsenAirHole(burnerId, open) {
+    const b = this.getItem(burnerId);
+    if (!b || b.typeId !== 'bunsen_burner') return false;
+    b.airHoleOpen = Boolean(open);
+    const bSpec = APPARATUS.bunsen_burner;
+    const fl = Math.round(b.flameLevel || 0);
+    const tbl = b.airHoleOpen ? bSpec.powerLevelsW : bSpec.yellowPowerLevelsW;
+    b.powerW = tbl[fl] || 0;
+    this.emitChange();
+    return true;
+  }
+
+  setVesselTiltDeg(vesselId, deg, dir = 1) {
+    const v = this.getItem(vesselId);
+    if (!v || v.kind !== 'vessel' || v.isShattered) return false;
+    const clamped = Math.max(0, Math.min(180, Number(deg) || 0));
+    v.tiltDeg = clamped;
+    v.tiltDir = dir < 0 ? -1 : 1;
+    v.tiltAngle = v.tiltDir * ((clamped * Math.PI) / 180);
+    if (clamped <= 0.1) v.tiltPourRateMlS = 0;
+    this.emitChange();
+    return true;
+  }
+
+  setTubeSubmersionRatio(vesselId, ratio) {
+    const v = this.getItem(vesselId);
+    if (!v || v.kind !== 'vessel') return false;
+    v.tubeSubmersionRatio = Math.max(0, Math.min(1, Number(ratio) || 0));
+    this.emitChange();
+    return true;
+  }
+
+  setCondenserRotation(condenserId, deg) {
+    const c = this.getItem(condenserId);
+    if (!c || c.kind !== 'condenser') return false;
+    c.rotationDeg = Math.max(-45, Math.min(45, Number(deg) || 0));
+    this.emitChange();
+    return true;
+  }
+
+  setWashBottleAngle(wbId, deg) {
+    const wb = this.getItem(wbId);
+    if (!wb || wb.kind !== 'wash_bottle') return false;
+    wb.sprayAngleDeg = Math.max(-45, Math.min(45, Number(deg) || 0));
+    this.emitChange();
+    return true;
+  }
+
+  getBathCoolingSource(vessel) {
+    if (!vessel || vessel.kind !== 'vessel' || vessel.isShattered) return null;
+    if (vessel.restingOnId) {
+      const sup = this.getItem(vessel.restingOnId);
+      if (sup && sup.kind === 'bath') {
+        const bSpec = APPARATUS[sup.typeId] || APPARATUS.ice_bath;
+        const tBath = sup.bathTempK ?? (sup.bathMode === 'ice_salt' ? 263.15 : 273.15);
+        return { bath: sup, tempK: tBath, coolingK: bSpec.coolingK || 0.28 };
+      }
+    }
+    const vSpec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
+    for (const sup of this.items) {
+      if (sup.kind !== 'bath') continue;
+      if (Math.abs(vessel.x - sup.x) <= 56 && vessel.y + vSpec.height / 2 >= sup.y - 10 && vessel.y <= sup.y + 42) {
+        const bSpec = APPARATUS[sup.typeId] || APPARATUS.ice_bath;
+        const tBath = sup.bathTempK ?? (sup.bathMode === 'ice_salt' ? 263.15 : 273.15);
+        return { bath: sup, tempK: tBath, coolingK: bSpec.coolingK || 0.28 };
+      }
+    }
+    return null;
+  }
+
+  stepVesselTiltPouring(v, dt) {
+    v.tiltPourRateMlS = 0;
+    if (!v || v.kind !== 'vessel' || v.isShattered || v.isStoppered || (v.tiltDeg || 0) <= 0.5) return;
+    const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+    const dir = v.tiltDir < 0 ? -1 : 1;
+    const rad = ((v.tiltDeg || 0) * Math.PI) / 180;
+    const pourX = v.x + dir * Math.sin(rad) * (spec.height * 0.48 + 8);
+    const vHoldMl = getVesselHoldVolumeMl(spec, v.tiltDeg);
+    const curLiqL = computeLiquidVolumeL(v.moles, v.tempK);
+    const curLiqMl = curLiqL * 1000;
+    if (curLiqMl > vHoldMl + 0.02) {
+      const excessMl = curLiqMl - vHoldMl;
+      const dMl = Math.min(excessMl, Math.max(1.2, excessMl * 3.2) * dt);
+      const frac = Math.min(1, dMl / curLiqMl);
+      let dst = null;
+      let bestDist = Infinity;
+      for (const cand of this.items) {
+        if (cand.id === v.id || cand.kind !== 'vessel' || cand.isShattered || cand.isStoppered || cand.isInverted) continue;
+        const cSpec = APPARATUS[cand.typeId] || APPARATUS.beaker_250;
+        const dx = Math.abs(cand.x - pourX);
+        if (dx <= Math.max(46, cSpec.width * 0.52) && cand.y >= v.y - 24 && dx < bestDist) {
+          bestDist = dx;
+          dst = cand;
+        }
+      }
+      if (dst) {
+        this.pourBetweenVessels(v.id, dst.id, dMl, false, { silentUndo: true, silentEmit: true });
+      } else {
+        // Pour spills cleanly onto bench
+        const tempSnap = { ...v.moles };
+        for (const [spId, n] of Object.entries(tempSnap)) {
+          const sp = SPECIES[spId];
+          if (sp && (sp.phase === 'l' || sp.phase === 'aq')) {
+            const rem = n * (1 - frac);
+            if (rem < 1e-12) delete v.moles[spId];
+            else v.moles[spId] = rem;
+          }
+        }
+      }
+      v.tiltPourRateMlS = dMl / Math.max(1e-4, dt);
+    }
+
+    // Gas pouring at tilt >= 15 deg: dense gases (CO2/Cl2) cascade downward onto lit splints; light H2 pours upward onto flames
+    if (v.tiltDeg >= 15) {
+      const head = v.headspaceGasMoles || {};
+      const denseGas = (head.CO2_g || 0) + (head.Cl2_g || 0);
+      if (denseGas > 1e-5) {
+        const dBleed = Math.min(denseGas, Math.max(5e-5, denseGas * 1.8 * dt));
+        if (head.CO2_g > 0) head.CO2_g = Math.max(0, head.CO2_g - dBleed * (head.CO2_g / denseGas));
+        if (head.Cl2_g > 0) head.Cl2_g = Math.max(0, head.Cl2_g - dBleed * (head.Cl2_g / denseGas));
+        for (const spl of this.items) {
+          if (spl.kind !== 'splint' || (spl.mode !== 'burning' && spl.mode !== 'glowing')) continue;
+          const tip = getProbeTipPos(spl);
+          if (Math.abs(tip.x - pourX) <= 72 && tip.y >= v.y - 24 && tip.y <= v.y + 195) {
+            spl.mode = 'unlit';
+            spl.cooldownTimer = 0.4;
+            this.visualHooks.onAlert?.('co2_extinguish', spl, {});
+            if (this.timeSec - (spl._seenCo2Ext ?? -99) > 3.5) {
+              spl._seenCo2Ext = this.timeSec;
+              this.addLog({ type: 'alert', key: 'alertGasExtinguishedSplint', vesselLabel: `${v.label} → ${spl.label}` });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  stepGasFlameInteractions(v, rateMap, dt) {
+    if (!v || v.kind !== 'vessel' || v.isShattered || v.isStoppered) return;
+    const h2Flow = (rateMap?.H2_g || 0) + ((v.tiltDeg || 0) >= 12 ? (v.headspaceGasMoles?.H2_g || 0) * 1.5 : 0);
+    if (h2Flow <= 2.5e-5) return;
+    if (this.timeSec - (v._seenH2Flash ?? -99) < 3.5) return;
+
+    const vSpec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+    const rad = ((v.tiltDeg || 0) * Math.PI) / 180;
+    const dir = v.tiltDir < 0 ? -1 : 1;
+    const spoutX = v.x + dir * Math.sin(rad) * (vSpec.height * 0.48 + 8);
+    const spoutY = v.y - Math.cos(rad) * (vSpec.height * 0.48);
+    for (const flm of this.items) {
+      const isLitBurner = flm.kind === 'burner' && (flm.powerW || 0) > 0;
+      const isLitSplint = flm.kind === 'splint' && (flm.mode === 'burning' || flm.mode === 'glowing');
+      if (!isLitBurner && !isLitSplint) continue;
+      const fx = isLitSplint ? getProbeTipPos(flm).x : flm.x;
+      const fy = isLitSplint ? getProbeTipPos(flm).y : flm.y - 26;
+      const distTop = Math.hypot(v.x - fx, (v.y - vSpec.height / 2) - fy);
+      const distSpout = Math.hypot(spoutX - fx, spoutY - fy);
+      const dist = Math.min(distTop, distSpout);
+      if (dist <= 135 && v.restingOnId !== flm.id) {
+        v._seenH2Flash = this.timeSec;
+        if (v.headspaceGasMoles?.H2_g) v.headspaceGasMoles.H2_g *= 0.2;
+        this.visualHooks.onAlert?.('oxyhydrogen_detonation', { x: (spoutX + fx) * 0.5, y: (spoutY + fy) * 0.5 }, { blastScale: 0.75 });
+        this.addLog({ type: 'alert', key: 'alertGasFlashIgnition', vesselLabel: v.label });
+        break;
       }
     }
   }
@@ -4927,12 +5141,32 @@ export class LabSimulation {
       // Continuous gravity spillover above physical brim
       this.stepVesselOverflow(v, scaledDt);
 
+      // Clear expired live gas tubing hover telemetry
+      if (v._liveTubeFlow && (!v.connectedTargetId || Date.now() - v._liveTubeFlow.updatedAt > 350)) {
+        v._liveTubeFlow = null;
+      }
+
+      // 2D cross-section wheel-tilt pouring & invisible gas cascading onto flames
+      this.stepVesselTiltPouring(v, scaledDt);
+
       // Check burner power & flame level (resting directly on burner / clay triangle OR clamped/held over flame plume)
       const heatSrc = this.getBurnerHeatingSource(v);
+      const bathSrc = this.getBathCoolingSource(v);
+      v.submergedInBathId = bathSrc?.bath?.id || null;
       const burnerPowerW = heatSrc?.powerW || 0;
       const burnerFlameLevel = heatSrc?.flameLevel || 0;
       const burnerFlameTempK = heatSrc?.flameTempK || null;
       v._bunsenHeated = Boolean(heatSrc?.burner?.typeId === 'bunsen_burner' && burnerPowerW > 0);
+      if (v._bunsenHeated && heatSrc.burner.airHoleOpen === false) {
+        v.sootLevel = Math.min(1.0, (v.sootLevel || 0) + 0.095 * scaledDt);
+      } else if (
+        v._bunsenHeated &&
+        heatSrc.burner.airHoleOpen !== false &&
+        (v.tempK >= 430 || (heatSrc.flameTempK || 0) >= 1100) &&
+        (v.sootLevel || 0) > 0
+      ) {
+        v.sootLevel = Math.max(0, (v.sootLevel || 0) - 0.16 * scaledDt);
+      }
 
       const frameGas = createZeroGasMap();
       let frameSteam = 0;
@@ -5008,7 +5242,8 @@ export class LabSimulation {
           chemRes.reactionHeatJ,
           burnerPowerW,
           burnerFlameLevel,
-          burnerFlameTempK
+          burnerFlameTempK,
+          bathSrc
         );
         frameFreezeMeltMol += (thermRes.freezeMeltRateMolS || 0) * dt;
         if (Number.isFinite(thermRes.freezePointK)) {
@@ -5567,6 +5802,7 @@ export class LabSimulation {
       }
 
       v.lastGasRateMap = rateMap;
+      this.stepGasFlameInteractions(v, rateMap, scaledDt);
       v.lastTotalRateMolS = Array.from(frameActiveMap.values()).reduce((s, r) => s + (r.rateMolS || 0), 0);
       for (const gId of ALL_GAS_IDS) {
         if (gId !== 'H2O_g') v.cumulativeGasMol = (v.cumulativeGasMol || 0) + (frameGas[gId] || 0);
