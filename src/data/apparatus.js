@@ -1259,25 +1259,39 @@ export function getProbeTipPos(item) {
   return { x: item.x, y: item.y, dir };
 }
 
+export function rotatePointAround(px, py, cx, cy, rad) {
+  if (!rad) return { x: px, y: py };
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const dx = px - cx;
+  const dy = py - cy;
+  return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+}
+
 export function getVesselEndPorts(vessel) {
   if (!vessel || vessel.kind !== 'vessel' || vessel.isShattered) return null;
   const spec = APPARATUS[vessel.typeId] || APPARATUS.erlenmeyer_250;
+  const effTilt = (vessel.tiltAngle || 0) + (vessel.landingTilt || 0);
   if (spec.isHorizontalTube) {
+    const lp = rotatePointAround(vessel.x - spec.width / 2 - 4, vessel.y, vessel.x, vessel.y, effTilt);
+    const lm = rotatePointAround(vessel.x - spec.width / 2 + 1, vessel.y, vessel.x, vessel.y, effTilt);
+    const rp = rotatePointAround(vessel.x + spec.width / 2 + 4, vessel.y, vessel.x, vessel.y, effTilt);
+    const rm = rotatePointAround(vessel.x + spec.width / 2 - 1, vessel.y, vessel.x, vessel.y, effTilt);
     return {
       left: {
         side: 'left',
-        x: vessel.x - spec.width / 2 - 4,
-        y: vessel.y,
-        mouthX: vessel.x - spec.width / 2 + 1,
-        mouthY: vessel.y,
+        x: lp.x,
+        y: lp.y,
+        mouthX: lm.x,
+        mouthY: lm.y,
         stoppered: Boolean(vessel.leftStoppered ?? vessel.isStoppered),
       },
       right: {
         side: 'right',
-        x: vessel.x + spec.width / 2 + 4,
-        y: vessel.y,
-        mouthX: vessel.x + spec.width / 2 - 1,
-        mouthY: vessel.y,
+        x: rp.x,
+        y: rp.y,
+        mouthX: rm.x,
+        mouthY: rm.y,
         stoppered: Boolean(vessel.rightStoppered ?? vessel.isStoppered),
       },
     };
@@ -1285,21 +1299,25 @@ export function getVesselEndPorts(vessel) {
   if (spec.isUTube) {
     const dx = spec.limbSpacingX || 28;
     const topY = vessel.y - spec.height / 2;
+    const lp = rotatePointAround(vessel.x - dx, topY - 8, vessel.x, vessel.y, effTilt);
+    const lm = rotatePointAround(vessel.x - dx, topY + 2, vessel.x, vessel.y, effTilt);
+    const rp = rotatePointAround(vessel.x + dx, topY - 8, vessel.x, vessel.y, effTilt);
+    const rm = rotatePointAround(vessel.x + dx, topY + 2, vessel.x, vessel.y, effTilt);
     return {
       left: {
         side: 'left',
-        x: vessel.x - dx,
-        y: topY - 8,
-        mouthX: vessel.x - dx,
-        mouthY: topY + 2,
+        x: lp.x,
+        y: lp.y,
+        mouthX: lm.x,
+        mouthY: lm.y,
         stoppered: Boolean(vessel.leftStoppered ?? vessel.isStoppered),
       },
       right: {
         side: 'right',
-        x: vessel.x + dx,
-        y: topY - 8,
-        mouthX: vessel.x + dx,
-        mouthY: topY + 2,
+        x: rp.x,
+        y: rp.y,
+        mouthX: rm.x,
+        mouthY: rm.y,
         stoppered: Boolean(vessel.rightStoppered ?? vessel.isStoppered),
       },
     };
@@ -1319,8 +1337,24 @@ export function getVesselTubingPort(vessel, preferredSide = null) {
     return { x: chosen.x, y: chosen.y, side: activeSide };
   }
   if (!vessel.isStoppered) return null;
-  if (vessel.isInverted) {
-    return { x: vessel.x, y: vessel.y + spec.height / 2 + 8, side: 'main' };
+  const effTilt = (vessel.tiltAngle || 0) + (vessel.landingTilt || 0);
+  const rawY = vessel.isInverted ? vessel.y + spec.height / 2 + 8 : vessel.y - spec.height / 2 - 8;
+  const pt = rotatePointAround(vessel.x, rawY, vessel.x, vessel.y, effTilt);
+  return { x: pt.x, y: pt.y, side: 'main' };
+}
+
+export function getTubeDestTipPos(sourceItem, targetVessel) {
+  if (!targetVessel || targetVessel.kind !== 'vessel') {
+    return targetVessel ? { x: targetVessel.x, y: targetVessel.y } : { x: 0, y: 0 };
   }
-  return { x: vessel.x, y: vessel.y - spec.height / 2 - 8, side: 'main' };
+  const tSpec = APPARATUS[targetVessel.typeId] || APPARATUS.beaker_250;
+  const effTilt = (targetVessel.tiltAngle || 0) + (targetVessel.landingTilt || 0);
+  if (targetVessel.isInverted) {
+    return rotatePointAround(targetVessel.x, targetVessel.y + tSpec.height / 2 - 4, targetVessel.x, targetVessel.y, effTilt);
+  }
+  const subRatio = Math.max(0, Math.min(1, sourceItem?.tubeSubmersionRatio ?? 0.72));
+  const uprightMouthY = targetVessel.y - tSpec.height / 2 + 2;
+  const uprightTipY = uprightMouthY + subRatio * Math.max(16, tSpec.height - 10);
+  const finalRawY = targetVessel.isStoppered && subRatio < 0.08 ? uprightMouthY - 10 : uprightTipY;
+  return rotatePointAround(targetVessel.x, finalRawY, targetVessel.x, targetVessel.y, effTilt);
 }

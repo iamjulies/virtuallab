@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v3-build-14';
+const CACHE_NAME = 'virlab-beta-v3-build-15';
 const ASSETS = [
   './',
   './index.html',
@@ -42,7 +42,9 @@ const ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' })))
+    )
   );
   self.skipWaiting();
 });
@@ -60,8 +62,13 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  const reqUrl = new URL(event.request.url);
+  const fetchPromise =
+    reqUrl.origin === self.location.origin
+      ? fetch(event.request.url, { cache: 'no-cache' })
+      : fetch(event.request);
   event.respondWith(
-    fetch(event.request)
+    fetchPromise
       .then((res) => {
         if (res && res.ok) {
           const copy = res.clone();

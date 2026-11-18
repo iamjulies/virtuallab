@@ -1,4 +1,4 @@
-import { APPARATUS, getCondenserPorts, getProbeTipPos, getSyringeGeometry } from '../data/apparatus.js';
+import { APPARATUS, getCondenserPorts, getProbeTipPos, getSyringeGeometry, getTubeDestTipPos } from '../data/apparatus.js';
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, computeSolutionVisuals, computePH } from '../engine/equilibrium.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
@@ -959,9 +959,7 @@ export function renderElectrodeCollectorTubes(ctx, items, isDark, timeNow = 0) {
             const g = getSyringeGeometry(target);
             return { x: g.nozzleX, y: g.nozzleY };
           })()
-        : target.isInverted
-        ? { x: target.x, y: target.y + tSpec.height / 2 - 4 }
-        : { x: target.x, y: target.y - tSpec.height / 2 + 10 };
+        : getTubeDestTipPos(el, target);
 
     const midY = Math.min(p0.y, p3.y) - 48;
     const p1 = { x: p0.x, y: midY };
@@ -997,6 +995,16 @@ export function renderElectrodeCollectorTubes(ctx, items, isDark, timeNow = 0) {
         ctx.arc(bx, by, 2.2, 0, Math.PI * 2);
         ctx.fill();
       }
+    }
+    if (target.kind === 'vessel' && !target.isInverted && !target.isShattered) {
+      const isSub = (el.tubeSubmersionRatio ?? 0.72) >= 0.4;
+      ctx.fillStyle = isSub ? '#0284c7' : '#f59e0b';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(p3.x, p3.y, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -1592,6 +1600,7 @@ export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFrom
 
   ctx.save();
   ctx.translate(x, y);
+  if (item._tiltRad) ctx.rotate(item._tiltRad);
   if (orient === 'left') ctx.rotate(-Math.PI / 2);
   else if (orient === 'right') ctx.rotate(Math.PI / 2);
   else if (orient === 'bottom') ctx.rotate(Math.PI);
@@ -1660,6 +1669,11 @@ export function renderPhenCotton(ctx, item, isSelected, isDark) {
   const b = Math.round(182 * lvl + 252 * (1 - lvl));
 
   ctx.save();
+  if (item._tiltRad) {
+    ctx.translate(x, y);
+    ctx.rotate(item._tiltRad);
+    ctx.translate(-x, -y);
+  }
   drawSelectionGlow(ctx, isSelected, false);
   ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
   ctx.strokeStyle = isSelected ? '#3b82f6' : lvl > 0.25 ? '#ec4899' : '#94a3b8';

@@ -30,13 +30,72 @@ function formatReagentMolPreview(reg, amount) {
   return `${SPECIES[firstId]?.formula || firstId}: ${(perMlVal * amount * 1000).toFixed(2)} mmol${concNote}`;
 }
 
+function getReagentConversionRates(reg) {
+  if (!reg) return { isSolid: false, density: 1, molPerUnit: 0.01 };
+  if (reg.kind === 'solid') {
+    const sp = SPECIES[reg.speciesId];
+    const molarMass = sp?.molarMass || 58.44;
+    return { isSolid: true, density: 1, molPerG: 1 / molarMass, molPerUnit: 1 / molarMass };
+  }
+  const density = reg.densityGPerMl || 1.0;
+  const entries = Object.entries(reg.perMl || {});
+  const molPerMl =
+    reg.previewMode === 'solvent_water'
+      ? reg.perMl?.H2O_l || 1 / 18.015
+      : entries[0]?.[1] || 0.001;
+  return { isSolid: false, density, molPerMl, molPerUnit: molPerMl };
+}
+
+function toCanonicalAmount(reg, val, unit) {
+  const c = getReagentConversionRates(reg);
+  if (c.isSolid) {
+    return unit === 'mol' ? val / c.molPerG : val;
+  }
+  if (unit === 'g') return val / c.density;
+  if (unit === 'mol') return val / c.molPerMl;
+  return val;
+}
+
+function fromCanonicalAmount(reg, canonAmt, unit) {
+  const c = getReagentConversionRates(reg);
+  if (c.isSolid) {
+    return unit === 'mol' ? canonAmt * c.molPerG : canonAmt;
+  }
+  if (unit === 'g') return canonAmt * c.density;
+  if (unit === 'mol') return canonAmt * c.molPerMl;
+  return canonAmt;
+}
+
+function formatUnitConversions(reg, canonAmt, activeUnit) {
+  if (!reg) return '';
+  const c = getReagentConversionRates(reg);
+  const parts = [];
+  if (c.isSolid) {
+    if (activeUnit !== 'g') parts.push(`${canonAmt.toFixed(2)} g`);
+    if (activeUnit !== 'mol') {
+      const m = canonAmt * c.molPerG;
+      parts.push(`${(m * 1000).toFixed(2)} mmol (${m.toFixed(4)} mol)`);
+    }
+  } else {
+    if (activeUnit !== 'mL') parts.push(`${canonAmt.toFixed(2)} mL`);
+    if (activeUnit !== 'g') parts.push(`${(canonAmt * c.density).toFixed(2)} g`);
+    if (activeUnit !== 'mol') {
+      const m = canonAmt * c.molPerMl;
+      parts.push(m >= 0.05 ? `${m.toFixed(3)} mol` : `${(m * 1000).toFixed(2)} mmol`);
+    }
+  }
+  const basePreview = formatReagentMolPreview(reg, canonAmt);
+  return parts.length > 0 ? `${parts.join(' · ')} (${basePreview})` : basePreview;
+}
+
 export class DosingModal {
-  constructor(container, sim, getLang, onStartBenchPick = null) {
+  constructor(container, sim, getLang, onStartBenchPick = null, getSpotlightRect = null) {
     this.container = container;
     this.sim = sim;
     this.getLang = getLang;
     this.onStartBenchPick = onStartBenchPick;
-    this.state = null; // { mode: 'reagent'|'transfer', reagentId, sourceVesselId, targetVesselId, amount, rateMlS, fine, includePpt, pouredLive }
+    this.getSpotlightRect = getSpotlightRect;
+    this.state = null; // { mode: 'reagent'|'transfer', reagentId, sourceVesselId, targetVesselId, amount, unit, rateMlS, fine, includePpt, pouredLive }
     this.pourInterval = null;
   }
 
@@ -95,6 +154,7 @@ export class DosingModal {
       reagentId,
       targetVesselId: target.id,
       amount: reg.defaultDose,
+      unit: reg.kind === 'solid' ? 'g' : 'mL',
       rateMlS: reg.isIndicator ? 0.5 : 10,
       fine: false,
       pouredLive: 0,
@@ -211,17 +271,61 @@ export class DosingModal {
             (i.kind === 'filter_funnel' || (i.kind === 'burette' && (!regForTarget || regForTarget.kind === 'liquid')))))
     );
 
+    const wrapBackdropHtml = (targetFocusId, innerCardHtml) => {
+      const spot = targetFocusId ? this.getSpotlightRect?.(targetFocusId) : null;
+      const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+      const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+      const cardW = Math.min(410, Math.max(300, vw - 24));
+      let cardLeft = Math.round((vw - cardW) * 0.5);
+      let cardTop = Math.round(Math.max(16, (vh - 460) * 0.5));
+      let spotHtml = '';
+      let backdropBg = 'rgba(2, 6, 23, 0.55)';
+      if (spot && spot.width > 10 && spot.height > 10) {
+        const sx = Math.round(Math.max(4, spot.left - 8));
+        const sy = Math.round(Math.max(4, spot.top - 8));
+        const sw = Math.round(spot.width + 16);
+        const sh = Math.round(spot.height + 16);
+        backdropBg = 'transparent';
+        spotHtml = `<div id="dosing-spotlight-ring" style="position:fixed;left:${sx}px;top:${sy}px;width:${sw}px;height:${sh}px;border-radius:14px;border:2.5px solid #38bdf8;box-shadow:0 0 0 9999px rgba(2,6,23,0.62),0 0 26px rgba(56,189,248,0.72);pointer-events:none;z-index:48;"></div>`;
+        if (vw - (sx + sw) >= cardW + 24) {
+          cardLeft = sx + sw + 16;
+        } else if (sx >= cardW + 24) {
+          cardLeft = sx - cardW - 16;
+        } else {
+          cardLeft = spot.centerX < vw * 0.5 ? Math.max(12, vw - cardW - 16) : 12;
+        }
+        cardTop = Math.max(14, Math.min(vh - 540, Math.round(spot.centerY - 240)));
+      }
+      return `
+        <div class="fixed inset-0 z-50" style="background:${backdropBg}" id="dosing-backdrop">
+          ${spotHtml}
+          <div id="dosing-card" style="position:fixed;z-index:51;left:${cardLeft}px;top:${cardTop}px;width:${cardW}px;max-height:calc(100vh - 24px);overflow-y:auto;"
+            class="rounded-2xl border border-theme bg-surface p-5 shadow-2xl flex flex-col gap-3 text-main">
+            ${innerCardHtml}
+          </div>
+        </div>
+      `;
+    };
+
     if (st.mode === 'reagent') {
       const reg = STARTER_REAGENTS.find((r) => r.id === st.reagentId);
       const isSolid = reg.kind === 'solid';
       const title = isSolid ? t('dosingTitleSolid') : t('dosingTitleLiquid');
-      const molPreview = formatReagentMolPreview(reg, st.amount);
+      const unitList = isSolid ? ['g', 'mol'] : ['mL', 'g', 'mol'];
+      const curUnit = unitList.includes(st.unit) ? st.unit : isSolid ? 'g' : 'mL';
+      st.unit = curUnit;
+      const dispValRaw = fromCanonicalAmount(reg, st.amount, curUnit);
+      const dispValStr = curUnit === 'mol' ? Number(dispValRaw.toFixed(4)) : Number(dispValRaw.toFixed(2));
+      const minDisp = Math.max(curUnit === 'mol' ? 0.0001 : 0.01, fromCanonicalAmount(reg, reg.minDose, curUnit));
+      const maxDisp = Math.max(minDisp * 2, fromCanonicalAmount(reg, reg.maxDose, curUnit));
+      const stepDisp = curUnit === 'mol' ? 0.001 : reg.step;
+      const convPreview = formatUnitConversions(reg, st.amount, curUnit);
       const presets =
         reg.dosePresets || (isSolid ? [0.25, 0.5, 1.0, 2.5, 5.0] : [1, 5, 10, 25, 50, 100]);
 
-      this.container.innerHTML = `
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="dosing-backdrop">
-          <div class="w-full max-w-md rounded-2xl border border-theme bg-surface p-5 shadow-2xl flex flex-col gap-3.5 text-main">
+      this.container.innerHTML = wrapBackdropHtml(
+        st.targetVesselId,
+        `
             <div class="flex items-start justify-between gap-2">
               <div>
                 <h3 class="text-sm font-bold">${title}: <span class="text-accent">${t(reg.i18nKey)}</span></h3>
@@ -230,37 +334,43 @@ export class DosingModal {
               <button type="button" id="dosing-close-x" class="px-2 py-1 rounded text-xs text-muted hover:text-main border border-theme">✕</button>
             </div>
 
-            <!-- Visual on-bench Target vessel selector -->
             ${this.renderTargetPickRow(
               vessels.find((v) => v.id === st.targetVesselId) || vessels[0],
               vessels.map((v) => v.id),
               t
             )}
 
-            <!-- Exact Mass / Volume Input -->
             <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2">
-              <div class="flex items-center justify-between">
-                <label class="text-xs font-semibold">${isSolid ? t('massLabel') : t('volumeLabel')}</label>
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1" role="group">
+                  ${unitList
+                    .map(
+                      (u) => `<button type="button" class="dose-unit-btn px-2 py-0.5 rounded border text-[11px] font-bold ${
+                        curUnit === u ? 'border-accent bg-accent text-white' : 'border-theme bg-surface text-muted hover:text-main'
+                      }" data-unit="${u}">${u}</button>`
+                    )
+                    .join('')}
+                </div>
                 <div class="flex items-center gap-1.5">
-                  <input id="dosing-num" type="number" min="0.01" max="${reg.maxDose}" step="${reg.step}" value="${st.amount}"
+                  <input id="dosing-num" type="number" step="any" value="${dispValStr}"
                     class="w-24 px-2 py-1 rounded border border-theme bg-surface text-xs font-mono font-bold text-right" />
-                  <span class="text-xs font-semibold">${isSolid ? 'g' : 'mL'}</span>
+                  <span class="text-xs font-semibold">${curUnit}</span>
                 </div>
               </div>
-              <input id="dosing-slider" type="range" min="${reg.minDose}" max="${reg.maxDose}" step="${reg.step}" value="${st.amount}" class="w-full accent-blue-500" />
-              <div class="flex flex-wrap gap-1.5 mt-1">
+              <input id="dosing-slider" type="range" min="${minDisp}" max="${maxDisp}" step="${stepDisp}" value="${dispValRaw}" class="w-full accent-blue-500" />
+              <div class="flex flex-wrap gap-1.5 mt-0.5">
                 ${presets
                   .map(
                     (p) =>
-                      `<button type="button" class="dose-preset px-2 py-1 rounded border border-theme bg-surface text-xs font-mono hover:border-accent" data-val="${p}">${p} ${
+                      `<button type="button" class="dose-preset px-2 py-0.5 rounded border border-theme bg-surface text-[11px] font-mono hover:border-accent" data-val="${p}">${p} ${
                         isSolid ? 'g' : 'mL'
                       }</button>`
                   )
                   .join('')}
               </div>
-              <div class="text-xs text-muted pt-1 border-t border-theme flex justify-between">
-                <span>${t('molesPreview')}</span>
-                <span id="dosing-mol-preview" class="font-mono font-semibold text-main">${molPreview}</span>
+              <div class="text-[11px] text-muted pt-1 border-t border-theme flex justify-between gap-2">
+                <span class="shrink-0">${t('molesPreview')}</span>
+                <span id="dosing-mol-preview" class="font-mono font-semibold text-main text-right">${convPreview}</span>
               </div>
             </div>
 
@@ -280,7 +390,6 @@ export class DosingModal {
               </div>
               `
                 : `
-              <!-- Liquid Flow Rate & Hold-to-Pour -->
               <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2">
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-muted">${t('flowRateLabel')}</span>
@@ -320,17 +429,16 @@ export class DosingModal {
                 ${reg.confirmKey ? t(reg.confirmKey) : t('btnAddExact')}
               </button>
             </div>
-          </div>
-        </div>
-      `;
+        `
+      );
     } else if (st.mode === 'transfer') {
       const src = this.sim.getItem(st.sourceVesselId);
       const srcLiqMl = computeLiquidVolumeL(src.moles, src.tempK) * 1000;
       const others = vessels.filter((v) => v.id !== st.sourceVesselId);
 
-      this.container.innerHTML = `
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="dosing-backdrop">
-          <div class="w-full max-w-md rounded-2xl border border-theme bg-surface p-5 shadow-2xl flex flex-col gap-3.5 text-main">
+      this.container.innerHTML = wrapBackdropHtml(
+        st.targetVesselId || st.sourceVesselId,
+        `
             <div class="flex items-start justify-between gap-2">
               <div>
                 <h3 class="text-sm font-bold">${t('dosingTitleTransfer')}</h3>
@@ -349,12 +457,21 @@ export class DosingModal {
               <div class="flex items-center justify-between">
                 <label class="text-xs font-semibold">${t('volumeLabel')}</label>
                 <div class="flex items-center gap-1.5">
-                  <input id="dosing-num" type="number" min="0.05" max="${Math.max(0.1, srcLiqMl.toFixed(2))}" step="0.5" value="${st.amount}"
+                  <input id="dosing-num" type="number" step="any" value="${st.amount}"
                     class="w-24 px-2 py-1 rounded border border-theme bg-surface text-xs font-mono font-bold text-right" />
                   <span class="text-xs font-semibold">mL</span>
                 </div>
               </div>
-              <input id="dosing-slider" type="range" min="0.05" max="${Math.max(0.1, srcLiqMl.toFixed(2))}" step="0.5" value="${st.amount}" class="w-full accent-blue-500" />
+              <input id="dosing-slider" type="range" min="0.05" max="${Math.max(0.1, srcLiqMl)}" step="0.01" value="${st.amount}" class="w-full accent-blue-500" />
+              <div class="flex flex-wrap gap-1.5">
+                ${[0.25, 0.5, 0.75, 1.0]
+                  .map(
+                    (f) => `<button type="button" class="dose-preset px-2 py-0.5 rounded border border-theme bg-surface text-[11px] font-mono hover:border-accent" data-val="${
+                      f === 1.0 ? srcLiqMl : Number((srcLiqMl * f).toFixed(2))
+                    }">${f === 1.0 ? 'Max' : `${Math.round(f * 100)}%`}</button>`
+                  )
+                  .join('')}
+              </div>
               <label class="flex items-center gap-2 text-xs font-medium text-main pt-1 cursor-pointer">
                 <input type="checkbox" id="chk-include-ppt" ${st.includePpt ? 'checked' : ''} class="accent-blue-500" />
                 <span>${t('transferShakeBeforePour')}</span>
@@ -391,9 +508,8 @@ export class DosingModal {
               <button type="button" id="dosing-cancel" class="px-3 py-2 rounded-lg border border-theme text-xs font-medium text-muted hover:text-main">${t('btnClose')}</button>
               <button type="button" id="dosing-confirm" class="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 transition">${t('btnAddExact')}</button>
             </div>
-          </div>
-        </div>
-      `;
+        `
+      );
     } else if (st.mode === 'solid_transfer') {
       const src = this.sim.getItem(st.sourceVesselId);
       const validVessels = this.sim.items.filter((i) => i.id !== st.sourceVesselId && i.kind === 'vessel' && !i.isShattered);
@@ -517,22 +633,78 @@ export class DosingModal {
 
     const numInput = this.container.querySelector('#dosing-num');
     const slider = this.container.querySelector('#dosing-slider');
-    const syncAmt = (val) => {
-      this.state.amount = Math.max(0.01, Number(val) || 0.05);
-      if (numInput) numInput.value = this.state.amount;
-      if (slider) slider.value = this.state.amount;
+    const reg = this.state.mode === 'reagent' ? STARTER_REAGENTS.find((r) => r.id === this.state.reagentId) : null;
+
+    const refreshPreviewAndSlider = () => {
+      const unit = this.state.unit || (reg?.kind === 'solid' ? 'g' : 'mL');
+      if (slider) {
+        slider.value = reg ? fromCanonicalAmount(reg, this.state.amount, unit) : this.state.amount;
+      }
       const preview = this.container.querySelector('#dosing-mol-preview');
-      if (preview && this.state.mode === 'reagent') {
-        const reg = STARTER_REAGENTS.find((r) => r.id === this.state.reagentId);
-        preview.textContent = formatReagentMolPreview(reg, this.state.amount);
+      if (preview && reg) {
+        preview.textContent = formatUnitConversions(reg, this.state.amount, unit);
       }
     };
 
-    numInput?.addEventListener('input', (e) => syncAmt(e.target.value));
-    slider?.addEventListener('input', (e) => syncAmt(e.target.value));
+    const commitDisplayVal = (dispVal, fromSliderOrPreset = false) => {
+      const unit = this.state.unit || (reg?.kind === 'solid' ? 'g' : 'mL');
+      const parsed = Number(dispVal);
+      if (!Number.isFinite(parsed)) return;
+      const minCanon = reg ? reg.minDose : 0.05;
+      const maxCanon = reg ? reg.maxDose : Math.max(0.1, Number(slider?.max) || 500);
+      const canon = reg ? toCanonicalAmount(reg, parsed, unit) : parsed;
+      this.state.amount = Math.max(minCanon, Math.min(maxCanon, canon));
+      if (fromSliderOrPreset && numInput) {
+        const clampedDisp = reg ? fromCanonicalAmount(reg, this.state.amount, unit) : this.state.amount;
+        numInput.value = unit === 'mol' ? Number(clampedDisp.toFixed(4)) : Number(clampedDisp.toFixed(2));
+      }
+      refreshPreviewAndSlider();
+    };
+
+    // Deferred numeric clamping: NEVER force-clamp while user is typing (e.g. "0" before ".4")!
+    numInput?.addEventListener('input', (e) => {
+      const raw = String(e.target.value ?? '').trim();
+      if (raw === '' || raw.endsWith('.') || raw.endsWith(',')) return;
+      const parsed = Number(raw.replace(',', '.'));
+      if (!Number.isFinite(parsed) || parsed <= 0) return;
+      commitDisplayVal(parsed, false);
+    });
+    numInput?.addEventListener('blur', () => {
+      const unit = this.state.unit || (reg?.kind === 'solid' ? 'g' : 'mL');
+      const raw = String(numInput.value ?? '').trim().replace(',', '.');
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        const defCanon = reg ? Math.max(reg.minDose, 0.05) : 0.05;
+        this.state.amount = defCanon;
+      } else {
+        commitDisplayVal(parsed, false);
+      }
+      const clampedDisp = reg ? fromCanonicalAmount(reg, this.state.amount, unit) : this.state.amount;
+      numInput.value = unit === 'mol' ? Number(clampedDisp.toFixed(4)) : Number(clampedDisp.toFixed(2));
+      refreshPreviewAndSlider();
+    });
+
+    slider?.addEventListener('input', (e) => commitDisplayVal(e.target.value, true));
+
+    this.container.querySelectorAll('.dose-unit-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.state.unit = btn.dataset.unit;
+        this.render();
+      });
+    });
 
     this.container.querySelectorAll('.dose-preset').forEach((btn) => {
-      btn.addEventListener('click', () => syncAmt(btn.dataset.val));
+      btn.addEventListener('click', () => {
+        const val = Number(btn.dataset.val);
+        if (!Number.isFinite(val)) return;
+        this.state.amount = val;
+        if (numInput) {
+          const unit = this.state.unit || (reg?.kind === 'solid' ? 'g' : 'mL');
+          const dVal = reg ? fromCanonicalAmount(reg, val, unit) : val;
+          numInput.value = unit === 'mol' ? Number(dVal.toFixed(4)) : Number(dVal.toFixed(2));
+        }
+        refreshPreviewAndSlider();
+      });
     });
 
     this.container.querySelector('#gran-coarse')?.addEventListener('click', () => {
@@ -556,11 +728,34 @@ export class DosingModal {
       });
     });
 
-    const addIncrement = (volMl) => {
+    const triggerVisualDrop = () => {
+      const tgt = this.sim.getItem(this.state.targetVesselId);
+      if (!tgt) return;
+      const tSpec = APPARATUS[tgt.typeId] || APPARATUS.beaker_250;
+      const regDrop = this.state.mode === 'reagent' ? STARTER_REAGENTS.find((r) => r.id === this.state.reagentId) : null;
+      this.sim.visualHooks.onAlert?.('burette_drop', tgt, {
+        tipX: tgt.x,
+        tipY: tgt.y - tSpec.height * 0.62,
+        stopY: tgt.y - tSpec.height * 0.22,
+        catchX: tgt.x,
+        color: regDrop?.bottleStyle?.streamColor || regDrop?.swatch || 'rgba(186, 230, 253, 0.92)',
+      });
+    };
+
+    const addIncrement = (volMl, withAnim = false) => {
       if (this.state.mode === 'reagent') {
         this.sim.addReagentToVessel(this.state.targetVesselId, this.state.reagentId, volMl, {
-          silentAnim: true,
+          silentAnim: !withAnim,
         });
+        if (withAnim) {
+          this.sim.activeReagentTransfer = {
+            vesselId: this.state.targetVesselId,
+            reagentId: this.state.reagentId,
+            startMs: performance.now(),
+            durationMs: 140,
+            amount: volMl,
+          };
+        }
         this.state.pouredLive += volMl;
       } else {
         const moved = this.sim.pourBetweenVessels(
@@ -568,7 +763,7 @@ export class DosingModal {
           this.state.targetVesselId,
           volMl,
           this.state.includePpt,
-          { rateMlS: Math.max(4, volMl / 0.05), pouredMlTotal: this.state.pouredLive + volMl }
+          { rateMlS: Math.max(4, volMl / 0.05), pouredMlTotal: this.state.pouredLive + volMl, silentStream: !withAnim }
         );
         this.state.pouredLive += moved;
       }
@@ -578,7 +773,8 @@ export class DosingModal {
 
     this.container.querySelector('#btn-single-drop')?.addEventListener('click', () => {
       soundEngine.playDropPlink();
-      addIncrement(0.05);
+      triggerVisualDrop();
+      addIncrement(0.05, false);
     });
 
     const holdBtn = this.container.querySelector('#btn-hold-pour');
@@ -587,8 +783,9 @@ export class DosingModal {
         e.preventDefault();
         this.stopContinuousPour();
         const stepMs = 50;
+        addIncrement(this.state.rateMlS * (stepMs / 1000), true);
         this.pourInterval = setInterval(() => {
-          addIncrement(this.state.rateMlS * (stepMs / 1000));
+          addIncrement(this.state.rateMlS * (stepMs / 1000), true);
         }, stepMs);
       };
       holdBtn.addEventListener('pointerdown', startPour);
@@ -612,6 +809,13 @@ export class DosingModal {
     });
 
     this.container.querySelector('#dosing-confirm')?.addEventListener('click', () => {
+      if (numInput) {
+        const unit = this.state.unit || (reg?.kind === 'solid' ? 'g' : 'mL');
+        const parsed = Number(String(numInput.value ?? '').trim().replace(',', '.'));
+        if (Number.isFinite(parsed) && parsed > 0) {
+          commitDisplayVal(parsed, false);
+        }
+      }
       soundEngine.playUiClick();
       if (this.state.mode === 'reagent') {
         this.sim.startTimedReagentPour(this.state.targetVesselId, this.state.reagentId, this.state.amount, {

@@ -1638,6 +1638,16 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
         ctx.fill();
       }
     }
+    if (receiver.kind === 'vessel' && !receiver.isInverted && !receiver.isShattered) {
+      const isSub = (cond.tubeSubmersionRatio ?? 0.72) >= 0.4;
+      ctx.fillStyle = isSub ? '#0284c7' : '#f59e0b';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(p3.x, p3.y, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
     ctx.restore();
   }
 }

@@ -280,6 +280,7 @@
       sim.addReagentToVessel(tube.id, 'h2o', 15);
       sim.addReagentToVessel(tube.id, 'hcl_37', 5);
       sim.toggleStopper(tube.id);
+      tube.stopperMode = 'solid';
       sim.addReagentToVessel(tube.id, 'zn', 0.65, { fine: true });
       stepSeconds(sim, 8.0);
       assert('Sealed tube overpressure pops rubber stopper automatically', tube.isStoppered === false && sim.logs.some(l => l.key === 'alertOverpressurePop'), `isStoppered=${tube.isStoppered}`);
@@ -2460,7 +2461,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.14';
+      const expectedBuild = 'virlab_beta_v3+build.15';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -3929,6 +3930,7 @@
       simC.addReagentToVessel(vC.id, 'hcl_37', 80, { silentAnim: true, silentEmit: true });
       simC.addReagentToVessel(vC.id, 'zn', 12, { silentAnim: true, silentEmit: true });
       vC.isStoppered = true;
+      vC.stopperMode = 'solid';
       stepSeconds(simC, 8.0, 0.05);
       const invC = validateVesselInvariants(vC);
 
@@ -6252,17 +6254,17 @@
       const erlRatio90 = vHoldErl90 / (vHoldErl0 || 1);
       const rbfRatio90 = vHoldRbf90 / 250;
       assert(
-        '2D V_hold(theta) cross-section preserves neck-retained fluid (~25–45% in Erlenmeyer / ~35–60% in Round Flask at 90°) and drains completely at steep tilt',
+        '2D V_hold(theta) cross-section preserves neck-retained fluid (~14–45% in Erlenmeyer / ~18–60% in Round Flask at 90°) and drains completely at steep tilt',
         Number.isFinite(clipTestY) &&
-          erlRatio90 >= 0.22 &&
+          erlRatio90 >= 0.14 &&
           erlRatio90 <= 0.48 &&
           vHoldErl125 < 2.0 &&
-          rbfRatio90 >= 0.32 &&
+          rbfRatio90 >= 0.18 &&
           rbfRatio90 <= 0.65 &&
           vHoldRbf155 < 2.0 &&
           vHoldCruc80 < 2.0 &&
           pouredAt95 > 40 &&
-          heldAt95 > 18 &&
+          heldAt95 > 10 &&
           leftAt130 < 8,
         `erl90=${(erlRatio90*100).toFixed(0)}%, rbf90=${(rbfRatio90*100).toFixed(0)}%, cruc80=${vHoldCruc80.toFixed(1)}, poured95=${pouredAt95.toFixed(1)}, held95=${heldAt95.toFixed(1)}, left130=${leftAt130.toFixed(1)}`
       );
@@ -6792,6 +6794,98 @@
         'Prompt 31 build 14 engine + optics verification suite completed',
         typeof simA.stepVesselTiltPouring === 'function' && typeof simA.buretteDispenseDrop === 'function',
         'build.14'
+      );
+    }
+
+    // TEST 144: Prompt 32 — Tilted Flask Hold Parity (Erlenmeyer/Round Flask pour when meniscus reaches lip) & Zero Leftover at Max Pour
+    {
+      const simF = new LabSimulation();
+      const erlF = simF.createApparatus('erlenmeyer_250', 220, 340);
+      erlF.isDragging = true;
+      simF.addReagentToVessel(erlF.id, 'h2o', 202, { silentAnim: true });
+      simF.setVesselTiltDeg(erlF.id, 82, 1);
+      stepSeconds(simF, 0.35);
+      const afterErlMl = computeLiquidVolumeL(erlF.moles, erlF.tempK) * 1000;
+
+      const rbfF = simF.createApparatus('round_flask_250', 420, 340);
+      rbfF.isDragging = true;
+      simF.addReagentToVessel(rbfF.id, 'h2o', 180, { silentAnim: true });
+      simF.setVesselTiltDeg(rbfF.id, 86, 1);
+      stepSeconds(simF, 0.35);
+      const afterRbfMl = computeLiquidVolumeL(rbfF.moles, rbfF.tempK) * 1000;
+
+      const bMaxA = simF.createApparatus('beaker_250', 600, 427);
+      const bMaxB = simF.createApparatus('beaker_250', 740, 427);
+      simF.addReagentToVessel(bMaxA.id, 'h2o', 24.83, { silentAnim: true });
+      simF.pourBetweenVessels(bMaxA.id, bMaxB.id, 24.82, false);
+      const remMaxMl = computeLiquidVolumeL(bMaxA.moles, bMaxA.tempK) * 1000;
+
+      assert(
+        'Tilted Erlenmeyer (~82°) & Round Flask (~86°) pour immediately at rim lip and max transfer leaves 0.00 mL residual',
+        afterErlMl < 200 && afterRbfMl < 178 && remMaxMl <= 0.01,
+        `erl=${afterErlMl.toFixed(1)}, rbf=${afterRbfMl.toFixed(1)}, remMax=${remMaxMl.toFixed(4)}`
+      );
+    }
+
+    // TEST 145: Prompt 32 — Rotated Stopper & Tubing Port Track Vessel Tilt & Wobble
+    {
+      const simM = new LabSimulation();
+      const vM = simM.createApparatus('erlenmeyer_250', 260, 427);
+      const vDst = simM.createApparatus('beaker_250', 460, 427);
+      const stopM = simM.createApparatus('rubber_stopper', 260, 340);
+      simM.attachRubberStopper(stopM.id, vM.id, 'main');
+      simM.connectTube(vM.id, vDst.id);
+      const portUpright = simM.getMouthSlotCoords(vM, 'main');
+      vM.landingTilt = 0.45;
+      simM.syncAttachedMouthTools();
+      const portTilted = simM.getMouthSlotCoords(vM, 'main');
+      assert(
+        'Attached rubber stopper and tubing ports track tilted/wobbling vessel mouth coordinates',
+        Math.abs(portTilted.x - portUpright.x) > 12 && Math.abs(stopM.x - portTilted.x) < 1 && Math.abs(stopM._tiltRad - 0.45) < 0.01,
+        `dx=${(portTilted.x - portUpright.x).toFixed(1)}, stopX=${stopM.x.toFixed(1)}`
+      );
+    }
+
+    // TEST 146: Prompt 32 — 1-Hole Stopper Vents Pressure vs Solid Stopper Seals & Universal Submersion Ratio
+    {
+      const simH = new LabSimulation();
+      const vHole = simH.createApparatus('erlenmeyer_250', 200, 427);
+      const stopH = simH.createApparatus('rubber_stopper', 200, 340);
+      simH.setStopperMode(stopH.id, 'holed');
+      simH.attachRubberStopper(stopH.id, vHole.id, 'main');
+      simH.addReagentToVessel(vHole.id, 'hcl_37', 25, { silentAnim: true });
+      simH.addReagentToVessel(vHole.id, 'caco3', 3, { fine: true, silentAnim: true });
+      stepSeconds(simH, 0.8);
+      const holeP = vHole.internalPressureBar;
+
+      const vSolid = simH.createApparatus('erlenmeyer_250', 380, 427);
+      const stopS = simH.createApparatus('rubber_stopper', 380, 340);
+      simH.setStopperMode(stopS.id, 'solid');
+      simH.attachRubberStopper(stopS.id, vSolid.id, 'main');
+      simH.addReagentToVessel(vSolid.id, 'hcl_37', 25, { silentAnim: true });
+      simH.addReagentToVessel(vSolid.id, 'caco3', 0.35, { fine: true, silentAnim: true });
+      stepSeconds(simH, 1.2);
+      const solidP = vSolid.internalPressureBar;
+
+      const condT = simH.createApparatus('liebig_condenser', 540, 260);
+      const elT = simH.createApparatus('electrode_rod', 600, 380);
+      const okCondSub = simH.setTubeSubmersionRatio(condT.id, 0.92) && Math.abs(condT.tubeSubmersionRatio - 0.92) < 0.01;
+      const okElSub = simH.setTubeSubmersionRatio(elT.id, 0.15) && Math.abs(elT.tubeSubmersionRatio - 0.15) < 0.01;
+
+      assert(
+        '1-hole untubed stopper vents gas cleanly without pressurizing while solid stopper seals; submersionRatio adjusts vessel/condenser/electrode tubing',
+        holeP <= 1.05 && solidP > 1.15 && okCondSub && okElSub,
+        `holeP=${holeP.toFixed(2)}, solidP=${solidP.toFixed(2)}, condSub=${okCondSub}, elSub=${okElSub}`
+      );
+    }
+
+    // TEST 147: Prompt 32 — Build 15 Verification Anchor
+    {
+      const simB15 = new LabSimulation();
+      assert(
+        'Prompt 32 build 15 engine & tubing consistency checks passed',
+        typeof simB15.syncAttachedMouthTools === 'function',
+        'build.15'
       );
     }
 

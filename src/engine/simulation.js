@@ -6,7 +6,7 @@ import {
   STARTER_REAGENTS,
 } from '../data/species.js';
 import { APPARATUS, clampItemToStandY, getProbeTipPos, getStandGeometry, getSyringeGeometry, getVesselEndPorts } from '../data/apparatus.js';
-import { getVesselHoldVolumeMl } from '../data/vesselGeometry.js';
+import { getInnerPolygonPx, getVesselHoldVolumeMl } from '../data/vesselGeometry.js';
 import {
   calcSolidTransferRatio,
   computeContentsMassG,
@@ -1819,16 +1819,23 @@ export class LabSimulation {
   getMouthSlotCoords(vessel, side = 'main') {
     if (!vessel || vessel.kind !== 'vessel') return null;
     const spec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
+    const effTilt = (vessel.tiltAngle || 0) + (vessel.landingTilt || 0);
     if (spec.hasTwoEnds) {
       const ends = getVesselEndPorts(vessel);
       const s = side === 'left' || side === 'right' ? side : 'right';
       const p = ends?.[s];
-      return p ? { x: p.mouthX, y: p.mouthY, side: s } : null;
+      return p ? { x: p.mouthX, y: p.mouthY, side: s, tiltRad: effTilt } : null;
     }
+    const rawY = vessel.isInverted ? vessel.y + spec.height / 2 - 1 : vessel.y - spec.height / 2 + 1;
+    const cos = Math.cos(effTilt);
+    const sin = Math.sin(effTilt);
+    const dx = 0;
+    const dy = rawY - vessel.y;
     return {
-      x: vessel.x,
-      y: vessel.isInverted ? vessel.y + spec.height / 2 - 1 : vessel.y - spec.height / 2 + 1,
+      x: vessel.x + dx * cos - dy * sin,
+      y: vessel.y + dx * sin + dy * cos,
       side: 'main',
+      tiltRad: effTilt,
     };
   }
 
@@ -1845,7 +1852,10 @@ export class LabSimulation {
     }
     for (const it of this.items) {
       if ((it.kind !== 'rubber_stopper' && it.kind !== 'phen_cotton') || !it.attachedToId) {
-        if (it.kind === 'rubber_stopper' || it.kind === 'phen_cotton') it._attachOrient = 'top';
+        if (it.kind === 'rubber_stopper' || it.kind === 'phen_cotton') {
+          it._attachOrient = 'top';
+          it._tiltRad = 0;
+        }
         continue;
       }
       const v = this.getItem(it.attachedToId);
@@ -1853,6 +1863,7 @@ export class LabSimulation {
         it.attachedToId = null;
         it.attachedSide = null;
         it._attachOrient = 'top';
+        it._tiltRad = 0;
         it.fallStartY = it.y;
         continue;
       }
@@ -1872,6 +1883,7 @@ export class LabSimulation {
       if (slot) {
         it.x = slot.x;
         it.y = slot.y;
+        it._tiltRad = slot.tiltRad || 0;
         it.vy = 0;
         it.restingOnId = null;
       }
@@ -2938,6 +2950,14 @@ export class LabSimulation {
         if (p < 0.999) {
           remaining.push(job);
         } else {
+          const remLiqMl = computeLiquidVolumeL(src.moles, src.tempK) * 1000;
+          if (job.totalMl >= (job.initialSrcMl || job.totalMl) - 0.1 && remLiqMl > 1e-4 && remLiqMl <= 1.2) {
+            this.pourBetweenVessels(src.id, dst.id, remLiqMl + 0.2, job.shakeBeforePour, {
+              rateMlS,
+              pouredMlTotal: job.movedMl + remLiqMl,
+              silentEmit: false,
+            });
+          }
           src.tiltAngle = 0;
           anyCompleted = true;
         }
@@ -2977,7 +2997,7 @@ export class LabSimulation {
       actualMl = Math.min(actualMl, Math.max(0, 50.0 - dstLiqMl));
       if (actualMl <= 1e-4) return 0;
     }
-    const frac = Math.min(1, actualMl / srcLiqMl);
+    const frac = actualMl >= srcLiqMl - 0.05 ? 1.0 : Math.min(1, actualMl / srcLiqMl);
     if (frac <= 0) return 0;
 
     // Effective density of the liquid phase (g/cm3)
@@ -4891,10 +4911,10 @@ export class LabSimulation {
     const target = this.getItem(v.connectedTargetId);
     if (!target || target.kind !== 'vessel' || target.isShattered) return;
 
-      const dpVac = this.environment.pressureBar - (v.internalPressureBar ?? this.environment.pressureBar);
+    const dpVac = this.environment.pressureBar - (v.internalPressureBar ?? this.environment.pressureBar);
     const tLiqL = computeLiquidVolumeL(target.moles, target.tempK);
     const tLiqMl = tLiqL * 1000;
-    if (dpVac <= 0.045 || tLiqMl <= 0.05 || !isTubeTipSubmerged(v, target)) return;
+    if (dpVac <= 0.025 || tLiqMl <= 0.05 || !isTubeTipSubmerged(v, target)) return;
 
     const spec = APPARATUS[v.typeId];
     const vLiqMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
@@ -4995,10 +5015,10 @@ export class LabSimulation {
     return true;
   }
 
-  setTubeSubmersionRatio(vesselId, ratio) {
-    const v = this.getItem(vesselId);
-    if (!v || v.kind !== 'vessel') return false;
-    v.tubeSubmersionRatio = Math.max(0, Math.min(1, Number(ratio) || 0));
+  setTubeSubmersionRatio(sourceId, ratio) {
+    const it = this.getItem(sourceId);
+    if (!it || (it.kind !== 'vessel' && it.kind !== 'condenser' && it.kind !== 'electrode')) return false;
+    it.tubeSubmersionRatio = Math.max(0, Math.min(1, Number(ratio) || 0));
     this.emitChange();
     return true;
   }
@@ -5055,10 +5075,14 @@ export class LabSimulation {
     }
     const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
     const dir = v.tiltDir < 0 ? -1 : 1;
-    const rad = ((v.tiltDeg || 0) * Math.PI) / 180;
-    const spoutX = v.x + dir * Math.sin(rad) * (spec.height * 0.45 + 6);
-    const spoutY = v.y - Math.cos(rad) * (spec.height * 0.35);
-    const pourX = v.x + dir * Math.sin(rad) * (spec.height * 0.48 + 8);
+    const effTilt = dir * (((v.tiltDeg || 0) * Math.PI) / 180) + (v.landingTilt || 0);
+    const { vertices } = getInnerPolygonPx(spec);
+    const lipLocal = dir < 0 ? vertices[0] : vertices[vertices.length - 1];
+    const cosL = Math.cos(effTilt);
+    const sinL = Math.sin(effTilt);
+    const spoutX = v.x + lipLocal.x * cosL - lipLocal.y * sinL;
+    const spoutY = v.y + lipLocal.x * sinL + lipLocal.y * cosL;
+    const pourX = spoutX;
     let dst = null;
     let bestDist = Infinity;
     for (const cand of this.items) {
@@ -5293,8 +5317,9 @@ export class LabSimulation {
     const numSteps = Math.max(1, Math.ceil(scaledDt / CONSTANTS.SUBSTEP_MAX_DT));
     const dt = scaledDt / numSteps;
 
-    // Advance rigid-body workbench gravity & landing impact physics
+    // Advance rigid-body workbench gravity & landing impact physics, keeping mouth stoppers/cotton synced to wobble
     this.stepGravityPhysics(scaledDt, realDeltaSec);
+    this.syncAttachedMouthTools();
 
     const getApp = (id) => this.getItem(id);
 

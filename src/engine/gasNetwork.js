@@ -6,7 +6,7 @@ import {
   NON_STEAM_GAS_IDS,
   SPECIES,
 } from '../data/species.js';
-import { APPARATUS, getCondenserPorts, getSyringeGeometry, getVesselEndPorts } from '../data/apparatus.js';
+import { APPARATUS, getCondenserPorts, getSyringeGeometry, getTubeDestTipPos, getVesselEndPorts, getVesselTubingPort } from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, solutionFreezingPointK } from './equilibrium.js';
 
 export const NON_STEAM_GASES = NON_STEAM_GAS_IDS;
@@ -124,16 +124,17 @@ export function computeTubingGeometry(vessel, target) {
   const syrNozzle = target.kind === 'gas_syringe' ? getSyringeGeometry(target) : null;
   const vEnds = vSpec.hasTwoEnds ? getVesselEndPorts(vessel) : null;
   const vSide = vessel.connectedPortSide || (vessel.flippedX ? 'left' : 'right');
-  const p0 = vEnds
+  const portPos = getVesselTubingPort(vessel, vessel.connectedPortSide);
+  const p0 = portPos
+    ? { x: portPos.x, y: portPos.y }
+    : vEnds
     ? { x: vEnds[vSide].x, y: vEnds[vSide].y }
     : vessel.isInverted
     ? { x: vessel.x, y: vessel.y + vSpec.height / 2 + 8 }
     : { x: vessel.x, y: vessel.y - vSpec.height / 2 - 8 };
   const tEnds = tSpec.hasTwoEnds ? getVesselEndPorts(target) : null;
   const tSide = target.incomingPortSide || (target.flippedX ? 'right' : 'left');
-  const subRatio = Math.max(0, Math.min(1, vessel?.tubeSubmersionRatio ?? 0.72));
-  const uprightMouthY = target.y - tSpec.height / 2 + 2;
-  const uprightTipY = uprightMouthY + subRatio * Math.max(16, tSpec.height - 12);
+  const tipPos = target.kind === 'vessel' && !tEnds ? getTubeDestTipPos(vessel, target) : null;
   const p3 =
     target.kind === 'gas_syringe'
       ? { x: syrNozzle.nozzleX, y: syrNozzle.nozzleY }
@@ -141,9 +142,7 @@ export function computeTubingGeometry(vessel, target) {
       ? condPorts.inlet
       : tEnds
       ? { x: tEnds[tSide].x, y: tEnds[tSide].y + (tSpec.isUTube ? 8 : 0) }
-      : target.isInverted
-      ? { x: target.x, y: target.y + tSpec.height / 2 - 4 }
-      : { x: target.x, y: target.isStoppered && subRatio < 0.08 ? uprightMouthY - 10 : uprightTipY };
+      : tipPos || { x: target.x, y: target.y };
 
   const archTopY = vessel.isInverted
     ? Math.max(p0.y, p3.y) + 34
@@ -198,10 +197,9 @@ export function computeTubingGeometry(vessel, target) {
 }
 
 export function computeCondenserOutletGeometry(cond, receiver) {
-  const rSpec = APPARATUS[receiver.typeId] || APPARATUS.beaker_250;
   const { outlet, dir } = getCondenserPorts(cond);
   const p0 = outlet;
-  const p3 = { x: receiver.x, y: receiver.y - rSpec.height / 2 + 8 };
+  const p3 = getTubeDestTipPos(cond, receiver);
   const midX = 0.5 * (p0.x + p3.x);
   const p1 = { x: p0.x + dir * 22, y: p0.y + 18 };
   const p2 = { x: midX + (p3.x - midX) * 0.4, y: p3.y - 34 };
@@ -677,8 +675,13 @@ export function stepVesselGasAndPressure(
   }
 
   const isLidClosed = Boolean(spec.hasLid && vessel.lidState === 'closed');
+  const hasOutTubeSingle = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);
   let effectiveSealed = Boolean(vessel.isStoppered) || isLidClosed;
   let flowThroughVentOnly = false;
+  if (!spec.hasTwoEnds && vessel.isStoppered && vessel.stopperMode !== 'solid' && !hasOutTubeSingle) {
+    // Open 1-hole rubber stopper with NO connected tubing vents gas to room instead of pressurizing
+    flowThroughVentOnly = true;
+  }
   if (spec.hasTwoEnds) {
     const connSide = vessel.connectedPortSide || (vessel.flippedX ? 'left' : 'right');
     const hasOutTube = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);

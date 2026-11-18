@@ -1,6 +1,20 @@
 import { APPARATUS } from '../data/apparatus.js';
-import { SPECIES, REAGENT_CATEGORIES } from '../data/species.js';
+import { SPECIES } from '../data/species.js';
 import { kelvinToCelsius } from '../data/constants.js';
+import {
+  beginCanvasLabelFrame,
+  flushCanvasLabelFrame,
+  renderGasSyringe,
+  renderPipette,
+  renderVessel,
+} from '../canvas/vesselRenderer.js';
+import {
+  renderBurette,
+  renderFilterFunnel,
+  renderIceBath,
+  renderIronSpoon,
+  renderLiebigCondenser,
+} from '../canvas/toolRenderer.js';
 import {
   VLAB_SCOPES,
   exportScopedVlabFile,
@@ -8,6 +22,8 @@ import {
   saveToLocalStorage,
 } from '../storage/workspaceStorage.js';
 import { soundEngine } from '../audio/soundEngine.js';
+
+const CABINET_PAGE_SIZE = 12; // 6 x 2 equal locker cubbies
 
 function classifyEntryFilter(entry) {
   if (!entry?.hasChemicals) return 'apparatus';
@@ -24,40 +40,105 @@ function classifyEntryFilter(entry) {
   return 'salt';
 }
 
+function drawCubbyThumbnail(canvas, entry) {
+  if (!canvas || !entry?.snapshot) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const cw = canvas.width;
+  const ch = canvas.height;
+  ctx.clearRect(0, 0, cw, ch);
+
+  const clone = JSON.parse(JSON.stringify(entry.snapshot));
+  clone.x = 0;
+  clone.y = 0;
+  clone.tiltAngle = 0;
+  clone.tiltDeg = 0;
+  clone.landingTilt = 0;
+  const spec = APPARATUS[clone.typeId] || { width: 72, height: 96 };
+  const scale = Math.min((cw - 14) / Math.max(30, spec.width || 72), (ch - 10) / Math.max(30, spec.height || 96), 1.0);
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light' && document.documentElement.getAttribute('data-theme') !== 'olivia';
+
+  ctx.save();
+  ctx.translate(cw * 0.5, ch * 0.52);
+  ctx.scale(scale, scale);
+  beginCanvasLabelFrame(new Set(), false);
+  try {
+    if (clone.kind === 'vessel') renderVessel(ctx, clone, false, false, isDark, 0, 'vi', 'dark');
+    else if (clone.kind === 'gas_syringe') renderGasSyringe(ctx, clone, false, false, isDark, 0, 'vi');
+    else if (clone.kind === 'pipette') renderPipette(ctx, clone, false, false, isDark);
+    else if (clone.kind === 'filter_funnel') renderFilterFunnel(ctx, clone, false, false, isDark, 'vi', 0);
+    else if (clone.kind === 'burette') renderBurette(ctx, clone, false, false, isDark, 0);
+    else if (clone.kind === 'condenser') renderLiebigCondenser(ctx, clone, false, false, isDark, 0);
+    else if (clone.kind === 'spoon') renderIronSpoon(ctx, clone, false, isDark, 0);
+    else if (clone.kind === 'bath') renderIceBath(ctx, clone, false, isDark, 0, 'vi');
+  } catch {}
+  flushCanvasLabelFrame(ctx);
+  ctx.restore();
+}
+
 export class StorageCabinetModal {
   constructor(labManager, getTranslator, getLang, callbacks = {}) {
     this.labManager = labManager;
     this.getTranslator = getTranslator;
     this.getLang = getLang;
-    this.callbacks = callbacks; // { onNotify, onRefresh }
+    this.callbacks = callbacks; // { onNotify, onRefresh, onOpenChange }
     this.isOpen = false;
     this.searchQuery = '';
     this.filterGroup = 'all';
+    this.currentPage = 1;
     this.rootEl = null;
+    this._wheelBound = false;
     this._ensureRoot();
   }
 
   _ensureRoot() {
-    let el = document.getElementById('storage-cabinet-modal');
+    let el = document.getElementById('storage-locker-root');
     if (!el) {
       el = document.createElement('div');
-      el.id = 'storage-cabinet-modal';
-      el.className = 'storage-modal-backdrop hidden';
-      document.body.appendChild(el);
+      el.id = 'storage-locker-root';
+      el.className = 'storage-locker-root hidden';
+      document.querySelector('.workbench-canvas-wrap')?.appendChild(el);
     }
     this.rootEl = el;
+    if (el && !this._wheelBound) {
+      this._wheelBound = true;
+      // Wheel anywhere over the Storage Locker changes pages (disabling stored vessel tilt wheeling)
+      el.addEventListener(
+        'wheel',
+        (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (Math.abs(e.deltaY) < 4) return;
+          const next = this.currentPage + (e.deltaY > 0 ? 1 : -1);
+          this.setPage(next);
+        },
+        { passive: false }
+      );
+    }
+  }
+
+  setPage(pageNum) {
+    const total = this._lastTotalPages || 1;
+    const clamped = Math.max(1, Math.min(total, Math.round(Number(pageNum) || 1)));
+    if (clamped !== this.currentPage) {
+      this.currentPage = clamped;
+      this.render();
+    }
   }
 
   open() {
+    this._ensureRoot();
     this.isOpen = true;
-    this.rootEl.classList.remove('hidden');
+    this.rootEl?.classList.remove('hidden');
     this.render();
-    setTimeout(() => this.rootEl?.querySelector('#cabinet-search-input')?.focus(), 40);
+    this.callbacks.onOpenChange?.(true);
   }
 
   close() {
+    if (!this.isOpen) return;
     this.isOpen = false;
-    this.rootEl.classList.add('hidden');
+    this.rootEl?.classList.add('hidden');
+    this.callbacks.onOpenChange?.(false);
   }
 
   toggle() {
@@ -66,7 +147,8 @@ export class StorageCabinetModal {
   }
 
   render() {
-    if (!this.rootEl) return;
+    this._ensureRoot();
+    if (!this.rootEl || !this.isOpen) return;
     const t = this.getTranslator();
     const langCode = this.getLang();
     const entries = Array.isArray(this.labManager?.storageCabinet) ? this.labManager.storageCabinet : [];
@@ -89,6 +171,13 @@ export class StorageCabinetModal {
       return appName.includes(q) || sticky.includes(q) || spText.includes(q);
     });
 
+    const totalPages = Math.max(1, Math.ceil(filtered.length / CABINET_PAGE_SIZE));
+    this._lastTotalPages = totalPages;
+    if (this.currentPage > totalPages) this.currentPage = totalPages;
+    if (this.currentPage < 1) this.currentPage = 1;
+    const startIdx = (this.currentPage - 1) * CABINET_PAGE_SIZE;
+    const pageSlice = filtered.slice(startIdx, startIdx + CABINET_PAGE_SIZE);
+
     const filters = [
       { id: 'all', label: t('cabinetFilterAll') },
       { id: 'acid', label: t('cabinetFilterAcid') },
@@ -98,104 +187,81 @@ export class StorageCabinetModal {
       { id: 'apparatus', label: t('cabinetFilterApparatus') },
     ];
 
+    const slotsHtml = [];
+    for (let i = 0; i < CABINET_PAGE_SIZE; i++) {
+      const entry = pageSlice[i];
+      if (!entry) {
+        slotsHtml.push(`<div class="storage-cubby opacity-70"></div>`);
+        continue;
+      }
+      const spec = APPARATUS[entry.apparatusId] || {};
+      const appTitle = spec.i18nKey ? t(spec.i18nKey) : entry.apparatusId;
+      const tempC = kelvinToCelsius(entry.tempK ?? 298.15).toFixed(0);
+      const stickyTxt = entry.stickyLabel?.text ? ` · ${entry.stickyLabel.text}` : '';
+      const molesEntries = Object.entries(entry.snapshot?.moles || {})
+        .filter(([, n]) => Number(n) > 1e-10)
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
+        .slice(0, 2);
+      const chemLine = molesEntries.map(([spId]) => SPECIES[spId]?.formula || spId).join(', ');
+      slotsHtml.push(`
+        <div class="storage-cubby" data-entry-id="${entry.id}" title="${appTitle}${stickyTxt} (${tempC}°C)">
+          <div class="storage-cubby-preview">
+            <canvas class="cab-thumb-canvas" width="94" height="72" data-entry-id="${entry.id}"></canvas>
+          </div>
+          <div class="storage-cubby-meta">${chemLine ? `${chemLine} · ` : ''}${appTitle}${stickyTxt}</div>
+          <div class="storage-cubby-actions">
+            <button type="button" data-cab-move="${entry.id}" class="storage-cubby-btn primary" title="${t('cabinetMoveToBench')}">${langCode === 'en' ? 'Take' : 'Lấy'}</button>
+            <button type="button" data-cab-clone="${entry.id}" class="storage-cubby-btn" title="${t('cabinetCloneToBench')}">+</button>
+            <button type="button" data-cab-del="${entry.id}" class="storage-cubby-btn danger" title="${t('cabinetDeleteEntry')}">×</button>
+          </div>
+        </div>
+      `);
+    }
+
     this.rootEl.innerHTML = `
-      <div class="storage-modal-card cabinet-modal-card">
-        <div class="storage-modal-header">
-          <div class="flex items-center gap-2.5">
-            <span class="text-lg">🗄️</span>
-            <div>
-              <div class="flex items-center gap-2">
-                <h2 class="text-sm sm:text-base font-bold leading-tight">${t('cabinetTitle')}</h2>
-                <span class="cabinet-count-pill">${entries.length} · ∞</span>
-              </div>
-              <p class="text-[11px] text-muted">${t('cabinetSubtitle')}</p>
-            </div>
-          </div>
-          <button type="button" id="btn-cabinet-close" class="w-8 h-8 rounded-lg border border-theme bg-surface text-muted hover:text-main flex items-center justify-center text-sm font-bold">✕</button>
+      <div class="storage-locker-topbar">
+        <div class="storage-page-badge" id="cab-page-badge">
+          <span>${langCode === 'en' ? 'page:' : 'trang:'}</span>
+          <input id="cab-page-input" type="number" min="1" max="${totalPages}" value="${this.currentPage}" />
+          <span>/ ${totalPages}</span>
         </div>
-
-        <div class="storage-modal-body">
-          <!-- Controls Row: Search + Deposit + .vlab Import/Export -->
-          <div class="flex flex-wrap items-center gap-2">
-            <input id="cabinet-search-input" type="text" value="${this.searchQuery.replace(/"/g, '&quot;')}"
-              placeholder="${t('cabinetSearchPlaceholder')}"
-              class="storage-input flex-1" style="min-width:190px" />
-            ${
-              selectedItem
-                ? `<button type="button" id="btn-cabinet-deposit-sel" class="storage-btn storage-btn-amber">📥 ${t('cabinetDepositSelected')}</button>`
-                : ''
-            }
-            <button type="button" id="btn-cabinet-export" class="storage-btn storage-btn-primary">📤 ${t('cabinetExportBtn')}</button>
-            <button type="button" id="btn-cabinet-import" class="storage-btn">📥 ${t('cabinetImportBtn')}</button>
-            <input type="file" id="input-cabinet-import" accept=".vlab,.json,application/json" class="hidden" />
-          </div>
-
-          <!-- Filter Pills -->
-          <div class="flex flex-wrap items-center gap-1.5">
-            ${filters
-              .map(
-                (f) => `<button type="button" data-cab-filter="${f.id}" class="cabinet-filter-pill ${
-                  this.filterGroup === f.id ? 'active' : ''
-                }">${f.label}</button>`
-              )
-              .join('')}
-          </div>
-
-          <!-- Items List -->
-          <div class="cabinet-grid">
-            ${
-              filtered.length === 0
-                ? `<div class="cabinet-empty-box">${t('cabinetEmpty')}</div>`
-                : filtered
-                    .map((entry) => {
-                      const spec = APPARATUS[entry.apparatusId] || {};
-                      const appTitle = spec.i18nKey ? t(spec.i18nKey) : entry.apparatusId;
-                      const tempC = kelvinToCelsius(entry.tempK ?? 298.15).toFixed(1);
-                      const molesEntries = Object.entries(entry.snapshot?.moles || {})
-                        .filter(([, n]) => Number(n) > 1e-10)
-                        .sort((a, b) => Number(b[1]) - Number(a[1]))
-                        .slice(0, 5);
-                      const gasEntries = Object.entries(entry.snapshot?.headspaceGasMoles || {})
-                        .filter(([g, n]) => g !== 'H2O_g' && Number(n) > 1e-9)
-                        .slice(0, 3);
-                      const chemSummary = [
-                        ...molesEntries.map(([spId, n]) => `${SPECIES[spId]?.formula || spId}: ${(Number(n) * 1000).toFixed(1)} mmol`),
-                        ...gasEntries.map(([gId, n]) => `💨 ${SPECIES[gId]?.formula || gId}: ${(Number(n) * 1000).toFixed(1)} mmol`),
-                      ].join(' · ');
-                      const stickyHtml = entry.stickyLabel?.text
-                        ? `<span class="cabinet-sticky-badge" style="background:${entry.stickyLabel.bgColor || '#fef08a'}">${entry.stickyLabel.text}</span>`
-                        : '';
-                      const savedDateStr = new Date(entry.storedAt || Date.now()).toLocaleString(
-                        langCode === 'vi' ? 'vi-VN' : 'en-US'
-                      );
-                      return `
-                        <div class="cabinet-item-card" data-entry-id="${entry.id}">
-                          <div class="flex items-start justify-between gap-2">
-                            <div class="flex flex-col gap-1 min-w-0">
-                              <div class="flex flex-wrap items-center gap-1.5">
-                                <span class="text-xs font-bold text-main">${appTitle}</span>
-                                ${stickyHtml}
-                              </div>
-                              <span class="text-[11px] font-mono text-muted">❄️ Frozen · ${tempC} °C · ${savedDateStr}</span>
-                            </div>
-                          </div>
-                          <div class="text-[11px] text-muted leading-snug break-words">
-                            ${chemSummary || (langCode === 'en' ? 'Empty clean apparatus' : 'Dụng cụ sạch chưa có hóa chất')}
-                          </div>
-                          <div class="flex flex-wrap items-center gap-1.5 pt-1">
-                            <button type="button" data-cab-move="${entry.id}" class="storage-btn storage-btn-primary text-xs">${t('cabinetMoveToBench')}</button>
-                            <button type="button" data-cab-clone="${entry.id}" class="storage-btn text-xs">${t('cabinetCloneToBench')}</button>
-                            <button type="button" data-cab-del="${entry.id}" class="storage-btn storage-btn-danger text-xs" style="margin-left:auto">${t('cabinetDeleteEntry')}</button>
-                          </div>
-                        </div>
-                      `;
-                    })
-                    .join('')
-            }
-          </div>
+        <div class="flex flex-wrap items-center gap-1">
+          ${filters
+            .map(
+              (f) => `<button type="button" data-cab-filter="${f.id}" class="cabinet-filter-pill ${
+                this.filterGroup === f.id ? 'active' : ''
+              }">${f.label}</button>`
+            )
+            .join('')}
         </div>
+        ${
+          selectedItem
+            ? `<button type="button" id="btn-cabinet-deposit-sel" class="ml-auto storage-btn storage-btn-amber text-xs py-1 px-2.5">📥 ${t('cabinetDepositSelected')}</button>`
+            : ''
+        }
+      </div>
+
+      <div class="storage-locker-grid">${slotsHtml.join('')}</div>
+
+      <div class="storage-locker-bottombar">
+        <button type="button" id="btn-cab-prev-page" class="storage-nav-arrow" ${this.currentPage <= 1 ? 'disabled' : ''}>←</button>
+        <div class="storage-locker-controls">
+          <input id="cabinet-search-input" type="text" value="${this.searchQuery.replace(/"/g, '&quot;')}"
+            placeholder="${t('cabinetSearchPlaceholder')}"
+            class="storage-input" />
+          <button type="button" id="btn-cabinet-export" class="storage-btn storage-btn-primary text-xs shrink-0">📤 ${t('cabinetExportBtn')}</button>
+          <button type="button" id="btn-cabinet-import" class="storage-btn text-xs shrink-0">📥 ${t('cabinetImportBtn')}</button>
+          <input type="file" id="input-cabinet-import" accept=".vlab,.json,application/json" class="hidden" />
+        </div>
+        <button type="button" id="btn-cab-next-page" class="storage-nav-arrow" ${this.currentPage >= totalPages ? 'disabled' : ''}>→</button>
       </div>
     `;
+
+    // Render crisp scaled thumbnails inside each cubby canvas
+    this.rootEl.querySelectorAll('.cab-thumb-canvas').forEach((cvs) => {
+      const entry = pageSlice.find((e) => e.id === cvs.dataset.entryId);
+      if (entry) drawCubbyThumbnail(cvs, entry);
+    });
 
     this._bindEvents();
   }
@@ -204,14 +270,19 @@ export class StorageCabinetModal {
     const t = this.getTranslator();
     const langCode = this.getLang();
 
-    this.rootEl.querySelector('#btn-cabinet-close')?.addEventListener('click', () => this.close());
-    this.rootEl.onclick = (e) => {
-      if (e.target === this.rootEl) this.close();
-    };
+    const pageInput = this.rootEl.querySelector('#cab-page-input');
+    pageInput?.addEventListener('change', (e) => this.setPage(e.target.value));
+    pageInput?.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') this.setPage(pageInput.value);
+    });
+    this.rootEl.querySelector('#btn-cab-prev-page')?.addEventListener('click', () => this.setPage(this.currentPage - 1));
+    this.rootEl.querySelector('#btn-cab-next-page')?.addEventListener('click', () => this.setPage(this.currentPage + 1));
 
     const searchInput = this.rootEl.querySelector('#cabinet-search-input');
     searchInput?.addEventListener('input', (e) => {
       this.searchQuery = e.target.value || '';
+      this.currentPage = 1;
       const pos = e.target.selectionStart;
       this.render();
       const nxt = this.rootEl?.querySelector('#cabinet-search-input');
@@ -220,10 +291,12 @@ export class StorageCabinetModal {
         if (typeof pos === 'number') nxt.setSelectionRange(pos, pos);
       }
     });
+    searchInput?.addEventListener('keydown', (e) => e.stopPropagation());
 
     this.rootEl.querySelectorAll('[data-cab-filter]').forEach((btn) => {
       btn.addEventListener('click', () => {
         this.filterGroup = btn.dataset.cabFilter || 'all';
+        this.currentPage = 1;
         this.render();
       });
     });
@@ -272,6 +345,7 @@ export class StorageCabinetModal {
         saveToLocalStorage(this.labManager);
         soundEngine.playTrashCrumple();
         this.render();
+        this.callbacks.onRefresh?.();
       });
     });
 
@@ -298,6 +372,7 @@ export class StorageCabinetModal {
           saveToLocalStorage(this.labManager);
           soundEngine.playUiClick();
           this.render();
+          this.callbacks.onRefresh?.();
           this.callbacks.onNotify?.(`📥 ${t('toastImportedVlab')} (+${added})`);
         } else {
           this.callbacks.onNotify?.(`⚠️ ${t('toastImportFailed')}`);

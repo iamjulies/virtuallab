@@ -496,8 +496,230 @@ header button.bg-amber-500 {
 #storage-cabinet-modal.hidden,
 #chemlab-quick-dialog.hidden,
 #dosing-modal-root.hidden,
-#workspace-storage-modal.hidden {
+#workspace-storage-modal.hidden,
+#storage-locker-root.hidden {
   display: none !important;
+}
+
+/* Embedded Pinned Storage Locker Tab View (6x2 Wood/Theme Shelf Grid) */
+.storage-locker-root {
+  position: absolute;
+  inset: 0;
+  z-index: 32;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.55rem 0.65rem;
+  background:
+    repeating-linear-gradient(92deg, rgba(120, 68, 28, 0.12) 0px, rgba(120, 68, 28, 0.12) 3px, rgba(84, 44, 16, 0.18) 3px, rgba(84, 44, 16, 0.18) 9px),
+    linear-gradient(180deg, #3f2311 0%, #2b170b 52%, #1d0f06 100%);
+  border-radius: 0.7rem;
+  overflow: hidden;
+}
+[data-theme="light"] .storage-locker-root {
+  background:
+    repeating-linear-gradient(92deg, rgba(161, 98, 42, 0.12) 0px, rgba(161, 98, 42, 0.12) 3px, rgba(196, 134, 72, 0.18) 3px, rgba(196, 134, 72, 0.18) 9px),
+    linear-gradient(180deg, #d6a46c 0%, #c18952 55%, #a8713c 100%);
+}
+[data-theme="olivia"] .storage-locker-root {
+  background:
+    repeating-linear-gradient(90deg, rgba(244, 165, 184, 0.16) 0px, rgba(244, 165, 184, 0.16) 4px, transparent 4px, transparent 14px),
+    linear-gradient(180deg, #faf3e3 0%, #f3e4cd 100%);
+}
+[data-theme="petal"] .storage-locker-root {
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0px, rgba(255, 255, 255, 0.03) 3px, transparent 3px, transparent 12px),
+    linear-gradient(180deg, #16161b 0%, #0e0e11 100%);
+}
+.storage-locker-topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+.storage-page-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 0.45rem;
+  border: 2px solid #facc15;
+  background-color: rgba(250, 204, 21, 0.18);
+  color: #fde047;
+  font-size: 0.78rem;
+  font-weight: 800;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+[data-theme="light"] .storage-page-badge,
+[data-theme="olivia"] .storage-page-badge {
+  background-color: #fef08a;
+  color: #221f20;
+  border-color: #ca8a04;
+}
+.storage-page-badge input {
+  width: 2.3rem;
+  padding: 0.05rem 0.2rem;
+  border-radius: 0.25rem;
+  border: 1px solid rgba(250, 204, 21, 0.65);
+  background: rgba(15, 23, 42, 0.65);
+  color: inherit;
+  text-align: center;
+  font-weight: 800;
+}
+[data-theme="light"] .storage-page-badge input,
+[data-theme="olivia"] .storage-page-badge input {
+  background: #ffffff;
+  color: #221f20;
+  border-color: #a16207;
+}
+.storage-locker-grid {
+  flex: 1 1 0%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+@media (max-width: 1020px) {
+  .storage-locker-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: repeat(4, minmax(0, 1fr));
+  }
+}
+.storage-cubby {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem;
+  border-radius: 0.45rem;
+  border: 2px solid #78350f;
+  background: linear-gradient(180deg, rgba(17, 9, 4, 0.72) 0%, rgba(45, 24, 11, 0.85) 84%, rgba(120, 62, 24, 0.96) 100%);
+  box-shadow: inset 0 8px 16px rgba(0, 0, 0, 0.55), 0 2px 0 rgba(217, 155, 86, 0.22);
+  overflow: hidden;
+  min-height: 0;
+}
+[data-theme="light"] .storage-cubby {
+  border-color: #7c471b;
+  background: linear-gradient(180deg, #f3dec3 0%, #e7c9a2 84%, #b47a43 100%);
+  box-shadow: inset 0 5px 10px rgba(82, 43, 12, 0.22);
+}
+[data-theme="olivia"] .storage-cubby {
+  border: 2px solid #221f20;
+  background: linear-gradient(180deg, #ffffff 0%, #faf3e3 84%, #f4a5b8 100%);
+  box-shadow: inset 0 4px 10px rgba(34, 31, 32, 0.08);
+}
+[data-theme="petal"] .storage-cubby {
+  border: 1.5px solid #2e2e36;
+  background: linear-gradient(180deg, #1b1b20 0%, #121216 86%, #24242b 100%);
+  box-shadow: inset 0 6px 14px rgba(0, 0, 0, 0.65);
+}
+.storage-cubby-preview {
+  flex: 1 1 0%;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.storage-cubby-preview canvas {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.storage-cubby-meta {
+  width: 100%;
+  text-align: center;
+  font-size: 0.64rem;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-main);
+}
+.storage-cubby-actions {
+  display: flex;
+  gap: 0.2rem;
+  width: 100%;
+  justify-content: center;
+  margin-top: 0.15rem;
+}
+.storage-cubby-btn {
+  padding: 0.14rem 0.35rem;
+  border-radius: 0.3rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  font-size: 0.62rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.storage-cubby-btn.primary {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+.storage-cubby-btn.danger:hover {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+.storage-locker-bottombar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-shrink: 0;
+}
+.storage-nav-arrow {
+  width: 2.8rem;
+  height: 2.2rem;
+  border-radius: 0.55rem;
+  border: 1.5px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  font-size: 1.15rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.storage-nav-arrow:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.storage-nav-arrow:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.storage-locker-controls {
+  flex: 1 1 0%;
+  max-width: 720px;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.32rem 0.5rem;
+  border-radius: 0.65rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+}
+.storage-locker-controls input {
+  flex: 1 1 0%;
+  min-width: 140px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.78rem;
+}
+.lab-tab-btn.storage-tab-btn {
+  border-color: rgba(245, 158, 11, 0.55);
+}
+.lab-tab-btn.storage-tab-btn.active {
+  background-color: #d97706;
+  border-color: #d97706;
+  color: #ffffff;
 }
 
 /* Shrinkable Responsive Non-Wrapping Top Toolbar */

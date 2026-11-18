@@ -168,73 +168,32 @@ export function getInnerPolygonPx(spec) {
 }
 
 /**
- * Compute axisymmetric 3D volume fraction retained below horizontal lip plane y_rot >= lipY
- * by integrating circular chord thickness 2*sqrt(R(y)^2 - x^2) over the inner meridian polygon.
+ * Compute retained liquid fraction using the exact rotated 2D inner cross-section polygon
+ * clipped at horizontal lip plane y_rot >= lipY — guaranteeing 100% parity with rendered meniscus clip!
  */
-function compute3DHoldFraction(innerVertices, thetaDeg, isNeckedFlask = false) {
+function compute2DHoldFraction(innerVertices, thetaDeg) {
   if (!Array.isArray(innerVertices) || innerVertices.length < 3) return 0;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const p of innerVertices) {
-    if (p.y < minY) minY = p.y;
-    if (p.y > maxY) maxY = p.y;
-  }
-  const spanY = maxY - minY;
-  if (spanY <= 1e-6) return 0;
-
   const rad = (thetaDeg * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
-  const lipPt = innerVertices[innerVertices.length - 1];
-  const lipY = lipPt.x * sin + lipPt.y * cos;
-
-  const ny = 36;
-  const nx = 24;
-  const dy = spanY / ny;
-  let totalV = 0;
-  let heldV = 0;
-
-  for (let iy = 0; iy < ny; iy++) {
-    const yl = minY + (iy + 0.5) * dy;
-    let rAtY = 0;
-    for (let i = 0; i < innerVertices.length; i++) {
-      const a = innerVertices[i];
-      const b = innerVertices[(i + 1) % innerVertices.length];
-      if ((a.y <= yl && b.y > yl) || (b.y <= yl && a.y > yl)) {
-        const xHit = a.x + ((yl - a.y) / (b.y - a.y)) * (b.x - a.x);
-        if (Math.abs(xHit) > rAtY) rAtY = Math.abs(xHit);
-      }
-    }
-    if (rAtY <= 1e-4) continue;
-    const dx = (2 * rAtY) / nx;
-    for (let ix = 0; ix < nx; ix++) {
-      const xl = -rAtY + (ix + 0.5) * dx;
-      const chordZ = Math.sqrt(Math.max(0, rAtY * rAtY - xl * xl));
-      const dV = chordZ * dx * dy;
-      totalV += dV;
-      const yRot = xl * sin + yl * cos;
-      if (yRot >= lipY) heldV += dV;
-    }
-  }
-  if (totalV <= 1e-9) return 0;
-  const workingFill = isNeckedFlask ? 0.44 : 0.94;
-  return Math.max(0, Math.min(1, (heldV / totalV) / workingFill));
+  const rotatedPoly = innerVertices.map((p) => ({
+    x: p.x * cos - p.y * sin,
+    y: p.x * sin + p.y * cos,
+  }));
+  const totalA = polygonArea(rotatedPoly);
+  if (totalA <= 1e-6) return 0;
+  const lipPt = rotatedPoly[rotatedPoly.length - 1];
+  const heldA = polygonArea(clipPolygonBelow(rotatedPoly, lipPt.y));
+  return Math.max(0, Math.min(1, heldA / totalA));
 }
 
 /**
- * Compute maximum retained liquid volume (mL) at tilt angle thetaDeg [0..180] via 2D/3D cross-section polygon clipping.
+ * Compute maximum retained liquid volume (mL) at tilt angle thetaDeg [0..180] via 2D cross-section polygon clipping.
  */
 export function getMaxHoldVolume(innerVertices, totalAreaPx, maxCapacityMl, thetaDeg) {
   const clAngle = Math.max(0, Math.min(180, Number(thetaDeg) || 0));
   if (clAngle <= 0.1) return maxCapacityMl;
-  const topWidth = Math.abs((innerVertices[innerVertices.length - 1]?.x || 0) - (innerVertices[0]?.x || 0));
-  let maxHalfW = 0;
-  for (const p of innerVertices) {
-    if (Math.abs(p.x) > maxHalfW) maxHalfW = Math.abs(p.x);
-  }
-  const isNeckedFlask = maxHalfW > 1e-3 && topWidth * 0.5 < maxHalfW * 0.65;
-  const frac3D = compute3DHoldFraction(innerVertices, clAngle, isNeckedFlask);
-  return maxCapacityMl * frac3D;
+  return maxCapacityMl * compute2DHoldFraction(innerVertices, clAngle);
 }
 
 export function getVesselHoldVolumeMl(spec, thetaDeg, maxCapOverride = null) {

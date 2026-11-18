@@ -753,6 +753,17 @@ export class InspectorPanel {
                       }
                     </div>
                   </div>
+                  ${
+                    curOutlet && curOutlet.kind === 'vessel' && !curOutlet.isInverted
+                      ? `<label class="flex flex-col gap-1 pt-1">
+                           <div class="flex justify-between text-[11px]">
+                             <span class="text-muted">${t('tubeDepthLabel')}</span>
+                             <strong class="font-mono text-sky-300" id="live-tube-depth-pct">${Math.round((item.tubeSubmersionRatio ?? 0.72) * 100)}%</strong>
+                           </div>
+                           <input type="range" id="ins-tube-depth-slider" min="0" max="100" step="2" value="${Math.round((item.tubeSubmersionRatio ?? 0.72) * 100)}" class="w-full accent-sky-500 cursor-pointer" />
+                         </label>`
+                      : ''
+                  }
                   <p class="text-[11px] text-muted leading-snug">${t('condDragHint')}</p>
                 </div>
                 <div class="flex flex-wrap gap-2">
@@ -1019,6 +1030,17 @@ export class InspectorPanel {
                 <button type="button" id="ins-el-pick-collector" ${collectorCandidates.length === 0 ? 'disabled' : ''} class="py-1.5 px-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 font-semibold text-xs hover:bg-emerald-500/20 disabled:opacity-40">${t('elCollectPickTarget')}</button>
               </div>
               ${item.gasTargetId || mountedTube ? `<button type="button" id="ins-el-clear-collector" class="py-1 px-2 rounded border border-red-500/40 bg-red-500/10 text-red-400 text-xs">${t('elCollectDetach')}</button>` : ''}
+              ${
+                collectorTarget && collectorTarget.kind === 'vessel' && !collectorTarget.isInverted
+                  ? `<label class="flex flex-col gap-1 pt-1">
+                       <div class="flex justify-between text-[11px]">
+                         <span class="text-muted">${t('tubeDepthLabel')}</span>
+                         <strong class="font-mono text-sky-300" id="live-tube-depth-pct">${Math.round((item.tubeSubmersionRatio ?? 0.72) * 100)}%</strong>
+                       </div>
+                       <input type="range" id="ins-tube-depth-slider" min="0" max="100" step="2" value="${Math.round((item.tubeSubmersionRatio ?? 0.72) * 100)}" class="w-full accent-sky-500 cursor-pointer" />
+                     </label>`
+                  : ''
+              }
             </div>
           ` : ''}
         </div>
@@ -2005,6 +2027,9 @@ export class InspectorPanel {
       this.container.querySelector('#ins-cond-out-dis')?.addEventListener('click', () => {
         this.sim.connectCondenserOutlet(item.id, null);
       });
+      this.container.querySelector('#ins-tube-depth-slider')?.addEventListener('input', (e) => {
+        this.sim.setTubeSubmersionRatio(item.id, Number(e.target.value) / 100);
+      });
       this.container.querySelectorAll('.bur-rate-btn').forEach((btn) => {
         btn.addEventListener('click', () => this.sim.setBuretteValveRate(item.id, Number(btn.dataset.rate)));
       });
@@ -2113,6 +2138,9 @@ export class InspectorPanel {
           mountedTube.mountedOverElectrodeId = null;
           this.sim.emitChange();
         }
+      });
+      this.container.querySelector('#ins-tube-depth-slider')?.addEventListener('input', (e) => {
+        this.sim.setTubeSubmersionRatio(item.id, Number(e.target.value) / 100);
       });
     } else if (item.kind === 'stir_bar') {
       this.container.querySelectorAll('.sb-rpm-btn').forEach((btn) => {

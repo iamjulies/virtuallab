@@ -5,6 +5,7 @@ import {
   getProbeTipPos,
   getStandGeometry,
   getSyringeGeometry,
+  getTubeDestTipPos,
   getVesselEndPorts,
   getVesselTubingPort,
 } from '../data/apparatus.js';
@@ -414,15 +415,46 @@ export class LabWorkbenchCanvas {
     return null;
   }
 
+  logicalToClient(lx, ly) {
+    const rect = this.canvas.getBoundingClientRect();
+    let vx = lx;
+    let vy = ly;
+    if (this.zoomScale > 1.001) {
+      vx = BENCH_LOGICAL_W * 0.5 + (lx - this.zoomCenterX) * this.zoomScale;
+      vy = BENCH_LOGICAL_H * 0.5 + (ly - this.zoomCenterY) * this.zoomScale;
+    }
+    return {
+      x: rect.left + this.viewOffsetX + vx * this.viewScale,
+      y: rect.top + this.viewOffsetY + vy * this.viewScale,
+      scale: this.viewScale * this.zoomScale,
+    };
+  }
+
   findTubeTipHandleAt(lx, ly) {
     for (let i = this.sim.items.length - 1; i >= 0; i--) {
-      const v = this.sim.items[i];
-      if (v.kind !== 'vessel' || v.isShattered || !v.connectedTargetId) continue;
-      const dst = this.sim.getItem(v.connectedTargetId);
-      if (!dst || dst.kind !== 'vessel' || dst.isInverted || dst.isShattered) continue;
-      const geom = computeTubingGeometry(v, dst);
-      if (geom?.p3 && Math.hypot(lx - geom.p3.x, ly - geom.p3.y) <= 14) {
-        return { srcVessel: v, dstVessel: dst, p3: geom.p3 };
+      const src = this.sim.items[i];
+      if (src.isShattered || src.isBroken) continue;
+      if (src.kind === 'vessel' && src.connectedTargetId) {
+        const dst = this.sim.getItem(src.connectedTargetId);
+        if (!dst || dst.kind !== 'vessel' || dst.isInverted || dst.isShattered) continue;
+        const geom = computeTubingGeometry(src, dst);
+        if (geom?.p3 && Math.hypot(lx - geom.p3.x, ly - geom.p3.y) <= 14) {
+          return { srcVessel: src, dstVessel: dst, p3: geom.p3 };
+        }
+      } else if (src.kind === 'electrode' && src.gasTargetId) {
+        const dst = this.sim.getItem(src.gasTargetId);
+        if (!dst || dst.kind !== 'vessel' || dst.isInverted || dst.isShattered || dst.mountedOverElectrodeId === src.id) continue;
+        const p3 = getTubeDestTipPos(src, dst);
+        if (Math.hypot(lx - p3.x, ly - p3.y) <= 14) {
+          return { srcVessel: src, dstVessel: dst, p3 };
+        }
+      } else if (src.kind === 'condenser' && src.outletTargetId) {
+        const dst = this.sim.getItem(src.outletTargetId);
+        if (!dst || dst.kind !== 'vessel' || dst.isInverted || dst.isShattered) continue;
+        const p3 = getTubeDestTipPos(src, dst);
+        if (Math.hypot(lx - p3.x, ly - p3.y) <= 14) {
+          return { srcVessel: src, dstVessel: dst, p3 };
+        }
       }
     }
     return null;
@@ -2679,8 +2711,9 @@ export class LabWorkbenchCanvas {
     }
 
     if (mode === 'thermal') {
-      const GW = 96;
-      const GH = 54;
+      // High-sharpness 240 x 135 thermal diffusion field -> Ironbow/Rainbow FLIR LUT
+      const GW = 240;
+      const GH = 135;
       if (!this._thermalCanvas) {
         this._thermalCanvas = document.createElement('canvas');
         this._thermalCanvas.width = GW;
@@ -2787,7 +2820,7 @@ export class LabWorkbenchCanvas {
         }
       }
 
-      for (let pass = 0; pass < 2; pass++) {
+      for (let pass = 0; pass < 3; pass++) {
         for (let gy = 0; gy < GH; gy++) {
           for (let gx = 0; gx < GW; gx++) {
             const c = grid[gy * GW + gx];
@@ -2795,7 +2828,7 @@ export class LabWorkbenchCanvas {
             const r = grid[gy * GW + Math.min(GW - 1, gx + 1)];
             const u = grid[Math.max(0, gy - 1) * GW + gx];
             const d = grid[Math.min(GH - 1, gy + 1) * GW + gx];
-            tmp[gy * GW + gx] = c * 0.4 + (l + r + u + d) * 0.15;
+            tmp[gy * GW + gx] = c * 0.44 + (l + r + u + d) * 0.14;
           }
         }
         grid.set(tmp);
@@ -2829,16 +2862,25 @@ export class LabWorkbenchCanvas {
       ctx.fillStyle = `rgba(${this._flirLut[ambLut]}, ${this._flirLut[ambLut + 1]}, ${this._flirLut[ambLut + 2]}, 0.84)`;
       ctx.fillRect(-padH, -padV, BENCH_LOGICAL_W + padH * 2, BENCH_LOGICAL_H + padV * 2);
       ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(this._thermalCanvas, 0, 0, BENCH_LOGICAL_W, BENCH_LOGICAL_H);
 
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.34)';
-      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.52)';
+      ctx.lineWidth = 1.4;
       for (const it of this.sim.items) {
         const sp = APPARATUS[it.typeId];
         if (!sp || it.isShattered || it.isBroken) continue;
+        const rad = (it.tiltAngle || 0) + (it.landingTilt || 0);
+        ctx.save();
+        if (rad) {
+          ctx.translate(it.x, it.y);
+          ctx.rotate(rad);
+          ctx.translate(-it.x, -it.y);
+        }
         ctx.beginPath();
         ctx.roundRect(it.x - sp.width * 0.46, it.y - sp.height * 0.46, sp.width * 0.92, sp.height * 0.92, 6);
         ctx.stroke();
+        ctx.restore();
       }
 
       const barX = BENCH_LOGICAL_W - 26;
