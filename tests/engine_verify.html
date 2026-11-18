@@ -59,9 +59,15 @@
     import {
       FIREBASE_CONFIG,
       WORKSPACE_SCHEMA_VERSION,
+      VLAB_SCOPES,
+      buildVlabFilename,
+      sanitizeVlabSlug,
+      classifyVlabData,
       serializeWorkspace,
       deserializeWorkspace,
       serializeActiveBench,
+      serializeStorageCabinet,
+      serializeFullLab,
       importBenchIntoNewTab,
       saveToLocalStorage,
       loadFromLocalStorage,
@@ -2450,7 +2456,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.10';
+      const expectedBuild = 'virlab_beta_v3+build.11';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -4828,34 +4834,44 @@
       );
     }
 
-    // TEST 103: Multi-Select (Marquee / Select All), Copy/Paste (Apparatus-Only Without Chemicals) & Render Validation
+    // TEST 103: Multi-Select (Marquee / Select All), Ctrl+V (WITH Chemicals + Labels) vs Ctrl+Shift+V (Empty Shell Keeping Label) & Render Validation
     {
       const lm = new LabManager();
       const simM = lm.getActiveSim();
       simM.setupPreset('clean');
       const v1 = simM.createApparatus('beaker_250', 220, 427);
       v1.moles = { H2O_l: 3.0, Cu2_aq: 0.1, SO4_2_aq: 0.1 }; // Filled with CuSO4 solution!
+      v1.stickyLabel = { text: 'CuSO4 1M', bgColor: '#fef08a' };
       const v2 = simM.createApparatus('crucible_porcelain', 420, 455);
       v2.lidState = 'closed';
       v2.moles = { AgNO3_s: 0.05 };
       const st = simM.createApparatus('rubber_stopper', 540, 468);
       st.stopperMode = 'solid';
 
-      // Verify Copy/Paste copies ALL 3 items structurally with ZERO chemicals inside!
+      // 1) Ctrl+C + Ctrl+V pastes WITH full chemicals & stickyLabel at cursor (targetX/targetY)
       const copiedN = lm.copyItems([v1.id, v2.id, st.id], simM);
-      const pastedList = lm.pasteItems(simM);
-      const pBeaker = pastedList.find((p) => p.typeId === 'beaker_250');
-      const pCruc = pastedList.find((p) => p.typeId === 'crucible_porcelain');
-      const pStop = pastedList.find((p) => p.typeId === 'rubber_stopper');
-      const noChemsCopied =
-        pBeaker &&
-        Object.keys(pBeaker.moles || {}).length === 0 &&
-        pCruc &&
-        Object.keys(pCruc.moles || {}).length === 0 &&
-        pCruc.lidState === 'closed' &&
-        pStop?.stopperMode === 'solid';
+      const pastedFull = lm.pasteItems(simM, { includeChemicals: true, targetX: 600, targetY: 420 });
+      const pBeakerFull = pastedFull.find((p) => p.typeId === 'beaker_250');
+      const pCrucFull = pastedFull.find((p) => p.typeId === 'crucible_porcelain');
+      const pStopFull = pastedFull.find((p) => p.typeId === 'rubber_stopper');
+      const withChemsCopied =
+        pBeakerFull &&
+        Math.abs((pBeakerFull.moles?.Cu2_aq || 0) - 0.1) < 1e-6 &&
+        pBeakerFull.stickyLabel?.text === 'CuSO4 1M' &&
+        pCrucFull &&
+        Math.abs((pCrucFull.moles?.AgNO3_s || 0) - 0.05) < 1e-6 &&
+        pCrucFull.lidState === 'closed' &&
+        pStopFull?.stopperMode === 'solid';
 
-      // Verify Marquee bounding selection & Molten/U-Tube/Stopper/Cotton Canvas render
+      // 2) Ctrl+Shift+V pastes EMPTY SHELL ONLY while still preserving stickyLabel!
+      const pastedShell = lm.pasteItems(simM, { includeChemicals: false });
+      const pBeakerShell = pastedShell.find((p) => p.typeId === 'beaker_250');
+      const shellOnlyKeepsLabel =
+        pBeakerShell &&
+        Object.keys(pBeakerShell.moles || {}).length === 0 &&
+        pBeakerShell.stickyLabel?.text === 'CuSO4 1M';
+
+      // Verify Marquee bounding selection & Molten/U-Tube/Stopper/Cotton/StickyLabel Canvas render
       const pU = simM.createApparatus('quartz_u_tube', 760, 380);
       pU.moles = { AgCl_s: 0.05 };
       pU.tempK = 760; // Molten amber AgCl!
@@ -4874,14 +4890,16 @@
       cWrap.remove();
 
       assert(
-        'Multi-Select (selectedIds + Marquee) & Copy/Paste duplicate apparatus settings without chemicals; Canvas renders molten solids, U-Tube & marquee cleanly',
+        'Multi-Select (selectedIds + Marquee), Ctrl+V (with chemicals & labels) & Ctrl+Shift+V (empty shell keeping stickyLabel) render cleanly',
         copiedN === 3 &&
-          pastedList.length === 3 &&
-          noChemsCopied &&
+          pastedFull.length === 3 &&
+          withChemsCopied &&
+          shellOnlyKeepsLabel &&
           simM.selectedIds.size === 3 &&
-          validateVesselInvariants(pBeaker).valid &&
+          validateVesselInvariants(pBeakerFull).valid &&
+          validateVesselInvariants(pBeakerShell).valid &&
           validateVesselInvariants(pU).valid,
-        `copied=${copiedN}, pasted=${pastedList.length}, cleanChems=${noChemsCopied}, selSize=${simM.selectedIds.size}`
+        `copied=${copiedN}, pasted=${pastedFull.length}, withChems=${withChemsCopied}, shellKeepLbl=${shellOnlyKeepsLabel}, selSize=${simM.selectedIds.size}`
       );
     }
 
@@ -5981,6 +5999,224 @@
         '3-Layer Workspace Persistence serializes pure physical state without bloat, exports single-bench .vlab & appends new tab on import without overwriting existing benches, and shares via LAB-XXX codes',
         noDerivedBloat && roundTripExact && canonRestored && isSingleBenchVlab && appendedNewTab && shareCodeOk && firebaseConfigOk,
         `noBloat=${noDerivedBloat}, roundTrip=${roundTripExact}, canon=${canonRestored}, singleVlab=${isSingleBenchVlab}, appendTab=${appendedNewTab}(labs=${lmAppend.labs.length}), shareCode=${shareCode}(ok=${shareCodeOk}), fb=${firebaseConfigOk}`
+      );
+    }
+
+    // TEST 124: Prompt 28 — Infinite Storage Cabinet (Frozen State), Standardized .vlab Scopes & Slugs, Sticky Labels & Tab Ops
+    {
+      const lmCab = new LabManager();
+      const sCab = lmCab.getActiveSim();
+      sCab.setupPreset('clean');
+      const hotFlask = sCab.createApparatus('erlenmeyer_250', 300, 400);
+      hotFlask.moles = { H2O_l: 4.0, Na_aq: 0.2, OH_aq: 0.2 };
+      hotFlask.tempK = 355.0;
+      hotFlask.stickyLabel = { text: 'NaOH 1M chuẩn', bgColor: '#bae6fd' };
+
+      const entry = lmCab.storeItemToCabinet(hotFlask.id, sCab);
+      // Step simulation for 20 seconds -> frozen cabinet entry MUST NOT cool, evaporate, or react!
+      stepSeconds(sCab, 10.0, 0.05);
+      const frozenIntact =
+        lmCab.storageCabinet.length === 1 &&
+        sCab.items.length === 0 &&
+        Math.abs(entry.snapshot.tempK - 355.0) < 1e-6 &&
+        Math.abs(entry.snapshot.moles.H2O_l - 4.0) < 1e-6 &&
+        entry.stickyLabel?.text === 'NaOH 1M chuẩn';
+
+      // Withdraw via Clone keeps cabinet copy + places exact frozen copy back onto bench
+      const clonedOut = lmCab.withdrawFromCabinet(entry.id, { mode: 'clone', targetX: 460, targetY: 410 });
+      const cloneOk =
+        lmCab.storageCabinet.length === 1 &&
+        clonedOut &&
+        Math.abs(clonedOut.tempK - 355.0) < 1e-6 &&
+        clonedOut.stickyLabel?.text === 'NaOH 1M chuẩn';
+
+      // Scope & Filename normalization check
+      const fSingle = buildVlabFilename(VLAB_SCOPES.SINGLE_BENCH, 'Mẫu Chuẩn Độ / Test: #1', 'vi');
+      const fCabVi = buildVlabFilename(VLAB_SCOPES.STORAGE_CABINET, '', 'vi');
+      const fCabEn = buildVlabFilename(VLAB_SCOPES.STORAGE_CABINET, '', 'en');
+      const fFull = buildVlabFilename(VLAB_SCOPES.FULL_LAB, '', 'vi');
+      const namesOk =
+        /^mau-chuan-do-test-1-\d{2}\.\d{2}\.\d{4}-\d{2}\.\d{2}\.\d{2}\.vlab$/.test(fSingle) &&
+        /^tutrudo-\d{2}\.\d{2}\.\d{4}-\d{2}\.\d{2}\.\d{2}\.vlab$/.test(fCabVi) &&
+        /^storagecabinet-\d{2}\.\d{2}\.\d{4}-\d{2}\.\d{2}\.\d{2}\.vlab$/.test(fCabEn) &&
+        /^fulllab-\d{2}\.\d{2}\.\d{4}-\d{2}\.\d{2}\.\d{2}\.vlab$/.test(fFull);
+
+      const singlePkg = serializeActiveBench(lmCab, 'Chuan Do');
+      const cabPkg = serializeStorageCabinet(lmCab);
+      const fullPkg = serializeFullLab(lmCab);
+      const scopesOk =
+        classifyVlabData(singlePkg) === VLAB_SCOPES.SINGLE_BENCH &&
+        classifyVlabData(cabPkg) === VLAB_SCOPES.STORAGE_CABINET &&
+        classifyVlabData(fullPkg) === VLAB_SCOPES.FULL_LAB &&
+        Array.isArray(fullPkg.storageCabinet) &&
+        fullPkg.storageCabinet.length === 1;
+
+      assert(
+        'Infinite Storage Cabinet freezes stored vessels in time, withdraws via clone/move with stickyLabel, and .vlab Scopes & Slugs serialize cleanly',
+        frozenIntact && cloneOk && namesOk && scopesOk,
+        `frozen=${frozenIntact}, clone=${cloneOk}, names=${namesOk}(${fSingle}), scopes=${scopesOk}`
+      );
+    }
+
+    // TEST 125: Prompt 28 — Stoppered Receiving Vessels (Holed & Solid Stoppers Accept Delivery Tubing & Condenser Outlet)
+    {
+      const simRcv = new LabSimulation();
+      simRcv.setupPreset('clean');
+      const srcFlask = simRcv.createApparatus('round_flask_250', 180, 390);
+      srcFlask.isStoppered = true;
+      srcFlask.moles = { H2O_l: 4.0, C2H5OH_l: 1.0 };
+      srcFlask.tempK = 365.0;
+      const cond = simRcv.createApparatus('liebig_condenser', 360, 340);
+      cond.waterFlowOn = true;
+      const dstStoppered = simRcv.createApparatus('erlenmeyer_250', 560, 410);
+      dstStoppered.isStoppered = true;
+      dstStoppered.stopperMode = 'solid';
+
+      simRcv.connectTube(srcFlask.id, cond.id);
+      const condOutOk = simRcv.connectCondenserOutlet(cond.id, dstStoppered.id);
+
+      // Also test gas delivery tube directly into solid-stoppered receiving flask!
+      const gasSrc = simRcv.createApparatus('erlenmeyer_250', 700, 410);
+      gasSrc.isStoppered = true;
+      gasSrc.moles = { CaCO3_s: 0.1, H_aq: 0.2, Cl_aq: 0.2, H2O_l: 3.0 };
+      const gasDst = simRcv.createApparatus('erlenmeyer_250', 840, 410);
+      gasDst.isStoppered = true;
+      gasDst.stopperMode = 'solid';
+      simRcv.connectTube(gasSrc.id, gasDst.id);
+
+      for (let i = 0; i < 60; i++) {
+        srcFlask.tempK = 365.0;
+        simRcv.step(0.05);
+      }
+
+      const distillateReceived = ((dstStoppered.moles.C2H5OH_l || 0) + (dstStoppered.moles.H2O_l || 0)) > 0.005;
+      const gasReceivedStoppered = (gasDst.headspaceGasMoles?.CO2_g || 0) > 1e-4;
+      assert(
+        'Condenser outlet & gas delivery tubes penetrate holed/solid stoppers cleanly, delivering liquid condensate & trapping received gas inside headspace',
+        condOutOk && distillateReceived && gasReceivedStoppered,
+        `condOut=${condOutOk}, dist=${((dstStoppered.moles.C2H5OH_l||0)+(dstStoppered.moles.H2O_l||0)).toFixed(4)}mol, headCO2=${((gasDst.headspaceGasMoles?.CO2_g||0)*1000).toFixed(2)}mmol`
+      );
+    }
+
+    // TEST 126: Prompt 28 — Quiet Room-Temperature Evaporation Calibration (~35x slower at 25 °C)
+    {
+      const areaCm2 = 24.0;
+      const evapWater25C = calcEvaporationRateMol(SPECIES.H2O_l, 1.0, 298.15, areaCm2, 1200, false);
+      const evapEtOH26C = calcEvaporationRateMol(SPECIES.C2H5OH_l, 0.5, 298.95, areaCm2, 0, false, 1.45);
+      const evapHotWater90C = calcEvaporationRateMol(SPECIES.H2O_l, 1.0, 363.15, areaCm2, 1200, false);
+
+      // Room-temp rates must be realistically gentle (~0.0005–0.004 mmol/s, ~35x slower than 0.03-0.3 mmol/s!)
+      const water25MmolS = evapWater25C * 1000;
+      const etoh26MmolS = evapEtOH26C * 1000;
+      const hot90MmolS = evapHotWater90C * 1000;
+      assert(
+        'Room-temperature evaporation calibrated (~0.0005–0.01 mmol/s for pure H2O & EtOH mix at 25–26 °C), scaling strongly when heated to 90 °C',
+        water25MmolS > 1e-4 && water25MmolS < 0.004 && etoh26MmolS < 0.025 && hot90MmolS > water25MmolS * 30,
+        `H2O@25C=${water25MmolS.toFixed(5)}mmol/s, EtOH@26C=${etoh26MmolS.toFixed(5)}mmol/s, H2O@90C=${hot90MmolS.toFixed(4)}mmol/s`
+      );
+    }
+
+    // TEST 127: Prompt 28 — Iron Powder vs Iron Nail Combustion, Oxide Proportions & <570 °C FeO Disproportionation
+    {
+      // 1) Iron powder at 298 K (room temp) does NOT burn; at >=760 °C (1120 K) sparks & produces Fe3O4 (~75% Fe) + Fe2O3 (~25% Fe)
+      const simFe = new LabSimulation();
+      simFe.setupPreset('clean');
+      const vPow = simFe.createApparatus('crucible_porcelain', 220, 440);
+      vPow.moles = { Fe_s: 0.08 };
+      vPow.groundPowderMap = { Fe_s: true };
+      vPow.particleCounts = { Fe_s: 400 };
+      vPow.tempK = 298.15;
+      stepSeconds(simFe, 1.5, 0.05);
+      const coldStable = (vPow.moles.Fe_s || 0) > 0.0799 && (vPow.moles.Fe3O4_s || 0) === 0;
+
+      vPow.tempK = 1120.0; // ~847 °C in air
+      for (let i = 0; i < 40; i++) {
+        vPow.tempK = 1120.0;
+        simFe.step(0.05);
+      }
+      const feInFe3O4 = (vPow.moles.Fe3O4_s || 0) * 3;
+      const feInFe2O3 = (vPow.moles.Fe2O3_s || 0) * 2;
+      const powderSparkedAndMixed =
+        feInFe3O4 > 1e-4 &&
+        feInFe2O3 > 1e-4 &&
+        feInFe3O4 > feInFe2O3 * 2.0 &&
+        (vPow.feSparkBurning || 0) > 0;
+
+      // 2) Solid iron nail at 950 °C (1223 K) in air builds 3-layer scale (FeO + Fe3O4 + Fe2O3) WITHOUT sparking!
+      const vNail = simFe.createApparatus('crucible_porcelain', 420, 440);
+      vNail.moles = { Fe_s: 0.08 };
+      vNail.particleCounts = { Fe_s: 1 };
+      for (let i = 0; i < 40; i++) {
+        vNail.tempK = 1223.15;
+        simFe.step(0.05);
+      }
+      const nailThreeLayerScale =
+        (vNail.moles.FeO_s || 0) > 1e-6 &&
+        (vNail.moles.Fe3O4_s || 0) > 1e-7 &&
+        (vNail.moles.Fe2O3_s || 0) > 1e-7 &&
+        !(vNail.feSparkBurning > 0.05);
+
+      // 3) Slow cooling below 570 °C disproportionates 4FeO -> Fe + Fe3O4
+      const vCool = simFe.createApparatus('crucible_porcelain', 620, 440);
+      vCool.moles = { FeO_s: 0.04 };
+      const initialFeO = vCool.moles.FeO_s;
+      for (let i = 0; i < 60; i++) {
+        vCool.tempK = 680.0; // ~407 °C < 570 °C!
+        simFe.step(0.1);
+      }
+      const dispropOk = (vCool.moles.FeO_s || 0) < initialFeO * 0.9 && (vCool.moles.Fe_s || 0) > 1e-4 && (vCool.moles.Fe3O4_s || 0) > 1e-4;
+
+      assert(
+        'Iron Powder (>=760 °C air sparks -> Fe3O4+Fe2O3, zero room-T pyrophoric) vs Iron Nail (no air sparks, 3-layer FeO/Fe3O4/Fe2O3 scale, <570 °C FeO disproportionation)',
+        coldStable && powderSparkedAndMixed && nailThreeLayerScale && dispropOk,
+        `cold=${coldStable}, powBurn=${powderSparkedAndMixed}(3:4=${(feInFe3O4*1000).toFixed(2)}mmol vs 2:3=${(feInFe2O3*1000).toFixed(2)}mmol), nailScale=${nailThreeLayerScale}, disprop=${dispropOk}`
+      );
+    }
+
+    // TEST 128: Prompt 28 — Na2O2/Na2O/Zn/ZnO Constants + Porcelain Crucible Closed-Lid O2 Exclusion & Auto-Pop at Overpressure
+    {
+      const propOk =
+        Math.abs(SPECIES.Na2O2_s.meltTempK - 733.15) < 0.5 &&
+        Math.abs(SPECIES.Na2O2_s.decompTempK - 733.15) < 0.5 &&
+        !SPECIES.Na2O2_s.noMelt &&
+        Math.abs(SPECIES.Na2O_s.meltTempK - 1405.15) < 0.5 &&
+        Math.abs(SPECIES.Na2O_s.sublTempK - 1548.15) < 0.5 &&
+        Math.abs(SPECIES.Na2O_s.boilTempK - 2223.15) < 0.5 &&
+        Math.abs(SPECIES.Zn_s.meltTempK - 692.65) < 0.5 &&
+        Math.abs(SPECIES.Zn_s.boilTempK - 1180.15) < 0.5 &&
+        Math.abs(SPECIES.ZnO_s.hotColorTempK - 573.15) < 0.5 &&
+        Math.abs(APPARATUS.crucible_porcelain.lidPopOverpressureBar - 0.06) < 1e-4;
+
+      // 1) Closed crucible heating Zn powder at 520 °C (~793 K) excludes external air O2 -> Zn stays mostly metallic & melts cleanly!
+      const simCr = new LabSimulation();
+      simCr.setupPreset('clean');
+      const crZn = simCr.createApparatus('crucible_porcelain', 300, 440);
+      crZn.lidState = 'closed';
+      crZn.moles = { Zn_s: 0.05 };
+      crZn.groundPowderMap = { Zn_s: true };
+      crZn.particleCounts = { Zn_s: 200 };
+      for (let i = 0; i < 60; i++) {
+        crZn.tempK = 793.15;
+        simCr.step(0.05);
+      }
+      const closedLidBlockedO2 = crZn.lidState === 'closed' && (crZn.moles.Zn_s || 0) > 0.048 && (crZn.moles.ZnO_s || 0) < 0.002;
+
+      // 2) Generating gas inside closed crucible builds pressure then automatically pops lid 'ajar' once overpressure >= 0.06 bar!
+      const crPop = simCr.createApparatus('crucible_porcelain', 500, 440);
+      crPop.lidState = 'closed';
+      crPop.moles = { Na2O2_s: 0.04 };
+      for (let i = 0; i < 60; i++) {
+        crPop.tempK = 930.15; // ~657 °C -> 2 Na2O2 -> 2 Na2O + O2(g)
+        simCr.step(0.05);
+      }
+      const na2o2DecompAndLidPopped =
+        (crPop.moles.Na2O_s || 0) > 0.01 &&
+        crPop.lidState === 'ajar';
+
+      assert(
+        'Na2O2/Na2O/Zn/ZnO thermal constants accurate; closed Porcelain Crucible blocks external O2 from burning heated Zn & pops lid ajar upon gas overpressure (>= 0.06 bar)',
+        propOk && closedLidBlockedO2 && na2o2DecompAndLidPopped,
+        `prop=${propOk}, closedZnO=${((crZn.moles.ZnO_s||0)*1000).toFixed(2)}mmol(${crZn.lidState}), popNa2O=${((crPop.moles.Na2O_s||0)*1000).toFixed(1)}mmol(lid=${crPop.lidState})`
       );
     }
 

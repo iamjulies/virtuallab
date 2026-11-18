@@ -140,7 +140,7 @@ function getReactantAvailableMol(vessel, spId, env) {
 
   const atmMode = env?.atmosphereMode || 'air';
   if (atmMode === 'inert') return headVal;
-  if (vessel.isStoppered) {
+  if (vessel.isStoppered || vessel.lidState === 'closed') {
     return headVal + Math.max(0, vessel.sealedAirO2Moles ?? 0);
   }
   if (vessel.isInverted && vessel.submergedInTroughId) {
@@ -164,7 +164,8 @@ export function getVesselEffectiveO2Bar(vessel, env) {
   if ((env?.atmosphereMode || 'air') === 'air') {
     const pEnv = env?.pressureBar || CONSTANTS.P_STD_BAR;
     const purgeFrac = vessel.airO2PurgeFrac ?? 1.0;
-    if (!vessel.isStoppered && !vessel.isInverted) {
+    const isClosedLid = vessel.lidState === 'closed';
+    if (!vessel.isStoppered && !vessel.isInverted && !isClosedLid) {
       pO2 += CONSTANTS.AIR_O2_FRAC * pEnv * purgeFrac;
     } else if ((vessel.sealedAirO2Moles || 0) > 1e-7) {
       pO2 += CONSTANTS.AIR_O2_FRAC * pEnv * Math.min(1, (vessel.sealedAirO2Moles || 0) / 0.0015);
@@ -380,6 +381,9 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
   if (rxn.type === 'thermal_decomposition') {
     if (rxn.requiresDry && ((hasWater && (moles.H2O_l || 0) > 1e-4) || (moles.H2O_s || 0) > 1e-4)) return 0;
     if (T < rxn.minTempK) return 0;
+    if (rxn.maxTempK && T >= rxn.maxTempK) return 0;
+    if (rxn.requiresInertOrVacuum && env?.atmosphereMode !== 'inert' && getVesselEffectiveO2Bar(vessel, env) > 0.03) return 0;
+    if (rxn.id === 'na2o_inert_disprop' && env?.atmosphereMode !== 'inert') return 0;
     let minExtent = Infinity;
     for (const [spId, stoich] of Object.entries(rxn.reactants)) {
       minExtent = Math.min(minExtent, (moles[spId] || 0) / stoich);
@@ -653,7 +657,10 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
         : (rxn.minTempK || 585);
     if (T < minTK) return 0;
     const pO2 = getVesselEffectiveO2Bar(vessel, options.environment);
-    if (pO2 <= (solidId === 'Fe_s' && !isFineMetal ? 0.35 : 0.015)) return 0;
+    // Fe_s in ordinary air is governed by fe_air_combustion (powder spark combustion vs nail protective 3-layer scale);
+    // fe_o2_burn activates specifically in pure/enriched O2 (>0.35 bar or headspace O2 > 1e-4)
+    if (solidId === 'Fe_s' && pO2 <= 0.35 && (vessel.headspaceGasMoles?.O2_g || 0) <= 1e-4) return 0;
+    if (pO2 <= 0.015) return 0;
     const nSolid = moles[solidId] || 0;
     if (nSolid <= 1e-10) return 0;
     const area = computeSolidSurfaceAreaM2(solidId, nSolid, pCount);
@@ -661,6 +668,28 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     const k = (rxn.kAtThreshold || 0.65) * arrheniusFactor(rxn.eaJ || 48000, T - minTK + CONSTANTS.T_STD_K);
     const stoichS = rxn.reactants?.[solidId] || 1;
     return Math.min((nSolid / stoichS) * 0.9, k * Math.max(1e-4, area) * o2Drive * (24.0 / stoichS));
+  }
+
+  if (rxn.type === 'fe_air_combustion') {
+    const nFe = moles.Fe_s || 0;
+    if (nFe <= 1e-10) return 0;
+    const pCount = vessel.particleCounts?.Fe_s ?? 4;
+    const isFineFe = Boolean(vessel.groundPowderMap?.Fe_s) || pCount >= 18;
+    if (rxn.fineOnly && !isFineFe) return 0;
+    if (rxn.bulkOnly && isFineFe) return 0;
+    if (T < (rxn.minTempK || 773.15)) return 0;
+    if (rxn.maxTempK && T >= rxn.maxTempK) return 0;
+    const pO2 = getVesselEffectiveO2Bar(vessel, options.environment);
+    // If inside enriched O2 vessel, let fe_o2_burn drive pure O2 spark combustion
+    if ((vessel.headspaceGasMoles?.O2_g || 0) > 1e-4 || pO2 > 0.35 || pO2 <= 0.015) return 0;
+    const area = computeSolidSurfaceAreaM2('Fe_s', nFe, isFineFe ? Math.max(240, pCount) : pCount);
+    const o2Drive = Math.min(1.6, pO2 / CONSTANTS.AIR_O2_FRAC);
+    const k = (rxn.kAtThreshold || 0.05) * arrheniusFactor(rxn.eaJ || 46000, T - (rxn.minTempK || 773.15) + CONSTANTS.T_STD_K);
+    const stoichS = rxn.reactants?.Fe_s || 3;
+    // Bulk iron nail builds a protective oxide scale that severely slows further oxidation (parabolic passivation)
+    const oxideMol = (moles.FeO_s || 0) + (moles.Fe3O4_s || 0) * 2 + (moles.Fe2O3_s || 0) * 1.5;
+    const scaleDamp = rxn.bulkOnly ? Math.max(0.08, 1.0 - (oxideMol / Math.max(1e-6, oxideMol + nFe)) * 1.4) : 1.0;
+    return Math.min((nFe / stoichS) * 0.85, k * Math.max(1e-4, area) * o2Drive * scaleDamp * (18.0 / stoichS));
   }
 
   if (rxn.type === 'sodium_combustion_gas') {
@@ -2347,7 +2376,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
         }
         const rem = used - fromHead;
         if (rem > 0 && spId === 'O2_g') {
-          if (vessel.isStoppered && (vessel.sealedAirO2Moles || 0) > 0) {
+          if ((vessel.isStoppered || vessel.lidState === 'closed') && (vessel.sealedAirO2Moles || 0) > 0) {
             const fromAir = Math.min(vessel.sealedAirO2Moles, rem);
             vessel.sealedAirO2Moles = Math.max(0, vessel.sealedAirO2Moles - fromAir);
             if ((vessel.sealedAirMoles || 0) > 0) {
@@ -2380,6 +2409,8 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     } else if (item.rxn.id === 'zn_o2_burn' && dXi > 1e-10) {
       vessel.znCombustionTimer = 1.0;
       vessel.znFlameColor = 'cyan_blue';
+    } else if ((item.rxn.id === 'fe_o2_burn' || item.rxn.id === 'fe_powder_air_ignite') && dXi > 1e-10) {
+      vessel.feSparkBurning = 1.0;
     } else if (item.rxn.id === 'na_o2_burn' && dXi > 1e-10) {
       vessel.naDryBurnTimer = 1.0;
     } else if (item.rxn.id === 'calcine_caco3' && dXi > 1e-10) {
@@ -2613,6 +2644,9 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   const atmMode = options.environment?.atmosphereMode || 'air';
   if ((vessel.znCombustionTimer || 0) > 0) {
     vessel.znCombustionTimer = Math.max(0, vessel.znCombustionTimer - dt);
+  }
+  if ((vessel.feSparkBurning || 0) > 0) {
+    vessel.feSparkBurning = Math.max(0, vessel.feSparkBurning - dt);
   }
   if ((vessel.naDryBurnTimer || 0) > 0) {
     vessel.naDryBurnTimer = Math.max(0, vessel.naDryBurnTimer - dt);

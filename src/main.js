@@ -14,15 +14,21 @@ import {
   deserializeWorkspace,
   serializeActiveBench,
   importBenchIntoNewTab,
+  overwriteBenchAtIndex,
   saveToLocalStorage,
   loadFromLocalStorage,
   resetAllBenches,
   exportWorkspaceToFile,
+  exportScopedVlabFile,
+  readVlabFile,
   importWorkspaceFromFile,
+  VLAB_SCOPES,
   cloudSync,
   initWorkspacePersistence,
 } from './storage/workspaceStorage.js';
 import { WorkspaceStorageModal } from './ui/workspaceStorageModal.js';
+import { StorageCabinetModal } from './ui/storageCabinetModal.js';
+import { FloatingContextUI } from './ui/contextMenu.js';
 
 const STORAGE_LANG_KEY = 'virlab_lang';
 const STORAGE_THEME_KEY = 'virlab_theme';
@@ -33,8 +39,14 @@ const appState = {
   theme: localStorage.getItem(STORAGE_THEME_KEY) || 'dark',
   deviceMode: localStorage.getItem(STORAGE_DEVICE_KEY) || 'auto',
   soundEnabled: soundEngine.isEnabled(),
+  cabinetCount: 0,
   mobileTab: 'bench', // 'shelf' | 'bench' | 'inspector'
 };
+
+let shortcutTarget = 'canvas'; // 'canvas' | 'tab'
+let renamingTabIndex = -1;
+let lastRPressMs = 0;
+const contextUI = new FloatingContextUI();
 
 function getTranslator() {
   const dict = I18N[appState.lang] || I18N.vi;
@@ -159,6 +171,9 @@ function handleVisualAlert(type, vessel, meta) {
   } else if (type === 'pop') {
     workbench.triggerShake(5.5, 0.24);
     showToast(`⚠️ ${meta?.hydraulic ? t('alertHydroOverflowPop') : t('alertOverpressurePop')}`);
+  } else if (type === 'crucible_lid_pop') {
+    workbench.triggerShake(3.2, 0.16);
+    showToast(`⚠️ ${t('alertCrucibleLidPop')}`);
   } else if (type === 'overflow') {
     showToast(`💧 ${t('alertOverflow')}`);
   } else if (type === 'syringe_overflow') {
@@ -255,7 +270,13 @@ function isOverShelfDiscardZone(clientX, clientY) {
 
 workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
   onSelect: () => {
+    shortcutTarget = 'canvas';
+    contextUI.closeMenu();
     refreshChrome();
+  },
+  onContextMenu: (clientX, clientY, logicalPt, hitItem) => {
+    shortcutTarget = 'canvas';
+    openCanvasContextMenu(clientX, clientY, logicalPt, hitItem);
   },
   onRequestDosing: (reagentId, vesselId) => {
     dosingModal.openReagent(reagentId, vesselId);
@@ -372,6 +393,10 @@ const envBar = new EnvironmentBar(headerEl, sim, appState, {
     soundEngine.playUiClick();
     storageModal.open();
   },
+  onOpenCabinet: () => {
+    soundEngine.playUiClick();
+    cabinetModal.open();
+  },
   onDeviceChange: (mode) => {
     appState.deviceMode = mode;
     localStorage.setItem(STORAGE_DEVICE_KEY, mode);
@@ -456,9 +481,15 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
       workbench.setExternalDropPreview(0, 0, null, null);
     }
   },
+  onContextMenu: (clientX, clientY, payload) => {
+    shortcutTarget = 'canvas';
+    openShelfContextMenu(clientX, clientY, payload);
+  },
 });
 
 const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
+  onEditStickyLabel: (vessel) => openStickyLabelEditor(vessel),
+  onStoreToCabinet: (itemId) => storeSelectedToCabinet(itemId),
   onOpenTransfer: (sourceId) => {
     const others = sim.items.filter(
       (i) =>
@@ -520,12 +551,415 @@ function syncActiveLabRefs() {
   comparisonPanel?.setSim(sim);
 }
 
+function getLabTitle(lab, t = getTranslator()) {
+  if (!lab) return `${t('labTabPrefix')} 1`;
+  return lab.customName && lab.customName.trim() ? lab.customName.trim() : `${t('labTabPrefix')} ${lab.number}`;
+}
+
+function startRenameLabTab(idx) {
+  if (idx < 0 || idx >= labManager.labs.length) return;
+  renamingTabIndex = idx;
+  shortcutTarget = 'tab';
+  lastLabTabSig = '';
+  renderLabTabs(getTranslator());
+  const inp = labTabsEl?.querySelector('.lab-tab-rename-input');
+  if (inp) {
+    inp.focus();
+    inp.select();
+  }
+}
+
+function promptExportSingleBench(targetIndex = labManager.activeIndex) {
+  const prevIdx = labManager.activeIndex;
+  if (targetIndex !== prevIdx && targetIndex >= 0 && targetIndex < labManager.labs.length) {
+    labManager.switchLab(targetIndex);
+  }
+  const t = getTranslator();
+  const activeLab = labManager.getActiveLab();
+  const defName = activeLab?.customName || `ban-${activeLab?.number || 1}`;
+  contextUI.showExportNameDialog(defName, t, appState.lang, (customName) => {
+    const fname = exportScopedVlabFile(VLAB_SCOPES.SINGLE_BENCH, labManager, {
+      customName,
+      langCode: appState.lang,
+    });
+    if (fname) {
+      soundEngine.playUiClick();
+      showToast(`📤 ${t('toastExportedVlab')} (${fname})`);
+    }
+  });
+}
+
+async function handleImportVlabFile(file) {
+  const t = getTranslator();
+  const { scope, data } = await readVlabFile(file);
+  if (scope === VLAB_SCOPES.STORAGE_CABINET) {
+    const added = labManager.mergeStorageCabinet(data.storageCabinet || []);
+    saveToLocalStorage(labManager);
+    soundEngine.playUiClick();
+    refreshChrome(true);
+    showToast(`📥 ${t('toastImportedVlab')} (+${added})`);
+    return;
+  }
+  if (scope === VLAB_SCOPES.FULL_LAB) {
+    contextUI.showConfirmDialog(
+      {
+        title: t('confirmFullLabTitle'),
+        desc: t('confirmFullLabDesc'),
+        confirmLabel: t('ctxPaste'),
+        cancelLabel: t('btnClose'),
+        danger: true,
+      },
+      () => {
+        deserializeWorkspace(labManager, data);
+        for (const lb of labManager.labs) ensureLabSubscribed(lb);
+        saveToLocalStorage(labManager);
+        soundEngine.playGlassClink('beaker_250', 0.85);
+        syncActiveLabRefs();
+        refreshChrome(true);
+        showToast(`📥 ${t('toastImportedVlab')}`);
+      }
+    );
+    return;
+  }
+  const res = importBenchIntoNewTab(labManager, data, { allowOverwriteChooser: true });
+  if (res?.needsOverwriteChooser) {
+    contextUI.showOverwriteBenchChooser(
+      labManager.labs,
+      (lb) => getLabTitle(lb, t),
+      t,
+      (pickedIdx) => {
+        overwriteBenchAtIndex(labManager, pickedIdx, res.benchPayload);
+        for (const lb of labManager.labs) ensureLabSubscribed(lb);
+        soundEngine.playGlassClink('beaker_250', 0.85);
+        syncActiveLabRefs();
+        refreshChrome(true);
+        showToast(`📥 ${t('toastImportedVlab')}`);
+      }
+    );
+    return;
+  }
+  if (res?.ok) {
+    for (const lb of labManager.labs) ensureLabSubscribed(lb);
+    soundEngine.playGlassClink('beaker_250', 0.85);
+    syncActiveLabRefs();
+    refreshChrome(true);
+    showToast(`📥 ${t('toastImportedVlab')}`);
+  }
+}
+
+function openStickyLabelEditor(vessel) {
+  if (!vessel) return;
+  const t = getTranslator();
+  contextUI.showStickyLabelDialog(vessel, t, appState.lang, (stickyLabel) => {
+    sim.recordUndo?.();
+    if (stickyLabel && stickyLabel.text) {
+      vessel.stickyLabel = stickyLabel;
+    } else {
+      delete vessel.stickyLabel;
+    }
+    sim.emitChange();
+    refreshChrome(true);
+    showToast(t('stickyLabelSavedToast'));
+  });
+}
+
+function storeSelectedToCabinet(itemId) {
+  if (!itemId) return;
+  const t = getTranslator();
+  const entry = labManager.storeItemToCabinet(itemId, sim);
+  if (entry) {
+    saveToLocalStorage(labManager);
+    soundEngine.playUiClick();
+    refreshChrome(true);
+    showToast(t('cabinetStoredToast'));
+  }
+}
+
+function emptyVesselContents(vessel) {
+  if (!vessel) return;
+  sim.recordUndo?.();
+  if (vessel.kind === 'vessel') {
+    sim.rinseVessel(vessel.id);
+  } else if (vessel.kind === 'pipette') {
+    vessel.volumeMl = 0;
+    vessel.moles = {};
+    sim.emitChange();
+  } else if (vessel.kind === 'spoon') {
+    sim.rinseSpoon(vessel.id);
+  }
+  soundEngine.playWaterRinse();
+  refreshChrome(true);
+}
+
+function getPasteTargetOpts() {
+  const pt = workbench?.pointerLogical;
+  if (pt && Number.isFinite(pt.x) && Number.isFinite(pt.y)) {
+    return { targetX: pt.x, targetY: pt.y };
+  }
+  return {};
+}
+
+function runUndoAction() {
+  const t = getTranslator();
+  const ok = labManager.undo(sim);
+  if (ok) {
+    soundEngine.playUndoWhoosh();
+    workbench.setSelection(Array.from(sim.selectedIds || []), sim.selectedId);
+    showToast(t('toastUndoSuccess'));
+    refreshChrome(true);
+  } else {
+    showToast(t('toastUndoEmpty'));
+  }
+}
+
+function runSelectAllAction() {
+  soundEngine.playUiClick();
+  const allIds = sim.items.map((it) => it.id);
+  sim.selectedIds = new Set(allIds);
+  sim.selectedId = allIds[allIds.length - 1] || null;
+  sim.emitChange();
+  refreshChrome();
+}
+
+function runCopyAction() {
+  const t = getTranslator();
+  if (shortcutTarget === 'tab') {
+    if (labManager.copyLab(labManager.activeIndex)) {
+      soundEngine.playUiClick();
+      showToast(`📋 ${getLabTitle(labManager.getActiveLab(), t)}`);
+    }
+    return true;
+  }
+  const ids = sim.selectedIds?.size > 0 ? sim.selectedIds : sim.selectedId ? [sim.selectedId] : [];
+  const count = labManager.copyItems(ids, sim);
+  if (count > 0) {
+    soundEngine.playUiClick();
+    showToast(t('toastCopiedApparatus').replace('{count}', String(count)));
+    return true;
+  }
+  return false;
+}
+
+function runCutAction() {
+  const t = getTranslator();
+  if (shortcutTarget === 'tab') {
+    if (labManager.cutLab(labManager.activeIndex)) {
+      soundEngine.playTrashCrumple();
+      for (const lb of labManager.labs) ensureLabSubscribed(lb);
+      syncActiveLabRefs();
+      refreshChrome(true);
+    }
+    return true;
+  }
+  const ids = sim.selectedIds?.size > 0 ? sim.selectedIds : sim.selectedId ? [sim.selectedId] : [];
+  const count = labManager.cutItems(ids, sim);
+  if (count > 0) {
+    soundEngine.playTrashCrumple();
+    workbench.setSelection([], null);
+    showToast(t('toastCutApparatus').replace('{count}', String(count)));
+    refreshChrome(true);
+    return true;
+  }
+  return false;
+}
+
+function runPasteAction(includeChemicals = true, cursorPt = null) {
+  const t = getTranslator();
+  if (shortcutTarget === 'tab' && includeChemicals) {
+    const res = labManager.pasteLab();
+    if (res.ok) {
+      ensureLabSubscribed(res.lab);
+      soundEngine.playGlassClink('beaker_250', 0.75);
+      syncActiveLabRefs();
+      refreshChrome(true);
+      return true;
+    }
+    if (res.reason === 'max_labs') {
+      showToast(`⚠️ ${t('labMaxLimit')}`);
+    }
+    return false;
+  }
+  const opts = cursorPt && Number.isFinite(cursorPt.x)
+    ? { includeChemicals, targetX: cursorPt.x, targetY: cursorPt.y }
+    : { includeChemicals, ...getPasteTargetOpts() };
+  const pasted = labManager.pasteItems(sim, opts);
+  if (pasted.length > 0) {
+    soundEngine.playGlassClink(pasted[0]?.typeId || 'beaker_250', 0.75);
+    showToast(t(includeChemicals ? 'toastPastedApparatus' : 'toastPastedEmptyApparatus').replace('{count}', String(pasted.length)));
+    refreshChrome();
+    return true;
+  }
+  return false;
+}
+
+function confirmResetAllBenches() {
+  const t = getTranslator();
+  contextUI.showConfirmDialog(
+    {
+      title: t('confirmResetAllTitle'),
+      desc: t('confirmResetAllDesc'),
+      confirmLabel: `${t('storageBtnResetAll')} (Enter)`,
+      cancelLabel: `${t('btnClose')} (Esc)`,
+      danger: true,
+    },
+    () => {
+      soundEngine.playTrashCrumple();
+      resetAllBenches(labManager);
+      for (const lb of labManager.labs) ensureLabSubscribed(lb);
+      syncActiveLabRefs();
+      refreshChrome(true);
+      showToast(`🔄 ${t('toastResetAllBenches')}`);
+    }
+  );
+}
+
+function openCanvasContextMenu(clientX, clientY, logicalPt, hitItem) {
+  const t = getTranslator();
+  const hasClipboard = Array.isArray(labManager.clipboard) && labManager.clipboard.length > 0;
+  const hasUndo = Array.isArray(sim.undoStack) && sim.undoStack.length > 0;
+  if (!hitItem) {
+    contextUI.showMenu(clientX, clientY, [
+      { label: t('ctxPaste'), shortcut: 'Ctrl+V', disabled: !hasClipboard, onClick: () => runPasteAction(true, logicalPt) },
+      { label: t('ctxPasteEmpty'), shortcut: 'Ctrl+Shift+V', disabled: !hasClipboard, onClick: () => runPasteAction(false, logicalPt) },
+      { separator: true },
+      { label: t('ctxSelectAll'), shortcut: 'Ctrl+A', disabled: sim.items.length === 0, onClick: () => runSelectAllAction() },
+      { label: t('ctxUndo'), shortcut: 'Ctrl+Z', disabled: !hasUndo, onClick: () => runUndoAction() },
+    ]);
+    return;
+  }
+
+  const moveSubmenu = labManager.labs
+    .map((lb, idx) =>
+      idx === labManager.activeIndex
+        ? null
+        : {
+            label: getLabTitle(lb, t),
+            onClick: () => {
+              const moved = labManager.moveItemBetweenLabs(hitItem.id, labManager.activeIndex, idx);
+              if (moved) {
+                showToast(`📤 ${t('labMovedToast').replace('{lab}', getLabTitle(moved.dstLab, t))}`);
+              }
+            },
+          }
+    )
+    .filter(Boolean);
+
+  contextUI.showMenu(clientX, clientY, [
+    { label: t('ctxCopy'), shortcut: 'Ctrl+C', onClick: () => runCopyAction() },
+    { label: t('ctxCut'), shortcut: 'Ctrl+X', onClick: () => runCutAction() },
+    { label: t('ctxPaste'), shortcut: 'Ctrl+V', disabled: !hasClipboard, onClick: () => runPasteAction(true, logicalPt) },
+    { label: t('ctxPasteEmpty'), shortcut: 'Ctrl+Shift+V', disabled: !hasClipboard, onClick: () => runPasteAction(false, logicalPt) },
+    { label: t('ctxSelectAll'), shortcut: 'Ctrl+A', onClick: () => runSelectAllAction() },
+    { label: t('ctxUndo'), shortcut: 'Ctrl+Z', disabled: !hasUndo, onClick: () => runUndoAction() },
+    { separator: true },
+    {
+      label: t('ctxEmptyVessel'),
+      disabled: !(hitItem.kind === 'vessel' || hitItem.kind === 'pipette' || hitItem.kind === 'spoon'),
+      onClick: () => emptyVesselContents(hitItem),
+    },
+    ...(moveSubmenu.length > 0 ? [{ label: t('ctxMoveToBench'), submenu: moveSubmenu }] : []),
+    ...(hitItem.kind === 'vessel' ? [{ label: t('ctxStickyLabel'), onClick: () => openStickyLabelEditor(hitItem) }] : []),
+    { label: t('ctxStoreCabinet'), onClick: () => storeSelectedToCabinet(hitItem.id) },
+    { separator: true },
+    {
+      label: t('ctxInfo'),
+      onClick: () => contextUI.showInfoModal({ kind: 'item', item: hitItem }, t, appState.lang),
+    },
+  ]);
+}
+
+function openShelfContextMenu(clientX, clientY, payload) {
+  const t = getTranslator();
+  const hasUndo = Array.isArray(sim.undoStack) && sim.undoStack.length > 0;
+  if (payload.kind === 'shelf_apparatus') {
+    contextUI.showMenu(clientX, clientY, [
+      {
+        label: t('ctxCopy'),
+        shortcut: 'Ctrl+C',
+        onClick: () => {
+          labManager.clipboard = [{ typeId: payload.typeId, dx: 0, dy: 0, anchorX: 420, anchorY: 360 }];
+          labManager.pasteSequence = 0;
+          soundEngine.playUiClick();
+          showToast(t('toastCopiedApparatus').replace('{count}', '1'));
+        },
+      },
+      { label: t('ctxUndo'), shortcut: 'Ctrl+Z', disabled: !hasUndo, onClick: () => runUndoAction() },
+      { separator: true },
+      {
+        label: t('ctxInfo'),
+        onClick: () => contextUI.showInfoModal({ kind: 'shelf_apparatus', typeId: payload.typeId }, t, appState.lang),
+      },
+    ]);
+  } else if (payload.kind === 'shelf_reagent') {
+    contextUI.showMenu(clientX, clientY, [
+      { label: t('ctxUndo'), shortcut: 'Ctrl+Z', disabled: !hasUndo, onClick: () => runUndoAction() },
+      { separator: true },
+      {
+        label: t('ctxInfo'),
+        onClick: () => contextUI.showInfoModal({ kind: 'reagent', reagentId: payload.reagentId }, t, appState.lang),
+      },
+    ]);
+  }
+}
+
+function openTabContextMenu(clientX, clientY, idx) {
+  const t = getTranslator();
+  const canDelete = labManager.labs.length > 1;
+  const hasTabClip = Boolean(labManager.tabClipboard);
+  shortcutTarget = 'tab';
+  if (idx !== labManager.activeIndex) {
+    labManager.switchLab(idx);
+  }
+  contextUI.showMenu(clientX, clientY, [
+    { label: t('ctxExportVlab'), shortcut: 'Ctrl+E', onClick: () => promptExportSingleBench(idx) },
+    { separator: true },
+    {
+      label: t('ctxCopy'),
+      shortcut: 'Ctrl+C',
+      onClick: () => {
+        labManager.copyLab(idx);
+        soundEngine.playUiClick();
+        showToast(`📋 ${getLabTitle(labManager.labs[idx], t)}`);
+      },
+    },
+    {
+      label: t('ctxCut'),
+      shortcut: 'Ctrl+X',
+      onClick: () => {
+        labManager.cutLab(idx);
+        soundEngine.playTrashCrumple();
+        for (const lb of labManager.labs) ensureLabSubscribed(lb);
+        syncActiveLabRefs();
+        refreshChrome(true);
+      },
+    },
+    {
+      label: t('ctxPaste'),
+      shortcut: 'Ctrl+V',
+      disabled: !hasTabClip,
+      onClick: () => {
+        shortcutTarget = 'tab';
+        runPasteAction(true);
+      },
+    },
+    { label: t('ctxRenameTab'), shortcut: 'F2', onClick: () => startRenameLabTab(idx) },
+    { separator: true },
+    {
+      label: t('ctxDeleteTab'),
+      shortcut: 'Del',
+      danger: true,
+      disabled: !canDelete,
+      onClick: () => labManager.removeLab(idx),
+    },
+  ]);
+}
+
 let lastLabTabSig = '';
 function renderLabTabs(t) {
   if (!labTabsEl) return;
   const userEmail = cloudSync.user?.email || '';
-  const sig = `${appState.lang}|${userEmail}|${labManager.activeIndex}|${labManager.labs
-    .map((lb) => `${lb.id}:${lb.sim.items.length}:${lb.sim.environment.atmosphereMode}:${lb.unreadAlerts || 0}`)
+  const sig = `${appState.lang}|${userEmail}|${shortcutTarget}|${renamingTabIndex}|${labManager.activeIndex}|${labManager.labs
+    .map((lb) => `${lb.id}:${lb.customName || ''}:${lb.sim.items.length}:${lb.sim.environment.atmosphereMode}:${lb.unreadAlerts || 0}`)
     .join(',')}`;
   if (sig === lastLabTabSig) return;
   lastLabTabSig = sig;
@@ -542,8 +976,12 @@ function renderLabTabs(t) {
       const closeBtn = canClose
         ? `<span class="lab-tab-close" data-close-lab="${idx}" title="${t('labCloseTip')}">×</span>`
         : '';
+      const isRenaming = idx === renamingTabIndex;
+      const titleHtml = isRenaming
+        ? `<input type="text" class="lab-tab-rename-input" value="${getLabTitle(lb, t).replace(/"/g, '&quot;')}" maxlength="40" />`
+        : `<span>${atmIcon} ${getLabTitle(lb, t)}</span>`;
       return `<button type="button" class="lab-tab-btn ${isActive ? 'active' : ''}" data-lab-index="${idx}" title="${t('labDropMoveHint')}">
-        <span>${atmIcon} ${t('labTabPrefix')} ${lb.number}</span>
+        ${titleHtml}
         <span class="text-[10px] opacity-80 font-mono">(${lb.sim.items.length})</span>
         ${dotHtml}
         ${closeBtn}
@@ -581,19 +1019,53 @@ function renderLabTabs(t) {
     </div>
   `;
 
+  if (renamingTabIndex >= 0) {
+    const renInp = labTabsEl.querySelector('.lab-tab-rename-input');
+    const commitRename = (save) => {
+      const targetIdx = renamingTabIndex;
+      renamingTabIndex = -1;
+      if (save && renInp) {
+        labManager.renameLab(targetIdx, renInp.value);
+        saveToLocalStorage(labManager);
+      } else {
+        lastLabTabSig = '';
+        renderLabTabs(t);
+      }
+    };
+    renInp?.addEventListener('click', (e) => e.stopPropagation());
+    renInp?.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') commitRename(true);
+      else if (e.key === 'Escape') commitRename(false);
+    });
+    renInp?.addEventListener('blur', () => commitRename(true));
+  }
+
   labTabsEl.querySelectorAll('.lab-tab-btn').forEach((btn) => {
+    const idx = Number(btn.dataset.labIndex);
     btn.addEventListener('click', (e) => {
+      if (renamingTabIndex >= 0) return;
       const closeEl = e.target.closest?.('[data-close-lab]');
       if (closeEl) {
         e.stopPropagation();
         labManager.removeLab(Number(closeEl.dataset.closeLab));
         return;
       }
-      labManager.switchLab(Number(btn.dataset.labIndex));
+      shortcutTarget = 'tab';
+      labManager.switchLab(idx);
       workspacePersistence?.triggerDebouncedSave();
       if (cloudSync.user && cloudSync.dirtySinceCloudSave) {
         cloudSync.saveWorkspaceToCloud(labManager).catch(() => {});
       }
+    });
+    btn.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      startRenameLabTab(idx);
+    });
+    btn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openTabContextMenu(e.clientX, e.clientY, idx);
     });
   });
 
@@ -606,11 +1078,10 @@ function renderLabTabs(t) {
     }
   });
 
-  // Wire direct Export .vlab button
+  // Wire direct Export .vlab button with custom filename popup
   labTabsEl.querySelector('#btn-export-vlab-bar')?.addEventListener('click', () => {
     soundEngine.playUiClick();
-    exportWorkspaceToFile(labManager);
-    showToast(`📤 ${t('toastExportedVlab')}`);
+    promptExportSingleBench(labManager.activeIndex);
   });
 
   // Wire direct Import .vlab / .json button
@@ -623,12 +1094,7 @@ function renderLabTabs(t) {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      await importWorkspaceFromFile(file, labManager);
-      soundEngine.playGlassClink('beaker_250', 0.8);
-      for (const lb of labManager.labs) ensureLabSubscribed(lb);
-      syncActiveLabRefs();
-      refreshChrome(true);
-      showToast(`📥 ${t('toastImportedVlab')}`);
+      await handleImportVlabFile(file);
     } catch (err) {
       showToast(`⚠️ ${t('toastImportFailed')}: ${err.message}`);
     } finally {
@@ -650,7 +1116,13 @@ function renderLabTabs(t) {
       await cloudSync.saveWorkspaceToCloud(labManager);
       showToast(`☁️ ${t('toastCloudSaved')}`);
     } catch (err) {
-      showToast(`⚠️ ${err.message || t('toastCloudError')}`);
+      if (err?.message === 'CLOUD_PERMISSION_DENIED' || err?.code === 'permission-denied') {
+        storageModal.open('auth');
+        storageModal._renderPermissionError?.(t);
+        showToast(`⚠️ ${t('toastCloudPermissionErr')}`);
+      } else {
+        showToast(`⚠️ ${err.message || t('toastCloudError')}`);
+      }
     }
   });
 
@@ -668,12 +1140,7 @@ function renderLabTabs(t) {
 
   // Wire Reset All Benches button
   labTabsEl.querySelector('#btn-reset-all-bar')?.addEventListener('click', () => {
-    soundEngine.playTrashCrumple();
-    resetAllBenches(labManager);
-    for (const lb of labManager.labs) ensureLabSubscribed(lb);
-    syncActiveLabRefs();
-    refreshChrome(true);
-    showToast(`🔄 ${t('toastResetAllBenches')}`);
+    confirmResetAllBenches();
   });
 }
 
@@ -708,12 +1175,14 @@ function applyThemeAndDevice() {
 
 function refreshChrome(forceInspector = false) {
   const t = getTranslator();
+  appState.cabinetCount = Array.isArray(labManager?.storageCabinet) ? labManager.storageCabinet.length : 0;
   workbench.setLang(appState.lang);
   envBar.render(t);
   renderLabTabs(t);
   shelfPanel.render(t);
   inspectorPanel.update(appState.lang, forceInspector);
   comparisonPanel?.render(forceInspector);
+  if (cabinetModal?.isOpen) cabinetModal.render();
   syncCompareButton();
   syncZoomHud(workbench.getZoomState());
 
@@ -763,64 +1232,129 @@ resetBtnEl?.addEventListener('click', () => {
   refreshChrome(true);
 });
 
-// Keyboard shortcuts: Backspace/Delete (Delete selected), Ctrl+Z (Undo up to 10 actions), Ctrl+A (Select All), Ctrl+C (Copy), Ctrl+V (Paste)
+// Global Keyboard Shortcuts (guarded cleanly against inputs & modifiers)
 window.addEventListener('keydown', (e) => {
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement?.isContentEditable) {
     return;
   }
-  const modalVisible = modalEl && !modalEl.classList.contains('hidden');
-  if ((e.key === 'Backspace' || e.key === 'Delete') && !modalVisible && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    const deletedCount = sim.deleteSelectedItems ? sim.deleteSelectedItems() : 0;
-    if (deletedCount > 0) {
+
+  if (e.key === 'Escape') {
+    contextUI.closeMenu();
+    contextUI.closeDialog();
+    cabinetModal?.close();
+    storageModal?.close();
+    dosingModal?.close();
+    workbench?.cancelItemPick();
+    return;
+  }
+
+  const anyModalOpen =
+    (modalEl && !modalEl.classList.contains('hidden')) ||
+    cabinetModal?.isOpen ||
+    storageModal?.isOpen ||
+    contextUI.isDialogOpen();
+
+  // Single-key shortcuts (MUST NOT fire with Ctrl/Meta/Alt pressed!)
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.key === 'F2' && shortcutTarget === 'tab' && !anyModalOpen) {
       e.preventDefault();
-      soundEngine.playTrashCrumple();
-      workbench.setSelection([], null);
+      startRenameLabTab(labManager.activeIndex);
+      return;
+    }
+
+    if ((e.key === 'Backspace' || e.key === 'Delete') && !anyModalOpen) {
+      if (shortcutTarget === 'tab') {
+        if (labManager.labs.length > 1) {
+          e.preventDefault();
+          labManager.removeLab(labManager.activeIndex);
+          soundEngine.playTrashCrumple();
+        }
+        return;
+      }
+      const deletedCount = sim.deleteSelectedItems ? sim.deleteSelectedItems() : 0;
+      if (deletedCount > 0) {
+        e.preventDefault();
+        soundEngine.playTrashCrumple();
+        workbench.setSelection([], null);
+        const t = getTranslator();
+        showToast(t('toastDeletedApparatus').replace('{count}', String(deletedCount)));
+        refreshChrome();
+      }
+      return;
+    }
+
+    if (anyModalOpen) return;
+
+    if (e.code === 'Space') {
+      e.preventDefault();
+      sim.environment.paused = !sim.environment.paused;
+      sim.emitChange();
+      soundEngine.playUiClick();
       const t = getTranslator();
-      showToast(t('toastDeletedApparatus').replace('{count}', String(deletedCount)));
-      refreshChrome();
+      showToast(sim.environment.paused ? `⏸ ${t('pause')}` : `▶ ${t('resume')}`);
+      return;
+    }
+
+    const low = (e.key || '').toLowerCase();
+    if (low === 'w') {
+      e.preventDefault();
+      const cycleW = [1, 2, 4, 0.5];
+      const idx = cycleW.indexOf(sim.environment.speed);
+      sim.environment.speed = cycleW[(idx + 1) % cycleW.length];
+      sim.emitChange();
+      soundEngine.playUiClick();
+      showToast(`⏩ ${getTranslator()('simSpeed')}: ${sim.environment.speed}x`);
+      return;
+    }
+    if (low === 's') {
+      e.preventDefault();
+      const cycleS = [1, 0.5, 4, 2];
+      const idx = cycleS.indexOf(sim.environment.speed);
+      sim.environment.speed = cycleS[(idx + 1) % cycleS.length];
+      sim.emitChange();
+      soundEngine.playUiClick();
+      showToast(`⏪ ${getTranslator()('simSpeed')}: ${sim.environment.speed}x`);
+      return;
+    }
+    if (low === 'r') {
+      e.preventDefault();
+      const now = performance.now();
+      if (now - lastRPressMs < 350) {
+        lastRPressMs = 0;
+        confirmResetAllBenches();
+      } else {
+        lastRPressMs = now;
+        particles.clear();
+        comparisonPanel?.setOpen(false);
+        labManager.clearBench(sim);
+        soundEngine.playWaterRinse();
+        showToast(getTranslator()('benchCleanedToast'));
+      }
+      return;
     }
     return;
   }
+
   if (!(e.ctrlKey || e.metaKey)) return;
   const key = (e.key || '').toLowerCase();
   if (key === 'z' && !e.shiftKey) {
     e.preventDefault();
-    const ok = labManager.undo(sim);
-    const t = getTranslator();
-    if (ok) {
-      soundEngine.playUndoWhoosh();
-      workbench.setSelection(Array.from(sim.selectedIds || []), sim.selectedId);
-      showToast(t('toastUndoSuccess'));
-      refreshChrome(true);
-    } else {
-      showToast(t('toastUndoEmpty'));
-    }
+    runUndoAction();
   } else if (key === 'a') {
     e.preventDefault();
-    soundEngine.playUiClick();
-    const allIds = sim.items.map((it) => it.id);
-    sim.selectedIds = new Set(allIds);
-    sim.selectedId = allIds[allIds.length - 1] || null;
-    sim.emitChange();
-    refreshChrome();
+    shortcutTarget = 'canvas';
+    runSelectAllAction();
   } else if (key === 'c') {
-    const count = labManager.copyItems(sim.selectedIds?.size > 0 ? sim.selectedIds : sim.selectedId ? [sim.selectedId] : [], sim);
-    if (count > 0) {
-      e.preventDefault();
-      soundEngine.playUiClick();
-      const t = getTranslator();
-      showToast(t('toastCopiedApparatus').replace('{count}', String(count)));
-    }
+    if (runCopyAction()) e.preventDefault();
+  } else if (key === 'x') {
+    if (runCutAction()) e.preventDefault();
   } else if (key === 'v') {
-    const pasted = labManager.pasteItems(sim);
-    if (pasted.length > 0) {
-      e.preventDefault();
-      soundEngine.playGlassClink(pasted[0]?.typeId || 'beaker_250', 0.75);
-      const t = getTranslator();
-      showToast(t('toastPastedApparatus').replace('{count}', String(pasted.length)));
-      refreshChrome();
-    }
+    const includeChemicals = !e.shiftKey;
+    if (runPasteAction(includeChemicals)) e.preventDefault();
+  } else if (key === 'e') {
+    e.preventDefault();
+    promptExportSingleBench(labManager.activeIndex);
   } else if (key === 's') {
     e.preventDefault();
     soundEngine.playUiClick();
@@ -831,11 +1365,25 @@ window.addEventListener('keydown', (e) => {
       cloudSync
         .saveWorkspaceToCloud(labManager)
         .then(() => showToast(`☁️ ${t('toastCloudSaved')}`))
-        .catch(() => showToast(`💾 ${t('toastLocalSaved')}`));
+        .catch((err) => {
+          if (err?.message === 'CLOUD_PERMISSION_DENIED' || err?.code === 'permission-denied') {
+            showToast(`⚠️ ${t('toastCloudPermissionErr')}`);
+          } else {
+            showToast(`💾 ${t('toastLocalSaved')}`);
+          }
+        });
     } else {
       showToast(`💾 ${t('toastLocalSaved')}`);
     }
   }
+});
+
+const cabinetModal = new StorageCabinetModal(labManager, getTranslator, () => appState.lang, {
+  onNotify: (msg) => showToast(msg),
+  onRefresh: () => {
+    syncActiveLabRefs();
+    refreshChrome(true);
+  },
 });
 
 const storageModal = new WorkspaceStorageModal(labManager, getTranslator, {
@@ -849,6 +1397,8 @@ const storageModal = new WorkspaceStorageModal(labManager, getTranslator, {
     appState.cloudSignedIn = Boolean(user);
     refreshChrome(false);
   },
+  onRequestExportSingleBench: () => promptExportSingleBench(labManager.activeIndex),
+  onImportVlabFile: (file) => handleImportVlabFile(file),
 });
 
 const workspacePersistence = initWorkspacePersistence(labManager, {
@@ -878,6 +1428,8 @@ if (typeof window !== 'undefined') {
     importWorkspaceFromFile,
     cloudSync,
     storageModal,
+    cabinetModal,
+    contextUI,
   };
 }
 

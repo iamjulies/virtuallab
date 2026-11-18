@@ -139,12 +139,15 @@ export class EnvironmentBar {
             <option value="mobile" ${deviceMode === 'mobile' ? 'selected' : ''}>📲 ${t('deviceMobile')}</option>
           </select>
 
+          <!-- Infinite Storage Cabinet Button -->
+          <button type="button" id="btn-storage-cabinet" title="${t('cabinetBtnTip')}" class="env-cabinet-btn">
+            🗄️ ${t('cabinetBtnLabel')} (${this.appState.cabinetCount || 0})
+          </button>
+
           <!-- Workspace Storage & Cloud Sync Button -->
-          <button type="button" id="btn-workspace-storage" title="${t('storageBtnTip')}" class="px-2.5 py-1.5 rounded-lg border ${
-            this.appState.cloudSignedIn
-              ? 'border-amber-500/60 bg-amber-500/15 text-amber-300'
-              : 'border-theme bg-surface-alt text-main'
-          } text-xs font-semibold hover:border-accent transition">
+          <button type="button" id="btn-workspace-storage" title="${t('storageBtnTip')}" class="env-storage-btn ${
+            this.appState.cloudSignedIn ? 'signed-in' : ''
+          }">
             ${this.appState.cloudSignedIn ? '☁️' : '💾'} ${t('storageBtnLabel')}
           </button>
 
@@ -216,6 +219,10 @@ export class EnvironmentBar {
 
     this.container.querySelector('#device-select')?.addEventListener('change', (e) => {
       this.callbacks.onDeviceChange?.(e.target.value);
+    });
+
+    this.container.querySelector('#btn-storage-cabinet')?.addEventListener('click', () => {
+      this.callbacks.onOpenCabinet?.();
     });
 
     this.container.querySelector('#btn-workspace-storage')?.addEventListener('click', () => {

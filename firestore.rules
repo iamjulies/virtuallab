@@ -1,0 +1,297 @@
+rules_version = '2';
+
+// ===============================================================
+// ChemLab Studio (virtuallab) - Cloud Firestore Security Rules
+// Firebase Project: sos-app-1c5ff
+// ===============================================================
+//
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users/{userId}
+// Document ID: Firebase Auth UID
+// Fields:
+//   - uid: string (optional, must match userId, immutable)
+//   - displayName: string (optional, 0..100 chars)
+//   - email: string (optional, 3..254 chars)
+//   - schemaVersion: string (optional, 1..32 chars)
+//
+// Subcollection: users/{userId}/workspace/{docId} (e.g., "current")
+// Document ID: string (e.g., "current")
+// Fields:
+//   - schemaVersion: string (required, 1..32 chars)
+//   - savedAt: number | timestamp (required, >= 0 if number)
+//   - activeBenchIndex: int (required, 0..19)
+//   - nextLabNumber: int (required, 1..10000)
+//   - vessels: list (required, <= 200 items)
+//   - connections: list (required, <= 200 items)
+//   - benches: list (required, 1..10 items)
+//   - updatedByEmail: string | null (optional, <= 254 chars)
+//   - cloudSavedAt: number | timestamp (optional, >= 0 if number)
+//   - storageCabinet: list (optional, infinite capacity)
+//   - scope: string (optional, 1..32 chars)
+//
+// Subcollection: users/{userId}/storage_cabinet/{docId}
+// Document ID: string
+// Fields (individual saved item OR cabinet array snapshot):
+//   - id: string (optional, 1..128 chars)
+//   - schemaVersion: string (optional, 1..32 chars)
+//   - name / title: string (optional, <= 200 chars)
+//   - notes: string (optional, <= 2000 chars)
+//   - stickyLabel: string | map | null (optional, <= 500 chars if string)
+//   - apparatusId: string (optional, 1..64 chars)
+//   - vessel / item: map | null (optional)
+//   - tags: list (optional, <= 50 items)
+//   - items / vessels: list (optional, infinite capacity)
+//   - savedAt / savedAtMs / createdAt / updatedAt: number | timestamp | string (optional)
+//
+// Collection: shared_benches/{shareCode}
+// Document ID: 6-char classroom code matching ^LAB-[0-9]{3}$
+// Fields:
+//   - shareCode: string (required, must equal document ID & match ^LAB-[0-9]{3}$, immutable)
+//   - schemaVersion: string (required, 1..32 chars)
+//   - createdByUid: string (required, must equal request.auth.uid on create, immutable)
+//   - createdBy: string (optional, <= 254 chars)
+//   - createdAt: number | timestamp (optional, immutable if set)
+//   - bench: map (required, 1..20 keys; optional vessels/connections/items lists <= 200)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function uidUnchanged(userId) {
+      return !('uid' in request.resource.data) ||
+        (request.resource.data.uid is string && request.resource.data.uid == userId);
+    }
+
+    function uidNotModified() {
+      return !('uid' in request.resource.data) ||
+        !('uid' in resource.data) ||
+        request.resource.data.uid == resource.data.uid;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasNoPrivilegedFields() {
+      return !request.resource.data.keys().hasAny([
+        'role', 'roles', 'isAdmin', 'admin', 'permissions'
+      ]);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+        isValidString(request.resource.data[field], minLen, maxLen);
+    }
+
+    function isValidTimestampOrEpoch(val) {
+      return val is timestamp || (val is number && val >= 0);
+    }
+
+    function isValidShareCode(shareCode) {
+      return shareCode.matches('^LAB-[0-9]{3}$');
+    }
+
+    // ===============================================================
+    // Domain Validators (Used in BOTH create and update)
+    // ===============================================================
+
+    function isValidUserProfile(data, userId) {
+      return data is map &&
+        hasOnlyAllowedFields(['uid', 'displayName', 'email', 'schemaVersion']) &&
+        hasNoPrivilegedFields() &&
+        uidUnchanged(userId) &&
+        isValidOptionalString('displayName', 0, 100) &&
+        isValidOptionalString('email', 3, 254) &&
+        isValidOptionalString('schemaVersion', 1, 32);
+    }
+
+    function isValidWorkspaceDoc(data) {
+      return data is map &&
+        hasRequiredFields([
+          'schemaVersion',
+          'savedAt',
+          'activeBenchIndex',
+          'nextLabNumber',
+          'vessels',
+          'connections',
+          'benches'
+        ]) &&
+        hasOnlyAllowedFields([
+          'schemaVersion',
+          'savedAt',
+          'activeBenchIndex',
+          'nextLabNumber',
+          'vessels',
+          'connections',
+          'benches',
+          'updatedByEmail',
+          'cloudSavedAt',
+          'storageCabinet',
+          'scope'
+        ]) &&
+        isValidString(data.schemaVersion, 1, 32) &&
+        isValidTimestampOrEpoch(data.savedAt) &&
+        data.activeBenchIndex is int && data.activeBenchIndex >= 0 && data.activeBenchIndex < 20 &&
+        data.nextLabNumber is int && data.nextLabNumber >= 1 && data.nextLabNumber <= 10000 &&
+        data.vessels is list && data.vessels.size() <= 200 &&
+        data.connections is list && data.connections.size() <= 200 &&
+        data.benches is list && data.benches.size() >= 1 && data.benches.size() <= 10 &&
+        (!('updatedByEmail' in data) || data.updatedByEmail == null || isValidString(data.updatedByEmail, 1, 254)) &&
+        (!('cloudSavedAt' in data) || isValidTimestampOrEpoch(data.cloudSavedAt)) &&
+        (!('storageCabinet' in data) || data.storageCabinet is list) &&
+        (!('scope' in data) || isValidString(data.scope, 1, 32));
+    }
+
+    function isValidStorageCabinetDoc(data, userId) {
+      return data is map &&
+        data.keys().size() > 0 &&
+        data.keys().size() <= 40 &&
+        hasNoPrivilegedFields() &&
+        uidUnchanged(userId) &&
+        isValidOptionalString('id', 1, 128) &&
+        isValidOptionalString('schemaVersion', 1, 32) &&
+        isValidOptionalString('name', 1, 200) &&
+        isValidOptionalString('title', 1, 200) &&
+        isValidOptionalString('notes', 0, 2000) &&
+        isValidOptionalString('apparatusId', 1, 64) &&
+        (!('stickyLabel' in data) || data.stickyLabel == null || isValidString(data.stickyLabel, 0, 500) || (data.stickyLabel is map && data.stickyLabel.keys().size() <= 10)) &&
+        (!('vessel' in data) || data.vessel == null || data.vessel is map) &&
+        (!('item' in data) || data.item == null || data.item is map) &&
+        (!('tags' in data) || (data.tags is list && data.tags.size() <= 50)) &&
+        (!('items' in data) || data.items is list) &&
+        (!('vessels' in data) || data.vessels is list) &&
+        (!('savedAt' in data) || isValidTimestampOrEpoch(data.savedAt) || isValidString(data.savedAt, 1, 64)) &&
+        (!('savedAtMs' in data) || isValidTimestampOrEpoch(data.savedAtMs)) &&
+        (!('createdAt' in data) || isValidTimestampOrEpoch(data.createdAt)) &&
+        (!('updatedAt' in data) || isValidTimestampOrEpoch(data.updatedAt));
+    }
+
+    function isValidGenericUserSubdoc(data, userId) {
+      return data is map &&
+        data.keys().size() > 0 &&
+        data.keys().size() <= 40 &&
+        hasNoPrivilegedFields() &&
+        uidUnchanged(userId) &&
+        isValidOptionalString('schemaVersion', 1, 32);
+    }
+
+    function isValidSharedBench(data, shareCode) {
+      return data is map &&
+        hasRequiredFields(['shareCode', 'schemaVersion', 'createdByUid', 'bench']) &&
+        hasOnlyAllowedFields([
+          'shareCode',
+          'schemaVersion',
+          'createdAt',
+          'createdBy',
+          'createdByUid',
+          'bench'
+        ]) &&
+        data.shareCode is string &&
+        data.shareCode == shareCode &&
+        isValidShareCode(data.shareCode) &&
+        isValidString(data.schemaVersion, 1, 32) &&
+        isValidString(data.createdByUid, 1, 128) &&
+        (!('createdBy' in data) || isValidString(data.createdBy, 1, 254)) &&
+        (!('createdAt' in data) || isValidTimestampOrEpoch(data.createdAt)) &&
+        data.bench is map &&
+        data.bench.keys().size() > 0 &&
+        data.bench.keys().size() <= 20 &&
+        (!('id' in data.bench) || isValidString(data.bench.id, 1, 64)) &&
+        (!('vessels' in data.bench) || (data.bench.vessels is list && data.bench.vessels.size() <= 200)) &&
+        (!('connections' in data.bench) || (data.bench.connections is list && data.bench.connections.size() <= 200)) &&
+        (!('items' in data.bench) || (data.bench.items is list && data.bench.items.size() <= 200));
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // User root document & owner-only subcollections
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUserProfile(request.resource.data, userId);
+      allow update: if isOwner(userId) && isValidUserProfile(request.resource.data, userId) && uidNotModified();
+      allow delete: if isOwner(userId);
+
+      // Personal cloud workspace snapshots (e.g. users/{userId}/workspace/current)
+      match /workspace/{docId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidWorkspaceDoc(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+
+      // Personal infinite storage cabinet
+      match /storage_cabinet/{docId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidStorageCabinetDoc(request.resource.data, userId);
+        allow update: if isOwner(userId) && isValidStorageCabinetDoc(request.resource.data, userId) && uidNotModified();
+        allow delete: if isOwner(userId);
+      }
+
+      // Other owner-scoped nested subcollections (excluding workspace & storage_cabinet to prevent rule bypass)
+      match /{subcollection}/{docPath=**} {
+        allow read: if isOwner(userId) && !(subcollection in ['workspace', 'storage_cabinet']);
+        allow create: if isOwner(userId) &&
+          !(subcollection in ['workspace', 'storage_cabinet']) &&
+          isValidGenericUserSubdoc(request.resource.data, userId);
+        allow update: if isOwner(userId) &&
+          !(subcollection in ['workspace', 'storage_cabinet']) &&
+          isValidGenericUserSubdoc(request.resource.data, userId) &&
+          uidNotModified();
+        allow delete: if isOwner(userId) && !(subcollection in ['workspace', 'storage_cabinet']);
+      }
+    }
+
+    // Classroom bench share codes (exact-code get only; listing disabled to prevent enumeration)
+    match /shared_benches/{shareCode} {
+      allow get: if isAuthenticated() && isValidShareCode(shareCode);
+      allow list: if false;
+
+      allow create: if isAuthenticated() &&
+        isValidShareCode(shareCode) &&
+        request.resource.data.createdByUid == request.auth.uid &&
+        isValidSharedBench(request.resource.data, shareCode);
+
+      allow update: if isAuthenticated() &&
+        isValidShareCode(shareCode) &&
+        resource.data.createdByUid == request.auth.uid &&
+        isValidSharedBench(request.resource.data, shareCode) &&
+        areImmutableFieldsUnchanged(['shareCode', 'createdByUid', 'createdAt']);
+
+      allow delete: if isAuthenticated() &&
+        resource.data.createdByUid == request.auth.uid;
+    }
+
+    // Default deny all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

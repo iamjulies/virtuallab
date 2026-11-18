@@ -111,10 +111,11 @@ export function calcEvaporationRateMol(
   const P_surface = moleFraction * gamma * P_sat;
   if (P_surface <= pAmbientPa) return 0;
 
-  // Gilliland diffusivity scaling in lab air (M_air = 28.97 g/mol)
+  // Gilliland diffusivity scaling in quiet lab air (M_air = 28.97 g/mol) with convective thermal plume above 35 C
   const diffFactor = Math.pow(Math.sqrt(1 / species.molarMass + 1 / 28.97), 2 / 3);
   const stirBoost = isStirred ? 1.85 : 1.0;
-  const k_mass = 5.4e-6 * stirBoost * diffFactor;
+  const thermalPlumeBoost = 1.0 + 18.0 * Math.pow(Math.max(0, (T - 308.15) / 60.0), 1.6);
+  const k_mass = 1.6e-7 * stirBoost * diffFactor * thermalPlumeBoost;
   return k_mass * areaCm2 * ((P_surface - pAmbientPa) / (R * T));
 }
 

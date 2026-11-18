@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v3-build-10';
+const CACHE_NAME = 'virlab-beta-v3-build-11';
 const ASSETS = [
   './',
   './index.html',
@@ -34,6 +34,8 @@ const ASSETS = [
   './src/ui/environmentBar.js',
   './src/ui/comparisonPanel.js',
   './src/ui/workspaceStorageModal.js',
+  './src/ui/storageCabinetModal.js',
+  './src/ui/contextMenu.js',
 ];
 
 self.addEventListener('install', (event) => {

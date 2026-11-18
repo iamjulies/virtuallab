@@ -335,7 +335,7 @@ function stepLiebigCondenser(sim, cond, dt) {
   let dst = null;
   if (cond.outletTargetId) {
     const oDst = sim.getItem(cond.outletTargetId);
-    if (oDst && oDst.kind === 'vessel' && !oDst.isShattered && !oDst.isStoppered) {
+    if (oDst && oDst.kind === 'vessel' && !oDst.isShattered) {
       dst = oDst;
     } else if (!oDst || oDst.isShattered) {
       cond.outletTargetId = null;
@@ -1374,7 +1374,11 @@ function stepCrucibleTongs(sim, tongs, dt) {
         break;
       }
     }
-    if (sample.speciesId === 'Fe_s' && sample.tempK >= 760.0 && (o2Jar || (atmMode === 'air' && sample.tempK >= 1050.0))) {
+    const isFeSampleFine = Boolean(sample.groundPowder || (sample.particleCount || 0) >= 18);
+    if (
+      sample.speciesId === 'Fe_s' &&
+      ((o2Jar && sample.tempK >= 760.0) || (atmMode === 'air' && isFeSampleFine && sample.tempK >= 1033.15))
+    ) {
       const availO2 = o2Jar ? o2Jar.headspaceGasMoles.O2_g || 0 : sample.moles;
       const dFe = Math.min(sample.moles, availO2 * 1.5, Math.max(2e-5, sample.moles * 0.95 * dt));
       if (dFe > 1e-8) {
@@ -1392,11 +1396,11 @@ function stepCrucibleTongs(sim, tongs, dt) {
           tongs.seenReactions.fe_tongs_o2 = sim.timeSec;
           sim.addLog({
             type: 'reaction',
-            equation: '3Fe(s) + 2O₂(g) —(t°)→ Fe₃O₄(s) (bắn tia lửa sáng)',
-            nameVi: 'Đốt dây Iron nóng đỏ trong Oxygen (bắn tia lửa sáng → Fe₃O₄)',
-            nameEn: 'Combustion of red-hot Iron on tongs in O₂ (golden sparks → Fe₃O₄)',
-            descVi: 'Iron nung đỏ đưa vào bình O₂ cháy sáng chói, bắn ra nhiều tia lửa và tạo hạt rắn nâu đen Fe₃O₄.',
-            descEn: 'Red-hot Iron glows intensely inside O₂ gas emitting brilliant golden sparks and molten Fe₃O₄ droplets.',
+            equation: o2Jar ? '3Fe(s) + 2O₂(g) —(t°)→ Fe₃O₄(s) (bắn tia lửa sáng)' : '8Fe(bột) + 5.5O₂(kk) —(≥ 760 °C)→ 2Fe₃O₄(s) + Fe₂O₃(s)',
+            nameVi: o2Jar ? 'Đốt dây Iron nóng đỏ trong Oxygen (bắn tia lửa sáng → Fe₃O₄)' : 'Đốt cháy bột Iron mịn ngoài không khí (tia lửa vàng-cam)',
+            nameEn: o2Jar ? 'Combustion of red-hot Iron on tongs in O₂ (golden sparks → Fe₃O₄)' : 'Fine Iron powder ignition in air (golden-orange sparks)',
+            descVi: o2Jar ? 'Iron nung đỏ đưa vào bình O₂ cháy sáng chói, bắn ra nhiều tia lửa và tạo hạt rắn nâu đen Fe₃O₄.' : 'Bột Iron mịn tự bốc cháy bắn tia lửa vàng-cam tạo Fe₃O₄ (~75% Fe) và Fe₂O₃ (~25% Fe).',
+            descEn: o2Jar ? 'Red-hot Iron glows intensely inside O₂ gas emitting brilliant golden sparks and molten Fe₃O₄ droplets.' : 'Fine Iron powder sparks in air yielding mainly Fe₃O₄ and thin Fe₂O₃.',
             vesselLabel: o2Jar?.label || tongs.label,
           });
         }
@@ -1405,7 +1409,7 @@ function stepCrucibleTongs(sim, tongs, dt) {
             tongs.heldSample = null;
           } else {
             sample.speciesId = 'Fe3O4_s';
-            sample.moles = dFe / 3;
+            sample.moles = dFe * 0.25;
           }
         }
       }
@@ -1607,41 +1611,51 @@ function stepIronSpoon(sim, spoon, dt) {
     }
   }
 
-  // C2. Iron combustion in O2(g) jar on deflagrating spoon: 3Fe + 2O2 -> Fe3O4 (sparks!)
+  // C2. Iron combustion in O2(g) jar (any form -> sparks!) vs fine powder in air (>= 760 °C -> sparks!)
+  // Bulk iron nail NEVER sparks in ordinary air (only glows red/orange/yellow-white with surface scale)!
   const nFeSpoon = moles.Fe_s || 0;
   const feSpoonFine = Boolean(spoon.groundPowderMap?.Fe_s) || (spoon.particleCounts?.Fe_s || 0) >= 18;
-  const feSpoonIgnK = feSpoonFine ? 610 : 760;
-  if (nFeSpoon > 1e-8 && spoon.tempK >= feSpoonIgnK && (inO2Jar || (inOpenAir && spoon.tempK >= 1050))) {
-    const rateScale = inO2Jar ? 1.55 : 0.45;
+  const feSpoonIgnK = inO2Jar ? (feSpoonFine ? 610 : 760) : 1033.15;
+  if (nFeSpoon > 1e-8 && spoon.tempK >= feSpoonIgnK && (inO2Jar || (inOpenAir && feSpoonFine))) {
+    const rateScale = inO2Jar ? 1.55 : 0.72;
     const maxByO2 = inO2Jar ? headO2 * 1.5 : nFeSpoon;
     const dBurn = Math.min(nFeSpoon, maxByO2, Math.max(2e-5, nFeSpoon * rateScale * dt));
     if (dBurn > 1e-10) {
       moles.Fe_s -= dBurn;
       if (moles.Fe_s < 1e-10) delete moles.Fe_s;
-      const dOxide = dBurn / 3;
       if (inO2Jar && hostV?.headspaceGasMoles) {
         hostV.headspaceGasMoles.O2_g = Math.max(0, (hostV.headspaceGasMoles.O2_g || 0) - (2 / 3) * dBurn);
-        moles.Fe3O4_s = (moles.Fe3O4_s || 0) + dOxide;
+        moles.Fe3O4_s = (moles.Fe3O4_s || 0) + dBurn / 3;
       } else {
-        moles.Fe3O4_s = (moles.Fe3O4_s || 0) + dOxide;
+        // Fine powder burning in air: ~75% Fe -> Fe3O4, ~25% Fe -> Fe2O3 (ratio 8 Fe -> 2 Fe3O4 + 1 Fe2O3)
+        moles.Fe3O4_s = (moles.Fe3O4_s || 0) + dBurn * 0.25;
+        moles.Fe2O3_s = (moles.Fe2O3_s || 0) + dBurn * 0.125;
       }
       spoon.burnTimer = 0.95;
       spoon.flameColor = 'sparks_fe';
-      spoon.tempK = Math.max(spoon.tempK, 1460);
+      spoon.tempK = Math.max(spoon.tempK, inO2Jar ? 1460 : 1280);
       if ((sim.timeSec - (spoon.seenReactions?.fe_spoon_burn ?? -99)) > 4.0) {
         spoon.seenReactions = spoon.seenReactions || {};
         spoon.seenReactions.fe_spoon_burn = sim.timeSec;
         sim.addLog({
           type: 'reaction',
-          equation: '3Fe(s) + 2O₂(g) —(t°)→ Fe₃O₄(s)',
-          nameVi: 'Đốt cháy Iron trên muôi sắt trong Oxygen (tia lửa sáng → Fe₃O₄)',
-          nameEn: 'Iron combustion on spoon in Oxygen yielding dark brown-black Fe₃O₄',
-          descVi: 'Iron nung đỏ cháy sáng rực trong khí O₂, bắn tia lửa vàng và tạo oxit Fe₃O₄ nâu đen.',
-          descEn: 'Red-hot Iron burns intensely in O₂ gas emitting bright sparks and forming dark Fe₃O₄.',
+          equation: inO2Jar ? '3Fe(s) + 2O₂(g) —(t°)→ Fe₃O₄(s)' : '8Fe(bột) + 5.5O₂(kk) —(760–1300 °C)→ 2Fe₃O₄(s) + Fe₂O₃(s)',
+          nameVi: inO2Jar ? 'Đốt cháy Iron trên muôi sắt trong Oxygen (tia lửa sáng → Fe₃O₄)' : 'Đốt cháy bột Iron mịn ngoài không khí (tia lửa vàng-cam)',
+          nameEn: inO2Jar ? 'Iron combustion on spoon in Oxygen yielding dark brown-black Fe₃O₄' : 'Combustion of fine Iron powder in air (golden-orange sparks)',
+          descVi: inO2Jar ? 'Iron nung đỏ cháy sáng rực trong khí O₂, bắn tia lửa vàng và tạo oxit Fe₃O₄ nâu đen.' : 'Bột Iron mịn cháy bắn tia lửa vàng-cam từ 760 °C, tạo chủ yếu Fe₃O₄ và lớp mỏng Fe₂O₃.',
+          descEn: inO2Jar ? 'Red-hot Iron burns intensely in O₂ gas emitting bright sparks and forming dark Fe₃O₄.' : 'Fine Iron powder ignites above 760 °C in air with golden-orange sparks forming Fe₃O₄ + Fe₂O₃.',
           vesselLabel: spoon.label,
         });
       }
     }
+  } else if (nFeSpoon > 1e-8 && !feSpoonFine && inOpenAir && spoon.tempK >= 843.15) {
+    // Bulk Iron nail heated above 570 °C in air grows thin 3-layer scale slowly without sparks
+    const dScale = Math.min(nFeSpoon, Math.max(1e-6, nFeSpoon * 0.015 * dt));
+    moles.Fe_s -= dScale;
+    if (moles.Fe_s < 1e-10) delete moles.Fe_s;
+    moles.FeO_s = (moles.FeO_s || 0) + dScale * 0.5;
+    moles.Fe3O4_s = (moles.Fe3O4_s || 0) + dScale * 0.1;
+    moles.Fe2O3_s = (moles.Fe2O3_s || 0) + dScale * 0.1;
   }
 
   // D. Solid thermal decompositions directly on heated spoon (CuSO4.5H2O, Cu(OH)2, CuCO3, CaCO3)

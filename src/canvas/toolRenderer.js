@@ -1478,7 +1478,7 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
     const topSpId = entries[0][0];
     const sp = SPECIES[topSpId];
     const moundCol =
-      topSpId === 'ZnO_s' && tempK >= 580
+      topSpId === 'ZnO_s' && tempK >= (sp?.hotColorTempK || 573.15)
         ? sp?.hotColor || '#fef08a'
         : sp?.color || '#cbd5e1';
 

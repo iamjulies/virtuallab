@@ -873,6 +873,18 @@ export class LabWorkbenchCanvas {
       }
     });
 
+    this.canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (this.pickState) return;
+      const pt = this.clientToLogical(e.clientX, e.clientY);
+      this.pointerLogical = { x: pt.x, y: pt.y };
+      const hitItem = this.hitTestItem(pt.x, pt.y);
+      if (hitItem && !this.sim.selectedIds?.has(hitItem.id)) {
+        this.setSelection(new Set([hitItem.id]), hitItem.id);
+      }
+      this.callbacks.onContextMenu?.(e.clientX, e.clientY, pt, hitItem);
+    });
+
     this.canvas.addEventListener('pointermove', (e) => {
       const pt = this.clientToLogical(e.clientX, e.clientY);
       this.pointerLogical = { x: pt.x, y: pt.y };
@@ -916,8 +928,7 @@ export class LabWorkbenchCanvas {
         } else if (pd.port === 'nozzle') {
           this.dropTargetVesselId = vTgt && APPARATUS[vTgt.typeId]?.stopperable ? vTgt.id : null;
         } else {
-          this.dropTargetVesselId =
-            vTgt && !vTgt.isStoppered ? vTgt.id : vTgt && pd.port === 'inlet' ? vTgt.id : null;
+          this.dropTargetVesselId = vTgt ? vTgt.id : null;
         }
         this.canvas.style.cursor = 'crosshair';
         return;
@@ -1301,7 +1312,7 @@ export class LabWorkbenchCanvas {
             if (vTgt && !vTgt.isShattered) {
               if (pd.port === 'inlet') {
                 this.sim.connectTube(vTgt.id, src.id);
-              } else if (pd.port === 'outlet' && !vTgt.isStoppered) {
+              } else if (pd.port === 'outlet') {
                 this.sim.connectCondenserOutlet(src.id, vTgt.id);
               }
             } else if (!pd.moved) {

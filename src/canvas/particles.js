@@ -554,13 +554,14 @@ export class ParticleSystem {
       }
     }
 
-    // 4c. Iron sparkling combustion inside O2 atmosphere (3Fe + 2O2 -> Fe3O4)
-    if (
-      (vessel.moles.Fe_s || 0) > 1e-8 &&
-      (vessel.headspaceGasMoles?.O2_g || 0) > 1e-5 &&
-      vessel.tempK >= ((vessel.particleCounts?.Fe_s || 0) >= 18 ? 610 : 760)
-    ) {
-      for (let i = 0; i < 3; i++) {
+    // 4c. Iron sparkling combustion: in pure O2 headspace (any Fe >= 610/760 K) OR fine Fe powder burning in open air (>= 760 °C / 1033 K)
+    // Solid bulk Iron nail NEVER sparks in ordinary air!
+    const feFineParticle = (vessel.moles.Fe_s || 0) > 1e-8 && (Boolean(vessel.groundPowderMap?.Fe_s) || (vessel.particleCounts?.Fe_s || 0) >= 18);
+    const feSparkO2 = (vessel.moles.Fe_s || 0) > 1e-8 && (vessel.headspaceGasMoles?.O2_g || 0) > 1e-5 && vessel.tempK >= (feFineParticle ? 610 : 760);
+    const feSparkAir = feFineParticle && !vessel.isStoppered && vessel.lidState !== 'closed' && (vessel.tempK >= 1033.15 || (vessel.feSparkBurning || 0) > 0.05);
+    if (feSparkO2 || feSparkAir) {
+      const sparkBurst = vessel.tempK >= 1373.15 ? 5 : 3;
+      for (let i = 0; i < sparkBurst; i++) {
         if (Math.random() < 0.72) {
           const ang = Math.random() * Math.PI * 2;
           const spd = 48 + Math.random() * 88;

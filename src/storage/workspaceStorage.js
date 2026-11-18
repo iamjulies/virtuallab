@@ -5,6 +5,74 @@ export const WORKSPACE_SCHEMA_VERSION = '1.0.0';
 export const LOCAL_STORAGE_KEY = 'chemlab_workspace_autosave_v1';
 export const LOCAL_SHARED_PREFIX = 'chemlab_shared_bench_';
 
+export const VLAB_SCOPES = {
+  SINGLE_BENCH: 'SINGLE_BENCH',
+  STORAGE_CABINET: 'STORAGE_CABINET',
+  FULL_LAB: 'FULL_LAB',
+};
+
+/**
+ * Format timestamp strictly as <MM.DD.YYYY>-<hh.mm.ss> per Prompt 28 filename spec.
+ */
+export function formatVlabTimestamp(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const yyyy = date.getFullYear();
+  const hh = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  return `${mm}.${dd}.${yyyy}-${hh}.${mi}.${ss}`;
+}
+
+/**
+ * Strip Vietnamese accents, remove forbidden OS path chars (/ \ : * ? " < > |),
+ * collapse whitespace into hyphens `-`, and normalize lowercase slug.
+ */
+export function sanitizeVlabSlug(rawName = '', fallback = 'ban-thi-nghiem') {
+  let s = String(rawName || '').trim();
+  if (!s) return fallback;
+  s = s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[đĐ]/g, (m) => (m === 'đ' ? 'd' : 'D'))
+    .replace(/[\\/:*?"<>|]+/g, '')
+    .replace(/[^\w\s.-]+/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+  return s || fallback;
+}
+
+export function buildVlabFilename(scope = VLAB_SCOPES.SINGLE_BENCH, customName = '', langCode = 'vi', date = new Date()) {
+  const stamp = formatVlabTimestamp(date);
+  if (scope === VLAB_SCOPES.STORAGE_CABINET) {
+    const prefix = langCode === 'en' ? 'storagecabinet' : 'tutrudo';
+    return `${prefix}-${stamp}.vlab`;
+  }
+  if (scope === VLAB_SCOPES.FULL_LAB) {
+    return `fulllab-${stamp}.vlab`;
+  }
+  const slug = sanitizeVlabSlug(customName, langCode === 'en' ? 'lab-bench' : 'ban-thi-nghiem');
+  return `${slug}-${stamp}.vlab`;
+}
+
+function stripUndefinedDeep(val) {
+  if (val === undefined) return null;
+  if (val === null || typeof val !== 'object') return val;
+  if (Array.isArray(val)) {
+    return val.map((el) => (el === undefined ? null : stripUndefinedDeep(el)));
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(val)) {
+    if (v !== undefined && typeof v !== 'function') {
+      out[k] = stripUndefinedDeep(v);
+    }
+  }
+  return out;
+}
+
 export const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyBnda-JlqVtVkzVkmlc_xcc3DzjQ_Umm2Q',
   authDomain: 'sos-app-1c5ff.firebaseapp.com',
@@ -157,6 +225,7 @@ export function serializeBench(sim, benchMeta = {}) {
         hasStopper: Boolean(v.isStoppered),
         isInverted: Boolean(v.isInverted),
         isHeating,
+        stickyLabel: v.stickyLabel ? { ...v.stickyLabel } : null,
         species: speciesList,
       };
     });
@@ -187,6 +256,7 @@ export function serializeBench(sim, benchMeta = {}) {
   return {
     id: benchMeta.id || 'lab_1',
     number: benchMeta.number || 1,
+    customName: benchMeta.customName || '',
     timeSec: Math.round((sim.timeSec || 0) * 100) / 100,
     nextId: sim.nextId || 1,
     environment: { ...(sim.environment || {}) },
@@ -234,6 +304,9 @@ export function deserializeBench(sim, benchData) {
           if (Number.isFinite(vSpec.pressureAtm)) item.pressureBar = Number(vSpec.pressureAtm) * 1.01325;
           if (typeof vSpec.hasStopper === 'boolean') item.isStoppered = vSpec.hasStopper;
           if (typeof vSpec.isInverted === 'boolean') item.isInverted = vSpec.isInverted;
+          if (vSpec.stickyLabel && typeof vSpec.stickyLabel === 'object' && vSpec.stickyLabel.text) {
+            item.stickyLabel = { text: String(vSpec.stickyLabel.text).slice(0, 30), bgColor: vSpec.stickyLabel.bgColor || '#fef08a' };
+          }
           if (Array.isArray(vSpec.species)) {
             const newMoles = {};
             for (const sp of vSpec.species) {
@@ -320,11 +393,15 @@ export function serializeWorkspace(target) {
   // Support passing either LabManager or a single LabSimulation directly
   if (Array.isArray(target.labs)) {
     const benches = target.labs.map((lab) =>
-      serializeBench(lab.sim, { id: lab.id, number: lab.number })
+      serializeBench(lab.sim, { id: lab.id, number: lab.number, customName: lab.customName || '' })
     );
     const activeBench = benches[target.activeIndex] || benches[0] || { vessels: [], connections: [], items: [] };
+    const storageCabinet = Array.isArray(target.storageCabinet)
+      ? stripUndefinedDeep(target.storageCabinet)
+      : [];
     return {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
+      scope: VLAB_SCOPES.FULL_LAB,
       savedAt: Date.now(),
       activeBenchIndex: target.activeIndex || 0,
       nextLabNumber: target.nextLabNumber || benches.length + 1,
@@ -332,6 +409,7 @@ export function serializeWorkspace(target) {
       vessels: activeBench.vessels,
       connections: activeBench.connections,
       benches,
+      storageCabinet,
     };
   }
 
@@ -339,12 +417,14 @@ export function serializeWorkspace(target) {
   const singleBench = serializeBench(target, { id: 'lab_1', number: 1 });
   return {
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    scope: VLAB_SCOPES.FULL_LAB,
     savedAt: Date.now(),
     activeBenchIndex: 0,
     nextLabNumber: 2,
     vessels: singleBench.vessels,
     connections: singleBench.connections,
     benches: [singleBench],
+    storageCabinet: [],
   };
 }
 
@@ -386,8 +466,12 @@ export function deserializeWorkspace(target, rawData) {
       if (!lab) continue;
       lab.id = bData.id || `lab_${i + 1}`;
       lab.number = Number(bData.number) || i + 1;
+      lab.customName = bData.customName ? String(bData.customName).trim() : '';
       lab.unreadAlerts = 0;
       deserializeBench(lab.sim, bData);
+    }
+    if (Array.isArray(data.storageCabinet)) {
+      target.storageCabinet = JSON.parse(JSON.stringify(data.storageCabinet));
     }
     target.activeIndex = activeIdx;
     target.nextLabNumber =
@@ -455,6 +539,7 @@ export function resetAllBenches(labManager) {
     if (first) {
       first.id = 'lab_1';
       first.number = 1;
+      first.customName = '';
       first.unreadAlerts = 0;
       first.sim.setupPreset('starter');
       first.sim.undoStack = [];
@@ -473,26 +558,26 @@ export function resetAllBenches(labManager) {
 }
 
 // ============================================================================
-// LAYER 2: Single-Bench File Export (.vlab) & Append-Tab Import (.vlab / .json)
+// LAYER 2: Standardized Scoped File Export/Import (.vlab)
 // ============================================================================
 
-/**
- * Serialize ONLY the single currently active lab bench for `.vlab` export.
- * Each `.vlab` file represents exactly 1 lab bench (never overwrites other benches on import).
- */
-export function serializeActiveBench(target) {
+export function serializeActiveBench(target, customName = '') {
   if (!target) return null;
   const activeLab = Array.isArray(target.labs) ? target.getActiveLab() : { id: 'lab_1', number: 1, sim: target };
   const activeSim = activeLab?.sim || target;
+  const resolvedName = customName || activeLab?.customName || '';
   const single = serializeBench(activeSim, {
     id: activeLab?.id || 'lab_1',
     number: activeLab?.number || 1,
+    customName: resolvedName,
   });
   if (!single) return null;
   return {
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    scope: VLAB_SCOPES.SINGLE_BENCH,
     savedAt: Date.now(),
     benchNumber: single.number,
+    customName: resolvedName,
     timeSec: single.timeSec,
     nextId: single.nextId,
     environment: single.environment,
@@ -502,16 +587,53 @@ export function serializeActiveBench(target) {
   };
 }
 
+export function serializeStorageCabinet(labManager) {
+  const entries = Array.isArray(labManager?.storageCabinet)
+    ? stripUndefinedDeep(labManager.storageCabinet)
+    : [];
+  return {
+    schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    scope: VLAB_SCOPES.STORAGE_CABINET,
+    savedAt: Date.now(),
+    storageCabinet: entries,
+  };
+}
+
+export function serializeFullLab(labManager) {
+  const payload = serializeWorkspace(labManager);
+  if (!payload) return null;
+  payload.scope = VLAB_SCOPES.FULL_LAB;
+  return payload;
+}
+
+export function overwriteBenchAtIndex(target, benchIndex, rawData) {
+  if (!target || !rawData || !Array.isArray(target.labs)) return null;
+  const idx = Math.max(0, Math.min(target.labs.length - 1, Number(benchIndex) || 0));
+  const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+  const benchPayload = data.bench || data;
+  const lab = target.labs[idx];
+  if (!lab) return null;
+  if (benchPayload.customName !== undefined) {
+    lab.customName = String(benchPayload.customName || '').trim();
+  }
+  deserializeBench(lab.sim, benchPayload);
+  lab.unreadAlerts = 0;
+  target.activeIndex = idx;
+  target.hooks?.onChange?.();
+  saveToLocalStorage(target);
+  return { ok: true, openedNewTab: false, overwrittenIndex: idx, labNumber: lab.number, benchIndex: idx, lab };
+}
+
 /**
- * Import a single-bench `.vlab` / `.json` payload by OPENING A NEW LAB BENCH TAB
- * (preserving all existing open benches instead of overwriting them!).
+ * Import a single-bench `.vlab` / `.json` payload by OPENING A NEW LAB BENCH TAB.
+ * If 10/10 tabs are already open and opts.allowOverwriteChooser is true, returns `{ needsOverwriteChoice: true, data }`
+ * so the UI can let the user pick which bench to overwrite or cancel cleanly.
  */
-export function importBenchIntoNewTab(target, rawData) {
+export function importBenchIntoNewTab(target, rawData, opts = {}) {
   if (!target || !rawData) return null;
   const data = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
   if (!data || typeof data !== 'object') return null;
 
-  // Extract single bench payload (even if user imports a file that had a `benches` array or `bench` wrapper)
   let benchPayload = data.bench || data;
   if (Array.isArray(data.benches) && data.benches.length > 0) {
     const idx = Math.max(0, Math.min(data.benches.length - 1, Number(data.activeBenchIndex) || 0));
@@ -527,45 +649,78 @@ export function importBenchIntoNewTab(target, rawData) {
   }
 
   if (Array.isArray(target.labs)) {
-    let targetLab = null;
-    let openedNewTab = false;
-    if (target.labs.length < (target.maxLabs || 10)) {
-      const added = target.addLab('clean', { silent: true });
-      if (added?.ok && added.lab) {
-        targetLab = added.lab;
-        openedNewTab = true;
+    if (target.labs.length >= (target.maxLabs || 10)) {
+      if (opts.allowOverwriteChooser) {
+        return { ok: false, needsOverwriteChoice: true, scope: VLAB_SCOPES.SINGLE_BENCH, benchPayload };
       }
+      const targetLab = target.getActiveLab();
+      deserializeBench(targetLab.sim, benchPayload);
+      if (benchPayload.customName) targetLab.customName = String(benchPayload.customName).trim();
+      targetLab.unreadAlerts = 0;
+      target.hooks?.onChange?.();
+      saveToLocalStorage(target);
+      return {
+        ok: true,
+        openedNewTab: false,
+        labNumber: targetLab.number,
+        benchIndex: target.labs.indexOf(targetLab),
+        lab: targetLab,
+      };
     }
-    if (!targetLab) {
-      targetLab = target.getActiveLab();
-    }
+
+    const added = target.addLab('clean', {
+      silent: true,
+      customName: benchPayload.customName ? String(benchPayload.customName).trim() : '',
+    });
+    const targetLab = added?.ok ? added.lab : target.getActiveLab();
     deserializeBench(targetLab.sim, benchPayload);
+    if (benchPayload.customName) targetLab.customName = String(benchPayload.customName).trim();
     targetLab.unreadAlerts = 0;
     target.hooks?.onChange?.();
     saveToLocalStorage(target);
     return {
       ok: true,
-      openedNewTab,
+      openedNewTab: Boolean(added?.ok),
       labNumber: targetLab.number,
       benchIndex: target.labs.indexOf(targetLab),
       lab: targetLab,
     };
   }
 
-  // Fallback if target is a standalone LabSimulation instance
   const ok = deserializeBench(target, benchPayload);
   return ok ? { ok: true, openedNewTab: false, labNumber: 1, benchIndex: 0 } : null;
 }
 
-export function exportWorkspaceToFile(labManager, customFilename = null) {
-  const payload = serializeActiveBench(labManager);
+export function classifyVlabData(data) {
+  if (!data || typeof data !== 'object') return null;
+  if (data.scope === VLAB_SCOPES.STORAGE_CABINET || (Array.isArray(data.storageCabinet) && !Array.isArray(data.benches) && !Array.isArray(data.items) && !Array.isArray(data.vessels))) {
+    return VLAB_SCOPES.STORAGE_CABINET;
+  }
+  if (data.scope === VLAB_SCOPES.FULL_LAB || (Array.isArray(data.benches) && data.benches.length >= 1)) {
+    return VLAB_SCOPES.FULL_LAB;
+  }
+  if (Array.isArray(data.items) || Array.isArray(data.vessels) || data.bench) {
+    return VLAB_SCOPES.SINGLE_BENCH;
+  }
+  return null;
+}
+
+export function exportScopedVlabFile(scope, labManager, options = {}) {
+  let payload = null;
+  if (scope === VLAB_SCOPES.STORAGE_CABINET) {
+    payload = serializeStorageCabinet(labManager);
+  } else if (scope === VLAB_SCOPES.FULL_LAB) {
+    payload = serializeFullLab(labManager);
+  } else {
+    payload = serializeActiveBench(labManager, options.customName || '');
+  }
   if (!payload) return false;
   const jsonString = JSON.stringify(payload, null, 2);
   const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
   const url = URL.createObjectURL(blob);
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-  const benchNum = payload.benchNumber || 1;
-  const filename = customFilename || `chemlab-ban-${benchNum}-${stamp}.vlab`;
+  const filename =
+    options.exactFilename ||
+    buildVlabFilename(scope, options.customName || payload.customName || '', options.langCode || 'vi');
 
   const a = document.createElement('a');
   a.href = url;
@@ -574,10 +729,21 @@ export function exportWorkspaceToFile(labManager, customFilename = null) {
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1500);
-  return true;
+  return filename;
 }
 
-export function importWorkspaceFromFile(file, labManager) {
+export function exportWorkspaceToFile(labManager, customNameOrFilename = null, langCode = 'vi') {
+  const isRawFile = typeof customNameOrFilename === 'string' && /\.vlab$/i.test(customNameOrFilename);
+  return Boolean(
+    exportScopedVlabFile(VLAB_SCOPES.SINGLE_BENCH, labManager, {
+      customName: isRawFile ? '' : customNameOrFilename || '',
+      exactFilename: isRawFile ? customNameOrFilename : null,
+      langCode,
+    })
+  );
+}
+
+export function readVlabFile(file) {
   return new Promise((resolve, reject) => {
     if (!file) {
       reject(new Error('No file provided'));
@@ -588,18 +754,37 @@ export function importWorkspaceFromFile(file, labManager) {
       try {
         const text = String(e.target?.result || '');
         const data = JSON.parse(text);
-        const res = importBenchIntoNewTab(labManager, data);
-        if (res && res.ok) {
-          resolve(res);
-        } else {
-          reject(new Error('Invalid .vlab bench schema'));
+        const scope = classifyVlabData(data);
+        if (!scope) {
+          reject(new Error('Invalid .vlab schema'));
+          return;
         }
+        resolve({ scope, data });
       } catch (err) {
         reject(err);
       }
     };
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsText(file);
+  });
+}
+
+export function importWorkspaceFromFile(file, labManager) {
+  return readVlabFile(file).then(({ scope, data }) => {
+    if (scope === VLAB_SCOPES.STORAGE_CABINET) {
+      const added = labManager?.mergeStorageCabinet?.(data.storageCabinet || []) || 0;
+      saveToLocalStorage(labManager);
+      return { ok: true, scope, addedCount: added };
+    }
+    if (scope === VLAB_SCOPES.FULL_LAB) {
+      const ok = deserializeWorkspace(labManager, data);
+      if (!ok) throw new Error('Invalid FULL_LAB schema');
+      saveToLocalStorage(labManager);
+      return { ok: true, scope, benchCount: labManager.labs?.length || 1 };
+    }
+    const res = importBenchIntoNewTab(labManager, data);
+    if (!res || !res.ok) throw new Error('Invalid SINGLE_BENCH schema');
+    return { ...res, scope };
   });
 }
 
@@ -667,6 +852,10 @@ class CloudSyncController {
           this.status = 'ready';
           this._notify();
         });
+        if (typeof this.auth.authStateReady === 'function') {
+          await this.auth.authStateReady();
+          this.user = this.auth.currentUser || null;
+        }
 
         this.status = 'ready';
         this._notify();
@@ -714,13 +903,29 @@ class CloudSyncController {
     if (!this.user) {
       throw new Error('AUTH_REQUIRED');
     }
-    const payload = serializeWorkspace(labManager);
+    const payload = stripUndefinedDeep(serializeWorkspace(labManager));
     const docRef = mods.doc(this.db, 'users', this.user.uid, 'workspace', 'current');
-    await mods.setDoc(docRef, {
-      ...payload,
-      updatedByEmail: this.user.email || null,
-      cloudSavedAt: Date.now(),
-    });
+    const cabRef = mods.doc(this.db, 'users', this.user.uid, 'storage_cabinet', 'current');
+    try {
+      await mods.setDoc(docRef, {
+        ...payload,
+        updatedByEmail: this.user.email || null,
+        cloudSavedAt: Date.now(),
+      });
+      await mods.setDoc(cabRef, stripUndefinedDeep({
+        schemaVersion: WORKSPACE_SCHEMA_VERSION,
+        items: payload.storageCabinet || [],
+        updatedAt: Date.now(),
+      }));
+    } catch (err) {
+      if (err?.code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('insufficient permissions')) {
+        const permErr = new Error('CLOUD_PERMISSION_DENIED');
+        permErr.code = 'permission-denied';
+        permErr.original = err;
+        throw permErr;
+      }
+      throw err;
+    }
     this.lastCloudSaveMs = Date.now();
     this.dirtySinceCloudSave = false;
     this._notify();
@@ -733,11 +938,29 @@ class CloudSyncController {
       throw new Error('AUTH_REQUIRED');
     }
     const docRef = mods.doc(this.db, 'users', this.user.uid, 'workspace', 'current');
-    const snap = await mods.getDoc(docRef);
+    const cabRef = mods.doc(this.db, 'users', this.user.uid, 'storage_cabinet', 'current');
+    let snap;
+    try {
+      snap = await mods.getDoc(docRef);
+    } catch (err) {
+      if (err?.code === 'permission-denied' || String(err?.message || '').toLowerCase().includes('insufficient permissions')) {
+        const permErr = new Error('CLOUD_PERMISSION_DENIED');
+        permErr.code = 'permission-denied';
+        permErr.original = err;
+        throw permErr;
+      }
+      throw err;
+    }
     if (!snap.exists()) {
       throw new Error('NO_CLOUD_WORKSPACE');
     }
     const data = snap.data();
+    try {
+      const cabSnap = await mods.getDoc(cabRef);
+      if (cabSnap.exists() && Array.isArray(cabSnap.data()?.items) && (!Array.isArray(data.storageCabinet) || data.storageCabinet.length === 0)) {
+        data.storageCabinet = cabSnap.data().items;
+      }
+    } catch {}
     const ok = deserializeWorkspace(labManager, data);
     if (ok) {
       saveToLocalStorage(labManager);
@@ -749,25 +972,28 @@ class CloudSyncController {
 
   /**
    * Generate a 6-character classroom Share Code (e.g., LAB-842) for the current active bench.
-   * Saves to Firestore `shared_benches/{code}` when online, and always caches locally so
-   * same-browser/offline testing works instantaneously.
+   * Saves to Firestore `shared_benches/{code}` when signed in & online, and always caches locally.
    */
   async createBenchShareCode(labManager) {
     const activeSim = labManager?.getActiveSim ? labManager.getActiveSim() : labManager;
     const activeLab = labManager?.getActiveLab ? labManager.getActiveLab() : { id: 'lab_1', number: 1 };
-    const benchPayload = serializeBench(activeSim, {
-      id: activeLab.id,
-      number: activeLab.number,
-    });
+    const benchPayload = stripUndefinedDeep(
+      serializeBench(activeSim, {
+        id: activeLab.id,
+        number: activeLab.number,
+        customName: activeLab.customName || '',
+      })
+    );
     const digits = String(Math.floor(100 + Math.random() * 900));
     const shareCode = `LAB-${digits}`;
-    const record = {
+    const record = stripUndefinedDeep({
       shareCode,
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       createdAt: Date.now(),
       createdBy: this.user?.email || 'anonymous',
+      createdByUid: this.user?.uid || 'local',
       bench: benchPayload,
-    };
+    });
 
     try {
       if (typeof localStorage !== 'undefined') {
@@ -775,19 +1001,15 @@ class CloudSyncController {
       }
     } catch {}
 
-    // Sync to Firestore in background if online / initialized
-    if (this.modules && this.db) {
+    // Sync to Firestore if signed in (required by Firestore owner rules)
+    if (this.user?.uid) {
       try {
-        const docRef = this.modules.doc(this.db, 'shared_benches', shareCode);
-        await this.modules.setDoc(docRef, record);
-      } catch {}
-    } else {
-      this.ensureFirebaseLoaded()
-        .then((mods) => {
-          const docRef = mods.doc(this.db, 'shared_benches', shareCode);
-          return mods.setDoc(docRef, record);
-        })
-        .catch(() => {});
+        const mods = this.modules || (await this.ensureFirebaseLoaded());
+        const docRef = mods.doc(this.db, 'shared_benches', shareCode);
+        await mods.setDoc(docRef, record);
+      } catch (err) {
+        console.warn('[CloudSync] Shared bench Firestore write skipped/denied:', err?.message || err);
+      }
     }
 
     return shareCode;

@@ -410,6 +410,10 @@ export class ShelfPanel {
           this.callbacks.onAddApparatus?.(id);
         }
       });
+      el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        this.callbacks.onContextMenu?.(e.clientX, e.clientY, { kind: 'shelf_apparatus', typeId: id });
+      });
     });
 
     // Unified Pointer Drag + Click for Reagent Cards
@@ -436,6 +440,10 @@ export class ShelfPanel {
           e.preventDefault();
           this.callbacks.onSelectReagent?.(id);
         }
+      });
+      el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        this.callbacks.onContextMenu?.(e.clientX, e.clientY, { kind: 'shelf_reagent', reagentId: id });
       });
     });
 

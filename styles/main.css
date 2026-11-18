@@ -991,6 +991,250 @@ button:disabled {
   color: #047857;
 }
 
+/* Explicit high-contrast buttons for Environment Bar (Storage Cabinet & Save/Cloud) */
+.env-cabinet-btn,
+.env-storage-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.36rem 0.65rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface-alt);
+  color: var(--text-main);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.env-cabinet-btn {
+  border-color: rgba(14, 165, 233, 0.45);
+  background-color: rgba(14, 165, 233, 0.12);
+  color: #38bdf8;
+}
+[data-theme="light"] .env-cabinet-btn {
+  color: #0369a1;
+  background-color: rgba(14, 165, 233, 0.1);
+}
+
+.env-storage-btn.signed-in {
+  border-color: rgba(245, 158, 11, 0.55);
+  background-color: rgba(245, 158, 11, 0.14);
+  color: #fbbf24;
+}
+[data-theme="light"] .env-storage-btn.signed-in {
+  color: #b45309;
+  background-color: rgba(245, 158, 11, 0.12);
+}
+
+.env-cabinet-btn:hover,
+.env-storage-btn:hover {
+  border-color: var(--accent);
+}
+
+.lab-tab-rename-input {
+  width: 96px;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.35rem;
+  border: 1px solid #ffffff;
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  font-size: 0.74rem;
+  font-weight: 600;
+  outline: none;
+}
+
+/* Custom Floating Right-Click Context Menu */
+.chemlab-context-menu {
+  position: fixed;
+  z-index: 120;
+  min-width: 215px;
+  padding: 0.35rem;
+  border-radius: 0.65rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  box-shadow: 0 14px 36px rgba(2, 6, 23, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chemlab-ctx-item-wrap {
+  position: relative;
+}
+
+.chemlab-ctx-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.42rem 0.65rem;
+  border-radius: 0.45rem;
+  border: none;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 0.76rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chemlab-ctx-item:hover:not(:disabled) {
+  background-color: var(--accent-soft);
+  color: var(--accent);
+}
+
+.chemlab-ctx-item.danger:hover:not(:disabled) {
+  background-color: rgba(239, 68, 68, 0.14);
+  color: #f43f5e;
+}
+
+.chemlab-ctx-item:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.chemlab-ctx-kbd {
+  font-size: 0.68rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-muted);
+}
+
+.chemlab-ctx-sep {
+  height: 1px;
+  margin: 0.25rem 0.35rem;
+  background-color: var(--border-color);
+}
+
+.chemlab-ctx-submenu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: -4px;
+  min-width: 170px;
+  padding: 0.35rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  box-shadow: 0 12px 28px rgba(2, 6, 23, 0.45);
+}
+
+.chemlab-ctx-item-wrap:hover .chemlab-ctx-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Infinite Storage Cabinet & Info Datasheet */
+.cabinet-modal-card {
+  max-width: 720px;
+}
+
+.cabinet-count-pill {
+  padding: 0.12rem 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(14, 165, 233, 0.45);
+  background-color: rgba(14, 165, 233, 0.14);
+  color: #38bdf8;
+  font-size: 0.7rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+}
+
+.cabinet-filter-pill {
+  padding: 0.28rem 0.62rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface-alt);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cabinet-filter-pill.active {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.cabinet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.65rem;
+  max-height: 48vh;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.cabinet-item-card {
+  padding: 0.7rem 0.8rem;
+  border-radius: 0.7rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.cabinet-empty-box {
+  grid-column: 1 / -1;
+  padding: 2rem 1rem;
+  text-align: center;
+  border-radius: 0.75rem;
+  border: 1px dashed var(--border-color);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.cabinet-sticky-badge {
+  padding: 0.1rem 0.42rem;
+  border-radius: 0.3rem;
+  color: #0f172a;
+  font-size: 0.68rem;
+  font-weight: 700;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+}
+
+.info-datasheet-grid {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-color);
+  border-radius: 0.65rem;
+  overflow: hidden;
+}
+
+.info-datasheet-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-surface-alt);
+}
+
+.info-datasheet-row:last-child {
+  border-bottom: none;
+}
+
+.sticky-color-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  border: 2px solid rgba(15, 23, 42, 0.25);
+  cursor: pointer;
+}
+
+.sticky-color-dot.active {
+  outline: 2.5px solid var(--accent);
+  outline-offset: 2px;
+}
+
 table {
   border-collapse: collapse;
 }

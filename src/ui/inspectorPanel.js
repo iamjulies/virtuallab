@@ -588,7 +588,7 @@ export class InspectorPanel {
     } else if (item.kind === 'condenser') {
       const stands = this.sim.items.filter((i) => i.kind === 'stand');
       const inletSrcs = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && APPARATUS[i.typeId]?.stopperable);
-      const outletDsts = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered && i.id !== item.connectedFromId);
+      const outletDsts = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && i.id !== item.connectedFromId);
       const curInlet = item.connectedFromId ? this.sim.getItem(item.connectedFromId) : null;
       const curOutlet = item.outletTargetId ? this.sim.getItem(item.outletTargetId) : null;
       topSection = `
@@ -1282,6 +1282,8 @@ export class InspectorPanel {
                   }</button>`
                 : ''
             }
+            <button type="button" id="ins-sticky-label" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('stickyLabelBtn')}</button>
+            <button type="button" id="ins-store-cabinet" class="px-2.5 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90">${t('ctxStoreCabinet')}</button>
             <button type="button" id="ins-rinse" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium text-muted hover:text-main">${t('actionRinse')}</button>
           </div>
           ${
@@ -1645,6 +1647,12 @@ export class InspectorPanel {
         soundEngine.playGlassClink(item.typeId, 0.7);
         this.sim.cycleCrucibleLid(item.id);
       });
+      this.container.querySelector('#ins-sticky-label')?.addEventListener('click', () => {
+        this.callbacks.onEditStickyLabel?.(item);
+      });
+      this.container.querySelector('#ins-store-cabinet')?.addEventListener('click', () => {
+        this.callbacks.onStoreToCabinet?.(item.id);
+      });
       this.container.querySelector('#ins-toggle-compare')?.addEventListener('click', () => {
         soundEngine.playUiClick();
         this.sim.toggleCompareVessel(item.id);
@@ -1730,7 +1738,7 @@ export class InspectorPanel {
         if (item.connectedFromId) this.sim.disconnectSyringe(item.connectedFromId);
       });
       this.container.querySelector('#ins-cond-out-pick')?.addEventListener('click', () => {
-        const dsts = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered && i.id !== item.connectedFromId);
+        const dsts = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && i.id !== item.connectedFromId);
         if (dsts.length === 0) return;
         this.callbacks.onStartBenchPick?.({
           candidateIds: dsts.map((d) => d.id),

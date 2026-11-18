@@ -172,9 +172,16 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         (vType === 'white_powder' || isGroundPowder) &&
         (sp.color === '#e2e8f0' || sp.color === '#f8fafc' || sp.color === '#f1f5f9');
       let fillCol = isNeutralWhite ? '#f1f5f9' : sp.color || '#f1f5f9';
-      if (sp.hotColor && vessel.tempK > 460) {
-        const hotFrac = Math.min(1, (vessel.tempK - 460) / 140);
-        if (hotFrac > 0.25) fillCol = sp.hotColor;
+      const hotThreshK = sp.hotColorTempK || 460;
+      if (sp.hotColor && vessel.tempK > hotThreshK) {
+        const hotFrac = Math.min(1, (vessel.tempK - hotThreshK) / 140);
+        if (hotFrac > 0.15) fillCol = sp.hotColor;
+      }
+      if (isFePowder && vessel.tempK >= 773.15) {
+        // Fine Iron powder blackbody glow: 500 °C dull red -> 760 °C orange -> 1100 °C bright yellow-white
+        if (vessel.tempK >= 1373.15) fillCol = '#fef08a';
+        else if (vessel.tempK >= 1033.15) fillCol = '#fb923c';
+        else fillCol = '#ef4444';
       }
       const strokeCol =
         isNeutralWhite && sp.highlightColor === '#ffffff' ? '#cbd5e1' : sp.highlightColor || '#cbd5e1';
@@ -240,12 +247,24 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       if (vType === 'iron_solid') {
         const nailLen = Math.min(width * 0.42, Math.max(16, 15 + Math.cbrt(massG) * 5.5));
         const hasCuCoat = (moles.Cu_s || 0) > 1e-6;
-        const isHot = vessel.tempK >= 720;
+        const tempC = (vessel.tempK || 298.15) - 273.15;
         const nailGrad = ctx.createLinearGradient(-nailLen * 0.5, -3, nailLen * 0.5, 3);
-        if (isHot) {
+        if (tempC >= 1100) {
+          // 1100–1300 °C bright yellow-white incandescence (above 1538 °C molten bright orange-white)
+          nailGrad.addColorStop(0, '#ffffff');
+          nailGrad.addColorStop(0.55, '#fef08a');
+          nailGrad.addColorStop(1, '#fb923c');
+        } else if (tempC >= 760) {
+          // 760–930 °C bright orange glow without sparks in air
           nailGrad.addColorStop(0, '#fed7aa');
-          nailGrad.addColorStop(0.5, '#f97316');
-          nailGrad.addColorStop(1, '#991b1b');
+          nailGrad.addColorStop(0.5, '#fb923c');
+          nailGrad.addColorStop(1, '#ea580c');
+        } else if (tempC >= 550) {
+          // 550–700 °C dark red -> bright cherry red glow
+          const rFrac = Math.min(1, (tempC - 550) / 150);
+          nailGrad.addColorStop(0, rFrac > 0.5 ? '#fca5a5' : '#ef4444');
+          nailGrad.addColorStop(0.5, rFrac > 0.5 ? '#ef4444' : '#dc2626');
+          nailGrad.addColorStop(1, '#7f1d1d');
         } else if (hasCuCoat) {
           nailGrad.addColorStop(0, '#d97706');
           nailGrad.addColorStop(0.55, '#b45309');
@@ -256,7 +275,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
           nailGrad.addColorStop(1, '#334155');
         }
         ctx.fillStyle = nailGrad;
-        ctx.strokeStyle = hasCuCoat ? '#f59e0b' : '#475569';
+        ctx.strokeStyle = tempC >= 550 ? '#f97316' : hasCuCoat ? '#f59e0b' : '#475569';
         ctx.lineWidth = 0.85;
         // Nail head
         ctx.fillRect(-nailLen * 0.5 - 2, -4.0, 3.0, 8.0);

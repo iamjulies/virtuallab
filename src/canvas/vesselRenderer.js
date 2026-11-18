@@ -2748,6 +2748,58 @@ export function renderVessel(ctx, vessel, opts) {
 
   ctx.restore();
 
+  // Sticky note label affixed upright onto vessel body (`stickyLabel: { text, bgColor }`)
+  if (vessel.stickyLabel?.text && !vessel.isShattered) {
+    const rawTxt = String(vessel.stickyLabel.text).trim().slice(0, 30);
+    if (rawTxt) {
+      ctx.save();
+      const noteBg = vessel.stickyLabel.bgColor || '#fef08a';
+      const lines = rawTxt.includes('\n')
+        ? rawTxt.split('\n').slice(0, 2)
+        : rawTxt.length > 15
+        ? [rawTxt.slice(0, 15).trim(), rawTxt.slice(15, 30).trim()].filter(Boolean)
+        : [rawTxt];
+      ctx.font = 'bold 8.5px system-ui, -apple-system, sans-serif';
+      const maxTextW = Math.max(...lines.map((l) => ctx.measureText(l).width), 22);
+      const noteW = Math.min(Math.max(40, w * 0.82), maxTextW + 14);
+      const noteH = lines.length > 1 ? 26 : 16;
+      const nx = x - noteW / 2;
+      const ny = y - noteH / 2 + (spec.shape === 'erlenmeyer' || spec.shape === 'round_flask' ? h * 0.14 : 0);
+
+      ctx.shadowColor = 'rgba(15, 23, 42, 0.22)';
+      ctx.shadowBlur = 4;
+      ctx.shadowOffsetY = 1.5;
+      ctx.fillStyle = noteBg;
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.25)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.roundRect(nx, ny, noteW, noteH, 3);
+      ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.stroke();
+
+      // Subtle folded bottom-right paper corner
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.12)';
+      ctx.beginPath();
+      ctx.moveTo(nx + noteW - 5, ny + noteH);
+      ctx.lineTo(nx + noteW, ny + noteH - 5);
+      ctx.lineTo(nx + noteW - 5, ny + noteH - 5);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = '#0f172a';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      if (lines.length === 1) {
+        ctx.fillText(lines[0], x, ny + noteH / 2 + 0.5, noteW - 8);
+      } else {
+        ctx.fillText(lines[0], x, ny + 8, noteW - 8);
+        ctx.fillText(lines[1], x, ny + 18.5, noteW - 8);
+      }
+      ctx.restore();
+    }
+  }
+
   // Gravity falling stream pouring downward from unstoppered unsubmerged inverted mouth
   if (vessel.isInverted && !vessel.isStoppered && !vessel.submergedInTroughId && (vessel.gravitySpillRateMlS || 0) > 0.2 && !vessel.isShattered) {
     const gWobble = Math.sin((timeNow || 0) * 20) * 1.6;

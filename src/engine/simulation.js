@@ -1380,7 +1380,16 @@ export class LabSimulation {
     if (!v || !APPARATUS[v.typeId]?.hasLid) return false;
     const order = ['open', 'ajar', 'closed'];
     const idx = order.indexOf(v.lidState || 'open');
-    v.lidState = order[(idx + 1) % order.length];
+    const nextState = order[(idx + 1) % order.length];
+    v.lidState = nextState;
+    if (nextState !== 'closed') {
+      v.sealedAirMoles = null;
+      v.sealedAirO2Moles = null;
+      v.internalPressureBar = this.environment.pressureBar;
+    } else {
+      v.sealedAirMoles = null;
+      v.sealedAirO2Moles = null;
+    }
     this.emitChange();
     return true;
   }
@@ -3304,7 +3313,7 @@ export class LabSimulation {
       return true;
     }
     const dst = this.getItem(vesselId);
-    if (!dst || dst.kind !== 'vessel' || dst.isShattered || dst.isStoppered) return false;
+    if (!dst || dst.kind !== 'vessel' || dst.isShattered) return false;
     cond.outletTargetId = dst.id;
     this.emitChange();
     return true;
@@ -5064,6 +5073,13 @@ export class LabSimulation {
         for (const ev of gasEvents) {
           if (ev.type === 'stopper_pop') {
             this.popStopper(v, ev.implosion ? 'alertOverpressurePop' : 'alertOverpressurePop');
+          } else if (ev.type === 'crucible_lid_pop') {
+            this.playFx?.('pop');
+            this.addLog({
+              type: 'alert',
+              key: 'alertCrucibleLidPop',
+              vesselLabel: v.label,
+            });
           } else if (ev.type === 'shatter') {
             this.shatterVessel(
               v,

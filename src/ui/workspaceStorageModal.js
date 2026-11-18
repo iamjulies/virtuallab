@@ -2,10 +2,26 @@ import {
   saveToLocalStorage,
   resetAllBenches,
   exportWorkspaceToFile,
+  exportScopedVlabFile,
   importWorkspaceFromFile,
+  VLAB_SCOPES,
   cloudSync,
 } from '../storage/workspaceStorage.js';
 import { soundEngine } from '../audio/soundEngine.js';
+
+const FIRESTORE_RULES_HELP = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    match /shared_benches/{shareCode} {
+      allow get: if request.auth != null;
+      allow list: if false;
+      allow create, update, delete: if request.auth != null;
+    }
+  }
+}`;
 
 export class WorkspaceStorageModal {
   constructor(labManager, getTranslator, callbacks = {}) {
@@ -216,7 +232,7 @@ export class WorkspaceStorageModal {
             </div>
           </div>
 
-          <!-- LAYER 2: Local .vlab / .json Export & Import -->
+          <!-- LAYER 2: Scoped .vlab Export & Import -->
           <div class="storage-section">
             <div class="flex items-center justify-between">
               <span class="font-bold text-sky-400">📁 ${t('storageLayer2Title')}</span>
@@ -226,6 +242,9 @@ export class WorkspaceStorageModal {
             <div class="flex flex-wrap items-center gap-2">
               <button type="button" id="btn-storage-export-vlab" class="storage-btn storage-btn-primary">
                 📤 ${t('storageBtnExportVlab')}
+              </button>
+              <button type="button" id="btn-storage-export-full" class="storage-btn storage-btn-amber">
+                📦 ${t('storageBtnExportFullLab')}
               </button>
               <button type="button" id="btn-storage-import-vlab" class="storage-btn">
                 📥 ${t('storageBtnImportVlab')}
@@ -303,11 +322,22 @@ export class WorkspaceStorageModal {
       this.close();
     });
 
-    // Layer 2: Export & Import .vlab
+    // Layer 2: Export & Import .vlab (standardized scope & custom naming)
     this.rootEl.querySelector('#btn-storage-export-vlab')?.addEventListener('click', () => {
       soundEngine.playUiClick();
-      exportWorkspaceToFile(this.labManager);
-      this.callbacks.onNotify?.(`📤 ${t('toastExportedVlab')}`);
+      if (this.callbacks.onRequestExportSingleBench) {
+        this.close();
+        this.callbacks.onRequestExportSingleBench();
+      } else {
+        exportWorkspaceToFile(this.labManager);
+        this.callbacks.onNotify?.(`📤 ${t('toastExportedVlab')}`);
+      }
+    });
+
+    this.rootEl.querySelector('#btn-storage-export-full')?.addEventListener('click', () => {
+      soundEngine.playUiClick();
+      const fname = exportScopedVlabFile(VLAB_SCOPES.FULL_LAB, this.labManager);
+      if (fname) this.callbacks.onNotify?.(`📤 ${t('toastExportedVlab')} (${fname})`);
     });
 
     const fileInput = this.rootEl.querySelector('#input-storage-import-vlab');
@@ -319,11 +349,16 @@ export class WorkspaceStorageModal {
       const file = e.target.files?.[0];
       if (!file) return;
       try {
-        await importWorkspaceFromFile(file, this.labManager);
-        soundEngine.playGlassClink('beaker_250', 0.8);
-        this.callbacks.onRefresh?.();
-        this.callbacks.onNotify?.(`📥 ${t('toastImportedVlab')}`);
-        this.close();
+        if (this.callbacks.onImportVlabFile) {
+          this.close();
+          await this.callbacks.onImportVlabFile(file);
+        } else {
+          await importWorkspaceFromFile(file, this.labManager);
+          soundEngine.playGlassClink('beaker_250', 0.8);
+          this.callbacks.onRefresh?.();
+          this.callbacks.onNotify?.(`📥 ${t('toastImportedVlab')}`);
+          this.close();
+        }
       } catch (err) {
         this.callbacks.onNotify?.(`⚠️ ${t('toastImportFailed')}: ${err.message}`);
       } finally {
@@ -399,8 +434,13 @@ export class WorkspaceStorageModal {
         this._setFeedback(`✅ ${t('toastCloudSaved')}`, 'success');
         this.callbacks.onNotify?.(`☁️ ${t('toastCloudSaved')}`);
       } catch (err) {
-        this._setFeedback(`⚠️ ${err.message || t('toastCloudError')}`, 'error');
-        this.callbacks.onNotify?.(`⚠️ ${err.message || t('toastCloudError')}`);
+        if (err?.message === 'CLOUD_PERMISSION_DENIED' || err?.code === 'permission-denied') {
+          this._renderPermissionError(t);
+          this.callbacks.onNotify?.(`⚠️ ${t('toastCloudPermissionErr')}`);
+        } else {
+          this._setFeedback(`⚠️ ${err.message || t('toastCloudError')}`, 'error');
+          this.callbacks.onNotify?.(`⚠️ ${err.message || t('toastCloudError')}`);
+        }
       }
     });
 
@@ -412,8 +452,13 @@ export class WorkspaceStorageModal {
         this.callbacks.onNotify?.(`☁️ ${t('toastCloudLoaded')}`);
         this.close();
       } catch (err) {
-        this._setFeedback(`⚠️ ${err.message || t('toastCloudError')}`, 'error');
-        this.callbacks.onNotify?.(`⚠️ ${err.message || t('toastCloudError')}`);
+        if (err?.message === 'CLOUD_PERMISSION_DENIED' || err?.code === 'permission-denied') {
+          this._renderPermissionError(t);
+          this.callbacks.onNotify?.(`⚠️ ${t('toastCloudPermissionErr')}`);
+        } else {
+          this._setFeedback(`⚠️ ${err.message || t('toastCloudError')}`, 'error');
+          this.callbacks.onNotify?.(`⚠️ ${err.message || t('toastCloudError')}`);
+        }
       }
     });
 
@@ -446,6 +491,28 @@ export class WorkspaceStorageModal {
         this._setFeedback(`⚠️ ${t('toastShareNotFound')}: ${codeInput}`, 'error');
         this.callbacks.onNotify?.(`⚠️ ${t('toastShareNotFound')}: ${codeInput}`);
       }
+    });
+  }
+
+  _renderPermissionError(t) {
+    const fbEl = this.rootEl?.querySelector('#cloud-auth-feedback');
+    if (!fbEl) return;
+    fbEl.className = 'storage-status-banner error';
+    fbEl.style.display = 'block';
+    fbEl.innerHTML = `
+      <div class="flex flex-col gap-1.5">
+        <span>⚠️ ${t('toastCloudPermissionErr')}</span>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" id="btn-copy-firestore-rules" class="storage-btn storage-btn-amber text-xs">📋 Copy Firestore Rules</button>
+          <span class="text-[10px] opacity-85">Project: <code>sos-app-1c5ff</code></span>
+        </div>
+      </div>
+    `;
+    fbEl.querySelector('#btn-copy-firestore-rules')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard?.writeText(FIRESTORE_RULES_HELP);
+        this.callbacks.onNotify?.('📋 Copied Firestore Rules to clipboard!');
+      } catch {}
     });
   }
 }

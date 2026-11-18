@@ -436,6 +436,7 @@ export const APPARATUS = {
     heatable: true,
     stopperable: false,
     popPressureBar: null,
+    lidPopOverpressureBar: 0.06,
     shatterPressureBar: null,
     shatterOverpressureBar: null,
     implosionUnderpressureBar: null,
