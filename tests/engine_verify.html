@@ -114,6 +114,8 @@
     import { LabWorkbenchCanvas } from '../src/canvas/workbench.js';
     import { I18N } from '../src/data/i18n.js';
     import { findClipYForVolume, getInnerPolygonPx, getVesselHoldVolumeMl } from '../src/data/vesselGeometry.js';
+    import { downloadCompositionXlsx, sanitizeLabFilenameSlug } from '../src/storage/xlsxExport.js';
+    import { ensureConcField, injectLocalPlume, stepLiquidConcField } from '../src/engine/liquidField.js';
     import {
       NON_STEAM_GASES,
       computeSyringeDischargeArc,
@@ -2458,7 +2460,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.12';
+      const expectedBuild = 'virlab_beta_v3+build.13';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2583,11 +2585,11 @@
         ps.emitBurst('nh3_hcl_smoke', 300, 350, { intensity: 1.0 });
       }
       const badTypes = ps.particles.filter((p) => p.kind === 'stopper_fly' || p.kind === 'shockwave' || p.kind === 'glass_triangle').length;
-      const goodRibbons = ps.particles.filter((p) => p.kind === 'smoke_ribbon' || p.kind === 'gas_cloud').length;
+      const goodRibbons = ps.particles.filter((p) => p.kind === 'aerosol_cloud' || p.kind === 'smoke_ribbon' || p.kind === 'gas_cloud').length;
       assert(
-        'Open-air NH3 + HCl white fume plume spawns gentle smoke_ribbon wisps with ZERO stopper_fly / shockwave / shards',
-        badTypes === 0 && goodRibbons > 0 && goodRibbons < 60,
-        `badTypes=${badTypes}, ribbons=${goodRibbons}`
+        'Open-air NH3 + HCl white fume plume spawns gentle aerosol cloud puffs with ZERO stopper_fly / shockwave / shards',
+        badTypes === 0 && goodRibbons > 0 && goodRibbons < 200,
+        `badTypes=${badTypes}, aerosols=${goodRibbons}`
       );
     }
 
@@ -3304,7 +3306,7 @@
       // Part A: ParticleSystem 'nh3_hcl_smoke' produces 'smoke_ribbon' wisps and renders cleanly on Dark & Light themes
       const ps = new ParticleSystem();
       ps.emitBurst('nh3_hcl_smoke', 200, 180, { count: 3, force: true });
-      const ribbonCount = ps.particles.filter((p) => p.kind === 'smoke_ribbon').length;
+      const ribbonCount = ps.particles.filter((p) => p.kind === 'aerosol_cloud' || p.kind === 'smoke_ribbon').length;
       ps.update(0.12);
       const cvs = document.createElement('canvas');
       cvs.width = 400;
@@ -6482,6 +6484,203 @@
         `bath=${bathStillIce}->${bathToggledOnce}, lid=${lidNoJitter}->${lidStepped}, el=${elStepped}, vm=${vmStepped}, cont=${contOk}, pip=${afterFirstPip.toFixed(2)}/${pipW.volumeMl.toFixed(2)}, tilt=${tiltedOk}->${autoResetOk}`
       );
       wrapW.remove();
+    }
+
+    // TEST 134: Prompt 30 — Excel (.xlsx) Composition Export, Compact Molten/Frozen Tags, Split Mass/Pressure, Vertical Escaped Gas & Reaction Contextmenu
+    {
+      const simX = new LabSimulation();
+      const bx = simX.createApparatus('beaker_250', 220, 427);
+      bx.moles = { FeCl2_s: 0.05, H2O_s: 1.0, CaCO3_s: 0.04, H_aq: 0.1, Cl_aq: 0.1 };
+      bx.tempK = 1000.0; // FeCl2 molten (>=950 K) in dry melt
+      bx.escapedGasMoles = { CO2_g: 0.012, H2_g: 0, O2_g: 0 };
+      bx.lastGasRateMap = { CO2_g: 0.002 };
+      bx.internalPressureBar = 1.45;
+      bx.activeReactions = [{ id: 'test_r1', equation: 'CaCO₃(s) + 2H⁺(aq) → Ca²⁺(aq) + H₂O(l) + CO₂(g)↑', nameVi: 'Phản ứng đá vôi', nameEn: 'Limestone acid', descVi: 'Chi tiết đầy đủ', descEn: 'Full details', rateMolS: 0.002 }];
+      simX.selectedId = bx.id;
+
+      const xRes = downloadCompositionXlsx({
+        labName: 'Phòng Lab Hóa 1',
+        vesselLabel: bx.label,
+        tempK: bx.tempK,
+        ph: 1.5,
+        pressureBar: bx.internalPressureBar,
+        rowsData: [{ id: 'FeCl2_s', formula: 'FeCl₂', phase: 's', mol: 0.05, massG: 6.34, concLabel: '🔥l' }],
+      });
+      const validZipMagic = xRes.bytes && xRes.bytes[0] === 0x50 && xRes.bytes[1] === 0x4b && xRes.bytes[2] === 0x03 && xRes.bytes[3] === 0x04;
+      const expectedNameOk = /^phong-lab-hoa-1-composition-\d{4}-\d{2}-\d{2}\.xlsx$/.test(xRes.filename);
+
+      const insDiv = document.createElement('div');
+      document.body.appendChild(insDiv);
+      let infoRxn = null;
+      const panel = new InspectorPanel(insDiv, simX, () => (k) => I18N.vi[k] || k, {
+        onShowReactionInfo: (r) => { infoRxn = r; },
+      });
+      panel.renderFull((k) => I18N.vi[k] || k, 'vi');
+
+      const hasXlsxBtn = Boolean(insDiv.querySelector('#btn-export-xlsx'));
+      const moltenTagOk = insDiv.querySelector('#sp-conc-FeCl2_s')?.textContent?.trim() === '🔥l';
+      const splitMassPressOk = Boolean(insDiv.querySelector('#live-mass')) && Boolean(insDiv.querySelector('#live-press-local')) && Boolean(insDiv.querySelector('#live-press-limit')) && Boolean(insDiv.querySelector('#live-press-bar'));
+      const escRows = insDiv.querySelectorAll('#live-escaped-gas tbody tr');
+      const escOnlyPositiveOk = escRows.length === 1 && escRows[0].textContent.includes('CO₂') && escRows[0].textContent.includes('mL') && !insDiv.querySelector('#live-escaped-gas').textContent.includes('H₂:');
+      const rxnCards = insDiv.querySelectorAll('#active-rxn-box .rxn-card-item');
+      const rxnCompactOk = rxnCards.length === 1 && !rxnCards[0].textContent.includes('Phản ứng đá vôi') && rxnCards[0].textContent.includes('2.00 mmol/s');
+      rxnCards[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 }));
+      const ctxBtn = document.querySelector('#rxn-ctx-popover button');
+      ctxBtn?.click();
+      const ctxInfoOk = Boolean(infoRxn && infoRxn.equation.includes('CaCO₃'));
+      document.getElementById('rxn-ctx-popover')?.remove();
+
+      bx.moles = { H2O_s: 1.0, NaCl_s: 0.2 };
+      bx.tempK = 263.15;
+      bx.isFrozenSolid = true;
+      panel.renderFull((k) => I18N.vi[k] || k, 'vi');
+      const frozenTagOk = insDiv.querySelector('#sp-conc-H2O_s')?.textContent?.trim() === '🧊s';
+      insDiv.remove();
+
+      assert(
+        'Excel .xlsx composition export uses standard ZIP OOXML + filename, inspector shows 🔥l/🧊s tags, split Net Mass & Pressure bar, vertical V>0mL escaped gases, and concise reaction cards with Info contextmenu',
+        validZipMagic && expectedNameOk && hasXlsxBtn && moltenTagOk && frozenTagOk && splitMassPressOk && escOnlyPositiveOk && rxnCompactOk && ctxInfoOk,
+        `zip=${validZipMagic}, fname=${xRes.filename}, tags=${moltenTagOk}/${frozenTagOk}, split=${splitMassPressOk}, escRows=${escRows.length}, rxnCompact=${rxnCompactOk}, ctx=${ctxInfoOk}`
+      );
+    }
+
+    // TEST 135: Prompt 30 — NH4Cl Aerosol Soft Cloud Puffs & Glass Frost Deposition
+    {
+      const psA = new ParticleSystem();
+      psA.emitBurst('nh3_hcl_smoke', 400, 300, { force: true, count: 4, intensity: 1.0 });
+      const aerosolOk =
+        psA.particles.length === 4 &&
+        psA.particles.every((p) => p.kind === 'aerosol_cloud' && p.vy > 0 && p.color.includes('245, 248, 255'));
+
+      const simN = new LabSimulation();
+      const bHcl = simN.createApparatus('beaker_250', 220, 427);
+      const bNh3 = simN.createApparatus('beaker_250', 310, 427);
+      simN.addReagentToVessel(bHcl.id, 'hcl_37', 40, { silentAnim: true });
+      simN.addReagentToVessel(bNh3.id, 'nh3_25', 40, { silentAnim: true });
+      stepSeconds(simN, 2.0);
+      const frostOk = (bHcl.nh4clFrostLevel || 0) > 0.01 && (bNh3.nh4clFrostLevel || 0) > 0.01;
+
+      assert(
+        'NH4Cl white smoke renders as radial-gradient aerosol cloud puffs settling slowly downward and frosts adjacent glass mouths',
+        aerosolOk && frostOk,
+        `aerosol=${aerosolOk}(n=${psA.particles.length}), hclFrost=${(bHcl.nh4clFrostLevel||0).toFixed(3)}, nh3Frost=${(bNh3.nh4clFrostLevel||0).toFixed(3)}`
+      );
+    }
+
+    // TEST 136: Prompt 30 — Surface Memory (Tollens Silver Mirror + Water Rinse Resistance + HNO3 Dissolution) & Glass Thermal Shock
+    {
+      const simM = new LabSimulation();
+      const tube = simM.createApparatus('test_tube_50', 220, 400);
+      simM.addReagentToVessel(tube.id, 'agno3', 4.0, { silentAnim: true });
+      simM.addReagentToVessel(tube.id, 'nh3_25', 8.0, { silentAnim: true });
+      simM.addReagentToVessel(tube.id, 'h2o2_30', 6.0, { silentAnim: true });
+      stepSeconds(simM, 3.0);
+      const mirrorBuilt = (tube.silverMirrorLevel || 0) > 0.1;
+
+      // Water rinsing preserves Silver Mirror & logs HNO3 reminder
+      simM.rinseVessel(tube.id);
+      const keptAfterRinse =
+        (tube.silverMirrorLevel || 0) > 0.1 &&
+        simM.logs.some((l) => l.key === 'alertSilverMirrorNeedsHNO3');
+
+      // Adding HNO3 chemically dissolves the Silver Mirror
+      simM.addReagentToVessel(tube.id, 'hno3_68', 15, { silentAnim: true });
+      stepSeconds(simM, 4.0);
+      const cleanedByHNO3 =
+        (tube.silverMirrorLevel || 0) < 0.02 &&
+        simM.logs.some((l) => l.key === 'alertSilverMirrorCleaned');
+
+      // Thermal shock: >350 °C glass beaker plunged into ice bath shatters; quartz tube survives
+      const bathShk = simM.createApparatus('ice_bath', 520, 448);
+      const hotBeaker = simM.createApparatus('beaker_250', 520, 425);
+      hotBeaker.tempK = 660.15; // 387 °C
+      simM.updateSupportAttachments();
+      stepSeconds(simM, 0.2);
+      const shockedGlass =
+        hotBeaker.isShattered === true && simM.logs.some((l) => l.key === 'alertThermalShock');
+
+      const simQ = new LabSimulation();
+      const bathQ = simQ.createApparatus('ice_bath', 520, 448);
+      const hotQuartz = simQ.createApparatus('quartz_tube', 520, 425);
+      hotQuartz.tempK = 680.15;
+      simQ.updateSupportAttachments();
+      stepSeconds(simQ, 0.2);
+      const quartzSurvived = hotQuartz.isShattered === false;
+
+      assert(
+        'Silver mirror adheres through water rinse, dissolves only in HNO3, and >350°C borosilicate suffers thermal shock in 0°C ice bath while quartz survives',
+        mirrorBuilt && keptAfterRinse && cleanedByHNO3 && shockedGlass && quartzSurvived,
+        `mirror=${(tube.silverMirrorLevel||0).toFixed(2)}, kept=${keptAfterRinse}, hno3Clean=${cleanedByHNO3}, shock=${shockedGlass}, qOk=${quartzSurvived}`
+      );
+    }
+
+    // TEST 137: Prompt 30 — Multi-Spectral Optics (Aerodynamics + Thermal FLIR) & Custom Canvas Themes (Olivia / Petal)
+    {
+      const simO = new LabSimulation();
+      const wrapO = document.createElement('div');
+      wrapO.style.width = '1000px';
+      wrapO.style.height = '560px';
+      const cvsO = document.createElement('canvas');
+      cvsO.width = 1000;
+      cvsO.height = 560;
+      wrapO.appendChild(cvsO);
+      document.body.appendChild(wrapO);
+      const wbO = new LabWorkbenchCanvas(cvsO, simO, new ParticleSystem());
+
+      const bGasO = simO.createApparatus('beaker_250', 220, 380);
+      bGasO.headspaceGasMoles.CO2_g = 0.08;
+      simO.setVesselTiltDeg(bGasO.id, 45, 1);
+      const bathO = simO.createApparatus('ice_bath', 440, 448);
+      simO.setBathMode(bathO.id, 'ice_salt');
+      const bnO = simO.createApparatus('bunsen_burner', 660, 418);
+      simO.setBurnerFlame(bnO.id, 3);
+      const bHotO = simO.createApparatus('beaker_250', 660, 315);
+      bHotO.tempK = 550;
+      bHotO.lastExothermicJ = 400;
+
+      let errO = null;
+      try {
+        wbO.setTheme(false, 'olivia');
+        simO.setOpticsMode('aerodynamics');
+        wbO.render(1.2);
+        wbO.setTheme(true, 'petal');
+        simO.setOpticsMode('thermal');
+        wbO.render(1.4);
+      } catch (e) {
+        errO = e?.message || String(e);
+      } finally {
+        wrapO.remove();
+      }
+      assert(
+        'Multi-Spectral Optics (aerodynamics CO2 waterfall & FLIR thermal camera) and Olivia/Petal canvas themes render cleanly with zero errors',
+        simO.environment.opticsMode === 'thermal' && errO === null,
+        `mode=${simO.environment.opticsMode}, err=${errO}`
+      );
+    }
+
+    // TEST 138: Prompt 30 — 2D Liquid Stirring Vortex & Local Diffusion Grid
+    {
+      const simL = new LabSimulation();
+      const bL = simL.createApparatus('beaker_250', 260, 427);
+      simL.addReagentToVessel(bL.id, 'h2o', 80, { silentAnim: true });
+      simL.addReagentToVessel(bL.id, 'phen', 2, { silentAnim: true });
+      simL.addReagentToVessel(bL.id, 'naoh', 0.2, { silentAnim: true });
+
+      const f = ensureConcField(bL);
+      const topBefore = f.pink[1 * f.w + 5];
+      const botBefore = f.pink[8 * f.w + 5];
+      const localizedOk = topBefore > 0.3 && botBefore < 0.08;
+
+      const sb = simL.createApparatus('stir_bar', 260, 440);
+      simL.insertStirBarIntoVessel(sb.id, bL.id, 1000);
+      stepSeconds(simL, 0.5);
+      const vortexSpun = (f.swirlAngleRad || 0) > 0.5 && f.pink[5 * f.w + 5] >= 0;
+
+      assert(
+        'Dropping NaOH into Phenolphthalein spawns localized upper concentration halo without instant full-liquid jump; spinning stir bar swirls vortex field',
+        localizedOk && vortexSpun,
+        `top=${topBefore.toFixed(2)}, bot=${botBefore.toFixed(2)}, swirlRad=${(f.swirlAngleRad||0).toFixed(2)}`
+      );
     }
 
     // Render test report

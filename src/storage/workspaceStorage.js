@@ -226,6 +226,9 @@ export function serializeBench(sim, benchMeta = {}) {
         isInverted: Boolean(v.isInverted),
         isHeating,
         stickyLabel: v.stickyLabel ? { ...v.stickyLabel } : null,
+        silverMirrorLevel: Math.round((v.silverMirrorLevel || 0) * 1000) / 1000,
+        nh4clFrostLevel: Math.round((v.nh4clFrostLevel || 0) * 1000) / 1000,
+        wallResidueMap: v.wallResidueMap ? { ...v.wallResidueMap } : {},
         species: speciesList,
       };
     });
@@ -339,6 +342,9 @@ export function deserializeBench(sim, benchData) {
         if (Number.isFinite(vSpec.pressureAtm)) created.pressureBar = Number(vSpec.pressureAtm) * 1.01325;
         created.isStoppered = Boolean(vSpec.hasStopper);
         created.isInverted = Boolean(vSpec.isInverted);
+        if (Number.isFinite(vSpec.silverMirrorLevel)) created.silverMirrorLevel = vSpec.silverMirrorLevel;
+        if (Number.isFinite(vSpec.nh4clFrostLevel)) created.nh4clFrostLevel = vSpec.nh4clFrostLevel;
+        if (vSpec.wallResidueMap && typeof vSpec.wallResidueMap === 'object') created.wallResidueMap = { ...vSpec.wallResidueMap };
         created.moles = {};
         for (const sp of vSpec.species || []) {
           const spId = resolveCanonicalToSpeciesId(sp.chemicalId, sp.phase);

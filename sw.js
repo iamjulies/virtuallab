@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v3-build-12';
+const CACHE_NAME = 'virlab-beta-v3-build-13';
 const ASSETS = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const ASSETS = [
   './src/main.js',
   './src/audio/soundEngine.js',
   './src/storage/workspaceStorage.js',
+  './src/storage/xlsxExport.js',
   './src/data/constants.js',
   './src/data/vesselGeometry.js',
   './src/data/i18n.js',
@@ -20,6 +21,7 @@ const ASSETS = [
   './src/engine/gasNetwork.js',
   './src/engine/electrochemistry.js',
   './src/engine/apparatusTools.js',
+  './src/engine/liquidField.js',
   './src/engine/labManager.js',
   './src/engine/simulation.js',
   './src/canvas/particles.js',

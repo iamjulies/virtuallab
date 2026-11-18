@@ -23,6 +23,32 @@
   --shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
 }
 
+/* Olivia Rodrigo — "you seem pretty sad for a girl so in love" */
+[data-theme="olivia"] {
+  --bg-app: #72aee0;
+  --bg-surface: #f6c5d1;
+  --bg-surface-alt: #faf3e3;
+  --text-main: #221f20;
+  --text-muted: #5c424b;
+  --border-color: #221f20;
+  --accent: #d95f86;
+  --accent-soft: rgba(244, 165, 184, 0.34);
+  --shadow: 0 10px 26px rgba(34, 31, 32, 0.18);
+}
+
+/* Ariana Grande — "petal" (monochrome concrete noir + crimson accent) */
+[data-theme="petal"] {
+  --bg-app: #101012;
+  --bg-surface: #1b1b1f;
+  --bg-surface-alt: #242429;
+  --text-main: #f2f2f5;
+  --text-muted: #a1a1aa;
+  --border-color: #33333a;
+  --accent: #d62839;
+  --accent-soft: rgba(214, 40, 57, 0.18);
+  --shadow: 0 12px 30px rgba(0, 0, 0, 0.65);
+}
+
 *,
 *::before,
 *::after {
@@ -104,10 +130,58 @@ button:disabled {
 .bg-pink-500\/10 { background-color: rgba(236, 72, 153, 0.12); }
 .border-slate-400\/50 { border-color: rgba(148, 163, 184, 0.5); }
 .bg-slate-500\/10 { background-color: rgba(100, 116, 139, 0.12); }
-[data-theme="light"] .text-sky-400 { color: #0284c7; }
-[data-theme="light"] .text-emerald-400 { color: #059669; }
-[data-theme="light"] .text-amber-400 { color: #b45309; }
-[data-theme="light"] .text-pink-400 { color: #be185d; }
+[data-theme="light"] .text-sky-400,
+[data-theme="olivia"] .text-sky-400 { color: #0284c7; }
+[data-theme="light"] .text-emerald-400,
+[data-theme="olivia"] .text-emerald-400 { color: #059669; }
+[data-theme="light"] .text-amber-400,
+[data-theme="olivia"] .text-amber-400 { color: #b45309; }
+[data-theme="light"] .text-pink-400,
+[data-theme="olivia"] .text-pink-400 { color: #be185d; }
+
+[data-theme="olivia"] .panel-card {
+  border-color: #221f20;
+  box-shadow: 0 4px 0 rgba(34, 31, 32, 0.85);
+}
+[data-theme="olivia"] header h1,
+[data-theme="olivia"] .lab-tab-btn,
+[data-theme="olivia"] .lab-persist-btn,
+[data-theme="olivia"] .panel-card button,
+[data-theme="olivia"] .panel-card h3 {
+  text-transform: lowercase;
+}
+[data-theme="olivia"] .olivia-cure-card {
+  border: 2px dashed #221f20 !important;
+  background-color: #faf3e3 !important;
+  color: #221f20;
+}
+[data-theme="olivia"] .lab-persist-btn,
+[data-theme="olivia"] .env-cabinet-btn,
+[data-theme="olivia"] .env-storage-btn,
+[data-theme="olivia"] #btn-sound-toggle {
+  color: #221f20 !important;
+  border-color: #221f20;
+}
+
+[data-theme="petal"] header h1,
+[data-theme="petal"] .lab-tab-btn,
+[data-theme="petal"] .lab-persist-btn,
+[data-theme="petal"] .panel-card button,
+[data-theme="petal"] .panel-card h3 {
+  text-transform: lowercase;
+}
+[data-theme="petal"] .press-card-warning {
+  border-color: rgba(214, 40, 57, 0.65) !important;
+}
+
+header button,
+header select {
+  color: var(--text-main);
+}
+header button.bg-accent,
+header button.bg-amber-500 {
+  color: #ffffff;
+}
 .text-red-400 { color: #f87171; }
 .hover\:bg-red-500\/10:hover { background-color: rgba(239, 68, 68, 0.12); }
 

@@ -33,6 +33,7 @@ import {
   syncDockedToolPositions,
 } from './apparatusTools.js';
 import { computeHeatCapacityJK, computeSteamOpacity, stepVesselThermodynamics } from './thermodynamics.js';
+import { injectLocalPlume, stepLiquidConcField } from './liquidField.js';
 import {
   ALL_GASES,
   NON_STEAM_GASES,
@@ -137,6 +138,7 @@ export class LabSimulation {
       paused: false,
       uvLight: false,
       atmosphereMode: 'air',        // 'air' (78% N2, 21% O2, 60% RH) | 'inert' (dry N2/Ar glovebox)
+      opticsMode: 'normal',         // 'normal' | 'aerodynamics' | 'thermal'
     };
     this.items = [];
     this.selectedId = null;
@@ -361,6 +363,10 @@ export class LabSimulation {
         tiltDeg: 0,
         tiltDir: 1,
         sootLevel: 0,
+        silverMirrorLevel: 0,
+        wallResidueMap: {},
+        nh4clFrostLevel: 0,
+        _recentHotTempK: 298.15,
         tubeSubmersionRatio: 0.72,
         submergedInBathId: null,
         tiltPourRateMlS: 0,
@@ -2615,6 +2621,14 @@ export class LabSimulation {
     v.freezePointK = CONSTANTS.T_FREEZE_WATER_K;
     v.lastFreezeMeltRateMolS = 0;
     v.escapedFrostH2OMol = 0;
+    v.sootLevel = 0;
+    v.nh4clFrostLevel = 0;
+    v.wallResidueMap = {};
+    v._concField = null;
+    if ((v.silverMirrorLevel || 0) > 0.08) {
+      // Tollens silver mirror cannot be washed away with pure water; only HNO3 dissolves it!
+      this.addLog({ type: 'alert', key: 'alertSilverMirrorNeedsHNO3', vesselLabel: v.label });
+    }
     this.recomputeScaleReadings();
     this.emitChange();
   }
@@ -2728,6 +2742,15 @@ export class LabSimulation {
     if (cOld + addedHeatCap > 0) {
       const nextT = (cOld * tOld + addedHeatCap * tAdd + dilutionHeatJ) / (cOld + addedHeatCap);
       v.tempK = Number.isFinite(nextT) ? Math.max(155, Math.min(1950, nextT)) : tOld;
+    }
+    if (dilutionHeatJ > 35) {
+      v._lastExothermicTimer = 1.6;
+      v.lastExothermicJ = dilutionHeatJ;
+    }
+    if ((reg.id === 'naoh' || reg.id === 'nh3_25') && (v.moles.Phenolphthalein_aq || 0) > 1e-8) {
+      injectLocalPlume(v, 'pink', 0.5 + (Math.random() - 0.5) * 0.14, 0.14, 0.95);
+    } else if (reg.id === 'cuso4_5h2o' && (v.moles.H2O_l || 0) > 1e-3) {
+      injectLocalPlume(v, 'copper', 0.5 + (Math.random() - 0.5) * 0.14, 0.86, 0.9);
     }
     if (coldSplashShock && v.kind === 'vessel') {
       this.shatterVessel(v, 'alertThermalShock', 'thermal_shock');
@@ -3757,6 +3780,11 @@ export class LabSimulation {
     if (cOld + cAdd > 0) {
       dst.tempK = (cOld * dst.tempK + cAdd * (pip.tempK || this.environment.tempK)) / (cOld + cAdd);
     }
+    if (((pip.moles?.OH_aq || 0) > 1e-7 || (pip.moles?.NH3_aq || 0) > 1e-7) && (dst.moles.Phenolphthalein_aq || 0) > 1e-8) {
+      injectLocalPlume(dst, 'pink', 0.5 + (Math.random() - 0.5) * 0.14, 0.12, 0.95);
+    } else if ((pip.moles?.Cu2_aq || 0) > 1e-6) {
+      injectLocalPlume(dst, 'copper', 0.5 + (Math.random() - 0.5) * 0.14, 0.14, 0.65);
+    }
 
     pip.volumeMl = Math.max(0, pip.volumeMl - actual);
     if (pip.volumeMl < 1e-4) {
@@ -4715,6 +4743,12 @@ export class LabSimulation {
     this.emitChange();
   }
 
+  setOpticsMode(mode) {
+    const valid = mode === 'aerodynamics' || mode === 'thermal' ? mode : 'normal';
+    this.environment.opticsMode = valid;
+    this.emitChange();
+  }
+
   /**
    * Toggle global lab atmosphere between Standard Air (20.95% O2, 60% RH)
    * and Pure Dry Inert Glovebox (100% N2/Ar, 0% O2, 0% RH).
@@ -5153,6 +5187,22 @@ export class LabSimulation {
       const heatSrc = this.getBurnerHeatingSource(v);
       const bathSrc = this.getBathCoolingSource(v);
       v.submergedInBathId = bathSrc?.bath?.id || null;
+      v._recentHotTempK = Math.max(v.tempK, (v._recentHotTempK || v.tempK) - (v._recentHotTempK > v.tempK ? 10 * scaledDt : 0));
+      if (
+        bathSrc &&
+        bathSrc.tempK <= 278.15 &&
+        v._recentHotTempK >= 623.15 &&
+        !APPARATUS[v.typeId]?.materialSpec?.includes('Quartz') &&
+        !APPARATUS[v.typeId]?.isPorcelain &&
+        APPARATUS[v.typeId]?.shape !== 'crucible'
+      ) {
+        this.shatterVessel(v, 'alertThermalShock', 'thermal_shock');
+        continue;
+      }
+      if ((v._lastExothermicTimer || 0) > 0) {
+        v._lastExothermicTimer = Math.max(0, v._lastExothermicTimer - scaledDt);
+        if (v._lastExothermicTimer === 0) v.lastExothermicJ = 0;
+      }
       const burnerPowerW = heatSrc?.powerW || 0;
       const burnerFlameLevel = heatSrc?.flameLevel || 0;
       const burnerFlameTempK = heatSrc?.flameTempK || null;
@@ -5334,6 +5384,49 @@ export class LabSimulation {
       }
 
       if (v.isShattered) continue;
+
+      // Glassware Surface Memory: Tollens Silver Mirror, stubborn CuO/BaSO4 crusts, HNO3 silver stripping & 2D liquid plume diffusion
+      const formedSilverMirror =
+        frameActiveMap.has('tollens_h2o2_alk') ||
+        frameActiveMap.has('tollens_h2o2_neut') ||
+        ((v.moles.Ag_s || 0) > 1e-4 && ((v.moles.NH3_aq || 0) > 1e-3 || frameActiveMap.has('cu_agno3') || frameActiveMap.has('zn_agno3')));
+      if (formedSilverMirror && (v.silverMirrorLevel || 0) < 1.0) {
+        const prevMir = v.silverMirrorLevel || 0;
+        v.silverMirrorLevel = Math.min(1.0, prevMir + 0.14 * scaledDt);
+        if (prevMir < 0.08 && v.silverMirrorLevel >= 0.08 && !v.seenReactions._silverMirrorLogged) {
+          v.seenReactions._silverMirrorLogged = true;
+          this.addLog({ type: 'info', key: 'alertSilverMirrorFormed', vesselLabel: v.label });
+        }
+      }
+      const hasAcidNitrate = (v.moles.HNO3_l || 0) > 1e-4 || ((v.moles.H_aq || 0) > 1e-4 && (v.moles.NO3_aq || 0) > 1e-4);
+      if ((v.silverMirrorLevel || 0) > 0.005 && hasAcidNitrate) {
+        const dMirror = Math.min(v.silverMirrorLevel, 0.35 * scaledDt);
+        v.silverMirrorLevel = Math.max(0, v.silverMirrorLevel - dMirror);
+        if (v.moles.HNO3_l > 0) v.moles.HNO3_l = Math.max(0, v.moles.HNO3_l - dMirror * 0.004);
+        else {
+          v.moles.H_aq = Math.max(0, (v.moles.H_aq || 0) - dMirror * 0.004);
+          v.moles.NO3_aq = Math.max(0, (v.moles.NO3_aq || 0) - dMirror * 0.002);
+        }
+        v.moles.Ag_aq = (v.moles.Ag_aq || 0) + dMirror * 0.002;
+        if (v.silverMirrorLevel <= 0.005) {
+          v.silverMirrorLevel = 0;
+          this.addLog({ type: 'info', key: 'alertSilverMirrorCleaned', vesselLabel: v.label });
+        }
+      }
+      v.wallResidueMap = v.wallResidueMap || {};
+      if ((v.moles.CuO_s || 0) > 5e-4) v.wallResidueMap.CuO_s = Math.min(1, (v.wallResidueMap.CuO_s || 0) + 0.08 * scaledDt);
+      if ((v.moles.BaSO4_s || 0) > 5e-4) v.wallResidueMap.BaSO4_s = Math.min(1, (v.wallResidueMap.BaSO4_s || 0) + 0.08 * scaledDt);
+
+      if ((v.moles.CuSO4_5H2O_s || 0) > 1e-5 && (v.moles.H2O_l || 0) > 1e-3 && Math.random() < 0.35) {
+        injectLocalPlume(v, 'copper', 0.5 + (Math.random() - 0.5) * 0.16, 0.88, 0.38);
+      }
+      stepLiquidConcField(v, scaledDt);
+      for (const r of frameActiveMap.values()) {
+        if ((r.dH || 0) < -5000 || (r.nameEn || '').toLowerCase().includes('neutral') || (r.nameEn || '').toLowerCase().includes('sodium')) {
+          v._lastExothermicTimer = 1.4;
+          v.lastExothermicJ = Math.max(v.lastExothermicJ || 0, Math.abs(r.dH || 0) * Math.max(1e-4, r.dXi || 0.001));
+        }
+      }
 
       // Post-step finite mathematical stabilizer across all conserved vessel state fields
       v.tempK = Number.isFinite(v.tempK) ? Math.max(155, Math.min(1950, v.tempK)) : CONSTANTS.T_STD_K;
@@ -5873,6 +5966,8 @@ export class LabSimulation {
           const my = Math.min(a.y, b.y) - 42;
           const intensity = Math.min(1.6, Math.sqrt(hclRate * nh3Rate) * 2800 + 0.35);
           this.lastWhiteSmokePairs.push({ aId: a.id, bId: b.id, x: mx, y: my, intensity });
+          a.nh4clFrostLevel = Math.min(1.0, (a.nh4clFrostLevel || 0) + 0.03 * realDeltaSec);
+          b.nh4clFrostLevel = Math.min(1.0, (b.nh4clFrostLevel || 0) + 0.03 * realDeltaSec);
           if (this.visualHooks.onAlert) {
             this.visualHooks.onAlert('nh3_hcl_smoke', { x: mx, y: my }, { intensity });
           }

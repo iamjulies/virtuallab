@@ -29,7 +29,7 @@ export class EnvironmentBar {
             <div class="flex items-center gap-2">
               <h1 class="text-sm sm:text-base font-bold leading-none">${t('appTitle')}</h1>
               <span class="hidden sm:inline-block text-xs px-2 py-0.5 rounded-full border border-theme bg-surface-alt text-muted">
-                ${t('modeFreeSandbox')}
+                ${theme === 'olivia' ? 'u + me = <3 · 🐝' : t('modeFreeSandbox')}
               </span>
             </div>
             <p class="text-xs text-muted mt-0.5 hidden md:block">${t('appSubtitle')}</p>
@@ -83,6 +83,13 @@ export class EnvironmentBar {
                 ? 'border-cyan-500/70 bg-cyan-500/20 text-cyan-300'
                 : 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400 hover:opacity-90'
             }">${env.atmosphereMode === 'inert' ? `🛡️ ${t('envAtmInert')}` : `🌬️ ${t('envAtmAir')}`}</button>
+
+          <!-- Multi-Spectral Optics Selector: Normal / Aerodynamics / Thermal FLIR -->
+          <select id="optics-select" title="${t('opticsLabel')}" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-main text-xs font-semibold">
+            <option value="normal" ${(env.opticsMode || 'normal') === 'normal' ? 'selected' : ''}>👁️ ${t('opticsNormal')}</option>
+            <option value="aerodynamics" ${env.opticsMode === 'aerodynamics' ? 'selected' : ''}>💨 ${t('opticsAero')}</option>
+            <option value="thermal" ${env.opticsMode === 'thermal' ? 'selected' : ''}>🌡️ ${t('opticsThermal')}</option>
+          </select>
 
           <!-- Speed & Pause -->
           <div class="flex items-center gap-1 p-1 rounded-lg border border-theme bg-surface-alt">
@@ -157,13 +164,24 @@ export class EnvironmentBar {
               ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
               : 'border-theme bg-surface-alt text-muted'
           } text-xs font-semibold hover:border-accent transition">
-            ${this.appState.soundEnabled !== false ? `🔊 ${t('soundOn')}` : `🔇 ${t('soundMuted')}`}
+            ${
+              theme === 'petal'
+                ? this.appState.soundEnabled !== false
+                  ? `🐰 ${t('soundOn')}`
+                  : `🔇 ${t('soundMuted')}`
+                : this.appState.soundEnabled !== false
+                ? `🔊 ${t('soundOn')}`
+                : `🔇 ${t('soundMuted')}`
+            }
           </button>
 
-          <!-- Theme Toggle -->
-          <button type="button" id="btn-theme-toggle" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-semibold hover:border-accent transition">
-            ${theme === 'dark' ? `🌙 ${t('themeDark')}` : `☀️ ${t('themeLight')}`}
-          </button>
+          <!-- Theme Selector (Dark, Light, Olivia Rodrigo, Ariana Grande petal) -->
+          <select id="theme-select" style="max-width: 155px;" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-main text-xs font-semibold truncate" title="Theme">
+            <option value="dark" ${theme === 'dark' ? 'selected' : ''}>🌙 ${t('themeDark')}</option>
+            <option value="light" ${theme === 'light' ? 'selected' : ''}>☀️ ${t('themeLight')}</option>
+            <option value="olivia" ${theme === 'olivia' ? 'selected' : ''}>🩷 ${t('themeOlivia')}</option>
+            <option value="petal" ${theme === 'petal' ? 'selected' : ''}>🥀 ${t('themePetal')}</option>
+          </select>
 
           <!-- Language Toggle VI / EN -->
           <button type="button" id="btn-lang-toggle" class="px-2.5 py-1.5 rounded-lg border border-theme bg-accent text-white text-xs font-bold hover:opacity-90 transition">
@@ -233,8 +251,12 @@ export class EnvironmentBar {
       this.callbacks.onSoundToggle?.();
     });
 
-    this.container.querySelector('#btn-theme-toggle')?.addEventListener('click', () => {
-      this.callbacks.onThemeChange?.();
+    this.container.querySelector('#optics-select')?.addEventListener('change', (e) => {
+      this.callbacks.onOpticsChange?.(e.target.value);
+    });
+
+    this.container.querySelector('#theme-select')?.addEventListener('change', (e) => {
+      this.callbacks.onThemeChange?.(e.target.value);
     });
 
     this.container.querySelector('#btn-lang-toggle')?.addEventListener('click', () => {

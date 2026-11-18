@@ -69,6 +69,7 @@ export class LabWorkbenchCanvas {
     this.callbacks = callbacks; // { onSelect, onRequestDosing, onDropApparatus }
 
     this.isDark = true;
+    this.themeName = 'dark';
     this.langCode = 'vi';
     this.dragState = null; // { itemId, offsetX, offsetY, startX, startY, pourTargetId, pouredMl }
     this.portDragState = null;
@@ -108,8 +109,9 @@ export class LabWorkbenchCanvas {
     this.shakeTimer = Math.max(this.shakeTimer, duration);
   }
 
-  setTheme(isDark) {
+  setTheme(isDark, themeName = isDark ? 'dark' : 'light') {
     this.isDark = isDark;
+    this.themeName = themeName || (isDark ? 'dark' : 'light');
   }
 
   setLang(langCode) {
@@ -2039,7 +2041,37 @@ export class LabWorkbenchCanvas {
   }
 
   renderWorldScene(ctx, timeNow, { includeLabels = true } = {}) {
-    // 1. Background subtle grid & lab bench surface (plus optional UV Lamp spotlight)
+    // 1. Background sky/noir theme backdrop, subtle dot grid & lab bench surface (plus optional UV Lamp spotlight)
+    if (this.themeName === 'olivia') {
+      const skyGrad = ctx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
+      skyGrad.addColorStop(0, '#72AEE0');
+      skyGrad.addColorStop(1, '#CBE5FA');
+      ctx.fillStyle = skyGrad;
+      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+    } else if (this.themeName === 'petal') {
+      ctx.fillStyle = '#111113';
+      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      // Diagonal sunlit shaft cutting across film-noir shadows
+      const beamGrad = ctx.createLinearGradient(120, 0, 740, BENCH_FLOOR_Y);
+      beamGrad.addColorStop(0, 'rgba(242, 242, 245, 0.08)');
+      beamGrad.addColorStop(0.55, 'rgba(242, 242, 245, 0.035)');
+      beamGrad.addColorStop(1, 'rgba(242, 242, 245, 0)');
+      ctx.fillStyle = beamGrad;
+      ctx.beginPath();
+      ctx.moveTo(90, 0);
+      ctx.lineTo(390, 0);
+      ctx.lineTo(820, BENCH_FLOOR_Y);
+      ctx.lineTo(520, BENCH_FLOOR_Y);
+      ctx.closePath();
+      ctx.fill();
+      // Subtle 3% monochrome film-grain texture
+      ctx.fillStyle = 'rgba(242, 242, 245, 0.03)';
+      for (let gi = 0; gi < 64; gi++) {
+        const gx = ((gi * 173 + 29) % 980) + 10;
+        const gy = ((gi * 97 + 41) % (BENCH_FLOOR_Y - 20)) + 10;
+        ctx.fillRect(gx, gy, 2, 2);
+      }
+    }
     if (this.sim.environment.uvLight) {
       const uvGrad = ctx.createRadialGradient(BENCH_LOGICAL_W * 0.5, 10, 20, BENCH_LOGICAL_W * 0.5, 250, 520);
       uvGrad.addColorStop(0, this.isDark ? 'rgba(139, 92, 246, 0.24)' : 'rgba(139, 92, 246, 0.14)');
@@ -2047,7 +2079,14 @@ export class LabWorkbenchCanvas {
       ctx.fillStyle = uvGrad;
       ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
     }
-    const bgGrid = this.isDark ? 'rgba(148, 163, 184, 0.08)' : 'rgba(15, 23, 42, 0.06)';
+    const bgGrid =
+      this.themeName === 'olivia'
+        ? 'rgba(250, 243, 227, 0.72)'
+        : this.themeName === 'petal'
+        ? 'rgba(242, 242, 245, 0.06)'
+        : this.isDark
+        ? 'rgba(148, 163, 184, 0.08)'
+        : 'rgba(15, 23, 42, 0.06)';
     ctx.fillStyle = bgGrid;
     for (let gx = 40; gx < BENCH_LOGICAL_W; gx += 40) {
       for (let gy = 40; gy < BENCH_FLOOR_Y; gy += 40) {
@@ -2057,7 +2096,13 @@ export class LabWorkbenchCanvas {
 
     // Lab Bench Table Edge
     const benchGrad = ctx.createLinearGradient(0, BENCH_FLOOR_Y, 0, BENCH_LOGICAL_H);
-    if (this.isDark) {
+    if (this.themeName === 'olivia') {
+      benchGrad.addColorStop(0, '#F8F0DF');
+      benchGrad.addColorStop(1, '#F4A5B8');
+    } else if (this.themeName === 'petal') {
+      benchGrad.addColorStop(0, '#1B1B1F');
+      benchGrad.addColorStop(1, '#101012');
+    } else if (this.isDark) {
       benchGrad.addColorStop(0, '#1e293b');
       benchGrad.addColorStop(1, '#0f172a');
     } else {
@@ -2067,8 +2112,9 @@ export class LabWorkbenchCanvas {
     ctx.fillStyle = benchGrad;
     ctx.fillRect(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, BENCH_LOGICAL_H - BENCH_FLOOR_Y);
 
-    ctx.strokeStyle = this.isDark ? '#334155' : '#64748b';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle =
+      this.themeName === 'olivia' ? '#221F20' : this.themeName === 'petal' ? '#33333A' : this.isDark ? '#334155' : '#64748b';
+    ctx.lineWidth = this.themeName === 'olivia' ? 1.6 : 2;
     ctx.beginPath();
     ctx.moveTo(0, BENCH_FLOOR_Y);
     ctx.lineTo(BENCH_LOGICAL_W, BENCH_FLOOR_Y);
@@ -2132,6 +2178,7 @@ export class LabWorkbenchCanvas {
           isSelected,
           isDropTarget: isDropTgt,
           isDark: this.isDark,
+          themeName: this.themeName,
           timeNow,
           langCode: this.langCode,
         });
@@ -2367,6 +2414,12 @@ export class LabWorkbenchCanvas {
       ctx.restore();
     }
 
+    // 6c. Multi-Spectral Optics Overlay ('aerodynamics' | 'thermal')
+    const opticsMode = this.sim.environment?.opticsMode || 'normal';
+    if (opticsMode !== 'normal') {
+      this.renderMultiSpectralOpticsOverlay(ctx, timeNow, opticsMode);
+    }
+
     // 7. Render hovered/dragged Canvas tooltip pills & live gas-tubing hover telemetry on top layer
     if (includeLabels) {
       flushCanvasLabelFrame(ctx);
@@ -2403,6 +2456,188 @@ export class LabWorkbenchCanvas {
         ctx.fillText(line2, bx + 10, by + 22);
         ctx.restore();
       }
+    }
+  }
+
+  /**
+   * Render Multi-Spectral Optics:
+   * - 'aerodynamics': Reveals colorless gases with molar-mass convection arrows & CO2 waterfall cascades over tilted rims.
+   * - 'thermal': FLIR false-color thermal imaging (-10°C indigo -> 1500°C white-hot) over flames, ice baths & exothermic hotspots.
+   */
+  renderMultiSpectralOpticsOverlay(ctx, timeNow, mode) {
+    const drawConvArrow = (ax, ay, dx, dy, color, label = '') => {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 2.0;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(ax + dx, ay + dy);
+      ctx.stroke();
+      const ang = Math.atan2(dy, dx);
+      ctx.beginPath();
+      ctx.moveTo(ax + dx, ay + dy);
+      ctx.lineTo(ax + dx - 6 * Math.cos(ang - 0.5), ay + dy - 6 * Math.sin(ang - 0.5));
+      ctx.lineTo(ax + dx - 6 * Math.cos(ang + 0.5), ay + dy - 6 * Math.sin(ang + 0.5));
+      ctx.closePath();
+      ctx.fill();
+      if (label) {
+        ctx.font = 'bold 10px ui-monospace, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, ax + dx * 0.5, ay + dy * 0.5 - 7);
+      }
+      ctx.restore();
+    };
+
+    if (mode === 'aerodynamics') {
+      const GAS_PAL = {
+        CO2_g: { rgba: 'rgba(167, 139, 250, 0.34)', stroke: '#a78bfa', formula: 'CO₂ (M=44)' },
+        Cl2_g: { rgba: 'rgba(163, 230, 53, 0.34)', stroke: '#a3e635', formula: 'Cl₂ (M=71)' },
+        HCl_g: { rgba: 'rgba(52, 211, 153, 0.32)', stroke: '#34d399', formula: 'HCl (M=36.5)' },
+        NO2_g: { rgba: 'rgba(251, 146, 60, 0.34)', stroke: '#fb923c', formula: 'NO₂ (M=46)' },
+        O2_g: { rgba: 'rgba(56, 189, 248, 0.30)', stroke: '#38bdf8', formula: 'O₂ (M=32)' },
+        H2_g: { rgba: 'rgba(103, 232, 249, 0.34)', stroke: '#22d3ee', formula: 'H₂ (M=2)' },
+        NH3_g: { rgba: 'rgba(244, 114, 182, 0.34)', stroke: '#f472b6', formula: 'NH₃ (M=17)' },
+      };
+      ctx.save();
+      for (const v of this.sim.items) {
+        if (v.kind !== 'vessel' || v.isShattered) continue;
+        const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+        const entries = Object.entries(v.headspaceGasMoles || {})
+          .map(([g, n]) => [g, (n || 0) + (v.lastGasRateMap?.[g] || 0) * 0.35])
+          .filter(([g, val]) => g !== 'H2O_g' && val > 1e-6);
+        if (entries.length === 0) continue;
+        entries.sort((a, b) => b[1] - a[1]);
+        const [domGas] = entries[0];
+        const pal = GAS_PAL[domGas] || GAS_PAL.O2_g;
+        const molarMass = SPECIES[domGas]?.molarMass || 30;
+        const isHeavy = molarMass >= 29;
+        const plumeY = isHeavy ? (v.isInverted ? v.y + spec.height * 0.2 : v.y + spec.height * 0.16) : v.y - spec.height * 0.25;
+
+        const pg = ctx.createRadialGradient(v.x, plumeY, 6, v.x, plumeY, spec.width * 0.65);
+        pg.addColorStop(0, pal.rgba);
+        pg.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = pg;
+        ctx.beginPath();
+        ctx.ellipse(v.x, plumeY, spec.width * 0.56, spec.height * 0.32, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        const dirSign = v.tiltDir < 0 ? -1 : 1;
+        if (isHeavy && (v.tiltDeg || 0) >= 15) {
+          // Dense CO2 / Cl2 cascading waterfall over tilted lip down onto bench
+          const rad = (v.tiltDeg * Math.PI) / 180;
+          const pourX = v.x + dirSign * Math.sin(rad) * (spec.height * 0.45);
+          const cg = ctx.createLinearGradient(pourX, v.y, pourX, BENCH_FLOOR_Y);
+          cg.addColorStop(0, pal.rgba);
+          cg.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = cg;
+          ctx.beginPath();
+          ctx.moveTo(pourX - 10, v.y);
+          ctx.lineTo(pourX + 18, v.y);
+          ctx.quadraticCurveTo(pourX + 24, BENCH_FLOOR_Y - 10, pourX + 52, BENCH_FLOOR_Y);
+          ctx.lineTo(pourX - 28, BENCH_FLOOR_Y);
+          ctx.closePath();
+          ctx.fill();
+          const dropPhase = (timeNow * 24) % 28;
+          drawConvArrow(pourX, v.y + dropPhase, dirSign * 4, 26, pal.stroke, pal.formula);
+        } else if (isHeavy) {
+          drawConvArrow(v.x, v.y - 6 + ((timeNow * 14) % 12), 0, 20, pal.stroke, pal.formula);
+        } else {
+          // Light gas H2 / NH3 shooting upward (accumulates in top dome of inverted vessels)
+          drawConvArrow(v.x, v.y - spec.height * 0.35 - ((timeNow * 22) % 18), 0, -24, pal.stroke, pal.formula);
+        }
+      }
+      ctx.restore();
+      return;
+    }
+
+    if (mode === 'thermal') {
+      const tempToFlirColor = (tempK, alpha = 0.62) => {
+        const c = tempK - 273.15;
+        if (c <= 0) return `rgba(79, 70, 229, ${alpha})`; // Indigo / Deep Blue (-10..0°C)
+        if (c <= 22) return `rgba(14, 165, 233, ${alpha})`; // Cool Cyan
+        if (c <= 45) return `rgba(16, 185, 129, ${alpha * 0.85})`; // Ambient Emerald
+        if (c <= 140) return `rgba(250, 204, 21, ${alpha})`; // Warm Yellow
+        if (c <= 420) return `rgba(239, 68, 68, ${Math.min(0.82, alpha * 1.15)})`; // Hot Red
+        return `rgba(255, 255, 240, ${Math.min(0.92, alpha * 1.3)})`; // White-Hot >420°C..1500°C
+      };
+      ctx.save();
+      ctx.fillStyle = 'rgba(15, 23, 58, 0.34)';
+      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+
+      for (const it of this.sim.items) {
+        if (it.kind === 'bath') {
+          const bTempK = it.bathMode === 'ice_salt' ? 263.15 : 273.15;
+          const rg = ctx.createRadialGradient(it.x, it.y, 12, it.x, it.y, 105);
+          rg.addColorStop(0, tempToFlirColor(bTempK, 0.72));
+          rg.addColorStop(1, 'rgba(30, 27, 75, 0)');
+          ctx.fillStyle = rg;
+          ctx.beginPath();
+          ctx.arc(it.x, it.y, 105, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (it.kind === 'burner' && (it.powerW || 0) > 0) {
+          const isBlueBunsen = it.typeId === 'bunsen_burner' && it.airHoleOpen !== false;
+          const plumeH = 85 + ((it.powerW || 0) / 1100) * 90;
+          const hg = ctx.createLinearGradient(it.x, it.y, it.x, it.y - plumeH);
+          hg.addColorStop(0, isBlueBunsen ? 'rgba(255, 255, 255, 0.88)' : 'rgba(239, 68, 68, 0.78)');
+          hg.addColorStop(0.55, 'rgba(250, 204, 21, 0.42)');
+          hg.addColorStop(1, 'rgba(239, 68, 68, 0)');
+          ctx.fillStyle = hg;
+          ctx.beginPath();
+          ctx.moveTo(it.x - 16, it.y - 12);
+          ctx.quadraticCurveTo(it.x - 30, it.y - plumeH * 0.6, it.x, it.y - plumeH);
+          ctx.quadraticCurveTo(it.x + 30, it.y - plumeH * 0.6, it.x + 16, it.y - 12);
+          ctx.closePath();
+          ctx.fill();
+        } else if (it.kind === 'vessel' && !it.isShattered) {
+          const spec = APPARATUS[it.typeId] || APPARATUS.beaker_250;
+          const rad = Math.max(spec.width, spec.height) * 0.66;
+          const vg = ctx.createRadialGradient(it.x, it.y + 8, 6, it.x, it.y + 8, rad);
+          vg.addColorStop(0, tempToFlirColor(it.tempK, 0.68));
+          vg.addColorStop(1, 'rgba(0, 0, 0, 0)');
+          ctx.fillStyle = vg;
+          ctx.beginPath();
+          ctx.arc(it.x, it.y + 8, rad, 0, Math.PI * 2);
+          ctx.fill();
+
+          if ((it.lastExothermicJ || 0) > 25) {
+            const exoR = 14 + Math.sin(timeNow * 8) * 3;
+            const eg = ctx.createRadialGradient(it.x, it.y + spec.height * 0.22, 1, it.x, it.y + spec.height * 0.22, exoR * 1.8);
+            eg.addColorStop(0, 'rgba(255, 255, 230, 0.92)');
+            eg.addColorStop(0.5, 'rgba(239, 68, 68, 0.65)');
+            eg.addColorStop(1, 'rgba(239, 68, 68, 0)');
+            ctx.fillStyle = eg;
+            ctx.beginPath();
+            ctx.arc(it.x, it.y + spec.height * 0.22, exoR * 1.8, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      // FLIR Color Spectrum Scale HUD bar top-left
+      const lg = ctx.createLinearGradient(14, 0, 174, 0);
+      lg.addColorStop(0, '#4f46e5');
+      lg.addColorStop(0.25, '#0ea5e9');
+      lg.addColorStop(0.45, '#10b981');
+      lg.addColorStop(0.68, '#facc15');
+      lg.addColorStop(0.86, '#ef4444');
+      lg.addColorStop(1, '#ffffff');
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.78)';
+      ctx.beginPath();
+      ctx.roundRect(10, 10, 174, 28, 6);
+      ctx.fill();
+      ctx.fillStyle = lg;
+      ctx.fillRect(16, 15, 162, 6);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = 'bold 9px ui-monospace, monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText('-10°C', 16, 33);
+      ctx.textAlign = 'center';
+      ctx.fillText('FLIR', 97, 33);
+      ctx.textAlign = 'right';
+      ctx.fillText('1500°C', 178, 33);
+      ctx.restore();
     }
   }
 }

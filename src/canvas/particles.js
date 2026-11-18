@@ -1031,30 +1031,25 @@ export class ParticleSystem {
     }
 
     if (type === 'nh3_hcl_smoke') {
-      // Crisp wispy curling white smoke ribbons (kitchen/incense smoke threads, distinct from round steam blobs)
-      if (!meta?.force && Math.random() > 0.45) return;
-      const intensity = Math.max(0.4, Math.min(1.5, meta?.intensity ?? 0.85));
-      const ribbonCount = meta?.count ?? (intensity > 0.85 ? 2 : 1);
-      for (let i = 0; i < ribbonCount; i++) {
-        const sx = x + (Math.random() - 0.5) * 24;
-        const sy = y + (Math.random() - 0.5) * 10;
+      // Soft radial-gradient NH4Cl(s) microcrystal aerosol puffs swirling & slowly settling downward
+      if (!meta?.force && Math.random() > 0.62) return;
+      const intensity = Math.max(0.4, Math.min(1.6, meta?.intensity ?? 0.9));
+      const puffCount = meta?.count ?? (intensity > 0.95 ? 4 : 3);
+      for (let i = 0; i < puffCount; i++) {
+        const px = x + (Math.random() - 0.5) * 32;
+        const py = y + (Math.random() - 0.5) * 18;
         this.particles.push({
-          kind: 'smoke_ribbon',
-          x: sx,
-          y: sy,
-          vx: (Math.random() - 0.5) * 10,
-          vy: -(22 + Math.random() * 18),
+          kind: 'aerosol_cloud',
+          x: px,
+          y: py,
+          vx: (Math.random() - 0.5) * 16,
+          vy: 2.5 + Math.random() * 6.5,
           phase: Math.random() * Math.PI * 2,
-          freq1: 4.5 + Math.random() * 2.5,
-          freq2: 9.2 + Math.random() * 3.0,
-          amp1: 18 + Math.random() * 14,
-          amp2: 8 + Math.random() * 7,
-          trail: [{ x: sx, y: sy }],
-          w: 1.7 + Math.random() * 1.1,
+          r: 8 + Math.random() * 9,
+          growR: 10 + Math.random() * 7,
           life: 0,
-          maxLife: 1.65 + Math.random() * 0.75,
-          color: this.isDark ? 'rgba(248, 250, 252, 0.86)' : 'rgba(100, 116, 139, 0.72)',
-          haloColor: this.isDark ? 'rgba(226, 232, 240, 0.26)' : 'rgba(148, 163, 184, 0.24)',
+          maxLife: 2.1 + Math.random() * 1.1,
+          color: this.isDark ? 'rgba(245, 248, 255, 0.75)' : 'rgba(226, 232, 240, 0.78)',
         });
       }
       return;
@@ -1330,6 +1325,14 @@ export class ParticleSystem {
         p.r += (p.growR || 12) * dt;
         p.vx += (Math.sin(p.life * 4.5 + p.phase) * 32 - p.vx * 0.9) * dt;
         p.vy = Math.max(-92, p.vy - 8 * dt);
+      } else if (p.kind === 'aerosol_cloud') {
+        p.r += (p.growR || 10) * dt;
+        p.vx += (Math.sin(p.life * 2.8 + p.phase) * 18 - p.vx * 0.85) * dt;
+        p.vy = Math.min(18, p.vy + 2.2 * dt); // Dense solid NH4Cl microcrystals gently settle downward
+      } else if (p.kind === 'monochrome_petal') {
+        p.vx = Math.sin(p.life * 2.2 + p.phase) * 24;
+        p.vy = 28 + Math.cos(p.life * 1.4 + p.phase) * 6;
+        p.angle = (p.angle || 0) + (p.spin || 1.2) * dt;
       } else if (p.kind === 'pipette_suck') {
         p.vx *= 0.98;
       } else if (p.kind === 'drip') {
@@ -1463,14 +1466,21 @@ export class ParticleSystem {
           ctx.lineWidth = Math.max(0.7, (p.w || 2.0) * (0.95 - t * 0.35));
           ctx.stroke();
         }
-      } else if (p.kind === 'gas_cloud') {
+      } else if (p.kind === 'gas_cloud' || p.kind === 'aerosol_cloud') {
         const grad = ctx.createRadialGradient(p.x, p.y, 1, p.x, p.y, p.r);
         grad.addColorStop(0, p.color);
-        grad.addColorStop(0.55, p.color);
+        grad.addColorStop(0.48, p.color);
         grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.kind === 'monochrome_petal') {
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle || 0);
+        ctx.fillStyle = p.color || '#F2F2F5';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, p.r || 6, (p.r || 6) * 0.48, 0, 0, Math.PI * 2);
         ctx.fill();
       } else if (p.kind === 'flame') {
         ctx.beginPath();
@@ -1548,6 +1558,25 @@ export class ParticleSystem {
       }
 
       ctx.restore();
+    }
+  }
+
+  spawnCelebrationPetals(count = 14) {
+    for (let i = 0; i < count; i++) {
+      this.particles.push({
+        kind: 'monochrome_petal',
+        x: 60 + Math.random() * 880,
+        y: -15 - Math.random() * 90,
+        vx: (Math.random() - 0.5) * 20,
+        vy: 30 + Math.random() * 18,
+        r: 4.5 + Math.random() * 3.5,
+        angle: Math.random() * Math.PI * 2,
+        spin: (Math.random() > 0.5 ? 1 : -1) * (1.2 + Math.random() * 1.4),
+        phase: Math.random() * Math.PI * 2,
+        life: 0,
+        maxLife: 5.5 + Math.random() * 2.5,
+        color: '#F2F2F5',
+      });
     }
   }
 }

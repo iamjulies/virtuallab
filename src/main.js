@@ -119,10 +119,22 @@ const labManager = new LabManager({
 let sim = labManager.getActiveSim();
 let particles = labManager.getActiveParticles();
 
+let lastPetalCelebrateMs = 0;
 function ensureLabSubscribed(lab) {
   if (!lab || subscribedSims.has(lab.sim)) return;
   subscribedSims.add(lab.sim);
+  let lastLogCount = lab.sim.logs?.length || 0;
   lab.sim.subscribe(() => {
+    const curCount = lab.sim.logs?.length || 0;
+    if (curCount > lastLogCount && lab.sim === sim && appState.theme === 'petal') {
+      const topLog = lab.sim.logs[0];
+      const now = Date.now();
+      if (topLog && (topLog.type === 'reaction' || topLog.key === 'alertSilverMirrorFormed') && now - lastPetalCelebrateMs > 5500) {
+        lastPetalCelebrateMs = now;
+        particles.spawnCelebrationPetals?.(16);
+      }
+    }
+    lastLogCount = curCount;
     if (lab.sim === sim) refreshChrome();
     workspacePersistence?.triggerDebouncedSave();
   });
@@ -378,12 +390,24 @@ const envBar = new EnvironmentBar(headerEl, sim, appState, {
     localStorage.setItem(STORAGE_LANG_KEY, appState.lang);
     refreshChrome(true);
   },
-  onThemeChange: () => {
-    appState.theme = appState.theme === 'dark' ? 'light' : 'dark';
+  onThemeChange: (nextTheme = null) => {
+    const order = ['dark', 'light', 'olivia', 'petal'];
+    const target = order.includes(nextTheme)
+      ? nextTheme
+      : order[(order.indexOf(appState.theme) + 1) % order.length];
+    appState.theme = target;
     localStorage.setItem(STORAGE_THEME_KEY, appState.theme);
     soundEngine.playUiClick();
     applyThemeAndDevice();
     refreshChrome(true);
+    if (target === 'petal') {
+      particles.spawnCelebrationPetals?.(14);
+    }
+  },
+  onOpticsChange: (mode) => {
+    soundEngine.playUiClick();
+    sim.setOpticsMode?.(mode);
+    refreshChrome();
   },
   onSoundToggle: () => {
     appState.soundEnabled = soundEngine.toggleEnabled();
@@ -526,6 +550,31 @@ const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
     setTimeout(() => workbench.resize(), 20);
   },
   onNotify: (msg) => showToast(msg),
+  onShowReactionInfo: (rxn) => {
+    if (!rxn) return;
+    document.getElementById('chemlab-rxn-info-modal')?.remove();
+    const wrap = document.createElement('div');
+    wrap.id = 'chemlab-rxn-info-modal';
+    wrap.className = 'storage-modal-backdrop';
+    wrap.innerHTML = `
+      <div class="storage-modal-card" style="max-width:460px;">
+        <div class="flex items-center justify-between gap-2 pb-2 border-b border-theme">
+          <h2 class="text-sm font-bold">${rxn.title || 'Reaction Info'}</h2>
+          <button type="button" id="rxn-modal-close" class="px-2 py-0.5 rounded border border-theme text-xs">✕</button>
+        </div>
+        <div class="flex flex-col gap-2 py-2 text-xs">
+          <div class="p-2 rounded-lg bg-surface-alt border border-theme font-mono font-bold text-accent">${rxn.equation || ''}</div>
+          <div class="font-semibold">${rxn.nameStr || ''}</div>
+          ${rxn.rateMolS ? `<div class="text-muted font-mono">${getTranslator()('rxnRateLabel')}: ${(rxn.rateMolS * 1000).toFixed(3)} mmol/s</div>` : ''}
+          ${rxn.descStr ? `<p class="text-muted leading-relaxed">${rxn.descStr}</p>` : ''}
+        </div>
+      </div>
+    `;
+    wrap.addEventListener('click', (ev) => {
+      if (ev.target === wrap || ev.target.id === 'rxn-modal-close') wrap.remove();
+    });
+    document.body.appendChild(wrap);
+  },
   getLabsMeta: () => ({ labs: labManager.labs, activeIndex: labManager.activeIndex }),
   onMoveToLab: (itemId, dstIdx) => {
     const moved = labManager.moveItemBetweenLabs(itemId, labManager.activeIndex, dstIdx);
@@ -541,8 +590,9 @@ function syncActiveLabRefs() {
   ensureLabSubscribed(activeLab);
   sim = activeLab.sim;
   particles = activeLab.particles;
-  const isDark = appState.theme === 'dark';
+  const isDark = appState.theme === 'dark' || appState.theme === 'petal';
   particles.setTheme(isDark);
+  workbench.setTheme?.(isDark, appState.theme);
   workbench.setSim(sim, particles);
   envBar.setSim(sim);
   shelfPanel.setSim(sim);
@@ -1165,10 +1215,10 @@ function setMobileTab(tab) {
 }
 
 function applyThemeAndDevice() {
-  const isDark = appState.theme === 'dark';
+  const isDark = appState.theme === 'dark' || appState.theme === 'petal';
   document.documentElement.setAttribute('data-theme', appState.theme);
   rootWrap.setAttribute('data-device', appState.deviceMode);
-  workbench.setTheme(isDark);
+  workbench.setTheme(isDark, appState.theme);
   particles.setTheme(isDark);
   inspectorPanel.setTheme(isDark);
 }
@@ -1380,6 +1430,31 @@ window.addEventListener('keydown', (e) => {
 
 const cabinetModal = new StorageCabinetModal(labManager, getTranslator, () => appState.lang, {
   onNotify: (msg) => showToast(msg),
+  onShowReactionInfo: (rxn) => {
+    if (!rxn) return;
+    document.getElementById('chemlab-rxn-info-modal')?.remove();
+    const wrap = document.createElement('div');
+    wrap.id = 'chemlab-rxn-info-modal';
+    wrap.className = 'storage-modal-backdrop';
+    wrap.innerHTML = `
+      <div class="storage-modal-card" style="max-width:460px;">
+        <div class="flex items-center justify-between gap-2 pb-2 border-b border-theme">
+          <h2 class="text-sm font-bold">${rxn.title || 'Reaction Info'}</h2>
+          <button type="button" id="rxn-modal-close" class="px-2 py-0.5 rounded border border-theme text-xs">✕</button>
+        </div>
+        <div class="flex flex-col gap-2 py-2 text-xs">
+          <div class="p-2 rounded-lg bg-surface-alt border border-theme font-mono font-bold text-accent">${rxn.equation || ''}</div>
+          <div class="font-semibold">${rxn.nameStr || ''}</div>
+          ${rxn.rateMolS ? `<div class="text-muted font-mono">${getTranslator()('rxnRateLabel')}: ${(rxn.rateMolS * 1000).toFixed(3)} mmol/s</div>` : ''}
+          ${rxn.descStr ? `<p class="text-muted leading-relaxed">${rxn.descStr}</p>` : ''}
+        </div>
+      </div>
+    `;
+    wrap.addEventListener('click', (ev) => {
+      if (ev.target === wrap || ev.target.id === 'rxn-modal-close') wrap.remove();
+    });
+    document.body.appendChild(wrap);
+  },
   onRefresh: () => {
     syncActiveLabRefs();
     refreshChrome(true);
@@ -1388,6 +1463,31 @@ const cabinetModal = new StorageCabinetModal(labManager, getTranslator, () => ap
 
 const storageModal = new WorkspaceStorageModal(labManager, getTranslator, {
   onNotify: (msg) => showToast(msg),
+  onShowReactionInfo: (rxn) => {
+    if (!rxn) return;
+    document.getElementById('chemlab-rxn-info-modal')?.remove();
+    const wrap = document.createElement('div');
+    wrap.id = 'chemlab-rxn-info-modal';
+    wrap.className = 'storage-modal-backdrop';
+    wrap.innerHTML = `
+      <div class="storage-modal-card" style="max-width:460px;">
+        <div class="flex items-center justify-between gap-2 pb-2 border-b border-theme">
+          <h2 class="text-sm font-bold">${rxn.title || 'Reaction Info'}</h2>
+          <button type="button" id="rxn-modal-close" class="px-2 py-0.5 rounded border border-theme text-xs">✕</button>
+        </div>
+        <div class="flex flex-col gap-2 py-2 text-xs">
+          <div class="p-2 rounded-lg bg-surface-alt border border-theme font-mono font-bold text-accent">${rxn.equation || ''}</div>
+          <div class="font-semibold">${rxn.nameStr || ''}</div>
+          ${rxn.rateMolS ? `<div class="text-muted font-mono">${getTranslator()('rxnRateLabel')}: ${(rxn.rateMolS * 1000).toFixed(3)} mmol/s</div>` : ''}
+          ${rxn.descStr ? `<p class="text-muted leading-relaxed">${rxn.descStr}</p>` : ''}
+        </div>
+      </div>
+    `;
+    wrap.addEventListener('click', (ev) => {
+      if (ev.target === wrap || ev.target.id === 'rxn-modal-close') wrap.remove();
+    });
+    document.body.appendChild(wrap);
+  },
   onRefresh: () => {
     for (const lb of labManager.labs) ensureLabSubscribed(lb);
     syncActiveLabRefs();

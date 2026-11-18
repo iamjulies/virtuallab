@@ -1704,7 +1704,7 @@ function renderShatteredWreckage(ctx, vessel, spec, pal, isSelected) {
 }
 
 export function renderVessel(ctx, vessel, opts) {
-  const { isSelected, isDropTarget, isDark, timeNow, langCode = 'vi' } = opts;
+  const { isSelected, isDropTarget, isDark, timeNow, langCode = 'vi', themeName = isDark ? 'dark' : 'light' } = opts;
   const spec = APPARATUS[vessel.typeId];
   const pal = getThemePalette(isDark);
   const { x, y } = vessel;
@@ -1934,6 +1934,60 @@ export function renderVessel(ctx, vessel, opts) {
       } else {
         ctx.fillStyle = vis.css;
         ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
+      }
+
+      // 2D local concentration diffusion plume (e.g. NaOH drop in Phenolphthalein or CuSO4 crystal) + Stir-bar swirl vortex
+      const cf = vessel._concField;
+      const liqH = Math.max(8, interiorBottom - surfaceY);
+      if (cf) {
+        const cellW = (w * 0.84) / cf.w;
+        const cellH = liqH / cf.h;
+        const gx0 = x - (w * 0.42);
+        ctx.save();
+        for (let j = 0; j < cf.h; j++) {
+          for (let i = 0; i < cf.w; i++) {
+            const idx = j * cf.w + i;
+            const pv = cf.pink[idx];
+            const cv = cf.copper[idx];
+            if (pv > 0.04) {
+              const cx = gx0 + (i + 0.5) * cellW;
+              const cy = surfaceY + (j + 0.5) * cellH;
+              const pr = Math.max(cellW, cellH) * 1.45;
+              const pg = ctx.createRadialGradient(cx, cy, 0.5, cx, cy, pr);
+              pg.addColorStop(0, `rgba(236, 72, 153, ${Math.min(0.86, pv * 0.85).toFixed(2)})`);
+              pg.addColorStop(1, 'rgba(236, 72, 153, 0)');
+              ctx.fillStyle = pg;
+              ctx.beginPath();
+              ctx.arc(cx, cy, pr, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            if (cv > 0.04) {
+              const cx = gx0 + (i + 0.5) * cellW;
+              const cy = surfaceY + (j + 0.5) * cellH;
+              const cr = Math.max(cellW, cellH) * 1.45;
+              const cg = ctx.createRadialGradient(cx, cy, 0.5, cx, cy, cr);
+              cg.addColorStop(0, `rgba(14, 165, 233, ${Math.min(0.75, cv * 0.72).toFixed(2)})`);
+              cg.addColorStop(1, 'rgba(14, 165, 233, 0)');
+              ctx.fillStyle = cg;
+              ctx.beginPath();
+              ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+        if (vessel.hasStirBar && (vessel.magStirRpm || 0) > 40) {
+          const ang = cf.swirlAngleRad || (timeNow || 0) * 6;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.34)';
+          ctx.lineWidth = 1.4;
+          for (let s = 0; s < 3; s++) {
+            const cy = surfaceY + liqH * (0.28 + s * 0.24);
+            const sx = Math.sin(ang + s * 2.1) * (w * 0.24);
+            ctx.beginPath();
+            ctx.ellipse(x + sx * 0.25, cy, w * 0.26, 3.2, 0, ang + s, ang + s + Math.PI * 0.85);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
       }
 
       if (!hasIce) {
@@ -2179,6 +2233,64 @@ export function renderVessel(ctx, vessel, opts) {
     hasWater,
     surfaceY
   );
+
+  // Glassware Surface Memory: Persistent Tollens Silver Mirror, stubborn CuO/BaSO4 wall crust, and NH4Cl frost dust
+  if ((vessel.silverMirrorLevel || 0) > 0.04) {
+    const mirAlpha = Math.min(0.92, (vessel.silverMirrorLevel || 0) * 0.92);
+    ctx.save();
+    ctx.globalAlpha = mirAlpha;
+    const mirGrad = ctx.createLinearGradient(x - w / 2, top + h * 0.2, x + w / 2, bottom);
+    mirGrad.addColorStop(0, '#94a3b8');
+    mirGrad.addColorStop(0.28, '#f8fafc');
+    mirGrad.addColorStop(0.5, '#cbd5e1');
+    mirGrad.addColorStop(0.72, '#ffffff');
+    mirGrad.addColorStop(1, '#64748b');
+    ctx.fillStyle = mirGrad;
+    ctx.fillRect(x - w / 2, top + h * 0.22, w, h * 0.78);
+    // Metallic vertical gleam reflection
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+    ctx.lineWidth = Math.max(2, w * 0.06);
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.22, top + h * 0.28);
+    ctx.lineTo(x - w * 0.22, bottom - 6);
+    ctx.stroke();
+    ctx.restore();
+  }
+  const resMap = vessel.wallResidueMap || {};
+  if ((resMap.CuO_s || 0) > 0.05 || (resMap.BaSO4_s || 0) > 0.05) {
+    ctx.save();
+    if ((resMap.CuO_s || 0) > 0.05) {
+      ctx.fillStyle = `rgba(30, 27, 24, ${Math.min(0.55, resMap.CuO_s * 0.55).toFixed(2)})`;
+      for (let k = 0; k < 7; k++) {
+        const px = x + Math.sin(k * 2.4 + (vessel.id?.charCodeAt?.(0) || 1)) * w * 0.3;
+        const py = bottom - 8 - (k % 4) * 9;
+        ctx.beginPath();
+        ctx.arc(px, py, 2.8 + (k % 3), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    if ((resMap.BaSO4_s || 0) > 0.05) {
+      ctx.fillStyle = `rgba(241, 245, 249, ${Math.min(0.62, resMap.BaSO4_s * 0.6).toFixed(2)})`;
+      for (let k = 0; k < 8; k++) {
+        const px = x + Math.cos(k * 1.9 + 1) * w * 0.32;
+        const py = bottom - 7 - (k % 5) * 8;
+        ctx.beginPath();
+        ctx.arc(px, py, 2.5 + (k % 2), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+  if ((vessel.nh4clFrostLevel || 0) > 0.04) {
+    ctx.save();
+    const nAlpha = Math.min(0.62, (vessel.nh4clFrostLevel || 0) * 0.65);
+    const nGrad = ctx.createLinearGradient(x, top, x, top + h * 0.55);
+    nGrad.addColorStop(0, `rgba(245, 248, 255, ${nAlpha.toFixed(2)})`);
+    nGrad.addColorStop(1, 'rgba(245, 248, 255, 0)');
+    ctx.fillStyle = nGrad;
+    ctx.fillRect(x - w / 2, top, w, h * 0.55);
+    ctx.restore();
+  }
 
   // Inner glass condensation mist & micro-droplets on upper cooler neck/walls
   if ((vessel.wallCondenseLevel || 0) > 0.05) {
@@ -2736,6 +2848,25 @@ export function renderVessel(ctx, vessel, opts) {
           ctx.stroke();
         }
       }
+    }
+    if (themeName === 'olivia') {
+      // Olivia Rodrigo "drop dead" pink heart padlock charm on sealed stopper
+      ctx.save();
+      const lx = x;
+      const ly = top - 16;
+      ctx.strokeStyle = '#221F20';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(lx, ly - 5, 4.2, Math.PI, 0);
+      ctx.stroke();
+      ctx.fillStyle = '#F4A5B8';
+      ctx.beginPath();
+      ctx.moveTo(lx, ly + 4.5);
+      ctx.bezierCurveTo(lx - 6.5, ly - 0.5, lx - 5.5, ly - 5.5, lx, ly - 2.2);
+      ctx.bezierCurveTo(lx + 5.5, ly - 5.5, lx + 6.5, ly - 0.5, lx, ly + 4.5);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
     }
   } else if (vessel.hasPhenCotton && !vessel.isShattered && !spec.hasTwoEnds && !vessel._physCottonMain) {
     // Phenolphthalein-soaked cotton/indicator strip at mouth (turns bright rose-pink on NH3 gas!)
