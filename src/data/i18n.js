@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v3+build.13',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v3+build.14',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -634,7 +634,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v3+build.13',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v3+build.14',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',

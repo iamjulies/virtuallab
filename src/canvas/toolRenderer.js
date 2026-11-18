@@ -2,7 +2,7 @@ import { APPARATUS, getCondenserPorts, getProbeTipPos, getSyringeGeometry } from
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, computeSolutionVisuals, computePH } from '../engine/equilibrium.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
-import { drawLabelPill, getThemePalette, setCurrentLabelItemId } from './vesselRenderer.js';
+import { drawLabelPill, formatCanvasText, getThemePalette, setCurrentLabelItemId } from './vesselRenderer.js';
 
 function drawSelectionGlow(ctx, isSelected, isDropTarget) {
   if (isDropTarget) {
@@ -63,6 +63,11 @@ export function renderFilterFunnel(ctx, item, isSelected, isDropTarget, isDark, 
   const rimHalfW = 31;
 
   ctx.save();
+  if (Math.abs(item.tiltAngle || 0) > 0.01) {
+    ctx.translate(x, y);
+    ctx.rotate(item.tiltAngle || 0);
+    ctx.translate(-x, -y);
+  }
   drawSelectionGlow(ctx, isSelected, isDropTarget);
 
   // Outer Borosilicate 60-deg cone + stem
@@ -398,6 +403,11 @@ export function renderBurette(ctx, item, isSelected, isDropTarget, isDark, timeN
   const halfW = 6.5;
 
   ctx.save();
+  if (Math.abs(item.tiltAngle || 0) > 0.01) {
+    ctx.translate(x, y);
+    ctx.rotate(item.tiltAngle || 0);
+    ctx.translate(-x, -y);
+  }
   drawSelectionGlow(ctx, isSelected, isDropTarget);
 
   // Top flared funnel neck & graduated glass barrel + tapered stopcock tip
@@ -1051,7 +1061,7 @@ export function renderDcPowerAndWires(ctx, items, selectedId, isDark) {
     ctx.fillStyle = pal.lcdText;
     ctx.font = 'bold 12.5px ui-monospace, monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`${vStr} · ${aStr}`, x, topY + 28);
+    ctx.fillText(formatCanvasText(`${vStr} · ${aStr}`), x, topY + 28);
     ctx.font = '600 8.5px system-ui, sans-serif';
     const modeTag =
       sup.circuitMode === 'galvanic'
@@ -1061,7 +1071,7 @@ export function renderDcPowerAndWires(ctx, items, selectedId, isDark) {
           ? 'ELECTROLYSIS ON'
           : 'STANDBY'
         : 'NO CIRCUIT';
-    ctx.fillText(modeTag, x, topY + 40);
+    ctx.fillText(formatCanvasText(modeTag), x, topY + 40);
 
     // Binding posts (+ Red / - Black)
     ctx.fillStyle = '#ef4444';
@@ -1155,7 +1165,7 @@ export function renderVoltAmmeterAndWires(ctx, items, selectedId, isDark) {
     ctx.fillStyle = pal.lcdText;
     ctx.font = 'bold 12px ui-monospace, monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(meter.mode === 'voltmeter' ? vStr : `${vStr} · ${aStr}`, x, topY + 28);
+    ctx.fillText(formatCanvasText(meter.mode === 'voltmeter' ? vStr : `${vStr} · ${aStr}`), x, topY + 28);
 
     ctx.font = '600 8px system-ui, sans-serif';
     const modeLabel =
@@ -1168,7 +1178,7 @@ export function renderVoltAmmeterAndWires(ctx, items, selectedId, isDark) {
         : meter.circuitMode === 'open_circuit'
         ? 'NO BRIDGE'
         : 'VOLTMETER (10MΩ)';
-    ctx.fillText(modeLabel, x, topY + 40);
+    ctx.fillText(formatCanvasText(modeLabel), x, topY + 40);
 
     // Banana jacks (+V/A Red / COM Black)
     ctx.fillStyle = '#ef4444';
@@ -1216,6 +1226,11 @@ export function renderDiffusionTube(ctx, item, isSelected, isDropTarget, isDark,
   }
 
   ctx.save();
+  if (Math.abs(item.tiltAngle || 0) > 0.01) {
+    ctx.translate(x, y);
+    ctx.rotate(item.tiltAngle || 0);
+    ctx.translate(-x, -y);
+  }
   drawSelectionGlow(ctx, isSelected, isDropTarget);
 
   // Bench rubber cradle stands supporting horizontal tube
@@ -1675,6 +1690,23 @@ export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCo
   const spec = APPARATUS[item.typeId] || { width: 144, height: 68 };
   const w = spec.width;
   const h = spec.height;
+  if (item.isBroken) {
+    renderBrokenToolShards(ctx, item, pal, isSelected, w, h);
+    ctx.save();
+    for (let i = 0; i < 4; i++) {
+      const ix = item.x - 36 + i * 24;
+      const iy = item.y + h / 2 - 5 + (i % 2) * 2;
+      ctx.fillStyle = 'rgba(186, 230, 253, 0.78)';
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(ix - 6, iy - 4, 12, 8, 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
   const left = item.x - w / 2;
   const top = item.y - h / 2;
   const isIceSalt = item.bathMode === 'ice_salt';
@@ -1777,7 +1809,7 @@ export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCo
   ctx.font = 'bold 10px ui-monospace, monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(isIceSalt ? '-10°C NaCl' : '0°C Ice', item.x, item.y + 12);
+  ctx.fillText(formatCanvasText(isIceSalt ? '-10°C NaCl' : '0°C Ice'), item.x, item.y + 12);
 
   const labelMode = isIceSalt ? (langCode === 'en' ? 'Ice+NaCl (-10°C)' : 'Đá+Muối (-10°C)') : (langCode === 'en' ? 'Pure Ice (0°C)' : 'Nước đá (0°C)');
   drawLabelPill(ctx, item.x, top - 14, `${item.label} · ${bathC}°C · ${labelMode}`, {

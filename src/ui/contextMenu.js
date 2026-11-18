@@ -43,12 +43,19 @@ export class FloatingContextUI {
     }
     if (!this._outsideBound) {
       this._outsideBound = true;
-      window.addEventListener('pointerdown', (e) => {
-        if (this.menuEl && !this.menuEl.classList.contains('hidden')) {
-          if (!this.menuEl.contains(e.target)) {
-            this.closeMenu();
+      window.addEventListener(
+        'pointerdown',
+        (e) => {
+          if (this.menuEl && !this.menuEl.classList.contains('hidden')) {
+            if (!(e.target instanceof Node) || !this.menuEl.contains(e.target)) {
+              this.closeMenu();
+            }
           }
-        }
+        },
+        { capture: true }
+      );
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') this.closeMenu();
       });
       window.addEventListener('blur', () => this.closeMenu());
     }
@@ -63,7 +70,11 @@ export class FloatingContextUI {
   }
 
   closeMenu() {
-    if (this.menuEl) this.menuEl.classList.add('hidden');
+    if (this.menuEl) {
+      this.menuEl.classList.add('hidden');
+      this.menuEl.style.display = 'none';
+      this.menuEl.innerHTML = '';
+    }
   }
 
   closeDialog() {
@@ -129,6 +140,7 @@ export class FloatingContextUI {
       this.menuEl.appendChild(btn);
     }
 
+    this.menuEl.style.display = '';
     this.menuEl.classList.remove('hidden');
     this.menuEl.style.left = `${clientX}px`;
     this.menuEl.style.top = `${clientY}px`;

@@ -770,6 +770,53 @@ export class ParticleSystem {
       return;
     }
 
+    if (type === 'burette_drop') {
+      const tx = meta?.tipX ?? x;
+      const ty = meta?.tipY ?? y;
+      this.particles.push({
+        kind: 'drip',
+        x: tx,
+        y: ty,
+        vx: 0,
+        vy: 68,
+        g: 1100,
+        r: 2.6,
+        stopY: meta?.stopY ?? BENCH_FLOOR_Y,
+        catchX: meta?.catchX ?? null,
+        life: 0,
+        maxLife: 0.72,
+        color: meta?.color || 'rgba(186, 230, 253, 0.92)',
+        splashed: false,
+      });
+      return;
+    }
+
+    if (type === 'tilt_spill' || type === 'tilt_solid_spill') {
+      const isSolid = type === 'tilt_solid_spill';
+      const fx = meta?.fromX ?? x;
+      const fy = meta?.fromY ?? y;
+      const col = isSolid ? (meta?.color || '#e2e8f0') : (meta?.liquidColor || 'rgba(186, 230, 253, 0.88)');
+      const count = isSolid ? 5 : Math.min(6, Math.max(2, Math.round((meta?.rateMlS || 4) * 0.4)));
+      for (let i = 0; i < count; i++) {
+        this.particles.push({
+          kind: 'drip',
+          x: fx + (Math.random() - 0.5) * 6,
+          y: fy + (Math.random() - 0.5) * 4,
+          vx: (Math.random() - 0.5) * (isSolid ? 22 : 16),
+          vy: isSolid ? 35 + Math.random() * 35 : 42 + Math.random() * 28,
+          g: isSolid ? 960 : 1200,
+          r: isSolid ? 1.8 + Math.random() * 1.1 : 2.1 + Math.random() * 1.1,
+          stopY: meta?.toY ?? BENCH_FLOOR_Y,
+          catchX: meta?.catchX ?? null,
+          life: 0,
+          maxLife: 0.75,
+          color: col,
+          splashed: false,
+        });
+      }
+      return;
+    }
+
     if (type === 'spoon_scoop') {
       const sx = meta?.x ?? x;
       const sy = meta?.y ?? y;

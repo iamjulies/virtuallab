@@ -139,6 +139,10 @@ button:disabled {
 [data-theme="light"] .text-pink-400,
 [data-theme="olivia"] .text-pink-400 { color: #be185d; }
 
+[data-theme="olivia"] *,
+[data-theme="petal"] * {
+  text-transform: lowercase !important;
+}
 [data-theme="olivia"] .panel-card {
   border-color: #221f20;
   box-shadow: 0 4px 0 rgba(34, 31, 32, 0.85);
@@ -148,7 +152,7 @@ button:disabled {
 [data-theme="olivia"] .lab-persist-btn,
 [data-theme="olivia"] .panel-card button,
 [data-theme="olivia"] .panel-card h3 {
-  text-transform: lowercase;
+  text-transform: lowercase !important;
 }
 [data-theme="olivia"] .olivia-cure-card {
   border: 2px dashed #221f20 !important;
@@ -168,7 +172,7 @@ button:disabled {
 [data-theme="petal"] .lab-persist-btn,
 [data-theme="petal"] .panel-card button,
 [data-theme="petal"] .panel-card h3 {
-  text-transform: lowercase;
+  text-transform: lowercase !important;
 }
 [data-theme="petal"] .press-card-warning {
   border-color: rgba(214, 40, 57, 0.65) !important;
@@ -485,11 +489,59 @@ header button.bg-amber-500 {
 .hidden.bench-pick-banner,
 .hidden.canvas-zoom-controls,
 .hidden.comparison-panel,
+.chemlab-context-menu.hidden,
+#rxn-ctx-popover.hidden,
+#chemlab-rxn-info-modal.hidden,
 .storage-modal-backdrop.hidden,
 #storage-cabinet-modal.hidden,
 #chemlab-quick-dialog.hidden,
 #dosing-modal-root.hidden,
 #workspace-storage-modal.hidden {
+  display: none !important;
+}
+
+/* Shrinkable Responsive Non-Wrapping Top Toolbar */
+.env-header-inner {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(0.35rem, 0.8vw, 0.75rem);
+  padding: clamp(0.35rem, 0.7vh, 0.55rem) clamp(0.5rem, 1.2vw, 1rem);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.env-header-inner > * {
+  flex-shrink: 0;
+}
+.env-toolbar-group {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: clamp(0.25rem, 0.55vw, 0.6rem);
+  flex-shrink: 0;
+}
+@media (max-width: 1280px) {
+  .env-header-inner {
+    font-size: 0.72rem;
+  }
+  .env-header-inner button,
+  .env-header-inner select,
+  .env-header-inner input {
+    font-size: 0.7rem !important;
+  }
+  .env-header-inner .env-compact-hide {
+    display: none !important;
+  }
+}
+.device-frame-wrap[data-device="tablet"] .env-header-inner,
+.device-frame-wrap[data-device="mobile"] .env-header-inner {
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
+}
+.device-frame-wrap[data-device="tablet"] .env-header-inner .env-compact-hide,
+.device-frame-wrap[data-device="mobile"] .env-header-inner .env-compact-hide {
   display: none !important;
 }
 

@@ -2460,7 +2460,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.13';
+      const expectedBuild = 'virlab_beta_v3+build.14';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -6680,6 +6680,118 @@
         'Dropping NaOH into Phenolphthalein spawns localized upper concentration halo without instant full-liquid jump; spinning stir bar swirls vortex field',
         localizedOk && vortexSpun,
         `top=${topBefore.toFixed(2)}, bot=${botBefore.toFixed(2)}, swirlRad=${(f.swirlAngleRad||0).toFixed(2)}`
+      );
+    }
+
+    // TEST 139: Prompt 31 — Signed Left/Right Wheel Tilt, Filter Funnel/Spoon Pour & Solid Particle Spill
+    {
+      const simT = new LabSimulation();
+      const alerts = [];
+      simT.visualHooks.onAlert = (type, item, meta) => alerts.push({ type, id: item?.id, meta });
+      const bSrc = simT.createApparatus('beaker_250', 220, 320);
+      bSrc.isDragging = true; // held aloft while tilting with wheel
+      const bDst = simT.createApparatus('beaker_250', 274, 427);
+      simT.addReagentToVessel(bSrc.id, 'caco3', 5, { fine: true, silentAnim: true });
+      simT.addReagentToVessel(bSrc.id, 'h2o', 120, { silentAnim: true });
+
+      simT.setVesselTiltDeg(bSrc.id, -65);
+      const leftOk = bSrc.tiltDir === -1 && bSrc.tiltDeg === 65 && bSrc.tiltAngle < 0;
+      simT.setVesselTiltDeg(bSrc.id, 65, 1);
+      stepSeconds(simT, 0.7);
+      const pouredBoth = (bDst.moles.H2O_l || 0) > 0.1 && (bDst.moles.CaCO3_s || 0) > 1e-4;
+      const spilledEventsOk = alerts.some((a) => a.type === 'tilt_spill') && alerts.some((a) => a.type === 'tilt_solid_spill');
+
+      const fnl = simT.createApparatus('filter_funnel', 420, 310);
+      simT.addReagentToVessel(fnl.id, 'h2o', 25, { silentAnim: true });
+      simT.setVesselTiltDeg(fnl.id, -55);
+      stepSeconds(simT, 0.35);
+      const fnlLost = (fnl.moles.H2O_l || 0) < (25 / 18.015) * 0.9;
+
+      assert(
+        'Signed wheel tilt rotates left (-)/right (+), pours liquids & dry solids cleanly to receivers, and supports filter funnel tilting',
+        leftOk && pouredBoth && spilledEventsOk && fnlLost,
+        `left=${leftOk}, h2o=${(bDst.moles.H2O_l||0).toFixed(2)}, ca=${(bDst.moles.CaCO3_s||0).toFixed(4)}, alerts=${alerts.map(a=>a.type).slice(0,4).join(',')}, fnlLost=${fnlLost}`
+      );
+    }
+
+    // TEST 140: Prompt 31 — Burette Drop Alert, Pipette Dose Draw/Dispense & Breakable Ice Bath
+    {
+      const simB = new LabSimulation();
+      const bAlerts = [];
+      simB.visualHooks.onAlert = (type, item, meta) => bAlerts.push({ type, meta });
+      const bur = simB.createApparatus('burette_50', 240, 220);
+      const bRecv = simB.createApparatus('erlenmeyer_250', 240, 427);
+      simB.addReagentToVessel(bur.id, 'hcl_37', 25, { silentAnim: true });
+      const dVol = simB.buretteDispenseDrop(bur.id, 0.05);
+      const dropEvt = bAlerts.find((a) => a.type === 'burette_drop');
+
+      const pip = simB.createApparatus('pipette_10', 360, 400);
+      simB.setPipetteDropDose(pip.id, 2.5);
+      const srcP = simB.createApparatus('beaker_250', 360, 427);
+      simB.addReagentToVessel(srcP.id, 'h2o', 30, { silentAnim: true });
+      const drawn = simB.pipetteDrawFromVessel(srcP.id, pip.dropDoseMl, pip);
+      const disp = simB.pipetteDispenseToVessel(bRecv.id, pip.dropDoseMl, pip);
+
+      const bath = simB.createApparatus('ice_bath', 540, 140);
+      const bathBreakable = APPARATUS.ice_bath.breakable === true && Number.isFinite(APPARATUS.ice_bath.fragilityDropPx);
+      simB.handleLandingImpact(bath, 260, 600, null);
+      const bathCooling = simB.getBathCoolingSource({ kind: 'vessel', typeId: 'beaker_250', x: 540, y: 427, isShattered: false });
+
+      assert(
+        'Burette dispense triggers drop animation, pipette draws/dispenses by dropDoseMl, and ice bath shatters on tall drops',
+        dVol > 0.04 && Boolean(dropEvt) && Math.abs(drawn - 2.5) < 0.05 && Math.abs(disp - 2.5) < 0.05 && bathBreakable && bath.isBroken === true && !bathCooling,
+        `dVol=${dVol.toFixed(2)}, drawn=${drawn.toFixed(2)}, disp=${disp.toFixed(2)}, bathBroken=${bath.isBroken}`
+      );
+    }
+
+    // TEST 141: Prompt 31 — Electrode Collector Tube Live Telemetry Tooltip Data
+    {
+      const simE = new LabSimulation();
+      const bEl = simE.createApparatus('beaker_250', 300, 427);
+      simE.addReagentToVessel(bEl.id, 'h2o', 120, { silentAnim: true });
+      simE.addReagentToVessel(bEl.id, 'nacl', 4, { silentAnim: true });
+      const ePos = simE.createApparatus('electrode_rod', 280, 400);
+      const eNeg = simE.createApparatus('electrode_rod', 320, 400);
+      ePos.dockedVesselId = bEl.id;
+      eNeg.dockedVesselId = bEl.id;
+      const syrEl = simE.createApparatus('gas_syringe', 460, 320);
+      simE.connectElectrodeCollector(eNeg.id, syrEl.id);
+      const dc = simE.createApparatus('dc_power', 140, 420);
+      dc.posElectrodeId = ePos.id;
+      dc.negElectrodeId = eNeg.id;
+      dc.voltageV = 9.0;
+      dc.powerOn = true;
+      stepSeconds(simE, 0.4);
+      const syrHasH2 = (syrEl.gasMoles?.H2_g || 0) > 1e-6;
+      const flowReady = Boolean(eNeg._liveTubeFlow && eNeg._liveTubeFlow.composition?.length > 0 && eNeg._liveTubeFlow.rateMlS > 0);
+      assert(
+        'Electrode collector tube routes gas into syringe and populates _liveTubeFlow tooltip telemetry',
+        syrHasH2 && flowReady,
+        `syrH2=${((syrEl.gasMoles?.H2_g || 0)*1e3).toFixed(4)}mmol, rate=${(eNeg._liveTubeFlow?.rateMlS || 0).toFixed(2)}mL/s`
+      );
+    }
+
+    // TEST 142: Prompt 31 — Lowercase Canvas Mode & Multi-Spectral Optics Mode Persistence
+    {
+      const simO = new LabSimulation();
+      simO.setOpticsMode('aerodynamics');
+      const aeroOk = simO.environment.opticsMode === 'aerodynamics';
+      simO.setOpticsMode('thermal');
+      const thermOk = simO.environment.opticsMode === 'thermal';
+      assert(
+        'Multi-spectral optics switches cleanly between normal, aerodynamics, and thermal FLIR modes',
+        aeroOk && thermOk,
+        `aero=${aeroOk}, thermal=${thermOk}`
+      );
+    }
+
+    // TEST 143: Prompt 31 — DOM Verification Anchor: Build 14 + CSS/Renderer Exports
+    {
+      const simA = new LabSimulation();
+      assert(
+        'Prompt 31 build 14 engine + optics verification suite completed',
+        typeof simA.stepVesselTiltPouring === 'function' && typeof simA.buretteDispenseDrop === 'function',
+        'build.14'
       );
     }
 

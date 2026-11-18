@@ -3201,6 +3201,19 @@ export class LabSimulation {
       if (target) target.moles[spId] = (target.moles[spId] || 0) + d;
     }
     b.dispensedMl = (b.dispensedMl || 0) + actualMl;
+    const vis = computeSolutionVisuals(b.moles, liqL, computePH(b.moles, liqL, b.tempK), 2.0, b.phenBleachFrac || 0, b.phenIrrevFrac || 0);
+    const tSpec = target ? APPARATUS[target.typeId] : null;
+    const stopY = target && tSpec ? target.y - tSpec.height * 0.22 : SIM_BENCH_FLOOR_Y;
+    if (this.visualHooks.onAlert) {
+      this.visualHooks.onAlert('burette_drop', b, {
+        tipX: b.x,
+        tipY,
+        stopY,
+        catchX: target ? target.x : null,
+        color: vis.css || 'rgba(186, 230, 253, 0.92)',
+        actualMl,
+      });
+    }
     this.recomputeScaleReadings();
     this.emitChange();
     return actualMl;
@@ -3533,6 +3546,27 @@ export class LabSimulation {
     if (electrodeItem?.gasTargetId) {
       const col = this.getItem(electrodeItem.gasTargetId);
       if (col && !col.isShattered && !col.isBroken) {
+        const dtLive = Math.max(1e-3, this._lastStepDt || 0.05);
+        const rateMlS =
+          ((mol / dtLive) * CONSTANTS.R_L_BAR_MOL_K * Math.max(200, v.tempK || 298.15)) /
+          Math.max(0.05, this.environment.pressureBar || 1.0) *
+          1000;
+        const fName = SPECIES[gasId]?.formula || gasId;
+        const prevUpdated = electrodeItem._liveTubeFlow?.updatedAt || 0;
+        const nowMs = Date.now();
+        if (nowMs - prevUpdated > 120) {
+          electrodeItem._liveTubeFlow = {
+            composition: [{ formula: fName, pct: 100 }],
+            rateMlS,
+            totalMlS: rateMlS,
+            tempC: (v.tempK || this.environment.tempK || 298.15) - 273.15,
+            updatedAt: nowMs,
+          };
+        } else if (electrodeItem._liveTubeFlow) {
+          electrodeItem._liveTubeFlow.rateMlS = electrodeItem._liveTubeFlow.rateMlS * 0.65 + rateMlS * 0.35;
+          electrodeItem._liveTubeFlow.totalMlS = electrodeItem._liveTubeFlow.rateMlS;
+          electrodeItem._liveTubeFlow.updatedAt = nowMs;
+        }
         const routed = routeGasPacketToTarget(
           v,
           col,
@@ -3545,6 +3579,7 @@ export class LabSimulation {
         if (routed.handled) return;
       } else {
         electrodeItem.gasTargetId = null;
+        electrodeItem._liveTubeFlow = null;
       }
     }
 
@@ -4440,7 +4475,8 @@ export class LabSimulation {
           item.kind === 'condenser' ||
           item.kind === 'salt_bridge' ||
           item.kind === 'filter_funnel' ||
-          item.kind === 'diffusion_tube')
+          item.kind === 'diffusion_tube' ||
+          item.kind === 'bath')
       ) {
         this.breakToolOnDrop(item);
       }
@@ -4940,10 +4976,19 @@ export class LabSimulation {
 
   setVesselTiltDeg(vesselId, deg, dir = 1) {
     const v = this.getItem(vesselId);
-    if (!v || v.kind !== 'vessel' || v.isShattered) return false;
-    const clamped = Math.max(0, Math.min(180, Number(deg) || 0));
+    if (
+      !v ||
+      (v.kind !== 'vessel' && v.kind !== 'filter_funnel' && v.kind !== 'spoon') ||
+      v.isShattered ||
+      v.isBroken
+    ) {
+      return false;
+    }
+    const rawDeg = Number(deg) || 0;
+    const resolvedDir = rawDeg < 0 ? -1 : dir < 0 ? -1 : 1;
+    const clamped = Math.max(0, Math.min(180, Math.abs(rawDeg)));
     v.tiltDeg = clamped;
-    v.tiltDir = dir < 0 ? -1 : 1;
+    v.tiltDir = resolvedDir;
     v.tiltAngle = v.tiltDir * ((clamped * Math.PI) / 180);
     if (clamped <= 0.1) v.tiltPourRateMlS = 0;
     this.emitChange();
@@ -4978,7 +5023,7 @@ export class LabSimulation {
     if (!vessel || vessel.kind !== 'vessel' || vessel.isShattered) return null;
     if (vessel.restingOnId) {
       const sup = this.getItem(vessel.restingOnId);
-      if (sup && sup.kind === 'bath') {
+      if (sup && sup.kind === 'bath' && !sup.isBroken) {
         const bSpec = APPARATUS[sup.typeId] || APPARATUS.ice_bath;
         const tBath = sup.bathTempK ?? (sup.bathMode === 'ice_salt' ? 263.15 : 273.15);
         return { bath: sup, tempK: tBath, coolingK: bSpec.coolingK || 0.28 };
@@ -4986,7 +5031,7 @@ export class LabSimulation {
     }
     const vSpec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
     for (const sup of this.items) {
-      if (sup.kind !== 'bath') continue;
+      if (sup.kind !== 'bath' || sup.isBroken) continue;
       if (Math.abs(vessel.x - sup.x) <= 56 && vessel.y + vSpec.height / 2 >= sup.y - 10 && vessel.y <= sup.y + 42) {
         const bSpec = APPARATUS[sup.typeId] || APPARATUS.ice_bath;
         const tBath = sup.bathTempK ?? (sup.bathMode === 'ice_salt' ? 263.15 : 273.15);
@@ -4998,44 +5043,153 @@ export class LabSimulation {
 
   stepVesselTiltPouring(v, dt) {
     v.tiltPourRateMlS = 0;
-    if (!v || v.kind !== 'vessel' || v.isShattered || v.isStoppered || (v.tiltDeg || 0) <= 0.5) return;
+    if (
+      !v ||
+      (v.kind !== 'vessel' && v.kind !== 'filter_funnel' && v.kind !== 'spoon') ||
+      v.isShattered ||
+      v.isBroken ||
+      v.isStoppered ||
+      (v.tiltDeg || 0) <= 0.5
+    ) {
+      return;
+    }
     const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
     const dir = v.tiltDir < 0 ? -1 : 1;
     const rad = ((v.tiltDeg || 0) * Math.PI) / 180;
+    const spoutX = v.x + dir * Math.sin(rad) * (spec.height * 0.45 + 6);
+    const spoutY = v.y - Math.cos(rad) * (spec.height * 0.35);
     const pourX = v.x + dir * Math.sin(rad) * (spec.height * 0.48 + 8);
-    const vHoldMl = getVesselHoldVolumeMl(spec, v.tiltDeg);
-    const curLiqL = computeLiquidVolumeL(v.moles, v.tempK);
-    const curLiqMl = curLiqL * 1000;
-    if (curLiqMl > vHoldMl + 0.02) {
-      const excessMl = curLiqMl - vHoldMl;
-      const dMl = Math.min(excessMl, Math.max(1.2, excessMl * 3.2) * dt);
-      const frac = Math.min(1, dMl / curLiqMl);
-      let dst = null;
-      let bestDist = Infinity;
-      for (const cand of this.items) {
-        if (cand.id === v.id || cand.kind !== 'vessel' || cand.isShattered || cand.isStoppered || cand.isInverted) continue;
-        const cSpec = APPARATUS[cand.typeId] || APPARATUS.beaker_250;
-        const dx = Math.abs(cand.x - pourX);
-        if (dx <= Math.max(46, cSpec.width * 0.52) && cand.y >= v.y - 24 && dx < bestDist) {
-          bestDist = dx;
-          dst = cand;
+    let dst = null;
+    let bestDist = Infinity;
+    for (const cand of this.items) {
+      if (
+        cand.id === v.id ||
+        (cand.kind !== 'vessel' && cand.kind !== 'filter_funnel') ||
+        cand.isShattered ||
+        cand.isBroken ||
+        cand.isStoppered ||
+        cand.isInverted
+      ) {
+        continue;
+      }
+      const cSpec = APPARATUS[cand.typeId] || APPARATUS.beaker_250;
+      const dx = Math.abs(cand.x - pourX);
+      if (dx <= Math.max(48, cSpec.width * 0.55) && cand.y >= v.y - 28 && dx < bestDist) {
+        bestDist = dx;
+        dst = cand;
+      }
+    }
+    const dstSpec = dst ? APPARATUS[dst.typeId] || APPARATUS.beaker_250 : null;
+
+    if (v.kind !== 'spoon') {
+      const vHoldMl = v.kind === 'filter_funnel' ? Math.max(0, 55 * Math.max(0, 1 - v.tiltDeg / 75)) : getVesselHoldVolumeMl(spec, v.tiltDeg);
+      const curLiqL = computeLiquidVolumeL(v.moles, v.tempK);
+      const curLiqMl = curLiqL * 1000;
+      if (curLiqMl > vHoldMl + 0.02) {
+        const excessMl = curLiqMl - vHoldMl;
+        const dMl = Math.min(excessMl, Math.max(1.2, excessMl * 3.2) * dt);
+        const frac = Math.min(1, dMl / curLiqMl);
+        const visColor = computeSolutionVisuals(
+          v.moles,
+          curLiqL,
+          computePH(v.moles, curLiqL, v.tempK),
+          spec.opticalPathCm || 4.0,
+          v.phenBleachFrac || 0,
+          v.phenIrrevFrac || 0
+        ).css;
+        if (dst) {
+          if (v.kind === 'vessel' && dst.kind === 'vessel') {
+            this.pourBetweenVessels(v.id, dst.id, dMl, false, { silentUndo: true, silentEmit: true });
+          } else {
+            for (const [spId, n] of Object.entries({ ...v.moles })) {
+              const sp = SPECIES[spId];
+              if (!sp || (sp.phase !== 'l' && sp.phase !== 'aq')) continue;
+              const mv = n * frac;
+              const rem = n - mv;
+              if (rem < 1e-12) delete v.moles[spId];
+              else v.moles[spId] = rem;
+              dst.moles[spId] = (dst.moles[spId] || 0) + mv;
+            }
+          }
+          this.activePourStream = {
+            fromX: spoutX,
+            fromY: spoutY,
+            toX: dst.x,
+            toY: dst.y - (dstSpec?.height || 90) * 0.25,
+            color: visColor || 'rgba(186, 230, 253, 0.85)',
+            rateMlS: dMl / Math.max(1e-4, dt),
+            timer: 0.14,
+            pouredMl: 0,
+          };
+        } else {
+          for (const [spId, n] of Object.entries({ ...v.moles })) {
+            const sp = SPECIES[spId];
+            if (sp && (sp.phase === 'l' || sp.phase === 'aq')) {
+              const rem = n * (1 - frac);
+              if (rem < 1e-12) delete v.moles[spId];
+              else v.moles[spId] = rem;
+            }
+          }
+          v.spilledPuddleColor = visColor;
+        }
+        v.tiltPourRateMlS = dMl / Math.max(1e-4, dt);
+        const nowMs = Date.now();
+        if (nowMs - (v._lastTiltDropMs || 0) >= 65) {
+          v._lastTiltDropMs = nowMs;
+          this.visualHooks.onAlert?.('tilt_spill', v, {
+            fromX: spoutX,
+            fromY: spoutY,
+            toY: dst ? dst.y - (dstSpec?.height || 90) * 0.25 : SIM_BENCH_FLOOR_Y,
+            catchX: dst ? dst.x : null,
+            liquidColor: visColor || 'rgba(186, 230, 253, 0.88)',
+            rateMlS: v.tiltPourRateMlS,
+          });
         }
       }
-      if (dst) {
-        this.pourBetweenVessels(v.id, dst.id, dMl, false, { silentUndo: true, silentEmit: true });
-      } else {
-        // Pour spills cleanly onto bench
-        const tempSnap = { ...v.moles };
-        for (const [spId, n] of Object.entries(tempSnap)) {
-          const sp = SPECIES[spId];
-          if (sp && (sp.phase === 'l' || sp.phase === 'aq')) {
-            const rem = n * (1 - frac);
-            if (rem < 1e-12) delete v.moles[spId];
-            else v.moles[spId] = rem;
+    }
+
+    // Solid particles falling / transferring at steep tilt (>= 48° for vessels/funnels, >= 25° for spoon)
+    const solidTiltThresh = v.kind === 'spoon' ? 25 : 48;
+    if ((v.tiltDeg || 0) >= solidTiltThresh) {
+      const solidEntries = Object.entries(v.moles || {}).filter(([spId, n]) => n > 1e-8 && SPECIES[spId]?.phase === 's');
+      if (solidEntries.length > 0) {
+        const dumpFrac = Math.min(1, (v.kind === 'spoon' ? 2.6 : 1.45) * dt);
+        let domColor = '#e2e8f0';
+        let bestN = 0;
+        for (const [spId, n] of solidEntries) {
+          if (n > bestN) {
+            bestN = n;
+            domColor = SPECIES[spId]?.color || '#e2e8f0';
+          }
+          const mv = n * dumpFrac;
+          if (n - mv < 1e-9) {
+            delete v.moles[spId];
+            if (v.particleCounts) delete v.particleCounts[spId];
+          } else {
+            v.moles[spId] = n - mv;
+          }
+          if (dst) {
+            dst.moles[spId] = (dst.moles[spId] || 0) + mv;
+            dst.particleCounts = dst.particleCounts || {};
+            dst.particleCounts[spId] = (dst.particleCounts[spId] || 0) + Math.max(1, Math.round(mv * 1200));
+            if (SPECIES[spId]?.isPrecipitate) {
+              dst.precipitateSettle = dst.precipitateSettle || {};
+              dst.precipitateSettle[spId] = 0.05;
+            }
           }
         }
+        const nowMs = Date.now();
+        if (nowMs - (v._lastTiltSolidMs || 0) >= 80) {
+          v._lastTiltSolidMs = nowMs;
+          this.visualHooks.onAlert?.('tilt_solid_spill', v, {
+            fromX: v.kind === 'spoon' ? v.x + (v.flippedX ? 46 : -46) : spoutX,
+            fromY: v.kind === 'spoon' ? v.y + 4 : spoutY,
+            toY: dst ? dst.y - (dstSpec?.height || 90) * 0.2 : SIM_BENCH_FLOOR_Y,
+            catchX: dst ? dst.x : null,
+            color: domColor,
+          });
+        }
       }
-      v.tiltPourRateMlS = dMl / Math.max(1e-4, dt);
     }
 
     // Gas pouring at tilt >= 15 deg: dense gases (CO2/Cl2) cascade downward onto lit splints; light H2 pours upward onto flames
@@ -5113,6 +5267,7 @@ export class LabSimulation {
     this.condenseEscapedVaporInCryo();
 
     const scaledDt = Math.min(0.25, realDeltaSec * this.environment.speed);
+    this._lastStepDt = scaledDt;
     this.timeSec += scaledDt;
 
     if (this.activePourStream) {
@@ -5943,6 +6098,16 @@ export class LabSimulation {
       }
 
       this.recordHistorySnapshot(v, false);
+    }
+
+    // Step wheel-tilt pouring & falling spills for filter funnels & spoons, plus expire electrode tube telemetry
+    const nowFlowMs = Date.now();
+    for (const tool of this.items) {
+      if ((tool.kind === 'filter_funnel' || tool.kind === 'spoon') && !tool.isBroken) {
+        this.stepVesselTiltPouring(tool, scaledDt);
+      } else if (tool.kind === 'electrode' && tool._liveTubeFlow && (!tool.gasTargetId || nowFlowMs - tool._liveTubeFlow.updatedAt > 450)) {
+        tool._liveTubeFlow = null;
+      }
     }
 
     // Gas-phase NH3(g) + HCl(g) -> NH4Cl(s) dense white smoke between adjacent open vessels

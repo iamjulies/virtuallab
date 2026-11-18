@@ -19,25 +19,25 @@ export class EnvironmentBar {
     const { lang, theme, deviceMode } = this.appState;
 
     this.container.innerHTML = `
-      <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 border-b border-theme bg-surface">
+      <div class="env-header-inner border-b border-theme bg-surface">
         <!-- Brand -->
-        <div class="flex items-center gap-2.5">
-          <div class="w-9 h-9 rounded-xl bg-accent text-white flex items-center justify-center text-lg font-bold shadow-sm">
+        <div class="env-toolbar-group gap-2">
+          <div class="w-8 h-8 rounded-xl bg-accent text-white flex items-center justify-center text-base font-bold shadow-sm shrink-0">
             ⚗️
           </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <h1 class="text-sm sm:text-base font-bold leading-none">${t('appTitle')}</h1>
-              <span class="hidden sm:inline-block text-xs px-2 py-0.5 rounded-full border border-theme bg-surface-alt text-muted">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5 whitespace-nowrap">
+              <h1 class="text-sm font-bold leading-none whitespace-nowrap">${t('appTitle')}</h1>
+              <span class="env-compact-hide text-xs px-2 py-0.5 rounded-full border border-theme bg-surface-alt text-muted whitespace-nowrap">
                 ${theme === 'olivia' ? 'u + me = <3 · 🐝' : t('modeFreeSandbox')}
               </span>
             </div>
-            <p class="text-xs text-muted mt-0.5 hidden md:block">${t('appSubtitle')}</p>
+            <p class="env-compact-hide text-[11px] text-muted mt-0.5 hidden xl:block whitespace-nowrap">${t('appSubtitle')}</p>
           </div>
         </div>
 
         <!-- Lab Environment Controls: T (298.15 K), P (1.00 bar), Speed -->
-        <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+        <div class="env-toolbar-group">
           ${(() => {
             const isSatp =
               Math.abs(env.tempK - CONSTANTS.T_STD_K) <= 0.15 &&
@@ -111,7 +111,7 @@ export class EnvironmentBar {
         </div>
 
         <!-- Right Toolbar: Presets, Device Mode, Theme, Language -->
-        <div class="flex flex-wrap items-center gap-1.5">
+        <div class="env-toolbar-group">
           <!-- Presets -->
           <select id="preset-select" style="max-width: 195px;" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium truncate">
             <option value="">${t('quickPresets')}</option>

@@ -158,12 +158,19 @@ let _labelFrameActive = false;
 let _allowedLabelIds = null;
 let _currentLabelItemId = null;
 let _deferredPills = [];
+let _lowercaseMode = false;
 
-export function beginCanvasLabelFrame(allowedIds = null) {
+export function formatCanvasText(text) {
+  const s = String(text ?? '');
+  return _lowercaseMode ? s.toLowerCase() : s;
+}
+
+export function beginCanvasLabelFrame(allowedIds = null, lowercaseMode = false) {
   _labelFrameActive = Boolean(allowedIds);
   _allowedLabelIds = allowedIds;
   _currentLabelItemId = null;
   _deferredPills = [];
+  _lowercaseMode = Boolean(lowercaseMode);
 }
 
 export function setCurrentLabelItemId(id) {
@@ -184,10 +191,11 @@ export function flushCanvasLabelFrame(ctx) {
 
 function renderLabelPillImmediate(ctx, cx, cy, text, opts = {}) {
   const { pal, borderColor, font = '600 11px system-ui, sans-serif', alpha = 1.0, height = 20 } = opts;
+  const drawText = _lowercaseMode ? String(text ?? '').toLowerCase() : String(text ?? '');
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.font = font;
-  const textW = Math.max(44, ctx.measureText(text).width + 14);
+  const textW = Math.max(44, ctx.measureText(drawText).width + 14);
   ctx.fillStyle = pal.badgeBg;
   ctx.strokeStyle = borderColor || pal.badgeBorder;
   ctx.lineWidth = 1;
@@ -199,7 +207,7 @@ function renderLabelPillImmediate(ctx, cx, cy, text, opts = {}) {
   ctx.fillStyle = pal.textPrimary;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, cx, cy + height / 2 + 0.5);
+  ctx.fillText(drawText, cx, cy + height / 2 + 0.5);
   ctx.restore();
 }
 
@@ -401,7 +409,7 @@ export function renderScale(ctx, item, isSelected, isDark, timeNow) {
   if (Math.abs(item.tareG) > 0.005) {
     ctx.font = 'bold 10px sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText('TARE', lcdX + 6, lcdY + lcdH / 2 + 1);
+    ctx.fillText(formatCanvasText('TARE'), lcdX + 6, lcdY + lcdH / 2 + 1);
   }
 
   ctx.restore();
@@ -2592,7 +2600,7 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.font = 'bold 7.5px system-ui, sans-serif';
     ctx.fillText(String(spec.maxVolumeMl || 250), patchX + patchW / 2, patchY + 7);
     ctx.font = '600 6.5px system-ui, sans-serif';
-    ctx.fillText('mL', patchX + patchW / 2, patchY + 15);
+    ctx.fillText(formatCanvasText('mL'), patchX + patchW / 2, patchY + 15);
   } else if (spec.shape === 'erlenmeyer') {
     // Non-linear conical graduations directly from VesselGeometry radial-volume slices
     const isLargeFlask = (spec.maxVolumeMl || 250) >= 900;
@@ -2633,7 +2641,7 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.font = 'bold 7.5px system-ui, sans-serif';
     ctx.fillText(String(spec.maxVolumeMl || 250), patchX + patchW / 2, patchY + 7.5);
     ctx.font = '600 6.5px system-ui, sans-serif';
-    ctx.fillText('ISO', patchX + patchW / 2, patchY + 15.5);
+    ctx.fillText(formatCanvasText('ISO'), patchX + patchW / 2, patchY + 15.5);
   } else if (spec.shape === 'round_flask') {
     // NS 29/32 ground-glass joint neck band + ISO bulb graduations + non-overlapping capacity badge
     const isLargeRound = (spec.maxVolumeMl || 250) >= 900;
@@ -2979,10 +2987,10 @@ export function renderVessel(ctx, vessel, opts) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       if (lines.length === 1) {
-        ctx.fillText(lines[0], x, ny + noteH / 2 + 0.5, noteW - 8);
+        ctx.fillText(formatCanvasText(lines[0]), x, ny + noteH / 2 + 0.5, noteW - 8);
       } else {
-        ctx.fillText(lines[0], x, ny + 8, noteW - 8);
-        ctx.fillText(lines[1], x, ny + 18.5, noteW - 8);
+        ctx.fillText(formatCanvasText(lines[0]), x, ny + 8, noteW - 8);
+        ctx.fillText(formatCanvasText(lines[1]), x, ny + 18.5, noteW - 8);
       }
       ctx.restore();
     }

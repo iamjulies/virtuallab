@@ -24,6 +24,7 @@ import { soundEngine } from '../audio/soundEngine.js';
 import {
   beginCanvasLabelFrame,
   flushCanvasLabelFrame,
+  formatCanvasText,
   renderBurner,
   renderGasSyringe,
   renderPipette,
@@ -454,25 +455,64 @@ export class LabWorkbenchCanvas {
         return { srcVessel: v, dstVessel: dst, x: lx, y: ly, flow: v._liveTubeFlow || null };
       }
     }
+    for (let i = this.sim.items.length - 1; i >= 0; i--) {
+      const el = this.sim.items[i];
+      if (el.kind !== 'electrode' || !el.gasTargetId) continue;
+      const target = this.sim.getItem(el.gasTargetId);
+      if (!target || target.isShattered || target.isBroken || target.mountedOverElectrodeId === el.id) continue;
+      const eSpec = APPARATUS.electrode_rod;
+      const eH = el.renderHeight || eSpec.height;
+      const tSpec = APPARATUS[target.typeId] || APPARATUS.gas_syringe;
+      const p0 = { x: el.x, y: el.y - eH / 2 + 8 };
+      const p3 =
+        target.kind === 'gas_syringe'
+          ? (() => {
+              const g = getSyringeGeometry(target);
+              return { x: g.nozzleX, y: g.nozzleY };
+            })()
+          : target.isInverted
+          ? { x: target.x, y: target.y + tSpec.height / 2 - 4 }
+          : { x: target.x, y: target.y - tSpec.height / 2 + 10 };
+      const midY = Math.min(p0.y, p3.y) - 48;
+      const p1 = { x: p0.x, y: midY };
+      const p2 = { x: p3.x, y: midY };
+      let minDist = Infinity;
+      let prev = p0;
+      for (let s = 1; s <= 16; s++) {
+        const u = s / 16;
+        const omt = 1 - u;
+        const q = {
+          x: omt ** 3 * p0.x + 3 * omt ** 2 * u * p1.x + 3 * omt * u ** 2 * p2.x + u ** 3 * p3.x,
+          y: omt ** 3 * p0.y + 3 * omt ** 2 * u * p1.y + 3 * omt * u ** 2 * p2.y + u ** 3 * p3.y,
+        };
+        const d = ptSegDist(lx, ly, prev.x, prev.y, q.x, q.y);
+        if (d < minDist) minDist = d;
+        prev = q;
+      }
+      if (minDist <= 12) {
+        return { srcVessel: el, dstVessel: target, x: lx, y: ly, flow: el._liveTubeFlow || null };
+      }
+    }
     return null;
   }
 
   resetWheelTiltedVessel(exceptId = null) {
     if (!this._wheelTiltVesselId || this._wheelTiltVesselId === exceptId) return;
     const prev = this.sim.getItem(this._wheelTiltVesselId);
-    if (prev && prev.kind === 'vessel' && (prev.tiltDeg || 0) > 0) {
+    if (prev && !APPARATUS[prev.typeId]?.isHorizontalTube && (prev.tiltDeg || 0) > 0) {
       this.sim.setVesselTiltDeg(prev.id, 0);
     }
     this._wheelTiltVesselId = null;
   }
 
   handleCanvasWheel(pt, deltaY, shiftKey = false) {
-    const hit = this.hitTestItem(pt.x, pt.y);
+    const heldItem = this.dragState ? this.sim.getItem(this.dragState.itemId) : null;
+    const hit = heldItem || this.hitTestItem(pt.x, pt.y);
     if (!hit) {
-      this.resetWheelTiltedVessel(null);
+      if (!this.dragState) this.resetWheelTiltedVessel(null);
       return false;
     }
-    if (this._wheelTiltVesselId && this._wheelTiltVesselId !== hit.id) {
+    if (!this.dragState && this._wheelTiltVesselId && this._wheelTiltVesselId !== hit.id) {
       this.resetWheelTiltedVessel(hit.id);
     }
 
@@ -575,14 +615,23 @@ export class LabWorkbenchCanvas {
       const now = performance.now();
       if (now - this._pipetteWheelTs < 150) return true;
       this._pipetteWheelTs = now;
-      const doseMl = deltaY > 0 ? 1.0 : 0.5;
+      const doseMl = hit.dropDoseMl || 1.0;
       const spec = APPARATUS[hit.typeId] || APPARATUS.pipette_10;
-      const tgt = this.findVesselAt(hit.x, hit.y + spec.height / 2 + 18, hit.id, false);
-      if (tgt && tgt.kind === 'vessel' && !tgt.isShattered && !tgt.isStoppered && (hit.volumeMl || 0) > 0.01) {
-        soundEngine.playDropPlink(0.95);
-        this.sim.pipetteDispenseToVessel(tgt.id, doseMl, hit);
-      } else {
-        this.sim.setPipetteDropDose(hit.id, doseMl);
+      const tgt = this.findVesselAt(hit.x, hit.y + spec.height / 2 + 24, hit.id, false);
+      const syrTgt = !tgt ? this.findSyringeAt(hit.x, hit.y + spec.height / 2 + 24) : null;
+      if (tgt && tgt.kind === 'vessel' && !tgt.isShattered && !tgt.isStoppered) {
+        if (deltaY > 0) {
+          if ((hit.volumeMl || 0) > 0.005) {
+            soundEngine.playDropPlink(0.95);
+            this.sim.pipetteDispenseToVessel(tgt.id, doseMl, hit);
+          }
+        } else {
+          soundEngine.playDropPlink(0.85);
+          this.sim.pipetteDrawFromVessel(tgt.id, doseMl, hit);
+        }
+      } else if (deltaY < 0 && syrTgt && !syrTgt.isBroken) {
+        soundEngine.playDropPlink(0.85);
+        this.sim.pipetteDrawFromSyringe(syrTgt.id, doseMl, hit);
       }
       return true;
     }
@@ -605,26 +654,29 @@ export class LabWorkbenchCanvas {
       return true;
     }
 
-    if (hit.kind === 'vessel') {
+    if (hit.kind === 'vessel' || hit.kind === 'filter_funnel' || hit.kind === 'spoon') {
       const spec = APPARATUS[hit.typeId] || {};
-      if (spec.hasLid && !shiftKey) {
+      const isHeld = this.dragState?.itemId === hit.id;
+      if (hit.kind === 'vessel' && spec.hasLid && !shiftKey && !isHeld) {
         return stepDiscrete(`lid:${hit.id}`, deltaY, () => {
           soundEngine.playGlassClink(hit.typeId, 0.7);
           this.sim.cycleCrucibleLid(hit.id);
         });
       }
-      if (spec.isMortar && !shiftKey) {
+      if (hit.kind === 'vessel' && spec.isMortar && !shiftKey && !isHeld) {
         return stepDiscrete(`mortar:${hit.id}`, deltaY, () => {
           soundEngine.playMortarGrind();
           this.sim.grindMortar(hit.id);
         });
       }
-      const stepDeg = (deltaY > 0 ? 1 : -1) * Math.min(14, Math.max(5, Math.abs(deltaY) * 0.09));
-      const curDeg = hit.tiltDeg || 0;
-      const nextDeg = clamp(0, 180, curDeg + stepDeg);
-      const dir = hit.flippedX ? -1 : 1;
-      this.sim.setVesselTiltDeg(hit.id, nextDeg, dir);
-      this._wheelTiltVesselId = nextDeg > 0 ? hit.id : null;
+      // Forward scroll (deltaY > 0) -> tilt RIGHT (+), reverse scroll (deltaY < 0) -> tilt LEFT (-)
+      const deltaDeg = (deltaY > 0 ? 1 : -1) * Math.min(14, Math.max(5, Math.abs(deltaY) * 0.09));
+      const curSigned = (hit.tiltDir < 0 ? -1 : 1) * (hit.tiltDeg || 0);
+      const nextSigned = clamp(-180, 180, curSigned + deltaDeg);
+      const nextAbs = Math.abs(nextSigned);
+      const nextDir = nextSigned < 0 ? -1 : 1;
+      this.sim.setVesselTiltDeg(hit.id, nextAbs, nextDir);
+      this._wheelTiltVesselId = nextAbs > 0 && !spec.isHorizontalTube ? hit.id : null;
       return true;
     }
 
@@ -1426,73 +1478,35 @@ export class LabWorkbenchCanvas {
             this.dragState.spoonAction = 'pour';
             this.dragState.spoonTargetId = tgt.id;
             this.dropTargetVesselId = tgt.id;
-            item.tiltAngle = item.x >= tgt.x ? -0.35 : 0.35;
+            if ((item.tiltDeg || 0) <= 0.1) item.tiltAngle = item.x >= tgt.x ? -0.35 : 0.35;
             item.hoveredActionLabel = this.langCode === 'vi' ? '🥄 Thả để đổ vào bình' : '🥄 Release to dump';
           } else if (spoonMol <= 1e-8 && tgtHasSolid) {
             this.dragState.spoonAction = 'scoop';
             this.dragState.spoonTargetId = tgt.id;
             this.dropTargetVesselId = tgt.id;
-            item.tiltAngle = 0;
+            if ((item.tiltDeg || 0) <= 0.1) item.tiltAngle = 0;
             item.hoveredActionLabel = this.langCode === 'vi' ? '🥄 Thả để múc chất rắn' : '🥄 Release to scoop';
           } else {
             this.dragState.spoonAction = null;
             this.dragState.spoonTargetId = null;
             this.dropTargetVesselId = null;
-            item.tiltAngle = 0;
+            if ((item.tiltDeg || 0) <= 0.1) item.tiltAngle = 0;
             item.hoveredActionLabel = null;
           }
         } else {
           this.dragState.spoonAction = null;
           this.dragState.spoonTargetId = null;
           this.dropTargetVesselId = null;
-          item.tiltAngle = 0;
+          if ((item.tiltDeg || 0) <= 0.1) item.tiltAngle = 0;
           item.hoveredActionLabel = null;
         }
       }
 
-      // If dragging a vessel/mortar/filter_funnel, check if hovering above another container rim to tilt & pour
+      // Disabled automatic proximity drag-pour: user aims vessel/funnel and scrolls wheel to tilt & pour cleanly
       if ((item.kind === 'vessel' || item.kind === 'filter_funnel') && !item.isStoppered && !item.isShattered) {
-        const liqMl = computeLiquidVolumeL(item.moles, item.tempK) * 1000;
-        const dragDistFromStart = Math.hypot(item.x - this.dragState.startX, item.y - this.dragState.startY);
-        const allowFunnelPour =
-          item.kind !== 'filter_funnel' || (dragDistFromStart > 56 && liqMl > 0.05);
-        const hasDryMovableSolids =
-          APPARATUS[item.typeId]?.isMortar && Object.values(item.moles || {}).some((n) => n > 1e-8);
-        let target = null;
-        if ((liqMl > 0.05 && allowFunnelPour) || hasDryMovableSolids) {
-          // Prioritize mounted Filter Funnels & Burettes BEFORE bare receiving vessels underneath!
-          const pourCands = [
-            ...this.sim.items.filter((o) => (o.kind === 'filter_funnel' || o.kind === 'burette') && !o.isBroken),
-            ...this.sim.items.filter((o) => o.kind === 'vessel' && !o.isShattered && !o.isStoppered),
-          ];
-          for (const other of pourCands) {
-            if (other.id === item.id) continue;
-            if (item.kind === 'filter_funnel' && other.id === this.dragState.unmountHoldoffId) continue;
-            const oSpec = APPARATUS[other.typeId];
-            const rimY = other.y - oSpec.height / 2;
-            const reachY = other.kind === 'filter_funnel' ? 42 : 28;
-            if (Math.abs(item.x - other.x) < 78 && item.y < rimY + reachY && item.y > rimY - 125) {
-              // Redirect pour targeting an open vessel that currently wears a mounted Filter Funnel -> funnel first!
-              if (other.kind === 'vessel' && item.kind !== 'filter_funnel') {
-                const mountedFunnel = this.getMountedFunnelOnVessel(other.id);
-                target = mountedFunnel || other;
-              } else {
-                target = other;
-              }
-              break;
-            }
-          }
-        }
-        if (target) {
-          this.dragState.pourTargetId = target.id;
-          this.dropTargetVesselId = target.id;
-          this.dragState.targetTilt = item.x >= target.x ? -0.56 : 0.56;
-          this.dragState.pourAlignFactor = Math.max(0.45, 1.0 - Math.abs(item.x - target.x) / 110);
-        } else {
-          this.dragState.pourTargetId = null;
-          if (item.kind !== 'filter_funnel') this.dropTargetVesselId = null;
-          this.dragState.targetTilt = 0;
-        }
+        this.dragState.pourTargetId = null;
+        this.dragState.targetTilt = 0;
+        if (item.kind !== 'filter_funnel') this.dropTargetVesselId = null;
       } else if (item.kind === 'pipette' && !item.isBroken) {
         const tgt = this.findVesselAt(item.x, item.y + spec.height * 0.28);
         const syrTgt = !tgt ? this.findSyringeAt(item.x, item.y + spec.height * 0.28) : null;
@@ -1705,9 +1719,12 @@ export class LabWorkbenchCanvas {
             else soundEngine.playGlassClink(item.typeId, 0.72);
           }
         }
-        if (item && (item.kind === 'vessel' || item.kind === 'pipette' || item.kind === 'spoon')) {
-          item.tiltAngle = 0;
-          if (item.kind === 'vessel') item.tiltDeg = 0;
+        if (item && (item.kind === 'vessel' || item.kind === 'filter_funnel' || item.kind === 'pipette' || item.kind === 'spoon')) {
+          if (!APPARATUS[item.typeId]?.isHorizontalTube) {
+            item.tiltAngle = 0;
+            item.tiltDeg = 0;
+            item.tiltDir = 1;
+          }
         }
         this.resetWheelTiltedVessel(null);
         if (item && item.kind === 'wash_bottle') {
@@ -1848,15 +1865,14 @@ export class LabWorkbenchCanvas {
     const src = this.sim.getItem(this.dragState.itemId);
     if (!src) return;
 
-    // Smoothly tilt toward target angle (~2.1 rad/s) or relax upright when away from pour target
-    if (src.kind === 'vessel' || src.kind === 'filter_funnel') {
-      const targetTilt = this.dragState.pourTargetId ? this.dragState.targetTilt || 0 : 0;
-      const curTilt = src.tiltAngle || 0;
-      const maxDelta = 2.1 * realDeltaSec;
-      if (Math.abs(targetTilt - curTilt) <= maxDelta) {
+    // Smoothly track user's wheel tilt angle while holding tool/vessel (condenser uses rotationDeg independently)
+    if (src.kind === 'vessel' || src.kind === 'filter_funnel' || src.kind === 'spoon') {
+      const targetTilt =
+        this.dragState.pourTargetId
+          ? this.dragState.targetTilt || 0
+          : (src.tiltDir < 0 ? -1 : 1) * (((src.tiltDeg || 0) * Math.PI) / 180);
+      if (src.kind !== 'spoon' || (src.tiltDeg || 0) > 0.1 || !this.dragState.spoonAction) {
         src.tiltAngle = targetTilt;
-      } else {
-        src.tiltAngle = curTilt + Math.sign(targetTilt - curTilt) * maxDelta;
       }
     }
 
@@ -2130,7 +2146,8 @@ export class LabWorkbenchCanvas {
       if (this.dragState?.pipetteTargetId) activeTooltipIds.add(this.dragState.pipetteTargetId);
       if (this.portDragState?.condId) activeTooltipIds.add(this.portDragState.condId);
     }
-    beginCanvasLabelFrame(activeTooltipIds);
+    const isLowercaseTheme = this.themeName === 'olivia' || this.themeName === 'petal';
+    beginCanvasLabelFrame(activeTooltipIds, isLowercaseTheme);
 
     renderTubingConnections(ctx, this.sim.items, this.isDark, timeNow, this.langCode);
     renderElectrodeCollectorTubes(ctx, this.sim.items, this.isDark, timeNow);
@@ -2432,8 +2449,8 @@ export class LabWorkbenchCanvas {
           ? 'No active flow'
           : 'Chưa có dòng khí';
         const rateTxt = `${(flow?.rateMlS || 0).toFixed(2)} mL/s · ${(flow?.tempC ?? 25).toFixed(1)}°C`;
-        const line1 = `${ht.srcVessel.label} → ${ht.dstVessel.label}: ${compText}`;
-        const line2 = `${rateTxt}`;
+        const line1 = formatCanvasText(`${ht.srcVessel.label} → ${ht.dstVessel.label}: ${compText}`);
+        const line2 = formatCanvasText(`${rateTxt}`);
         ctx.save();
         ctx.font = '600 11px system-ui, sans-serif';
         const boxW = Math.max(175, Math.min(340, Math.max(ctx.measureText(line1).width, ctx.measureText(line2).width) + 22));
@@ -2461,182 +2478,413 @@ export class LabWorkbenchCanvas {
 
   /**
    * Render Multi-Spectral Optics:
-   * - 'aerodynamics': Reveals colorless gases with molar-mass convection arrows & CO2 waterfall cascades over tilted rims.
-   * - 'thermal': FLIR false-color thermal imaging (-10°C indigo -> 1500°C white-hot) over flames, ice baths & exothermic hotspots.
+   * - 'aerodynamics': Flowing reaction-gas vector streamlines & continuous volumetric plumes (ignores ambient air).
+   * - 'thermal': Whole-bench FLIR false-color thermal imaging heatmap (-15°C indigo -> 1000°C white-hot) with MSX silhouettes.
    */
   renderMultiSpectralOpticsOverlay(ctx, timeNow, mode) {
-    const drawConvArrow = (ax, ay, dx, dy, color, label = '') => {
+    const drawArrowHead = (tipX, tipY, ang, color, size = 6) => {
       ctx.save();
-      ctx.strokeStyle = color;
       ctx.fillStyle = color;
-      ctx.lineWidth = 2.0;
-      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(ax, ay);
-      ctx.lineTo(ax + dx, ay + dy);
-      ctx.stroke();
-      const ang = Math.atan2(dy, dx);
-      ctx.beginPath();
-      ctx.moveTo(ax + dx, ay + dy);
-      ctx.lineTo(ax + dx - 6 * Math.cos(ang - 0.5), ay + dy - 6 * Math.sin(ang - 0.5));
-      ctx.lineTo(ax + dx - 6 * Math.cos(ang + 0.5), ay + dy - 6 * Math.sin(ang + 0.5));
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(tipX - size * Math.cos(ang - 0.52), tipY - size * Math.sin(ang - 0.52));
+      ctx.lineTo(tipX - size * Math.cos(ang + 0.52), tipY - size * Math.sin(ang + 0.52));
       ctx.closePath();
       ctx.fill();
+      ctx.restore();
+    };
+
+    const drawFlowStreamline = (pts, color, width = 2.0, dashOffset = 0, label = '') => {
+      if (pts.length < 2) return;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.setLineDash([12, 8]);
+      ctx.lineDashOffset = dashOffset;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i].x + pts[i + 1].x) * 0.5;
+        const my = (pts[i].y + pts[i + 1].y) * 0.5;
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+      }
+      const last = pts[pts.length - 1];
+      const prev = pts[pts.length - 2];
+      ctx.lineTo(last.x, last.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const ang = Math.atan2(last.y - prev.y, last.x - prev.x);
+      drawArrowHead(last.x, last.y, ang, color, 6.2);
       if (label) {
+        const mid = pts[Math.floor(pts.length * 0.5)];
         ctx.font = 'bold 10px ui-monospace, monospace';
+        ctx.fillStyle = color;
         ctx.textAlign = 'center';
-        ctx.fillText(label, ax + dx * 0.5, ay + dy * 0.5 - 7);
+        ctx.fillText(formatCanvasText(label), mid.x, mid.y - 8);
       }
       ctx.restore();
     };
 
     if (mode === 'aerodynamics') {
       const GAS_PAL = {
-        CO2_g: { rgba: 'rgba(167, 139, 250, 0.34)', stroke: '#a78bfa', formula: 'CO₂ (M=44)' },
-        Cl2_g: { rgba: 'rgba(163, 230, 53, 0.34)', stroke: '#a3e635', formula: 'Cl₂ (M=71)' },
-        HCl_g: { rgba: 'rgba(52, 211, 153, 0.32)', stroke: '#34d399', formula: 'HCl (M=36.5)' },
-        NO2_g: { rgba: 'rgba(251, 146, 60, 0.34)', stroke: '#fb923c', formula: 'NO₂ (M=46)' },
-        O2_g: { rgba: 'rgba(56, 189, 248, 0.30)', stroke: '#38bdf8', formula: 'O₂ (M=32)' },
-        H2_g: { rgba: 'rgba(103, 232, 249, 0.34)', stroke: '#22d3ee', formula: 'H₂ (M=2)' },
-        NH3_g: { rgba: 'rgba(244, 114, 182, 0.34)', stroke: '#f472b6', formula: 'NH₃ (M=17)' },
+        CO2_g: { rgba: 'rgba(139, 92, 246, 0.34)', core: 'rgba(167, 139, 250, 0.72)', stroke: '#a78bfa', formula: 'CO₂ (M=44 ↓)' },
+        Cl2_g: { rgba: 'rgba(132, 204, 22, 0.34)', core: 'rgba(163, 230, 53, 0.72)', stroke: '#a3e635', formula: 'Cl₂ (M=71 ↓)' },
+        HCl_g: { rgba: 'rgba(16, 185, 129, 0.30)', core: 'rgba(52, 211, 153, 0.68)', stroke: '#34d399', formula: 'HCl (M=36.5 ↓)' },
+        NO2_g: { rgba: 'rgba(249, 115, 22, 0.34)', core: 'rgba(251, 146, 60, 0.72)', stroke: '#fb923c', formula: 'NO₂ (M=46 ↓)' },
+        NO_g: { rgba: 'rgba(245, 158, 11, 0.30)', core: 'rgba(251, 191, 36, 0.68)', stroke: '#fbbf24', formula: 'NO (M=30 ↓)' },
+        O2_g: { rgba: 'rgba(14, 165, 233, 0.28)', core: 'rgba(56, 189, 248, 0.64)', stroke: '#38bdf8', formula: 'O₂ (M=32 ↓)' },
+        H2_g: { rgba: 'rgba(6, 182, 212, 0.34)', core: 'rgba(34, 211, 238, 0.75)', stroke: '#22d3ee', formula: 'H₂ (M=2 ↑)' },
+        NH3_g: { rgba: 'rgba(236, 72, 153, 0.34)', core: 'rgba(244, 114, 182, 0.75)', stroke: '#f472b6', formula: 'NH₃ (M=17 ↑)' },
+        SO3_g: { rgba: 'rgba(244, 63, 94, 0.32)', core: 'rgba(251, 113, 133, 0.70)', stroke: '#fb7185', formula: 'SO₃ (M=80 ↓)' },
       };
       ctx.save();
+      ctx.fillStyle = this.isDark ? 'rgba(2, 6, 23, 0.26)' : 'rgba(15, 23, 42, 0.14)';
+      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+
+      let hasActiveFlow = false;
       for (const v of this.sim.items) {
         if (v.kind !== 'vessel' || v.isShattered) continue;
         const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
         const entries = Object.entries(v.headspaceGasMoles || {})
-          .map(([g, n]) => [g, (n || 0) + (v.lastGasRateMap?.[g] || 0) * 0.35])
+          .map(([g, n]) => [g, (n || 0) + (v.lastGasRateMap?.[g] || 0) * 0.45])
           .filter(([g, val]) => g !== 'H2O_g' && val > 1e-6);
         if (entries.length === 0) continue;
+        hasActiveFlow = true;
         entries.sort((a, b) => b[1] - a[1]);
         const [domGas] = entries[0];
         const pal = GAS_PAL[domGas] || GAS_PAL.O2_g;
         const molarMass = SPECIES[domGas]?.molarMass || 30;
         const isHeavy = molarMass >= 29;
-        const plumeY = isHeavy ? (v.isInverted ? v.y + spec.height * 0.2 : v.y + spec.height * 0.16) : v.y - spec.height * 0.25;
-
-        const pg = ctx.createRadialGradient(v.x, plumeY, 6, v.x, plumeY, spec.width * 0.65);
-        pg.addColorStop(0, pal.rgba);
-        pg.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = pg;
-        ctx.beginPath();
-        ctx.ellipse(v.x, plumeY, spec.width * 0.56, spec.height * 0.32, 0, 0, Math.PI * 2);
-        ctx.fill();
-
         const dirSign = v.tiltDir < 0 ? -1 : 1;
-        if (isHeavy && (v.tiltDeg || 0) >= 15) {
-          // Dense CO2 / Cl2 cascading waterfall over tilted lip down onto bench
-          const rad = (v.tiltDeg * Math.PI) / 180;
-          const pourX = v.x + dirSign * Math.sin(rad) * (spec.height * 0.45);
-          const cg = ctx.createLinearGradient(pourX, v.y, pourX, BENCH_FLOOR_Y);
-          cg.addColorStop(0, pal.rgba);
-          cg.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = cg;
+        const rad = ((v.tiltDeg || 0) * Math.PI) / 180;
+        const rimX = v.x + dirSign * Math.sin(rad) * (spec.height * 0.44);
+        const rimY = v.y - Math.cos(rad) * (spec.height * 0.44);
+        const scrollPhase = -(timeNow * 42);
+
+        if (isHeavy && (v.tiltDeg || 0) >= 12) {
+          const spreadG = ctx.createLinearGradient(rimX, rimY, rimX + dirSign * 40, BENCH_FLOOR_Y);
+          spreadG.addColorStop(0, pal.core);
+          spreadG.addColorStop(0.65, pal.rgba);
+          spreadG.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = spreadG;
           ctx.beginPath();
-          ctx.moveTo(pourX - 10, v.y);
-          ctx.lineTo(pourX + 18, v.y);
-          ctx.quadraticCurveTo(pourX + 24, BENCH_FLOOR_Y - 10, pourX + 52, BENCH_FLOOR_Y);
-          ctx.lineTo(pourX - 28, BENCH_FLOOR_Y);
+          ctx.moveTo(rimX - 12, rimY);
+          ctx.lineTo(rimX + 14, rimY);
+          ctx.bezierCurveTo(rimX + dirSign * 42, rimY + 40, rimX + dirSign * 75, BENCH_FLOOR_Y - 22, rimX + dirSign * 145, BENCH_FLOOR_Y);
+          ctx.lineTo(rimX - dirSign * 85, BENCH_FLOOR_Y);
+          ctx.bezierCurveTo(rimX - dirSign * 26, BENCH_FLOOR_Y - 18, rimX - 16, rimY + 35, rimX - 12, rimY);
           ctx.closePath();
           ctx.fill();
-          const dropPhase = (timeNow * 24) % 28;
-          drawConvArrow(pourX, v.y + dropPhase, dirSign * 4, 26, pal.stroke, pal.formula);
+
+          for (let s = -2; s <= 2; s++) {
+            const lat = s * 22 * dirSign;
+            const pts = [
+              { x: v.x + s * 4, y: rimY - 4 },
+              { x: rimX + s * 6 + dirSign * 12, y: rimY + 26 },
+              { x: rimX + dirSign * 28 + lat * 0.7, y: Math.min(BENCH_FLOOR_Y - 14, (rimY + BENCH_FLOOR_Y) * 0.55) },
+              { x: rimX + dirSign * 56 + lat * 1.4, y: BENCH_FLOOR_Y - 10 - Math.abs(s) * 4 },
+            ];
+            drawFlowStreamline(pts, pal.stroke, s === 0 ? 2.4 : 1.6, scrollPhase + s * 8, s === 0 ? pal.formula : '');
+          }
         } else if (isHeavy) {
-          drawConvArrow(v.x, v.y - 6 + ((timeNow * 14) % 12), 0, 20, pal.stroke, pal.formula);
+          const plumeY = v.y + spec.height * 0.12;
+          const pg = ctx.createRadialGradient(v.x, plumeY, 6, v.x, plumeY, spec.width * 0.85);
+          pg.addColorStop(0, pal.core);
+          pg.addColorStop(0.5, pal.rgba);
+          pg.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = pg;
+          ctx.beginPath();
+          ctx.ellipse(v.x, plumeY, spec.width * 0.78, spec.height * 0.42, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (!v.isStoppered && !v.isInverted) {
+            for (const side of [-1, 1]) {
+              const wv = Math.sin(timeNow * 2.2 + side) * 6;
+              drawFlowStreamline(
+                [
+                  { x: v.x + side * 6, y: v.y - spec.height * 0.34 },
+                  { x: v.x + side * (spec.width * 0.48 + 8), y: v.y - spec.height * 0.12 + wv },
+                  { x: v.x + side * (spec.width * 0.65 + 22), y: Math.min(BENCH_FLOOR_Y - 8, v.y + spec.height * 0.36) },
+                ],
+                pal.stroke,
+                1.7,
+                scrollPhase,
+                side === 1 ? pal.formula : ''
+              );
+            }
+          } else {
+            drawFlowStreamline(
+              [
+                { x: v.x, y: v.y - spec.height * 0.25 },
+                { x: v.x, y: v.y + spec.height * 0.22 },
+              ],
+              pal.stroke,
+              2.2,
+              scrollPhase,
+              pal.formula
+            );
+          }
         } else {
-          // Light gas H2 / NH3 shooting upward (accumulates in top dome of inverted vessels)
-          drawConvArrow(v.x, v.y - spec.height * 0.35 - ((timeNow * 22) % 18), 0, -24, pal.stroke, pal.formula);
+          const basePlumeY = v.y - spec.height * 0.45;
+          const domeG = ctx.createRadialGradient(v.x, basePlumeY - 35, 8, v.x, basePlumeY - 45, 110);
+          domeG.addColorStop(0, pal.core);
+          domeG.addColorStop(0.55, pal.rgba);
+          domeG.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = domeG;
+          ctx.beginPath();
+          ctx.ellipse(v.x, basePlumeY - 38, spec.width * 0.85, 88, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          for (let s = -1; s <= 1; s++) {
+            const sw = Math.sin(timeNow * 2.8 + s * 1.4) * 10;
+            const pts = [
+              { x: v.x + s * 8, y: v.y - spec.height * 0.1 },
+              { x: v.x + s * 18 + sw, y: basePlumeY - 12 },
+              { x: v.x + s * 34 - sw * 0.7, y: Math.max(24, basePlumeY - 62) },
+              { x: v.x + s * 52, y: Math.max(16, basePlumeY - 108) },
+            ];
+            drawFlowStreamline(pts, pal.stroke, s === 0 ? 2.4 : 1.7, scrollPhase + s * 7, s === 0 ? pal.formula : '');
+          }
         }
       }
+
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.78)';
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(10, 10, 224, 24, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = 'bold 10px ui-monospace, monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        formatCanvasText(
+          hasActiveFlow
+            ? this.langCode === 'en'
+              ? 'Aero: Reaction Gas Flow Only'
+              : 'Bá khí: Luồng khí phản ứng'
+            : this.langCode === 'en'
+            ? 'Aero: No Active Gas Evolution'
+            : 'Bá khí: Chưa có khí sinh ra'
+        ),
+        18,
+        22
+      );
       ctx.restore();
       return;
     }
 
     if (mode === 'thermal') {
-      const tempToFlirColor = (tempK, alpha = 0.62) => {
-        const c = tempK - 273.15;
-        if (c <= 0) return `rgba(79, 70, 229, ${alpha})`; // Indigo / Deep Blue (-10..0°C)
-        if (c <= 22) return `rgba(14, 165, 233, ${alpha})`; // Cool Cyan
-        if (c <= 45) return `rgba(16, 185, 129, ${alpha * 0.85})`; // Ambient Emerald
-        if (c <= 140) return `rgba(250, 204, 21, ${alpha})`; // Warm Yellow
-        if (c <= 420) return `rgba(239, 68, 68, ${Math.min(0.82, alpha * 1.15)})`; // Hot Red
-        return `rgba(255, 255, 240, ${Math.min(0.92, alpha * 1.3)})`; // White-Hot >420°C..1500°C
-      };
-      ctx.save();
-      ctx.fillStyle = 'rgba(15, 23, 58, 0.34)';
-      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
-
-      for (const it of this.sim.items) {
-        if (it.kind === 'bath') {
-          const bTempK = it.bathMode === 'ice_salt' ? 263.15 : 273.15;
-          const rg = ctx.createRadialGradient(it.x, it.y, 12, it.x, it.y, 105);
-          rg.addColorStop(0, tempToFlirColor(bTempK, 0.72));
-          rg.addColorStop(1, 'rgba(30, 27, 75, 0)');
-          ctx.fillStyle = rg;
-          ctx.beginPath();
-          ctx.arc(it.x, it.y, 105, 0, Math.PI * 2);
-          ctx.fill();
-        } else if (it.kind === 'burner' && (it.powerW || 0) > 0) {
-          const isBlueBunsen = it.typeId === 'bunsen_burner' && it.airHoleOpen !== false;
-          const plumeH = 85 + ((it.powerW || 0) / 1100) * 90;
-          const hg = ctx.createLinearGradient(it.x, it.y, it.x, it.y - plumeH);
-          hg.addColorStop(0, isBlueBunsen ? 'rgba(255, 255, 255, 0.88)' : 'rgba(239, 68, 68, 0.78)');
-          hg.addColorStop(0.55, 'rgba(250, 204, 21, 0.42)');
-          hg.addColorStop(1, 'rgba(239, 68, 68, 0)');
-          ctx.fillStyle = hg;
-          ctx.beginPath();
-          ctx.moveTo(it.x - 16, it.y - 12);
-          ctx.quadraticCurveTo(it.x - 30, it.y - plumeH * 0.6, it.x, it.y - plumeH);
-          ctx.quadraticCurveTo(it.x + 30, it.y - plumeH * 0.6, it.x + 16, it.y - 12);
-          ctx.closePath();
-          ctx.fill();
-        } else if (it.kind === 'vessel' && !it.isShattered) {
-          const spec = APPARATUS[it.typeId] || APPARATUS.beaker_250;
-          const rad = Math.max(spec.width, spec.height) * 0.66;
-          const vg = ctx.createRadialGradient(it.x, it.y + 8, 6, it.x, it.y + 8, rad);
-          vg.addColorStop(0, tempToFlirColor(it.tempK, 0.68));
-          vg.addColorStop(1, 'rgba(0, 0, 0, 0)');
-          ctx.fillStyle = vg;
-          ctx.beginPath();
-          ctx.arc(it.x, it.y + 8, rad, 0, Math.PI * 2);
-          ctx.fill();
-
-          if ((it.lastExothermicJ || 0) > 25) {
-            const exoR = 14 + Math.sin(timeNow * 8) * 3;
-            const eg = ctx.createRadialGradient(it.x, it.y + spec.height * 0.22, 1, it.x, it.y + spec.height * 0.22, exoR * 1.8);
-            eg.addColorStop(0, 'rgba(255, 255, 230, 0.92)');
-            eg.addColorStop(0.5, 'rgba(239, 68, 68, 0.65)');
-            eg.addColorStop(1, 'rgba(239, 68, 68, 0)');
-            ctx.fillStyle = eg;
-            ctx.beginPath();
-            ctx.arc(it.x, it.y + spec.height * 0.22, exoR * 1.8, 0, Math.PI * 2);
-            ctx.fill();
+      const GW = 96;
+      const GH = 54;
+      if (!this._thermalCanvas) {
+        this._thermalCanvas = document.createElement('canvas');
+        this._thermalCanvas.width = GW;
+        this._thermalCanvas.height = GH;
+        this._thermalCtx = this._thermalCanvas.getContext('2d');
+        this._thermalImgData = this._thermalCtx.createImageData(GW, GH);
+        this._thermalGrid = new Float32Array(GW * GH);
+        this._thermalGridTmp = new Float32Array(GW * GH);
+        this._flirLut = new Uint8Array(256 * 3);
+        const stops = [
+          [0.0, [14, 16, 128]],
+          [0.18, [29, 78, 216]],
+          [0.34, [6, 182, 212]],
+          [0.48, [34, 197, 94]],
+          [0.64, [250, 204, 21]],
+          [0.80, [249, 115, 22]],
+          [0.92, [239, 68, 68]],
+          [1.0, [255, 255, 255]],
+        ];
+        for (let i = 0; i < 256; i++) {
+          const u = i / 255;
+          let s0 = stops[0];
+          let s1 = stops[stops.length - 1];
+          for (let k = 0; k < stops.length - 1; k++) {
+            if (u >= stops[k][0] && u <= stops[k + 1][0]) {
+              s0 = stops[k];
+              s1 = stops[k + 1];
+              break;
+            }
           }
+          const span = Math.max(1e-5, s1[0] - s0[0]);
+          const f = (u - s0[0]) / span;
+          this._flirLut[i * 3] = Math.round(s0[1][0] + (s1[1][0] - s0[1][0]) * f);
+          this._flirLut[i * 3 + 1] = Math.round(s0[1][1] + (s1[1][1] - s0[1][1]) * f);
+          this._flirLut[i * 3 + 2] = Math.round(s0[1][2] + (s1[1][2] - s0[1][2]) * f);
         }
       }
 
-      // FLIR Color Spectrum Scale HUD bar top-left
-      const lg = ctx.createLinearGradient(14, 0, 174, 0);
-      lg.addColorStop(0, '#4f46e5');
-      lg.addColorStop(0.25, '#0ea5e9');
-      lg.addColorStop(0.45, '#10b981');
-      lg.addColorStop(0.68, '#facc15');
-      lg.addColorStop(0.86, '#ef4444');
-      lg.addColorStop(1, '#ffffff');
-      ctx.fillStyle = 'rgba(2, 6, 23, 0.78)';
+      const grid = this._thermalGrid;
+      const tmp = this._thermalGridTmp;
+      const ambC = (this.sim.environment?.tempK ?? 298.15) - 273.15;
+      for (let gy = 0; gy < GH; gy++) {
+        const wy = (gy / GH) * BENCH_LOGICAL_H;
+        const baseC = wy >= BENCH_FLOOR_Y ? ambC - 7.5 : ambC - (1 - gy / GH) * 3.5;
+        for (let gx = 0; gx < GW; gx++) {
+          grid[gy * GW + gx] = baseC;
+        }
+      }
+
+      const splatHeat = (cx, cy, rx, ry, targetC, strength = 0.85) => {
+        const minX = Math.max(0, Math.floor(((cx - rx * 1.5) / BENCH_LOGICAL_W) * GW));
+        const maxX = Math.min(GW - 1, Math.ceil(((cx + rx * 1.5) / BENCH_LOGICAL_W) * GW));
+        const minY = Math.max(0, Math.floor(((cy - ry * 1.5) / BENCH_LOGICAL_H) * GH));
+        const maxY = Math.min(GH - 1, Math.ceil(((cy + ry * 1.5) / BENCH_LOGICAL_H) * GH));
+        for (let gy = minY; gy <= maxY; gy++) {
+          const wy = ((gy + 0.5) / GH) * BENCH_LOGICAL_H;
+          const dy = (wy - cy) / Math.max(12, ry);
+          for (let gx = minX; gx <= maxX; gx++) {
+            const wx = ((gx + 0.5) / GW) * BENCH_LOGICAL_W;
+            const dx = (wx - cx) / Math.max(12, rx);
+            const d2 = dx * dx + dy * dy;
+            if (d2 > 2.25) continue;
+            const w = strength * Math.exp(-d2 * 1.45);
+            const idx = gy * GW + gx;
+            grid[idx] = grid[idx] * (1 - w) + targetC * w;
+          }
+        }
+      };
+
+      let obsMinC = ambC - 4;
+      let obsMaxC = ambC + 10;
+      for (const it of this.sim.items) {
+        if (it.isShattered || it.isBroken) continue;
+        if (it.kind === 'bath') {
+          const bC = it.bathMode === 'ice_salt' ? -10 : 0;
+          obsMinC = Math.min(obsMinC, bC);
+          splatHeat(it.x, it.y, 92, 52, bC, 0.94);
+          splatHeat(it.x, BENCH_FLOOR_Y + 6, 125, 22, (bC + ambC) * 0.5, 0.55);
+        } else if (it.kind === 'burner' && (it.powerW || 0) > 0) {
+          const isBlue = it.typeId === 'bunsen_burner' && it.airHoleOpen !== false;
+          const peakC = isBlue ? 1350 : 920;
+          obsMaxC = Math.max(obsMaxC, peakC);
+          const plumeH = 85 + ((it.powerW || 0) / 1100) * 115;
+          splatHeat(it.x, it.y - 12, 34, 34, peakC, 0.95);
+          splatHeat(it.x, it.y - plumeH * 0.55, 56, plumeH * 0.65, peakC * 0.55, 0.72);
+          splatHeat(it.x, it.y - plumeH * 1.05, 84, plumeH * 0.5, ambC + 180, 0.42);
+        } else if (it.kind === 'vessel') {
+          const spec = APPARATUS[it.typeId] || APPARATUS.beaker_250;
+          const vC = (it.tempK ?? 298.15) - 273.15;
+          obsMinC = Math.min(obsMinC, vC);
+          obsMaxC = Math.max(obsMaxC, vC);
+          splatHeat(it.x, it.y + 4, spec.width * 0.62, spec.height * 0.62, vC, 0.9);
+          if ((it.lastExothermicJ || 0) > 20) {
+            obsMaxC = Math.max(obsMaxC, vC + 95);
+            splatHeat(it.x, it.y + spec.height * 0.18, 36, 32, vC + 110, 0.85);
+          }
+        } else if (it.kind === 'spoon' && (it.tempK || 298.15) > 315) {
+          const sC = (it.tempK || 298.15) - 273.15;
+          obsMaxC = Math.max(obsMaxC, sC);
+          splatHeat(it.x, it.y, 44, 24, sC, 0.88);
+        } else if (it.kind === 'condenser' && it.waterFlowOn) {
+          obsMinC = Math.min(obsMinC, 14);
+          splatHeat(it.x, it.y, 58, 22, 14, 0.72);
+        }
+      }
+
+      for (let pass = 0; pass < 2; pass++) {
+        for (let gy = 0; gy < GH; gy++) {
+          for (let gx = 0; gx < GW; gx++) {
+            const c = grid[gy * GW + gx];
+            const l = grid[gy * GW + Math.max(0, gx - 1)];
+            const r = grid[gy * GW + Math.min(GW - 1, gx + 1)];
+            const u = grid[Math.max(0, gy - 1) * GW + gx];
+            const d = grid[Math.min(GH - 1, gy + 1) * GW + gx];
+            tmp[gy * GW + gx] = c * 0.4 + (l + r + u + d) * 0.15;
+          }
+        }
+        grid.set(tmp);
+      }
+
+      const pixels = this._thermalImgData.data;
+      const spanLow = -15;
+      const spanHigh = Math.max(120, obsMaxC);
+      const mapTempNorm = (c) => {
+        if (c <= 28) {
+          return Math.max(0.02, Math.min(0.28, ((c - spanLow) / (28 - spanLow)) * 0.28));
+        }
+        const hotFrac = Math.max(0, Math.min(1, (c - 28) / (spanHigh - 28)));
+        return 0.28 + Math.pow(hotFrac, 0.44) * 0.72;
+      };
+
+      for (let i = 0; i < GW * GH; i++) {
+        const idxLut = Math.max(0, Math.min(255, Math.round(mapTempNorm(grid[i]) * 255))) * 3;
+        const p = i * 4;
+        pixels[p] = this._flirLut[idxLut];
+        pixels[p + 1] = this._flirLut[idxLut + 1];
+        pixels[p + 2] = this._flirLut[idxLut + 2];
+        pixels[p + 3] = 212;
+      }
+      this._thermalCtx.putImageData(this._thermalImgData, 0, 0);
+
+      ctx.save();
+      const padV = Math.max(0, (this.viewOffsetY || 0) / Math.max(0.1, this.viewScale || 1)) + 8;
+      const padH = Math.max(0, (this.viewOffsetX || 0) / Math.max(0.1, this.viewScale || 1)) + 8;
+      const ambLut = Math.max(0, Math.min(255, Math.round(mapTempNorm(ambC - 2) * 255))) * 3;
+      ctx.fillStyle = `rgba(${this._flirLut[ambLut]}, ${this._flirLut[ambLut + 1]}, ${this._flirLut[ambLut + 2]}, 0.84)`;
+      ctx.fillRect(-padH, -padV, BENCH_LOGICAL_W + padH * 2, BENCH_LOGICAL_H + padV * 2);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(this._thermalCanvas, 0, 0, BENCH_LOGICAL_W, BENCH_LOGICAL_H);
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.34)';
+      ctx.lineWidth = 1.2;
+      for (const it of this.sim.items) {
+        const sp = APPARATUS[it.typeId];
+        if (!sp || it.isShattered || it.isBroken) continue;
+        ctx.beginPath();
+        ctx.roundRect(it.x - sp.width * 0.46, it.y - sp.height * 0.46, sp.width * 0.92, sp.height * 0.92, 6);
+        ctx.stroke();
+      }
+
+      const barX = BENCH_LOGICAL_W - 26;
+      const barTop = 58;
+      const barH = 190;
+      const vg = ctx.createLinearGradient(0, barTop, 0, barTop + barH);
+      vg.addColorStop(0.0, '#ffffff');
+      vg.addColorStop(0.14, '#ef4444');
+      vg.addColorStop(0.32, '#f97316');
+      vg.addColorStop(0.50, '#facc15');
+      vg.addColorStop(0.68, '#22c55e');
+      vg.addColorStop(0.84, '#06b6d4');
+      vg.addColorStop(1.0, '#0e1080');
+
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.72)';
       ctx.beginPath();
-      ctx.roundRect(10, 10, 174, 28, 6);
+      ctx.roundRect(barX - 24, barTop - 22, 42, barH + 44, 7);
       ctx.fill();
-      ctx.fillStyle = lg;
-      ctx.fillRect(16, 15, 162, 6);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 9px ui-monospace, monospace';
-      ctx.textAlign = 'left';
-      ctx.fillText('-10°C', 16, 33);
+      ctx.fillStyle = vg;
+      ctx.fillRect(barX, barTop, 10, barH);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(barX, barTop, 10, barH);
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 10px ui-monospace, monospace';
       ctx.textAlign = 'center';
-      ctx.fillText('FLIR', 97, 33);
-      ctx.textAlign = 'right';
-      ctx.fillText('1500°C', 178, 33);
+      ctx.fillText('+', barX + 5, barTop - 9);
+      ctx.fillText('-', barX + 5, barTop + barH + 13);
+
+      if (this.pointerLogical) {
+        const gx = Math.max(0, Math.min(GW - 1, Math.floor((this.pointerLogical.x / BENCH_LOGICAL_W) * GW)));
+        const gy = Math.max(0, Math.min(GH - 1, Math.floor((this.pointerLogical.y / BENCH_LOGICAL_H) * GH)));
+        const spotC = grid[gy * GW + gx];
+        const spotTxt = formatCanvasText(`${spotC.toFixed(1)}°C`);
+        ctx.fillStyle = 'rgba(2, 6, 23, 0.84)';
+        ctx.strokeStyle = '#facc15';
+        ctx.beginPath();
+        ctx.roundRect(10, 10, 118, 24, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#fde047';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(formatCanvasText(`FLIR ${obsMaxC.toFixed(0)}°C | ${spotTxt}`), 16, 22);
+      }
       ctx.restore();
     }
   }

@@ -81,8 +81,8 @@ function buildEscapedGasVerticalHtml(item, env, t) {
   for (const g of GAS_DISPLAY_META) {
     const mol = escapedMap[g.id] || 0;
     const volMl = ((mol * CONSTANTS.R_L_BAR_MOL_K * tempK) / pBar) * 1000;
-    if (volMl <= 0.005) continue; // Only show gases physically present (V > 0 mL)
     const rateMolS = rateMap[g.id] || 0;
+    if (volMl <= 0.005 && rateMolS <= 1e-7) continue; // Only show gases physically present or evolving
     const rateMmolS = rateMolS * 1000;
     const rateMlS = ((rateMolS * CONSTANTS.R_L_BAR_MOL_K * tempK) / pBar) * 1000;
     activeRows.push(`
@@ -317,6 +317,9 @@ export class InspectorPanel {
       const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered).length;
       return `spn|${item.id}|${item.flippedX ? 1 : 0}|${spKeys}|${vCnt}|${langCode}|${logLen}`;
     }
+    if (item.kind === 'bath') {
+      return `bath|${item.id}|${item.isBroken ? 1 : 0}|${item.bathMode || 'ice'}|${langCode}|${logLen}`;
+    }
     return `other|${item.id}|${langCode}|${logLen}`;
   }
 
@@ -351,12 +354,15 @@ export class InspectorPanel {
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div>
-              <div class="text-sm font-bold">🧊 ${t('eq_ice_bath')} ${item.label}</div>
+              <div class="text-sm font-bold">🧊 ${t('eq_ice_bath')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
               <div class="text-[11px] text-muted">${APPARATUS.ice_bath?.materialSpec || ''}</div>
             </div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
           </div>
-          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex items-center justify-between">
+          ${
+            item.isBroken
+              ? `<p class="text-xs text-red-400 font-medium">${t('alertToolBreak')}</p>`
+              : `<div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex items-center justify-between">
             <span class="text-muted">${t('metricTemp')}</span>
             <strong class="font-mono text-sky-400">${(bathC + 273.15).toFixed(1)} K (${bathC}°C)</strong>
           </div>
@@ -376,6 +382,7 @@ export class InspectorPanel {
             nestedVessels.length > 0
               ? `<div class="text-xs text-sky-300 font-mono">📥 ${nestedVessels.map((v) => `${v.label} (${kelvinToCelsius(v.tempK).toFixed(1)}°C)`).join(', ')}</div>`
               : ''
+          }`
           }
         </div>
       `;
@@ -1510,18 +1517,19 @@ export class InspectorPanel {
                 <span>${t('tubeHoldNote')}</span>
                 <strong class="font-mono">${t(APPARATUS[connTarget.typeId].i18nKey)} ${connTarget.label}</strong>
               </div>`
-            : `<div class="px-3 py-2 rounded-lg border border-theme bg-surface-alt text-xs flex flex-col gap-1.5">
-                <div class="flex items-center justify-between gap-2">
-                  <span class="text-muted font-semibold">${t('gasEscapedNote')}</span>
-                  <span class="font-mono text-[11px] text-amber-400" id="live-escaped-gas-temp">${
-                    item.lastGasOutTempK
-                      ? `${t('gasOutTempTag')} ${kelvinToCelsius(item.lastGasOutTempK).toFixed(1)}°C`
-                      : ''
-                  }</span>
-                </div>
-                <div id="live-escaped-gas">${buildEscapedGasVerticalHtml(item, this.sim.environment, t)}</div>
-              </div>`
+            : ''
         }
+        <div class="px-3 py-2 rounded-lg border border-theme bg-surface-alt text-xs flex flex-col gap-1.5">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-muted font-semibold">${t('gasEscapedNote')}</span>
+            <span class="font-mono text-[11px] text-amber-400" id="live-escaped-gas-temp">${
+              item.lastGasOutTempK
+                ? `${t('gasOutTempTag')} ${kelvinToCelsius(item.lastGasOutTempK).toFixed(1)}°C`
+                : ''
+            }</span>
+          </div>
+          <div id="live-escaped-gas">${buildEscapedGasVerticalHtml(item, this.sim.environment, t)}</div>
+        </div>
         ${(() => {
           const headGases = Object.entries(item.headspaceGasMoles || {}).filter(([g, n]) => g !== 'H2O_g' && (n || 0) > 1e-6);
           if (headGases.length === 0) return '';
@@ -1941,8 +1949,17 @@ export class InspectorPanel {
           });
           menu.appendChild(btn);
           document.body.appendChild(menu);
-          const closeMenu = () => { menu.remove(); window.removeEventListener('pointerdown', closeMenu); };
-          setTimeout(() => window.addEventListener('pointerdown', closeMenu), 10);
+          const closeMenu = (ev) => {
+            if (ev && ev.target instanceof Node && menu.contains(ev.target)) return;
+            menu.remove();
+            window.removeEventListener('pointerdown', closeMenu, { capture: true });
+            window.removeEventListener('keydown', onEsc);
+          };
+          const onEsc = (ev) => {
+            if (ev.key === 'Escape') closeMenu();
+          };
+          window.addEventListener('pointerdown', closeMenu, { capture: true });
+          window.addEventListener('keydown', onEsc);
         });
       });
     } else if (item.kind === 'filter_funnel' || item.kind === 'condenser' || item.kind === 'burette') {

@@ -416,7 +416,7 @@ export const APPARATUS = {
     id: 'ice_bath',
     kind: 'bath',
     category: 'thermal',
-    breakable: false,
+    breakable: true,
     i18nKey: 'eq_ice_bath',
     isoStandard: 'Thermostatic Ice / Ice-NaCl Cooling Bath (0 °C / -10 °C)',
     materialSpec: 'Insulated Double-Wall Borosilicate + Cooling Jacket',
@@ -427,7 +427,7 @@ export const APPARATUS = {
     coolingK: 0.28,
     bathTempIceK: 273.15,
     bathTempSaltK: 263.15,
-    fragilityDropPx: Infinity,
+    fragilityDropPx: 230,
   },
   crucible_porcelain: {
     id: 'crucible_porcelain',
