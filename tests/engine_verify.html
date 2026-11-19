@@ -2462,7 +2462,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.17';
+      const expectedBuild = 'virlab_beta_v3+build.18';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -6963,7 +6963,7 @@
       );
     }
 
-    // TEST 152: Prompt 34 — Paused Visual Continuity, Ctrl/SOS Themes & Visible Thermometer Draw
+    // TEST 152: Prompt 34 — Full Freeze When Paused, Ctrl/SOS Themes & Visible Thermometer Draw
     {
       const simP = new LabSimulation();
       const bStir = simP.createApparatus('beaker_250', 260, 427);
@@ -6975,8 +6975,8 @@
       const phase1 = bStir.stirBarPhase || 0;
       const thP = simP.createApparatus('thermometer', 420, 400);
       assert(
-        'Paused simulation continues advancing stirBarPhase visual motion cleanly while freezing chemistry, and Ctrl/SOS theme + thermometer present',
-        phase1 > phase0 && Boolean(I18N.vi.themeCtrl && I18N.vi.themeSos) && thP.kind === 'thermometer',
+        'Paused simulation freezes stirBarPhase and all chemistry/physics completely, and Ctrl/SOS theme + thermometer present',
+        phase1 === phase0 && Boolean(I18N.vi.themeCtrl && I18N.vi.themeSos) && thP.kind === 'thermometer',
         `dPhase=${(phase1 - phase0).toFixed(2)}, thermId=${thP.id}`
       );
     }

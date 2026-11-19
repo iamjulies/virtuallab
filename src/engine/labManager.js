@@ -574,7 +574,7 @@ export class LabManager {
     const active = this.labs[this.activeIndex];
     if (active) {
       active.sim.step(dt);
-      active.particles.update(dt * (active.sim.environment.paused ? 1 : active.sim.environment.speed));
+      active.particles.update(dt * (active.sim.environment.paused ? 0 : active.sim.environment.speed));
     }
 
     let bgNotified = false;

@@ -5339,26 +5339,7 @@ export class LabSimulation {
       }
     }
 
-    if (this.environment.paused) {
-      // Keep purely visual animations alive when paused (stir bar spin, flames, bubbling/condenser/electrode visuals) without changing stoichiometry
-      for (const it of this.items) {
-        if (it.kind === 'vessel') {
-          if ((it.magStirRpm || 0) > 0 && it.hasStirBar && !it.isFrozenSolid) {
-            it.stirBarPhase = (it.stirBarPhase || 0) + (it.magStirRpm / 60) * Math.PI * 2 * realDeltaSec;
-          }
-          if (this.visualHooks.onParticlesNeeded && it._lastVisualMetrics) {
-            this.visualHooks.onParticlesNeeded(it, it._lastVisualMetrics);
-          }
-        } else if (this.visualHooks.onParticlesNeeded) {
-          if (it.kind === 'condenser' && it.activeDrop) {
-            this.visualHooks.onParticlesNeeded(it, { rateMlS: it.distillRateMlS });
-          } else if (it.kind === 'electrode' && it.gasBubbleType && (it.gasBubbleRate || 0) > 1e-7) {
-            this.visualHooks.onParticlesNeeded(it, { gasId: it.gasBubbleType, rateMolS: it.gasBubbleRate });
-          }
-        }
-      }
-      return;
-    }
+    if (this.environment.paused) return;
 
     this.condenseEscapedVaporInCryo();
 

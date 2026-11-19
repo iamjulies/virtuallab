@@ -94,7 +94,7 @@ const subscribedSims = new WeakSet();
 const labManager = new LabManager({
   onActiveParticlesNeeded: (vessel, metrics) => {
     const activeLab = labManager.getActiveLab();
-    const spd = activeLab.sim.environment.paused ? 1 : activeLab.sim.environment.speed;
+    const spd = activeLab.sim.environment.paused ? 0 : activeLab.sim.environment.speed;
     activeLab.particles.emitForVessel(vessel, metrics, lastFrameDt * spd);
   },
   onAlert: (_idx, type, vessel, meta) => {
@@ -1688,6 +1688,7 @@ refreshChrome(true);
 
 // 60 FPS Animation & Physics Loop (active lab 60 FPS, background labs ~15 Hz batched)
 let prevMs = performance.now();
+let renderClockSec = prevMs / 1000;
 let uiSyncAccum = 0;
 
 function frame(nowMs) {
@@ -1695,10 +1696,14 @@ function frame(nowMs) {
   prevMs = nowMs;
   lastFrameDt = dt;
 
+  if (!sim.environment.paused) {
+    renderClockSec += dt;
+  }
+
   workbench.tickInteractivePour(dt);
   labManager.stepAllLabs(dt, () => renderLabTabs(getTranslator()));
   soundEngine.stepContinuous(sim, dt);
-  workbench.render(nowMs / 1000);
+  workbench.render(renderClockSec);
 
   // Sync live telemetry numbers at ~15 Hz so UI is snappy without over-rendering
   uiSyncAccum += dt;
