@@ -309,6 +309,8 @@ export class ParticleSystem {
       C2H5Cl_g: metrics.gasRateC2H5Cl || 0,
       NH3_g: metrics.gasRateNH3 || 0,
       NO2_g: metrics.gasRateNO2 || 0,
+      SO2_g: metrics.gasRateSO2 || 0,
+      H2S_g: metrics.gasRateH2S || 0,
       NO_g: metrics.gasRateNO || 0,
     };
     const nH = vessel.moles.H_aq || 0;

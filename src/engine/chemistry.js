@@ -194,6 +194,7 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
 
   if (rxn.type === 'dissolution') {
     if (!hasWater || iceMob <= 0) return 0;
+    if (computeSulfuricAcidState(moles).w >= 0.75) return 0;
     const nSolid = moles[rxn.solidId] || 0;
     const waterMassKg = (moles.H2O_l * SPECIES.H2O_l.molarMass) / 1000;
     const etohMassKg = ((moles.C2H5OH_l || 0) * SPECIES.C2H5OH_l.molarMass) / 1000;
@@ -201,6 +202,7 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     let saltingMult = 1.0;
     let gardenSlow = 1.0;
     if (rxn.solidId === 'CuSO4_5H2O_s' || rxn.solidId === 'CuSO4_s') {
+      if (computeSulfuricAcidState(moles).w >= 0.72) return 0;
       const totalSolvKg = waterMassKg + etohMassKg;
       const etohWtFrac = totalSolvKg > 1e-9 ? etohMassKg / totalSolvKg : 0;
       if (etohWtFrac > 0.05) {
@@ -757,6 +759,15 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     return Math.min(nCaO, nW, k * Math.max(1e-4, area) * 42.0);
   }
 
+  if (rxn.type === 'dissolve_solid') {
+    if (!hasWater || iceMob <= 0) return 0;
+    if (computeSulfuricAcidState(moles).w >= 0.75) return 0;
+    const nSolid = moles[rxn.solidId] || 0;
+    if (nSolid <= 1e-10 || (moles.H2O_l || 0) < 0.02) return 0;
+    const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, vessel.particleCounts?.[rxn.solidId] ?? 12);
+    return rxn.k298 * arrheniusFactor(rxn.eaJ || 8000, T) * Math.max(1e-5, area) * stirBoost * iceMob * 40.0;
+  }
+
   if (rxn.type === 'heterogeneous_acid_salt') {
     if (!hasWater || iceMob <= 0) return 0;
     const nSolid = moles[rxn.solidId] || 0;
@@ -765,7 +776,17 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     const pCount = vessel.particleCounts?.[rxn.solidId] ?? 6;
     const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, pCount);
     const k = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
-    return Math.min(nSolid, (moles[rxn.aqueousId] || 0) / 2, k * Math.max(1e-5, area) * Math.min(12.0, cH) * 6.5 * iceMob);
+    // CaSO4 crust passivation on coarse CaCO3 in sulfate-bearing media (does not halt ground powder or HCl)
+    let sulfatePassivMult = 1.0;
+    if (rxn.solidId === 'CaCO3_s') {
+      const nSO4Tot = (moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0) + (moles.CaSO4_s || 0);
+      const isFineCaCO3 = Boolean(vessel.groundPowderMap?.CaCO3_s) || pCount >= 36;
+      if (nSO4Tot > 1e-4 && ((moles.CaSO4_s || 0) > 2e-5 || (moles.SO4_2_aq || 0) / liquidVolL > 0.15)) {
+        const coatRatio = Math.min(1, ((moles.CaSO4_s || 0) * 18.0) / Math.max(0.01, nSolid));
+        sulfatePassivMult = isFineCaCO3 ? Math.max(0.35, 1 - 0.55 * coatRatio) : Math.max(0.015, 1 - 0.96 * coatRatio);
+      }
+    }
+    return Math.min(nSolid, (moles[rxn.aqueousId] || 0) / 2, k * Math.max(1e-5, area) * Math.min(12.0, cH) * 6.5 * iceMob * sulfatePassivMult);
   }
 
   if (rxn.type === 'excess_co2_bicarb') {
@@ -796,6 +817,15 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     const cSO4 = (moles.SO4_2_aq || 0) / liquidVolL;
     if (cCa * cSO4 <= (rxn.kspThreshold || 0.00025)) return 0;
     const excessExt = Math.min(moles.Ca2_aq || 0, moles.SO4_2_aq || 0) * 0.85;
+    return excessExt * getEffectiveRateConstant(rxn, T, false) * iceMob;
+  }
+
+  if (rxn.type === 'sparing_salt_ppt_ag2so4') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const cAg = (moles.Ag_aq || 0) / liquidVolL;
+    const cSO4 = (moles.SO4_2_aq || 0) / liquidVolL;
+    if (cAg * cAg * cSO4 <= (rxn.kspThreshold || 1.4e-5)) return 0;
+    const excessExt = Math.min((moles.Ag_aq || 0) / 2, moles.SO4_2_aq || 0) * 0.72;
     return excessExt * getEffectiveRateConstant(rxn, T, false) * iceMob;
   }
 
@@ -869,10 +899,81 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     return (nAcid / 4) * (rxn.k298 || 0.085) * concScale * (thermalDrive + uvDrive) * iceMob;
   }
 
+  if (rxn.type === 'h2so4_hydrate') {
+    const nH2SO4L = moles.H2SO4_l || 0;
+    const nW = moles.H2O_l || 0;
+    if (nH2SO4L <= 1e-10 || nW <= 1e-6 || iceMob <= 0) return 0;
+    // Stay molecular when bulk mass fraction w >= 0.78; hydrate vigorously into ions + heat below 78% w/w
+    if (computeSulfuricAcidState(moles).w >= 0.78) return 0;
+    return nH2SO4L * 16.0 * iceMob;
+  }
+
+  if (rxn.type === 'h2so4_nacl_hcl') {
+    const sulf = computeSulfuricAcidState(moles);
+    if (sulf.w < 0.65) return 0;
+    const nNaCl = moles.NaCl_s || 0;
+    const nAcidL = moles.H2SO4_l || 0;
+    if (nNaCl <= 1e-10 || nAcidL <= 1e-10) return 0;
+    const area = computeSolidSurfaceAreaM2('NaCl_s', nNaCl, vessel.particleCounts?.NaCl_s ?? 12);
+    const tierMult = sulf.tier === 'conc_98' ? 1.65 : 0.75;
+    return rxn.k298 * arrheniusFactor(rxn.eaJ || 26000, T) * Math.max(1e-4, area) * tierMult * 22.0;
+  }
+
+  if (rxn.type === 'h2so4_nahso4_nacl') {
+    if (T < (rxn.minTempK || 450.15)) return 0;
+    const nNaCl = moles.NaCl_s || 0;
+    const nNaHSO4 = moles.NaHSO4_s || 0;
+    if (nNaCl <= 1e-10 || nNaHSO4 <= 1e-10) return 0;
+    return Math.min(nNaCl, nNaHSO4) * rxn.k298 * arrheniusFactor(rxn.eaJ || 34000, T - 450.15 + CONSTANTS.T_STD_K);
+  }
+
+  if (rxn.type === 'h2so4_conc_salt' || rxn.type === 'h2so4_conc_base') {
+    const nAcidL = moles.H2SO4_l || 0;
+    if (nAcidL <= 1e-10) return 0;
+    let minExt = nAcidL;
+    for (const [spId, st] of Object.entries(rxn.reactants)) {
+      minExt = Math.min(minExt, (moles[spId] || 0) / st);
+    }
+    if (minExt <= 1e-11) return 0;
+    // CaCO3 in conc H2SO4 forms an insulating CaSO4 shell on coarse pieces
+    let coatMult = 1.0;
+    if (rxn.solidId === 'CaCO3_s') {
+      const isFine = Boolean(vessel.groundPowderMap?.CaCO3_s) || (vessel.particleCounts?.CaCO3_s ?? 6) >= 36;
+      const coatRatio = Math.min(1, ((moles.CaSO4_s || 0) * 18.0) / Math.max(0.01, moles.CaCO3_s || 0.01));
+      coatMult = isFine ? Math.max(0.3, 1 - 0.6 * coatRatio) : Math.max(0.02, 1 - 0.94 * coatRatio);
+    }
+    return minExt * rxn.k298 * arrheniusFactor(rxn.eaJ || 18000, T) * coatMult;
+  }
+
+  if (rxn.type === 'h2so4_dehydrate_cuso4') {
+    const sulf = computeSulfuricAcidState(moles);
+    if (sulf.w < 0.80 || (moles.CuSO4_5H2O_s || 0) <= 1e-10) return 0;
+    const tierBoost = sulf.tier === 'conc_98' ? 1.5 : 0.7;
+    return (moles.CuSO4_5H2O_s || 0) * rxn.k298 * arrheniusFactor(rxn.eaJ || 18000, T) * tierBoost;
+  }
+
+  if (rxn.type === 'h2so4_peroxide') {
+    const sulf = computeSulfuricAcidState(moles);
+    if (sulf.w < 0.55 || (moles.H2O2_aq || 0) <= 1e-9) return 0;
+    if (sulf.w < 0.78 && T < 313.15) return 0;
+    const concBoost = sulf.w >= 0.85 ? 2.2 : 1.0;
+    return ((moles.H2O2_aq || 0) / 2) * rxn.k298 * arrheniusFactor(rxn.eaJ || 26000, T) * concBoost;
+  }
+
+  if (rxn.type === 'metal_h2so4_redox') {
+    // Unified Sulfuric Acid Concentration-Tier Metal Solver runs in stepMetalSulfuricSolver()
+    return 0;
+  }
+
   if (rxn.type === 'metal_nonox_acid') {
     if (!hasWater || iceMob <= 0) return 0;
     if (hasNitrateOxidizingEnv(moles, liquidVolL)) return 0;
+    const sulf = computeSulfuricAcidState(moles);
     const solidId = rxn.solidId || 'Fe_s';
+    if (sulf.tier === 'conc' || sulf.tier === 'conc_98') {
+      return 0; // Handled cleanly by stepMetalSulfuricSolver (Fe passivated cold / SO2 hot; Zn -> SO2)
+    }
+    const midBlend = sulf.tier === 'mid' ? Math.max(0.12, 1 - (sulf.w - 0.20) / 0.45) : 1.0;
     const nSolid = moles[solidId] || 0;
     const nH = moles.H_aq || 0;
     if (nSolid <= 1e-10 || nH <= 1e-10) return 0;
@@ -883,7 +984,7 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     const area = computeSolidSurfaceAreaM2(solidId, nSolid, isFine ? Math.max(pCount, 65) : pCount);
     const fineBoost = isFine ? 2.4 : 1.0;
     const kEff = getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0);
-    return kEff * area * fineBoost * Math.min(8.0, cH) * 2.8 * iceMob;
+    return kEff * area * fineBoost * Math.min(8.0, cH) * 2.8 * iceMob * midBlend;
   }
 
   if (rxn.type === 'metal_hno3_redox') {
@@ -1789,10 +1890,12 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   H2CO3_aq: { H2O_g: 1, CO2_g: 1 },
   NH3_aq: { NH3_g: 1 },
   NO2_aq: { NO2_g: 1 },
+  SO2_aq: { SO2_g: 1 },
 };
 
 export const DRY_SALT_PAIRINGS = [
   ['Ag_aq', 1, 'Cl_aq', 1, 'AgCl_s', 1, false],
+  ['Ag_aq', 2, 'SO4_2_aq', 1, 'Ag2SO4_s', 1, false],
   ['Ag_aq', 2, 'CO3_2_aq', 1, 'Ag2CO3_s', 1, false],
   ['Ag_aq', 1, 'NO3_aq', 1, 'AgNO3_s', 1, false],
   ['Ba2_aq', 1, 'SO4_2_aq', 1, 'BaSO4_s', 1, false],
@@ -1829,12 +1932,14 @@ export const DRY_SALT_PAIRINGS = [
   ['Na_aq', 1, 'Cl_aq', 1, 'NaCl_s', 1, false],
   ['Na_aq', 1, 'ClO_aq', 1, 'NaClO_s', 1, false],
   ['Na_aq', 2, 'SO4_2_aq', 1, 'Na2SO4_s', 1, false],
+  ['Na_aq', 1, 'HSO4_aq', 1, 'NaHSO4_s', 1, false],
   ['Na_aq', 1, 'NO3_aq', 1, 'NaNO3_s', 1, false],
   ['Na_aq', 1, 'C2H5O_aq', 1, 'C2H5ONa_s', 1, false],
   ['Na_aq', 1, 'OH_aq', 1, 'NaOH_s', 1, false],
   ['NH4_aq', 1, 'Cl_aq', 1, 'NH4Cl_s', 1, false],
   ['NH4_aq', 1, 'NO3_aq', 1, 'NH4NO3_s', 1, false],
   ['NH4_aq', 2, 'SO4_2_aq', 1, 'NH4_2_SO4_s', 1, false],
+  ['NH4_aq', 1, 'HSO4_aq', 1, 'NH4HSO4_s', 1, false],
   ['H_aq', 1, 'OH_aq', 1, 'H2O_g', 1, true],
   ['H_aq', 1, 'Cl_aq', 1, 'HCl_g', 1, true],
   ['H_aq', 1, 'NO3_aq', 1, 'HNO3_g', 1, true],
@@ -1852,6 +1957,7 @@ export function enforceDryPhaseBoundary(vessel) {
     (moles.H2O_l || 0) > 1e-7 ||
     (moles.C2H5OH_l || 0) > 1e-7 ||
     (moles.HNO3_l || 0) > 1e-7 ||
+    (moles.H2SO4_l || 0) > 1e-7 ||
     (moles.H2O_s || 0) > 1e-7
   ) {
     return { gasProduced };
@@ -2060,6 +2166,26 @@ export const NITRATE_PRODUCTS = {
   'NH4+': { id: 'NH4+', speciesId: 'NH4_aq', formula: 'NH₄⁺', isGas: false, ep: 8, kN: 1, hP: 10 },
 };
 
+/**
+ * Classify Sulfuric acid mass fraction & concentration tier:
+ * low (<20%), mid (20-65%), conc (65-90%), conc_98 (>=90%).
+ */
+export function computeSulfuricAcidState(moles) {
+  if (!moles) return { nAcidEq: 0, w: 0, tier: 'none' };
+  const nH2SO4L = moles.H2SO4_l || 0;
+  const nSO4Tot = (moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0);
+  const nHTot = (moles.H_aq || 0) + (moles.HSO4_aq || 0);
+  const nH2SO4Aq = Math.min(nSO4Tot, nHTot * 0.5);
+  const nAcidEq = nH2SO4L + nH2SO4Aq;
+  if (nAcidEq <= 1e-8) return { nAcidEq: 0, w: 0, tier: 'none' };
+  const mAcidG = nAcidEq * CONSTANTS.M_H2SO4;
+  const mWaterG = (moles.H2O_l || 0) * CONSTANTS.M_H2O;
+  const denom = mAcidG + mWaterG;
+  const w = denom > 1e-9 ? mAcidG / denom : 1.0;
+  const tier = w >= 0.90 ? 'conc_98' : w >= 0.65 ? 'conc' : w >= 0.20 ? 'mid' : 'low';
+  return { nAcidEq, w, tier };
+}
+
 export function hasNitrateOxidizingEnv(moles, liquidVolL) {
   if (!moles || !(liquidVolL > 1e-6)) return false;
   return (moles.H_aq || 0) / liquidVolL > 0.01 && (moles.NO3_aq || 0) / liquidVolL > 0.01;
@@ -2258,6 +2384,184 @@ function stepMetalNitrateSolver(vessel, liquidVolL, dt, activeReactions, gasProd
         rateMolS: reactedTotal / Math.max(1e-4, dt),
         vigorousGas: dominantProduct.isGas,
         dXi: reactedTotal,
+      });
+    }
+  }
+
+  return totalHeatJ;
+}
+
+/**
+ * Sulfuric Acid Concentration-Tier Redox Solver for Zn, Fe, Cu across mid (20-65%), conc (65-90%), conc_98 (>=90%).
+ * - Fe passivates in cold conc H2SO4 (>= 65%, T < 50 °C) and reacts on heating yielding Fe3+ + SO2.
+ * - Zn yields SO2 in conc/hot H2SO4 and blends H2/SO2 (+ trace S/H2S when hot) in mid 20-65% tier.
+ * - Cu dissolves in hot conc H2SO4 (>= 65%, T >= 70 °C) yielding Cu2+ + SO2.
+ */
+function stepMetalSulfuricSolver(vessel, liquidVolL, dt, activeReactions, gasProduced) {
+  const moles = vessel.moles;
+  if (liquidVolL <= 1e-6 || hasNitrateOxidizingEnv(moles, liquidVolL)) return 0;
+  const sulf = computeSulfuricAcidState(moles);
+  if (sulf.nAcidEq <= 1e-8 || sulf.tier === 'low') return 0;
+  const iceMob = computeIceMobilityFactor(vessel);
+  if (iceMob <= 0) return 0;
+
+  const T = vessel.tempK;
+  const stirBoost = vessel.stirTimer > 0 ? 2.6 : 1.0;
+  let totalHeatJ = 0;
+
+  // Consume nEq mol of H2SO4 equivalents from molecular H2SO4_l first, then aqueous H+ + sulfate
+  const consumeH2SO4Eq = (reqEq) => {
+    let rem = reqEq;
+    const nL = moles.H2SO4_l || 0;
+    if (nL > 1e-13 && rem > 0) {
+      const takeL = Math.min(nL, rem);
+      moles.H2SO4_l = nL - takeL;
+      if (moles.H2SO4_l < 1e-14) delete moles.H2SO4_l;
+      rem -= takeL;
+    }
+    if (rem > 1e-13) {
+      const availAq = Math.min((moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0), ((moles.H_aq || 0) + (moles.HSO4_aq || 0)) * 0.5);
+      const takeAq = Math.min(availAq, rem);
+      if (takeAq > 1e-13) {
+        // Draw HSO4_aq first (supplies 1 H+ + 1 SO4), plus H_aq + SO4_2_aq for remainder
+        let needH = 2 * takeAq;
+        let needS = takeAq;
+        const takeHSO4 = Math.min(moles.HSO4_aq || 0, needH, needS);
+        if (takeHSO4 > 1e-14) {
+          moles.HSO4_aq = (moles.HSO4_aq || 0) - takeHSO4;
+          if (moles.HSO4_aq < 1e-14) delete moles.HSO4_aq;
+          needH -= takeHSO4;
+          needS -= takeHSO4;
+        }
+        if (needH > 1e-14) {
+          moles.H_aq = Math.max(0, (moles.H_aq || 0) - needH);
+          if (moles.H_aq < 1e-14) delete moles.H_aq;
+        }
+        if (needS > 1e-14) {
+          moles.SO4_2_aq = Math.max(0, (moles.SO4_2_aq || 0) - needS);
+          if (moles.SO4_2_aq < 1e-14) delete moles.SO4_2_aq;
+        }
+        rem -= takeAq;
+      }
+    }
+    return reqEq - rem;
+  };
+
+  const getAvailAcidEq = () => {
+    const nL = moles.H2SO4_l || 0;
+    const availAq = Math.min((moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0), ((moles.H_aq || 0) + (moles.HSO4_aq || 0)) * 0.5);
+    return nL + availAq;
+  };
+
+  // 1. Iron (Fe_s) in conc/hot H2SO4
+  const nFe = moles.Fe_s || 0;
+  if (nFe > 1e-10) {
+    if (sulf.w >= 0.65 && T < 323.15) {
+      vessel.fePassivated = true;
+    } else if (sulf.w >= 0.65 && T >= 323.15) {
+      vessel.fePassivated = false;
+      const pCount = vessel.particleCounts?.Fe_s ?? 4;
+      const isFine = Boolean(vessel.groundPowderMap?.Fe_s) || pCount >= 18;
+      const area = computeSolidSurfaceAreaM2('Fe_s', nFe, isFine ? Math.max(pCount, 60) : pCount);
+      const k = 0.28 * arrheniusFactor(30000, T) * (isFine ? 1.85 : 1.0) * stirBoost * iceMob;
+      const dFe = Math.min(nFe, getAvailAcidEq() / 3, k * Math.max(1e-5, area) * 3.8 * dt);
+      if (dFe > 1e-12) {
+        const usedAcid = consumeH2SO4Eq(3 * dFe);
+        const effFe = usedAcid / 3;
+        moles.Fe_s = Math.max(0, nFe - effFe);
+        if (moles.Fe_s < 1e-13) delete moles.Fe_s;
+        moles.Fe3_aq = (moles.Fe3_aq || 0) + effFe;
+        moles.SO4_2_aq = (moles.SO4_2_aq || 0) + 1.5 * effFe;
+        moles.H2O_l = (moles.H2O_l || 0) + 3 * effFe;
+        gasProduced.SO2_g = (gasProduced.SO2_g || 0) + 1.5 * effFe;
+        totalHeatJ += 230000 * effFe;
+        activeReactions.push({
+          id: 'fe_h2so4_conc_hot',
+          equation: '2Fe(s) + 6H₂SO₄(đặc, nóng) → Fe₂(SO₄)₃ + 3SO₂(g)↑ + 6H₂O(l)',
+          nameVi: 'Iron tác dụng với H₂SO₄ đặc, nóng (tạo Fe³⁺ + SO₂↑)',
+          nameEn: 'Iron oxidation in hot concentrated H₂SO₄ (Fe³⁺ + SO₂↑)',
+          descVi: 'Nhiệt độ ≥ 50 °C phá vỡ lớp thụ động trên Iron, tạo muối Fe₂(SO₄)₃ vàng nâu và giải phóng khí SO₂ mùi hắc.',
+          descEn: 'Heating above 50 °C breaks Iron passivation yielding amber Fe³⁺ sulfate and pungent SO₂ gas.',
+          rateMolS: effFe / Math.max(1e-4, dt),
+          vigorousGas: true,
+          dXi: effFe,
+        });
+      }
+    }
+  }
+
+  // 2. Zinc (Zn_s) across mid (20-65% -> SO2 + trace S/H2S) & conc/conc_98 (>=65% -> SO2)
+  const nZn = moles.Zn_s || 0;
+  if (nZn > 1e-10) {
+    const fOx = sulf.w >= 0.65 ? 1.0 : (sulf.w - 0.20) / 0.45;
+    const pCount = vessel.particleCounts?.Zn_s ?? 8;
+    const area = computeSolidSurfaceAreaM2('Zn_s', nZn, pCount);
+    const k = (sulf.w >= 0.65 ? 0.34 : 0.22) * arrheniusFactor(28000, T) * stirBoost * iceMob * fOx;
+    const dZn = Math.min(nZn, getAvailAcidEq() / 2.2, k * Math.max(1e-5, area) * 4.2 * dt);
+    if (dZn > 1e-12) {
+      // Mid hot transition (20-65%, T >= 50 °C) yields trace S(s) & H2S(g) alongside dominant SO2(g)
+      const hasMidTrace = sulf.tier === 'mid' && T >= 323.15;
+      const fracH2S = hasMidTrace ? 0.08 : 0;
+      const fracS = hasMidTrace ? 0.07 : 0;
+      const fracSO2 = 1 - fracH2S - fracS;
+      const acidNeeded = dZn * (2 * fracSO2 + (4 / 3) * fracS + 1.25 * fracH2S);
+      const usedAcid = consumeH2SO4Eq(acidNeeded);
+      const scale = acidNeeded > 0 ? usedAcid / acidNeeded : 0;
+      const effZn = dZn * scale;
+      if (effZn > 1e-13) {
+        moles.Zn_s = Math.max(0, nZn - effZn);
+        if (moles.Zn_s < 1e-13) delete moles.Zn_s;
+        moles.Zn2_aq = (moles.Zn2_aq || 0) + effZn;
+        moles.SO4_2_aq = (moles.SO4_2_aq || 0) + effZn;
+        moles.H2O_l = (moles.H2O_l || 0) + effZn * (2 * fracSO2 + (4 / 3) * fracS + fracH2S);
+        if (fracSO2 > 0) gasProduced.SO2_g = (gasProduced.SO2_g || 0) + effZn * fracSO2;
+        if (fracS > 0) moles.S_s = (moles.S_s || 0) + (effZn * fracS) / 3;
+        if (fracH2S > 0) gasProduced.H2S_g = (gasProduced.H2S_g || 0) + effZn * fracH2S * 0.25;
+        totalHeatJ += 215000 * effZn;
+        activeReactions.push({
+          id: 'zn_h2so4_conc',
+          equation: hasMidTrace
+            ? 'Zn(s) + 2H₂SO₄ → ZnSO₄ + SO₂(g)↑ + [vết S↓ / H₂S↑] + 2H₂O'
+            : 'Zn(s) + 2H₂SO₄(đặc) → ZnSO₄ + SO₂(g)↑ + 2H₂O(l)',
+          nameVi: hasMidTrace ? 'Zinc + H₂SO₄ trung bình nóng (SO₂ + vết S / H₂S)' : 'Zinc khử H₂SO₄ đặc sinh khí SO₂',
+          nameEn: hasMidTrace ? 'Zinc in warm mid-conc. H₂SO₄ (SO₂ + trace S / H₂S)' : 'Zinc reduction of conc. H₂SO₄ to SO₂',
+          descVi: 'Zinc khử H₂SO₄ đặc tạo dung dịch/muối ZnSO₄ và giải phóng khí SO₂ mùi hắc.',
+          descEn: 'Metallic Zinc reduces concentrated Sulfuric acid evolving pungent SO₂ gas and Zn²⁺.',
+          rateMolS: effZn / Math.max(1e-4, dt),
+          vigorousGas: true,
+          dXi: effZn,
+        });
+      }
+    }
+  }
+
+  // 3. Copper (Cu_s) in hot conc H2SO4 (>= 65%, T >= 70 °C)
+  const nCu = moles.Cu_s || 0;
+  if (nCu > 1e-10 && sulf.w >= 0.65 && T >= 343.15) {
+    const pCount = vessel.particleCounts?.Cu_s ?? 8;
+    const area = computeSolidSurfaceAreaM2('Cu_s', nCu, pCount);
+    const k = 0.24 * arrheniusFactor(32000, T - 343.15 + CONSTANTS.T_STD_K) * stirBoost * iceMob;
+    const dCu = Math.min(nCu, getAvailAcidEq() / 2, k * Math.max(1e-5, area) * 3.6 * dt);
+    if (dCu > 1e-12) {
+      const usedAcid = consumeH2SO4Eq(2 * dCu);
+      const effCu = usedAcid / 2;
+      moles.Cu_s = Math.max(0, nCu - effCu);
+      if (moles.Cu_s < 1e-13) delete moles.Cu_s;
+      moles.Cu2_aq = (moles.Cu2_aq || 0) + effCu;
+      moles.SO4_2_aq = (moles.SO4_2_aq || 0) + effCu;
+      moles.H2O_l = (moles.H2O_l || 0) + 2 * effCu;
+      gasProduced.SO2_g = (gasProduced.SO2_g || 0) + effCu;
+      totalHeatJ += 118000 * effCu;
+      activeReactions.push({
+        id: 'cu_h2so4_conc_hot',
+        equation: 'Cu(s) + 2H₂SO₄(đặc, nóng) → CuSO₄ + SO₂(g)↑ + 2H₂O(l)',
+        nameVi: 'Copper phản ứng với H₂SO₄ đặc, nóng tạo Cu²⁺ xanh lam + SO₂↑',
+        nameEn: 'Copper oxidation in hot concentrated H₂SO₄ (blue Cu²⁺ + SO₂↑)',
+        descVi: 'Đun nóng (≥ 70 °C), H₂SO₄ đặc oxi hóa Copper thành dung dịch xanh lam Cu²⁺ và khí SO₂.',
+        descEn: 'Heating above 70 °C enables conc. H₂SO₄ to oxidize Copper yielding blue Cu²⁺ and SO₂ gas.',
+        rateMolS: effCu / Math.max(1e-4, dt),
+        vigorousGas: true,
+        dXi: effCu,
       });
     }
   }
@@ -2486,7 +2790,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     const nW = vessel.moles.H2O_l || 0;
     const nE = vessel.moles.C2H5OH_l || 0;
     const xEtOH = nE / Math.max(1e-9, nW + nE);
-    const isDirectHazard = liquidVolL > 1e-5 && (cH >= 6.0 || cAg >= 1.5) && nNaLeft * SPECIES.Na_s.molarMass >= 0.08;
+    const isDirectHazard = liquidVolL > 1e-5 && (cH >= 6.0 || cAg >= 1.5 || (vessel.moles.H2SO4_l || 0) > 1e-4) && nNaLeft * SPECIES.Na_s.molarMass >= 0.08;
 
     const effNaFootprint = Math.min(Math.max(aNaCm2, 0.08), 6.0);
     const mobilityFactor = 0.28 + 0.72 * (1 - Math.exp(-0.14 * (areaSurfCm2 / effNaFootprint)));
@@ -2606,6 +2910,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     reactionHeatJ += stepChloroSilverAndCuprousEquilibria(vessel, liquidVolL, dt, activeReactions);
     reactionHeatJ += stepAmmineComplexEquilibria(vessel, liquidVolL, dt, activeReactions);
     reactionHeatJ += stepMetalNitrateSolver(vessel, liquidVolL, dt, activeReactions, gasProduced);
+    reactionHeatJ += stepMetalSulfuricSolver(vessel, liquidVolL, dt, activeReactions, gasProduced);
     stepLiquidLiquidPartition(vessel, strat, dt);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
   } else {
@@ -2707,14 +3012,17 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   const moles = vessel.moles;
   const liqV = computeLiquidVolumeL(moles, vessel.tempK);
 
-  // Clear Fe passivation flag once outside cold concentrated HNO3
+  // Clear Fe passivation flag once outside cold concentrated HNO3 or cold concentrated H2SO4
   if (vessel.fePassivated) {
     const nAcidCheck = Math.min(moles.H_aq || 0, moles.NO3_aq || 0);
     const cAcidCheck = liqV > 1e-5 ? nAcidCheck / liqV : 0;
     const mHno3C = nAcidCheck * CONSTANTS.M_HNO3;
     const mWaterC = (moles.H2O_l || 0) * CONSTANTS.M_H2O;
     const wHno3C = mHno3C / Math.max(1e-9, mHno3C + mWaterC);
-    if ((moles.Fe_s || 0) <= 1e-10 || (wHno3C < 0.60 && cAcidCheck < 10.0) || vessel.tempK >= 323.15) {
+    const inColdConcHNO3 = (wHno3C >= 0.60 || cAcidCheck >= 10.0) && vessel.tempK < 323.15;
+    const sulfC = computeSulfuricAcidState(moles);
+    const inColdConcH2SO4 = sulfC.w >= 0.65 && vessel.tempK < 323.15;
+    if ((moles.Fe_s || 0) <= 1e-10 || (!inColdConcHNO3 && !inColdConcH2SO4)) {
       vessel.fePassivated = false;
     }
   }

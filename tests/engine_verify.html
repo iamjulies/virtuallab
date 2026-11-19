@@ -1894,7 +1894,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 15 &&
+          STARTER_REAGENTS.length === 16 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2145,8 +2145,8 @@
           badgeCustomEn === 'Non-standard' &&
           badgeCryoEn === '❄️ Cryo' &&
           badgeCryoVi === '❄️ Cryo' &&
-          I18N.vi.appSubtitle.includes('virlab_beta_v3+') &&
-          I18N.en.appSubtitle.includes('virlab_beta_v3+') &&
+          /virlab_beta_v[34]\+/.test(I18N.vi.appSubtitle) &&
+          /virlab_beta_v[34]\+/.test(I18N.en.appSubtitle) &&
           I18N.vi.reg_cuso4_5h2o.includes('Copper(II)'),
         `min=${minAttr}, badges=${badgeSatp}|${badgeCustomEn}|${badgeCryoEn}|${badgeCryoVi}, subVi=${I18N.vi.appSubtitle}`
       );
@@ -2462,7 +2462,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.18';
+      const expectedBuild = 'virlab_beta_v4+build.1';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,7 +2515,7 @@
       assert(
         'Build virlab_beta_v3+build.6 parity: All 39 apparatus & 15 starter reagents translated in VI/EN, Prompt 26 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
-          STARTER_REAGENTS.length === 15 &&
+          STARTER_REAGENTS.length === 16 &&
           !APPARATUS.clay_triangle &&
           allTranslated &&
           newKeysPresent &&
@@ -2766,7 +2766,7 @@
       assert(
         'Reagent filters work, Clean Bench clears 0 items, Quick Presets populate cleanly, and Zn + 0.125M NaOH evolves H2 & [Zn(OH)4]2-',
         REAGENT_CATEGORIES.length >= 5 &&
-          acidCount === 2 &&
+          acidCount === 3 &&
           cleanCount === 0 &&
           daniellCount >= 5 &&
           diffCount === 1 &&
@@ -6978,6 +6978,52 @@
         'Paused simulation freezes stirBarPhase and all chemistry/physics completely, and Ctrl/SOS theme + thermometer present',
         phase1 === phase0 && Boolean(I18N.vi.themeCtrl && I18N.vi.themeSos) && thP.kind === 'thermometer',
         `dPhase=${(phase1 - phase0).toFixed(2)}, thermId=${thP.id}`
+      );
+    }
+
+    // TEST 153: Prompt 35 (beta_v4+build.1) — H2SO4 98% Concentration Tiers, CuSO4·5H2O Dehydration, Fe Passivation, NaCl->HCl & Dilution Exotherm
+    {
+      const simS = new LabSimulation();
+      // 1. Dehydration of CuSO4·5H2O in H2SO4 98%
+      const bCu = simS.createApparatus('beaker_250', 180, 427);
+      simS.addReagentToVessel(bCu.id, 'cuso4_5h2o', 2.0, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bCu.id, 'h2so4_98', 15.0, { silentAnim: true, silentEmit: true });
+      stepSeconds(simS, 4.0, 0.05);
+      const okDehydrate = (bCu.moles.CuSO4_s || 0) > 1e-4;
+
+      // 2. Fe in cold vs hot conc H2SO4 98%
+      const bFeConc = simS.createApparatus('beaker_250', 340, 427);
+      simS.addReagentToVessel(bFeConc.id, 'h2so4_98', 20.0, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bFeConc.id, 'fe', 1.5, { silentAnim: true, silentEmit: true });
+      const feMol0 = bFeConc.moles.Fe_s || 0;
+      stepSeconds(simS, 2.0, 0.05);
+      const coldPassiv = bFeConc.fePassivated === true && Math.abs((bFeConc.moles.Fe_s || 0) - feMol0) < 1e-6;
+      bFeConc.tempK = 353.15;
+      stepSeconds(simS, 3.0, 0.05);
+      const hotFe3 = (bFeConc.moles.Fe3_aq || 0) > 1e-4 && (bFeConc.escapedGasMoles?.SO2_g || 0) > 1e-4;
+
+      // 3. Dilute H2SO4 (< 20%) + Fe -> Fe2+ + H2 (no passivation, no SO2)
+      const bFeDil = simS.createApparatus('beaker_250', 500, 427);
+      simS.addReagentToVessel(bFeDil.id, 'h2o', 80.0, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bFeDil.id, 'h2so4_98', 6.0, { silentAnim: true, silentEmit: true });
+      const tBeforeHyd = bFeDil.tempK;
+      stepSeconds(simS, 1.0, 0.05);
+      const dilExothermOk = bFeDil.tempK > tBeforeHyd + 8.0;
+      simS.addReagentToVessel(bFeDil.id, 'fe', 1.5, { silentAnim: true, silentEmit: true });
+      stepSeconds(simS, 3.0, 0.05);
+      const dilFe2H2Ok = (bFeDil.moles.Fe2_aq || 0) > 1e-4 && (bFeDil.escapedGasMoles?.H2_g || 0) > 1e-4 && !bFeDil.fePassivated;
+
+      // 4. NaCl(s) + H2SO4 98% -> NaHSO4 + HCl(g)
+      const bSalt = simS.createApparatus('beaker_250', 660, 427);
+      simS.addReagentToVessel(bSalt.id, 'nacl', 3.0, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bSalt.id, 'h2so4_98', 15.0, { silentAnim: true, silentEmit: true });
+      stepSeconds(simS, 4.0, 0.05);
+      const okNaHCl = (bSalt.moles.NaHSO4_s || 0) > 1e-4 && ((bSalt.escapedGasMoles?.HCl_g || 0) + (bSalt.headspaceGasMoles?.HCl_g || 0)) > 1e-4;
+
+      assert(
+        'H2SO4 98% dehydrates CuSO4·5H2O, passivates cold Fe (SO2+Fe3+ when hot), evolves H2+Fe2+ when diluted & releases HCl from NaCl',
+        okDehydrate && coldPassiv && hotFe3 && dilExothermOk && dilFe2H2Ok && okNaHCl,
+        `dehy=${okDehydrate}, coldPass=${coldPassiv}, hotFe3=${hotFe3}, exo=${dilExothermOk}, dilH2=${dilFe2H2Ok}, naHCl=${okNaHCl}`
       );
     }
 

@@ -41,6 +41,15 @@ export const CONSTANTS = {
   HNO3_AZEOTROPE_WT_FRAC: 0.68,      // Maximum-boiling HNO3/H2O azeotrope at 68% w/w (121.2 °C)
   T_FREEZE_PURE_HNO3_K: 231.15,      // -42 °C freezing point of anhydrous HNO3
   T_BOIL_PURE_HNO3_K: 356.15,        // +83 °C normal boiling point of anhydrous HNO3
+  M_H2SO4: 98.0785,                  // g/mol Sulfuric acid
+  M_SO2: 64.0638,                    // g/mol Sulfur dioxide
+  M_H2S: 34.0809,                    // g/mol Hydrogen sulfide
+  H2SO4_AZEOTROPE_WT_FRAC: 0.983,    // 98.3% w/w constant-boiling azeotrope (~337 °C at 1 bar)
+  H2SO4_CONC_WT_FRAC: 0.98,          // Commercial 98% w/w reagent
+  H2SO4_CONC_DENSITY_G_ML: 1.836,    // g/mL at 298.15 K
+  T_FREEZE_PURE_H2SO4_K: 283.46,     // +10.31 °C pure H2SO4 (~3 °C for 98%)
+  T_BOIL_H2SO4_98_K: 610.15,         // +337 °C 98.3% H2SO4 azeotrope normal boiling point
+  DELTA_H_HYDRATION_H2SO4_J: 74500,  // J/mol standard hydration exotherm of H2SO4(l) in water
   CP_H2O_J_MOL_K: 75.38,             // J/(mol·K)
 
   // Antoine coefficients for water vapor pressure (log10(P_mmHg) = A - B / (C + T_C))
@@ -217,17 +226,33 @@ export function solutionBoilingPointK(moles, P_bar) {
     (1 / CONSTANTS.T_BOIL_PURE_HNO3_K -
       (CONSTANTS.R_J_MOL_K / CONSTANTS.DELTA_H_VAP_HNO3_J) * Math.log(pSafe / CONSTANTS.P_STD_BAR));
   const nPureHNO3 = moles.HNO3_l || 0;
-  if (nPureHNO3 > 1e-10 && (moles.H2O_l || 0) <= 1e-9 && (moles.C2H5OH_l || 0) <= 1e-9) {
+  const nPureH2SO4 = moles.H2SO4_l || 0;
+  if (nPureHNO3 > 1e-10 && nPureH2SO4 <= 1e-10 && (moles.H2O_l || 0) <= 1e-9 && (moles.C2H5OH_l || 0) <= 1e-9) {
     return Math.max(295, pureHno3BpK);
   }
   const nH2O = moles.H2O_l || 0;
   const nEtOH = moles.C2H5OH_l || 0;
-  if (nH2O <= 1e-10 && nEtOH <= 1e-10) return baseK;
+  const nSO4Tot = (moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0);
+  const nH2SO4Aq = Math.min(nSO4Tot, ((moles.H_aq || 0) + (moles.HSO4_aq || 0)) * 0.5);
+  const nH2SO4Tot = nPureH2SO4 + nH2SO4Aq;
+  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10) return baseK;
 
   const mH2O = nH2O * CONSTANTS.M_H2O;
   const nHCl = Math.min(moles.H_aq || 0, moles.Cl_aq || 0);
   const nHNO3Aq = Math.min(moles.H_aq || 0, moles.NO3_aq || 0);
   const nHNO3Tot = nHNO3Aq + nPureHNO3;
+
+  // Sulfuric acid-water BPE: rises monotonically from 100 °C -> ~124 °C (50%) -> ~205 °C (80%) -> 337 °C (98.3%)
+  if (nEtOH <= 1e-9 && nH2SO4Tot > 1e-9 && (nPureH2SO4 > 1e-9 || (nH2SO4Tot >= nHCl * 0.5 && nH2SO4Tot >= nHNO3Tot * 0.5))) {
+    const mAcid = nH2SO4Tot * CONSTANTS.M_H2SO4;
+    const wAcid = Math.min(1, mAcid / Math.max(1e-9, mAcid + mH2O));
+    const boil98P = CONSTANTS.T_BOIL_H2SO4_98_K + 18.0 * Math.log(pSafe / CONSTANTS.P_STD_BAR);
+    if (wAcid >= 0.04) {
+      const span = Math.max(0, boil98P - baseK);
+      const deltaK = span * Math.pow(Math.min(1, wAcid / CONSTANTS.H2SO4_AZEOTROPE_WT_FRAC), 2.35);
+      return Math.max(295, baseK + deltaK);
+    }
+  }
 
   // Aqueous HNO3 (including residual anhydrous HNO3_l): rises from 100 °C -> 121.2 °C (68% azeotrope) -> 83 °C (100%)
   if ((nH2O > 1e-10 || nPureHNO3 > 1e-10) && nEtOH <= 1e-9 && nHNO3Tot > 1e-9 && nHNO3Tot >= nHCl * 0.5) {

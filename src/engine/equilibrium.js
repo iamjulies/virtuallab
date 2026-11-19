@@ -10,15 +10,19 @@ export function computeAqueousVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
   if (!moles) return 0;
   const nH2O = Math.max(0, moles.H2O_l || 0);
   const nEtOH = Math.max(0, moles.C2H5OH_l || 0);
-  if (nH2O <= 1e-12 && nEtOH <= 1e-12) return 0;
+  const nH2SO4L = Math.max(0, moles.H2SO4_l || 0);
+  const nHNO3L = Math.max(0, moles.HNO3_l || 0);
+  if (nH2O <= 1e-12 && nEtOH <= 1e-12 && nH2SO4L <= 1e-12 && nHNO3L <= 1e-12) return 0;
 
   const T = Number.isFinite(tempK) ? Math.max(155, Math.min(800, tempK)) : CONSTANTS.T_STD_K;
   const rho = waterDensityGPerMl(T);
   const waterVolMl = (nH2O * SPECIES.H2O_l.molarMass) / rho;
   const etohVolMl = (nEtOH * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density;
+  const h2so4VolMl = nH2SO4L > 1e-12 ? (nH2SO4L * SPECIES.H2SO4_l.molarMass) / SPECIES.H2SO4_l.density : 0;
+  const hno3VolMl = nHNO3L > 1e-12 ? (nHNO3L * SPECIES.HNO3_l.molarMass) / SPECIES.HNO3_l.density : 0;
   // Ethanol-water mixtures exhibit ~3.5% excess volume contraction
   const mixFactor = nH2O > 1e-9 && nEtOH > 1e-9 ? 0.965 : 1.0;
-  const solventVolMl = (waterVolMl + etohVolMl) * mixFactor;
+  const solventVolMl = (waterVolMl + etohVolMl) * mixFactor + h2so4VolMl + hno3VolMl;
 
   let diluteVolDeltaMl = 0;
   let totalSoluteMoles = 0;
@@ -108,6 +112,14 @@ export function solutionFreezingPointK(moles, useBulkWaterIfFrozen = false) {
   if ((moles?.HNO3_l || 0) > 1e-9 && (moles?.H2O_l || 0) <= 1e-6 && (moles?.H2O_s || 0) <= 1e-6 && (moles?.C2H5OH_l || 0) <= 1e-6) {
     return CONSTANTS.T_FREEZE_PURE_HNO3_K;
   }
+  if ((moles?.H2SO4_l || 0) > 1e-9 && (moles?.H2O_s || 0) <= 1e-6 && (moles?.C2H5OH_l || 0) <= 1e-6) {
+    const mA = (moles.H2SO4_l || 0) * CONSTANTS.M_H2SO4;
+    const mW = (moles.H2O_l || 0) * CONSTANTS.M_H2O;
+    const wA = mA / Math.max(1e-9, mA + mW);
+    if (wA >= 0.90) {
+      return 276.15 + (wA - 0.98) * 350; // ~3 °C for 98% -> 10.3 °C for 100% H2SO4
+    }
+  }
   const nWater = moles?.H2O_l || 0;
   const nIce = moles?.H2O_s || 0;
   if (nWater <= 1e-12 && nIce <= 1e-12) {
@@ -144,7 +156,7 @@ export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
   const aqVolL = computeAqueousVolumeL(moles, tempK);
   const effVolL = aqVolL > 1e-6 ? aqVolL : liquidVolL;
 
-  const nH = moles.H_aq || 0;
+  const nH = (moles.H_aq || 0) + (moles.H2SO4_l || 0) * 1.5;
   const nOH = moles.OH_aq || 0;
   const nEthoxide = moles.C2H5O_aq || 0;
   const cNH3 = Math.max(0, moles.NH3_aq || 0) / effVolL;

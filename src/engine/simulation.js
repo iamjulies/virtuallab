@@ -2722,6 +2722,11 @@ export class LabSimulation {
           const dilutionExtent = Math.min(1, nH2OExisting / (nNH3Added * 16 + 0.1));
           dilutionHeatJ += 3400 * nNH3Added * dilutionExtent;
         }
+      } else if (reg.id === 'h2o' && (v.moles.H2SO4_l || 0) >= 0.04) {
+        if (amt >= 1.5) {
+          this.addLog({ type: 'alert', key: 'alertWaterIntoConcAcid', vesselLabel: v.label });
+          dilutionHeatJ += Math.min(8500, amt * 360);
+        }
       } else if (reg.id === 'h2o' && (v.moles.H_aq || 0) > 0.05) {
         const liqL = computeLiquidVolumeL(v.moles, v.tempK);
         const cH = (v.moles.H_aq || 0) / Math.max(1e-4, liqL);
@@ -3109,6 +3114,14 @@ export class LabSimulation {
 
     const hMixDstAfter = computeEthanolWaterExcessEnthalpyJ(dst.moles.H2O_l || 0, dst.moles.C2H5OH_l || 0, dstTempBefore);
     const mixHeatJ = Math.max(0, hMixDstBefore + frac * hMixSrcBefore - hMixDstAfter);
+    if (
+      dst.kind === 'vessel' &&
+      (dst.moles.H2SO4_l || 0) >= 0.05 &&
+      actualMl >= 3.0 &&
+      (src.moles.H2O_l || 0) * frac > (src.moles.H2SO4_l || 0) * frac * 4.0 + 0.1
+    ) {
+      this.addLog({ type: 'alert', key: 'alertWaterIntoConcAcid', vesselLabel: dst.label });
+    }
     if (cDstBefore + cMoved > 0) {
       const nextT = (cDstBefore * dstTempBefore + cMoved * src.tempK + mixHeatJ) / (cDstBefore + cMoved);
       dst.tempK = Number.isFinite(nextT) ? Math.max(155, Math.min(1350, nextT)) : dstTempBefore;

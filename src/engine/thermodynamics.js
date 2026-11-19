@@ -481,7 +481,7 @@ export function stepVesselThermodynamics(
     flameTempOverrideK &&
     flameTempOverrideK >= 850 &&
     effectiveBurnerW > 200 &&
-    (vessel.moles.H2O_l || 0) + (vessel.moles.C2H5OH_l || 0) + (vessel.moles.HNO3_l || 0) < 0.004;
+    (vessel.moles.H2O_l || 0) + (vessel.moles.C2H5OH_l || 0) + (vessel.moles.HNO3_l || 0) + (vessel.moles.H2SO4_l || 0) < 0.004;
   const effHeatCapJK = isDryFocusedBunsen ? Math.max(16.0, cTotal * 0.28) : cTotal;
   const rawHeatJ = reactionHeatJ + effectiveBurnerW * dt + ambientExchangeJ + evapCoolingJ;
   const netHeatJ = Number.isFinite(rawHeatJ) ? rawHeatJ : 0;
@@ -616,7 +616,8 @@ export function stepVesselThermodynamics(
   const hasAnyLiquid =
     (vessel.moles.H2O_l || 0) > 1e-7 ||
     (vessel.moles.C2H5OH_l || 0) > 1e-7 ||
-    (vessel.moles.HNO3_l || 0) > 1e-7;
+    (vessel.moles.HNO3_l || 0) > 1e-7 ||
+    (vessel.moles.H2SO4_l || 0) > 1e-7;
   const steamOpacity =
     hasAnyLiquid && !vessel.isFrozenSolid
       ? computeSteamOpacity(newTempK, env.tempK, CONSTANTS.RELATIVE_HUMIDITY)

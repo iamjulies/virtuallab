@@ -2741,6 +2741,8 @@ export class LabWorkbenchCanvas {
         H2_g: { rgba: 'rgba(6, 182, 212, 0.34)', core: 'rgba(34, 211, 238, 0.75)', stroke: '#22d3ee', formula: 'H₂ (M=2 ↑)' },
         NH3_g: { rgba: 'rgba(236, 72, 153, 0.34)', core: 'rgba(244, 114, 182, 0.75)', stroke: '#f472b6', formula: 'NH₃ (M=17 ↑)' },
         SO3_g: { rgba: 'rgba(244, 63, 94, 0.32)', core: 'rgba(251, 113, 133, 0.70)', stroke: '#fb7185', formula: 'SO₃ (M=80 ↓)' },
+        SO2_g: { rgba: 'rgba(148, 163, 184, 0.34)', core: 'rgba(203, 213, 225, 0.72)', stroke: '#94a3b8', formula: 'SO₂ (M=64 ↓)' },
+        H2S_g: { rgba: 'rgba(234, 179, 8, 0.30)', core: 'rgba(250, 204, 21, 0.68)', stroke: '#eab308', formula: 'H₂S (M=34 ↓)' },
       };
       ctx.save();
       ctx.fillStyle = this.isDark ? 'rgba(2, 6, 23, 0.26)' : 'rgba(15, 23, 42, 0.14)';
