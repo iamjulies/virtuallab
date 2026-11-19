@@ -2734,6 +2734,10 @@ export class LabWorkbenchCanvas {
       const GAS_PAL = {
         CO2_g: { rgba: 'rgba(139, 92, 246, 0.34)', core: 'rgba(167, 139, 250, 0.72)', stroke: '#a78bfa', formula: 'CO₂ (M=44 ↓)' },
         Cl2_g: { rgba: 'rgba(132, 204, 22, 0.34)', core: 'rgba(163, 230, 53, 0.72)', stroke: '#a3e635', formula: 'Cl₂ (M=71 ↓)' },
+        Br2_g: { rgba: 'rgba(185, 28, 28, 0.42)', core: 'rgba(220, 38, 38, 0.78)', stroke: '#ef4444', formula: 'Br₂ (M=160 ↓)' },
+        I2_g: { rgba: 'rgba(147, 51, 234, 0.42)', core: 'rgba(192, 132, 252, 0.78)', stroke: '#c084fc', formula: 'I₂ (M=254 ↓)' },
+        HBr_g: { rgba: 'rgba(16, 185, 129, 0.30)', core: 'rgba(52, 211, 153, 0.68)', stroke: '#34d399', formula: 'HBr (M=81 ↓)' },
+        HI_g: { rgba: 'rgba(16, 185, 129, 0.30)', core: 'rgba(52, 211, 153, 0.68)', stroke: '#34d399', formula: 'HI (M=128 ↓)' },
         HCl_g: { rgba: 'rgba(16, 185, 129, 0.30)', core: 'rgba(52, 211, 153, 0.68)', stroke: '#34d399', formula: 'HCl (M=36.5 ↓)' },
         HNO3_g: { rgba: 'rgba(244, 63, 94, 0.28)', core: 'rgba(251, 113, 133, 0.64)', stroke: '#fb7185', formula: 'HNO₃ (M=63 ↓)' },
         NO2_g: { rgba: 'rgba(249, 115, 22, 0.34)', core: 'rgba(251, 146, 60, 0.72)', stroke: '#fb923c', formula: 'NO₂ (M=46 ↓)' },

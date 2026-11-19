@@ -709,22 +709,28 @@ export function checkFlameLoopInteractions(sim, loop) {
       const hasNa =
         (m.Na_aq || 0) + (m.Na_s || 0) + (m.NaOH_s || 0) + (m.NaCl_s || 0) +
         (m.Na2CO3_s || 0) + (m.NaHCO3_s || 0) + (m.Na2SO4_s || 0) + (m.NaNO3_s || 0) +
-        (m.Na2O_s || 0) + (m.Na2O2_s || 0) > 1e-6;
+        (m.Na2O_s || 0) + (m.Na2O2_s || 0) + (m.NaBr_s || 0) + (m.NaBrO3_s || 0) +
+        (m.NaI_s || 0) + (m.NaIO3_s || 0) + (m.NaClO3_s || 0) > 1e-6;
       const hasCa =
-        (m.Ca2_aq || 0) + (m.CaCl2_s || 0) + (m.CaNO3_2_s || 0) + (m.CaCO3_s || 0) +
-        (m.CaO_s || 0) + (m.CaOH2_s || 0) + (m.CaSO4_s || 0) > 1e-6;
+        (m.Ca2_aq || 0) + (m.CaCl2_s || 0) + (m.CaBr2_s || 0) + (m.CaI2_s || 0) +
+        (m.CaNO3_2_s || 0) + (m.CaCO3_s || 0) + (m.CaO_s || 0) + (m.CaOH2_s || 0) +
+        (m.CaSO4_s || 0) > 1e-6;
       const hasBa =
-        (m.Ba2_aq || 0) + (m.BaCl2_2H2O_s || 0) + (m.BaCl2_s || 0) + (m.BaNO3_2_s || 0) +
-        (m.BaOH2_s || 0) + (m.BaCO3_s || 0) + (m.BaSO4_s || 0) > 1e-6;
+        (m.Ba2_aq || 0) + (m.BaCl2_2H2O_s || 0) + (m.BaCl2_s || 0) + (m.BaBr2_s || 0) +
+        (m.BaI2_s || 0) + (m.BaNO3_2_s || 0) + (m.BaOH2_s || 0) + (m.BaCO3_s || 0) +
+        (m.BaSO4_s || 0) > 1e-6;
       const hasCu =
         (m.Cu2_aq || 0) + (m.CuCl4_2_aq || 0) + (m.CuNH3_4_2_aq || 0) + (m.CuOH4_2_aq || 0) +
-        (m.CuSO4_5H2O_s || 0) + (m.CuSO4_s || 0) + (m.CuCl2_s || 0) + (m.CuNO3_2_s || 0) +
-        (m.CuCO3_s || 0) + (m.CuO_s || 0) + (m.CuOH2_s || 0) > 1e-6;
+        (m.CuSO4_5H2O_s || 0) + (m.CuSO4_s || 0) + (m.CuCl2_s || 0) + (m.CuBr2_s || 0) +
+        (m.CuI_s || 0) + (m.CuNO3_2_s || 0) + (m.CuCO3_s || 0) + (m.CuO_s || 0) +
+        (m.CuOH2_s || 0) > 1e-6;
       const hasFe =
         (m.Fe2_aq || 0) + (m.Fe3_aq || 0) + (m.FeCl2_s || 0) + (m.FeCl3_s || 0) +
-        (m.FeSO4_s || 0) + (m.FeNO3_2_s || 0) + (m.FeNO3_3_s || 0) > 1e-6;
+        (m.FeBr2_s || 0) + (m.FeBr3_s || 0) + (m.FeI2_s || 0) + (m.FeSO4_s || 0) +
+        (m.FeNO3_2_s || 0) + (m.FeNO3_3_s || 0) > 1e-6;
       const hasK =
         (m.K_aq || 0) + (m.K_s || 0) + (m.KOH_s || 0) + (m.KCl_s || 0) +
+        (m.KBr_s || 0) + (m.KBrO3_s || 0) + (m.KI_s || 0) + (m.KIO3_s || 0) + (m.KClO3_s || 0) +
         (m.KNO3_s || 0) + (m.K2SO4_s || 0) + (m.K2CO3_s || 0) + (m.KHCO3_s || 0) +
         (m.KHSO4_s || 0) + (m.KO2_s || 0) + (m.K2O_s || 0) + (m.KMnO4_s || 0) + (m.K2MnO4_s || 0) > 1e-6;
       if (hasNa) {

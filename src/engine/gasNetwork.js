@@ -898,6 +898,22 @@ export function stepVesselGasAndPressure(
       } else if (remHCl > 0) {
         storeUnabsorbedGas('HCl_g', remHCl);
       }
+      const dHBr = routeProduced.HBr_g || 0;
+      if (dHBr > 0 && (target.moles.H2O_l || 0) > 1e-4) {
+        target.moles.H_aq = (target.moles.H_aq || 0) + dHBr;
+        target.moles.Br_aq = (target.moles.Br_aq || 0) + dHBr;
+        heatAddedJ += dHBr * 85000;
+      } else if (dHBr > 0) {
+        storeUnabsorbedGas('HBr_g', dHBr);
+      }
+      const dHI = routeProduced.HI_g || 0;
+      if (dHI > 0 && (target.moles.H2O_l || 0) > 1e-4) {
+        target.moles.H_aq = (target.moles.H_aq || 0) + dHI;
+        target.moles.I_aq = (target.moles.I_aq || 0) + dHI;
+        heatAddedJ += dHI * 80000;
+      } else if (dHI > 0) {
+        storeUnabsorbedGas('HI_g', dHI);
+      }
       if ((routeProduced.NH3_g || 0) > 0 && (target.moles.H2O_l || 0) > 1e-4) {
         const dNH3 = routeProduced.NH3_g;
         target.moles.NH3_aq = (target.moles.NH3_aq || 0) + dNH3;
@@ -971,8 +987,89 @@ export function stepVesselGasAndPressure(
           target.gasFlushInMol = (target.gasFlushInMol || 0) + dCo2;
         }
       }
+      const hasReactiveHalogenSink =
+        (target.moles.OH_aq || 0) > 1e-5 ||
+        (target.moles.I_aq || 0) > 1e-5 ||
+        (target.moles.Br_aq || 0) > 1e-5;
+      if ((routeProduced.Cl2_g || 0) > 0) {
+        const dCl2 = routeProduced.Cl2_g;
+        if ((target.moles.H2O_l || 0) > 1e-4 && tipSubmerged) {
+          const absFrac = hasReactiveHalogenSink ? 0.96 : 0.42;
+          const dAbs = dCl2 * absFrac;
+          target.moles.Cl2_aq = (target.moles.Cl2_aq || 0) + dAbs;
+          if (dCl2 - dAbs > 1e-13) {
+            target.headspaceGasMoles.Cl2_g = (target.headspaceGasMoles.Cl2_g || 0) + (dCl2 - dAbs);
+          }
+          target._tubeBubbleGasMol = (target._tubeBubbleGasMol || 0) + dCl2;
+        } else {
+          target.headspaceGasMoles.Cl2_g = (target.headspaceGasMoles.Cl2_g || 0) + dCl2;
+          target.gasFlushInMol = (target.gasFlushInMol || 0) + dCl2;
+        }
+      }
+      if ((routeProduced.Br2_g || 0) > 0) {
+        const dBr2 = routeProduced.Br2_g;
+        const hasWaterTgt = (target.moles.H2O_l || 0) > 1e-4;
+        if (hasWaterTgt && tipSubmerged) {
+          const absFrac = hasReactiveHalogenSink ? 0.97 : 0.78;
+          const dAbs = dBr2 * absFrac;
+          target.moles.Br2_aq = (target.moles.Br2_aq || 0) + dAbs;
+          if (dBr2 - dAbs > 1e-13) {
+            target.headspaceGasMoles.Br2_g = (target.headspaceGasMoles.Br2_g || 0) + (dBr2 - dAbs);
+          }
+          heatAddedJ += dAbs * 31000;
+          target._tubeBubbleGasMol = (target._tubeBubbleGasMol || 0) + dBr2;
+        } else if (!hasWaterTgt && (target.tempK || 298.15) < 328.15) {
+          const dCond = dBr2 * 0.72;
+          target.moles.Br2_l = (target.moles.Br2_l || 0) + dCond;
+          if (dBr2 - dCond > 1e-13) {
+            target.headspaceGasMoles.Br2_g = (target.headspaceGasMoles.Br2_g || 0) + (dBr2 - dCond);
+          }
+          heatAddedJ += dCond * 29960;
+        } else {
+          target.headspaceGasMoles.Br2_g = (target.headspaceGasMoles.Br2_g || 0) + dBr2;
+          target.gasFlushInMol = (target.gasFlushInMol || 0) + dBr2;
+        }
+      }
+      if ((routeProduced.I2_g || 0) > 0) {
+        const dI2 = routeProduced.I2_g;
+        const hasWaterTgt = (target.moles.H2O_l || 0) > 1e-4;
+        if (hasWaterTgt && tipSubmerged) {
+          const absFrac = (target.moles.I_aq || 0) > 1e-5 || (target.moles.OH_aq || 0) > 1e-5 ? 0.95 : 0.85;
+          const dAbs = dI2 * absFrac;
+          target.moles.I2_aq = (target.moles.I2_aq || 0) + dAbs;
+          if (dI2 - dAbs > 1e-13) {
+            target.headspaceGasMoles.I2_g = (target.headspaceGasMoles.I2_g || 0) + (dI2 - dAbs);
+          }
+          target._tubeBubbleGasMol = (target._tubeBubbleGasMol || 0) + dI2;
+        } else if (!hasWaterTgt && (target.tempK || 298.15) < 343.15) {
+          const depFrac = (target.tempK || 298.15) < 318.15 ? 0.88 : 0.55;
+          const dDep = dI2 * depFrac;
+          target.moles.I2_s = (target.moles.I2_s || 0) + dDep;
+          target.wallCondenseLevel = Math.min(1.0, (target.wallCondenseLevel || 0) + 0.12);
+          if (dI2 - dDep > 1e-13) {
+            target.headspaceGasMoles.I2_g = (target.headspaceGasMoles.I2_g || 0) + (dI2 - dDep);
+          }
+          heatAddedJ += dDep * 62400;
+        } else {
+          target.headspaceGasMoles.I2_g = (target.headspaceGasMoles.I2_g || 0) + dI2;
+          target.gasFlushInMol = (target.gasFlushInMol || 0) + dI2;
+        }
+      }
       for (const g of NON_STEAM_GASES) {
-        if (g !== 'HCl_g' && g !== 'HNO3_g' && g !== 'NH3_g' && g !== 'C2H5OH_g' && g !== 'CO2_g' && g !== 'SO3_g' && routeProduced[g] > 0) {
+        if (
+          g !== 'HCl_g' &&
+          g !== 'HBr_g' &&
+          g !== 'HI_g' &&
+          g !== 'HNO3_g' &&
+          g !== 'NH3_g' &&
+          g !== 'C2H5OH_g' &&
+          g !== 'CO2_g' &&
+          g !== 'SO3_g' &&
+          g !== 'Cl2_g' &&
+          g !== 'Br2_g' &&
+          g !== 'I2_g' &&
+          routeProduced[g] > 0
+        ) {
           target.headspaceGasMoles[g] = (target.headspaceGasMoles[g] || 0) + routeProduced[g];
           target.gasFlushInMol = (target.gasFlushInMol || 0) + routeProduced[g];
           if (tipSubmerged && (target.moles.H2O_l || 0) > 1e-4) {
@@ -1096,6 +1193,40 @@ export function stepVesselGasAndPressure(
         vessel.moles.NO3_aq = (vessel.moles.NO3_aq || 0) + dDissHNO3;
       }
     }
+    const headHBr = vessel.headspaceGasMoles.HBr_g || 0;
+    if (headHBr > 1e-9) {
+      const roomCapHBr = Math.max(0, 11.0 - (vessel.moles.Br_aq || 0) / liqVolL) * liqVolL;
+      const dDissHBr = Math.min(headHBr, roomCapHBr, headHBr * 0.72 + 0.002);
+      if (dDissHBr > 1e-11) {
+        vessel.headspaceGasMoles.HBr_g = Math.max(0, headHBr - dDissHBr);
+        vessel.moles.H_aq = (vessel.moles.H_aq || 0) + dDissHBr;
+        vessel.moles.Br_aq = (vessel.moles.Br_aq || 0) + dDissHBr;
+      }
+    }
+    const headHI = vessel.headspaceGasMoles.HI_g || 0;
+    if (headHI > 1e-9) {
+      const roomCapHI = Math.max(0, 10.0 - (vessel.moles.I_aq || 0) / liqVolL) * liqVolL;
+      const dDissHI = Math.min(headHI, roomCapHI, headHI * 0.72 + 0.002);
+      if (dDissHI > 1e-11) {
+        vessel.headspaceGasMoles.HI_g = Math.max(0, headHI - dDissHI);
+        vessel.moles.H_aq = (vessel.moles.H_aq || 0) + dDissHI;
+        vessel.moles.I_aq = (vessel.moles.I_aq || 0) + dDissHI;
+      }
+    }
+    const hasAqHalSink =
+      (vessel.moles.OH_aq || 0) > 1e-5 ||
+      (vessel.moles.I_aq || 0) > 1e-5 ||
+      (vessel.moles.Br_aq || 0) > 1e-5;
+    const headCl2 = vessel.headspaceGasMoles.Cl2_g || 0;
+    if (headCl2 > 1e-9 && (hasAqHalSink || (vessel.moles.Cl2_aq || 0) < 0.08 * liqVolL)) {
+      const rateFrac = hasAqHalSink ? 0.55 : 0.14;
+      const cap = hasAqHalSink ? headCl2 : Math.max(0, 0.09 * liqVolL - (vessel.moles.Cl2_aq || 0));
+      const dDissCl2 = Math.min(headCl2, cap, headCl2 * rateFrac);
+      if (dDissCl2 > 1e-11) {
+        vessel.headspaceGasMoles.Cl2_g = Math.max(0, headCl2 - dDissCl2);
+        vessel.moles.Cl2_aq = (vessel.moles.Cl2_aq || 0) + dDissCl2;
+      }
+    }
     const headSO3 = vessel.headspaceGasMoles.SO3_g || 0;
     if (headSO3 > 1e-9 && nWaterIn > 1e-4) {
       const dSO3 = Math.min(headSO3, Math.max(0, nWaterIn - 1e-4));
@@ -1104,6 +1235,32 @@ export function stepVesselGasAndPressure(
         vessel.moles.H2O_l -= dSO3;
         vessel.moles.H_aq = (vessel.moles.H_aq || 0) + 2 * dSO3;
         vessel.moles.SO4_2_aq = (vessel.moles.SO4_2_aq || 0) + dSO3;
+      }
+    }
+  }
+
+  // Cool-surface desublimation I2(g) -> I2(s) crystals & Br2(g) -> Br2(l) condensation inside chilled/cooling vessel
+  const headI2 = vessel.headspaceGasMoles.I2_g || 0;
+  if (headI2 > 1e-8 && vessel.tempK < 323.15) {
+    const pSubBar = 0.00041 * Math.exp((62400 / CONSTANTS.R_J_MOL_K) * (1 / 298.15 - 1 / Math.max(200, vessel.tempK)));
+    const nEqI2 = (pSubBar * headspaceL) / (CONSTANTS.R_L_BAR_MOL_K * vessel.tempK);
+    if (headI2 > nEqI2) {
+      const dDepI2 = (headI2 - nEqI2) * (vessel.tempK < 303.15 ? 0.42 : 0.18);
+      if (dDepI2 > 1e-12) {
+        vessel.headspaceGasMoles.I2_g = Math.max(0, headI2 - dDepI2);
+        vessel.moles.I2_s = (vessel.moles.I2_s || 0) + dDepI2;
+      }
+    }
+  }
+  const headBr2 = vessel.headspaceGasMoles.Br2_g || 0;
+  if (headBr2 > 1e-8 && vessel.tempK < 318.15) {
+    const pBrVapBar = 0.233 * Math.exp((29960 / CONSTANTS.R_J_MOL_K) * (1 / 293.15 - 1 / Math.max(200, vessel.tempK)));
+    const nEqBr2 = (pBrVapBar * headspaceL) / (CONSTANTS.R_L_BAR_MOL_K * vessel.tempK);
+    if (headBr2 > nEqBr2 * 1.05) {
+      const dCondBr2 = (headBr2 - nEqBr2) * 0.22;
+      if (dCondBr2 > 1e-12) {
+        vessel.headspaceGasMoles.Br2_g = Math.max(0, headBr2 - dCondBr2);
+        vessel.moles.Br2_l = (vessel.moles.Br2_l || 0) + dCondBr2;
       }
     }
   }
@@ -1264,6 +1421,17 @@ export function stepOpenGasBuoyancy(vessel, env, dt) {
   if (vessel._cuoReductionCondenseTimer > 0) {
     vessel._cuoReductionCondenseTimer = Math.max(0, vessel._cuoReductionCondenseTimer - dt);
     vessel.wallCondenseLevel = Math.min(1.0, (vessel.wallCondenseLevel || 0) + 0.55 * dt);
+  }
+
+  // Direct cool-surface desublimation I2(g) -> I2(s) in open vessels as purple vapor meets cool glass (< 50 C)
+  const headI2Open = head.I2_g || 0;
+  if (headI2Open > 1e-8 && (vessel.tempK || 298.15) < 323.15) {
+    const kDep = (vessel.tempK || 298.15) < 303.15 ? 2.4 : 0.85;
+    const dDep = headI2Open * (1 - Math.exp(-kDep * dt));
+    if (dDep > 1e-12) {
+      head.I2_g = Math.max(0, headI2Open - dDep);
+      vessel.moles.I2_s = (vessel.moles.I2_s || 0) + dDep;
+    }
   }
 
   for (const gId of ALL_GASES) {

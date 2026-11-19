@@ -321,9 +321,9 @@ export function computeSolutionVisuals(
     const inPhase =
       phaseFilter === 'all'
         ? sp.phase === 'aq' || sp.phase === 'org' || sp.phase === 'l'
-        : phaseFilter === 'aq'
-        ? sp.phase === 'aq'
-        : sp.phase === 'org' && (sp.liquidGroup || 'organic_light') === phaseFilter;
+        : phaseFilter === 'aq' || phaseFilter === 'aqueous'
+        ? sp.phase === 'aq' || (sp.phase === 'l' && (sp.liquidGroup || 'aqueous') === 'aqueous')
+        : (sp.phase === 'org' || sp.phase === 'l') && (sp.liquidGroup || 'organic_light') === phaseFilter;
     if (!inPhase) continue;
     const conc = Math.min(100, nMol / liquidVolL);
     const ext = sp.extinctionRGB;

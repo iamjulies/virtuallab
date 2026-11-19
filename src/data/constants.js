@@ -232,9 +232,15 @@ export function solutionBoilingPointK(moles, P_bar) {
   }
   const nH2O = moles.H2O_l || 0;
   const nEtOH = moles.C2H5OH_l || 0;
+  const nBr2Liq = moles.Br2_l || 0;
   const nSO4Tot = (moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0);
   const nH2SO4Aq = Math.min(nSO4Tot, ((moles.H_aq || 0) + (moles.HSO4_aq || 0)) * 0.5);
   const nH2SO4Tot = nPureH2SO4 + nH2SO4Aq;
+  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nBr2Liq > 1e-8) {
+    const pureBr2BpK =
+      1 / (1 / 331.95 - (CONSTANTS.R_J_MOL_K / 29960) * Math.log(pSafe / CONSTANTS.P_STD_BAR));
+    return Math.max(266, pureBr2BpK);
+  }
   if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10) return baseK;
 
   const mH2O = nH2O * CONSTANTS.M_H2O;

@@ -5679,6 +5679,8 @@ export class LabSimulation {
         combinedGas.HNO3_g += thermRes.hno3ProducedMol || 0;
         combinedGas.NH3_g += thermRes.nh3ProducedMol || 0;
         combinedGas.C2H5OH_g += thermRes.ethanolProducedMol || 0;
+        combinedGas.Br2_g += thermRes.br2ProducedMol || 0;
+        combinedGas.I2_g += thermRes.i2ProducedMol || 0;
 
         const gasEvents = stepVesselGasAndPressure(
           v,
@@ -6038,6 +6040,10 @@ export class LabSimulation {
           (v.recentHalogenGasTimer || 0) > 0 ||
           frameGas.C2H5Cl_g > 1e-7 ||
           frameGas.Cl2_g > 1e-7 ||
+          frameGas.Br2_g > 1e-7 ||
+          frameGas.I2_g > 1e-7 ||
+          frameGas.HBr_g > 1e-6 ||
+          frameGas.HI_g > 1e-6 ||
           frameGas.HCl_g > 1e-6;
         if (sup && hasCuMetal && hasHalogenPlume) {
           sup.beilsteinTimer = 2.0;

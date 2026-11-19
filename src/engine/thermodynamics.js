@@ -283,11 +283,15 @@ export function stepVesselThermodynamics(
   let hclProducedMol = 0;
   let hno3ProducedMol = 0;
   let nh3ProducedMol = 0;
+  let br2ProducedMol = 0;
+  let i2ProducedMol = 0;
   let evapCoolingJ = 0;
   const nWater = vessel.moles.H2O_l || 0;
   const nEthanol = vessel.moles.C2H5OH_l || 0;
   const nAmmonia = vessel.moles.NH3_aq || 0;
   const nPureHNO3 = vessel.moles.HNO3_l || 0;
+  const nBr2Liq = vessel.moles.Br2_l || 0;
+  const nI2Solid = vessel.moles.I2_s || 0;
 
   const hasOpenTube = !!(vessel.connectedTargetId || vessel.connectedSyringeId);
   const effectivePressureBar =
@@ -307,7 +311,7 @@ export function stepVesselThermodynamics(
   const effTopAreaCm2 = strat.topAreaCm2 * (vessel.isStoppered && hasOpenTube ? 0.55 : 1.0);
   const aqCapFactor = strat.hasLightCover ? 0.06 : 1.0;
 
-  if ((nWater > 1e-7 || nEthanol > 1e-7 || nAmmonia > 1e-8 || nPureHNO3 > 1e-7 || strat.lightOrganicMl > 0.05) && (canSubBoilVent || canEtOHVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
+  if ((nWater > 1e-7 || nEthanol > 1e-7 || nAmmonia > 1e-8 || nPureHNO3 > 1e-7 || nBr2Liq > 1e-8 || nI2Solid > 1e-8 || strat.lightOrganicMl > 0.05) && (canSubBoilVent || canEtOHVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
     const vle = computeEthanolWaterVLE(vessel.moles, vessel.tempK, false);
     const volMl = strat.totalLiqMl + computeSolidVolumeMl(vessel.moles);
     const areaCm2 = effTopAreaCm2;
@@ -474,6 +478,46 @@ export function stepVesselThermodynamics(
         evapCoolingJ -= subBoilNH3 * 23350;
       }
     }
+
+    // 1e) Volatile Bromine (Br2_l, vp 23.3 kPa @ 20 C, bp 58.8 C) & sub-boiling Br2(aq) fuming
+    if (nBr2Liq > 1e-9 && vessel.tempK >= 265.95 && (!vessel.isStoppered || hasOpenTube)) {
+      const brSp = SPECIES.Br2_l;
+      const evapBr2MolS = calcEvaporationRateMol(brSp, 1.0, vessel.tempK, areaCm2, 0, isStirred, 1.0);
+      const coverScale = nWater > 1e-4 && strat.topLayerKey !== 'organic_heavy' ? 0.16 : 1.0;
+      const roomFumeFloor = 4.2e-5 * Math.exp(0.055 * Math.min(45, vessel.tempK - 293.15));
+      const subBoilBr2 = Math.min(nBr2Liq, Math.max(evapBr2MolS, roomFumeFloor) * coverScale * dt);
+      if (subBoilBr2 > 1e-12) {
+        vessel.moles.Br2_l = Math.max(0, nBr2Liq - subBoilBr2);
+        if (vessel.moles.Br2_l < 1e-13) delete vessel.moles.Br2_l;
+        br2ProducedMol += subBoilBr2;
+        evapCoolingJ -= subBoilBr2 * brSp.dHVapJ;
+      }
+    }
+    const nBr2Aq = vessel.moles.Br2_aq || 0;
+    if (!vessel.isFrozenSolid && nBr2Aq > 1e-7 && nWater > 1e-4 && vessel.tempK >= 285.15 && (!vessel.isStoppered || hasOpenTube)) {
+      const rateAqBr2 = nBr2Aq * 0.008 * Math.exp(0.048 * Math.min(55, vessel.tempK - 293.15));
+      const dBr2Aq = Math.min(nBr2Aq, rateAqBr2 * dt);
+      if (dBr2Aq > 1e-12) {
+        vessel.moles.Br2_aq = Math.max(0, nBr2Aq - dBr2Aq);
+        if (vessel.moles.Br2_aq < 1e-13) delete vessel.moles.Br2_aq;
+        br2ProducedMol += dBr2Aq;
+        evapCoolingJ -= dBr2Aq * 31000;
+      }
+    }
+
+    // 1f) Iodine direct sublimation I2(s) -> I2(g) (trace @ 20 C, brisk 50–114 C below mp 113.7 C)
+    if (nI2Solid > 1e-9 && vessel.tempK >= 290.15 && (!vessel.isStoppered || hasOpenTube) && (nWater < 0.06 || vessel.tempK >= 338.15)) {
+      const pSubBar = 0.00041 * Math.exp((62400 / CONSTANTS.R_J_MOL_K) * (1 / 298.15 - 1 / Math.min(480, vessel.tempK)));
+      const thermalDrive = vessel.tempK >= 323.15 ? 1.0 : 0.14;
+      const evapI2MolS = (effAreaCm2 / 12.0) * 0.028 * pSubBar * thermalDrive * (isStirred ? 1.35 : 1.0);
+      const sublI2 = Math.min(nI2Solid, evapI2MolS * dt);
+      if (sublI2 > 1e-12) {
+        vessel.moles.I2_s = Math.max(0, nI2Solid - sublI2);
+        if (vessel.moles.I2_s < 1e-13) delete vessel.moles.I2_s;
+        i2ProducedMol += sublI2;
+        evapCoolingJ -= sublI2 * 62400;
+      }
+    }
   }
 
   // Update temperature with strict finite clamping across deep-cryo (155 K) to Bunsen peak (1950 K)
@@ -490,12 +534,38 @@ export function stepVesselThermodynamics(
   if (!Number.isFinite(newTempK)) newTempK = tCurClamped;
   newTempK = Math.max(155, Math.min(1950, newTempK));
 
-  // Regime 2: Co-distillation boiling clamp for Water + Ethanol + Nitric acid (pure HNO3 at 83 C!)
+  // Regime 2: Co-distillation boiling clamp for Water + Ethanol + Nitric acid (pure HNO3 at 83 C) + Bromine (58.8 C!)
   let isBoiling = false;
   const remainingWater = vessel.moles.H2O_l || 0;
   const remainingEtOH = vessel.moles.C2H5OH_l || 0;
   const remainingPureHNO3 = vessel.moles.HNO3_l || 0;
-  if (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 > 1e-7 && newTempK >= boilingPointK) {
+  const remainingBr2 = vessel.moles.Br2_l || 0;
+  const pureBr2BpK = 1 / (1 / 331.95 - (CONSTANTS.R_J_MOL_K / 29960) * Math.log(Math.max(0.05, effectivePressureBar) / CONSTANTS.P_STD_BAR));
+  if (remainingBr2 > 1e-7 && newTempK >= pureBr2BpK && remainingWater > 1e-7) {
+    // Immiscible heavy Br2 boils vigorously around 58.8 C under aqueous layer first
+    const excessBr2J = (newTempK - pureBr2BpK) * cTotal;
+    const boilBr2 = Math.min(remainingBr2, excessBr2J / 29960);
+    if (boilBr2 > 1e-12) {
+      vessel.moles.Br2_l = Math.max(0, remainingBr2 - boilBr2);
+      if (vessel.moles.Br2_l < 1e-13) delete vessel.moles.Br2_l;
+      br2ProducedMol += boilBr2;
+      newTempK = Math.max(pureBr2BpK, newTempK - (boilBr2 * 29960) / cTotal);
+      isBoiling = true;
+    }
+  }
+  const remBr2After = vessel.moles.Br2_l || 0;
+  if (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 <= 1e-7 && remBr2After > 1e-7 && newTempK >= boilingPointK) {
+    isBoiling = true;
+    const excessJ = (newTempK - boilingPointK) * cTotal;
+    const boilBr2 = Math.min(remBr2After, excessJ / 29960);
+    if (boilBr2 > 1e-12) {
+      vessel.moles.Br2_l = Math.max(0, remBr2After - boilBr2);
+      if (vessel.moles.Br2_l < 1e-13) delete vessel.moles.Br2_l;
+      br2ProducedMol += boilBr2;
+    }
+    const leftoverJ = Math.max(0, excessJ - boilBr2 * 29960);
+    newTempK = boilingPointK + leftoverJ / cTotal;
+  } else if (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 > 1e-7 && newTempK >= boilingPointK) {
     isBoiling = true;
     const excessJ = (newTempK - boilingPointK) * cTotal;
     const boilPureHNO3 = Math.min(remainingPureHNO3, excessJ / CONSTANTS.DELTA_H_VAP_HNO3_J);
@@ -609,6 +679,24 @@ export function stepVesselThermodynamics(
     }
   }
 
+  // Sealed / dry high-temp I2(s) sublimation even when flask is warm/stoppered without bulk water
+  const remI2Now = vessel.moles.I2_s || 0;
+  if (remI2Now > 1e-9 && newTempK >= 323.15 && (vessel.moles.H2O_l || 0) < 0.06 && vessel.isStoppered && !hasOpenTube) {
+    const hVolL = Math.max(0.01, (spec.maxVolumeMl || 250) * 0.0007);
+    const pSubBar = 0.00041 * Math.exp((62400 / CONSTANTS.R_J_MOL_K) * (1 / 298.15 - 1 / Math.min(480, newTempK)));
+    const nEqHead = (pSubBar * hVolL) / (CONSTANTS.R_L_BAR_MOL_K * newTempK);
+    const curHeadI2 = vessel.headspaceGasMoles?.I2_g || 0;
+    if (nEqHead > curHeadI2 + 1e-8) {
+      const subSealed = Math.min(remI2Now, (nEqHead - curHeadI2) * Math.min(1, 1.5 * dt));
+      if (subSealed > 1e-12) {
+        vessel.moles.I2_s = Math.max(0, remI2Now - subSealed);
+        if (vessel.moles.I2_s < 1e-13) delete vessel.moles.I2_s;
+        i2ProducedMol += subSealed;
+        newTempK = Math.max(250, newTempK - (subSealed * 62400) / cTotal);
+      }
+    }
+  }
+
   // Regime 3: Freezing / melting solid-liquid phase clamp with cryoscopy & latent heat
   const phaseRes = updateFreezeMeltPhase(vessel, dt, newTempK, cTotal);
   newTempK = phaseRes.updatedTempK;
@@ -618,7 +706,8 @@ export function stepVesselThermodynamics(
     (vessel.moles.H2O_l || 0) > 1e-7 ||
     (vessel.moles.C2H5OH_l || 0) > 1e-7 ||
     (vessel.moles.HNO3_l || 0) > 1e-7 ||
-    (vessel.moles.H2SO4_l || 0) > 1e-7;
+    (vessel.moles.H2SO4_l || 0) > 1e-7 ||
+    (vessel.moles.Br2_l || 0) > 1e-7;
   const steamOpacity =
     hasAnyLiquid && !vessel.isFrozenSolid
       ? computeSteamOpacity(newTempK, env.tempK, CONSTANTS.RELATIVE_HUMIDITY)
@@ -630,6 +719,8 @@ export function stepVesselThermodynamics(
     hclProducedMol,
     hno3ProducedMol,
     nh3ProducedMol,
+    br2ProducedMol,
+    i2ProducedMol,
     isBoiling,
     boilingPointK,
     steamOpacity,

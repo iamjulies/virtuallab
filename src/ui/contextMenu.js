@@ -186,6 +186,8 @@ export class FloatingContextUI {
       al: { spId: 'Al_s', formula: 'Al', iupac: 'Aluminium', cas: '7429-90-5', mm: '26.982 g/mol', density: '2.700 g/cm³', melt: '660.3 °C (933.5 K)', boil: '2470.0 °C (2743 K)', conc: 'Pure Metal (s)', wiki: 'Aluminium', pubchem: '5359268' },
       k: { spId: 'K_s', formula: 'K', iupac: 'Potassium', cas: '7440-09-7', mm: '39.098 g/mol', density: '0.862 g/cm³', melt: '63.5 °C (336.7 K)', boil: '759.0 °C (1032 K)', conc: 'Pure Metal (in oil)', wiki: 'Potassium', pubchem: '5462222' },
       kmno4: { spId: 'KMnO4_s', formula: 'KMnO₄', iupac: 'Potassium permanganate', cas: '7722-64-7', mm: '158.034 g/mol', density: '2.703 g/cm³', melt: 'Decomposes before melting (~240 °C)', boil: '2KMnO₄ → K₂MnO₄ + MnO₂ + O₂↑', conc: 'Pure Crystalline Oxidizer', wiki: 'Potassium_permanganate', pubchem: '516875' },
+      br2: { spId: 'Br2_l', formula: 'Br₂', iupac: 'Bromine', cas: '7726-95-6', mm: '159.808 g/mol', density: '3.110 g/cm³ (20 °C)', melt: '-7.2 °C (265.95 K)', boil: '58.8 °C (331.95 K)', conc: 'Pure Liquid Halogen (23.3 kPa @ 20 °C)', wiki: 'Bromine', pubchem: '24408' },
+      i2: { spId: 'I2_s', formula: 'I₂', iupac: 'Iodine', cas: '7553-56-2', mm: '253.809 g/mol', density: '4.930 g/cm³', melt: '113.7 °C (386.85 K, sublimes readily)', boil: '184.3 °C (457.45 K)', conc: 'Pure Crystalline Halogen', wiki: 'Iodine', pubchem: '807' },
     };
 
     if (kind === 'reagent') {
