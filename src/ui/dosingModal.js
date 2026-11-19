@@ -317,7 +317,8 @@ export class DosingModal {
       const dispValRaw = fromCanonicalAmount(reg, st.amount, curUnit);
       const dispValStr = curUnit === 'mol' ? Number(dispValRaw.toFixed(4)) : Number(dispValRaw.toFixed(2));
       const minDisp = Math.max(curUnit === 'mol' ? 0.0001 : 0.01, fromCanonicalAmount(reg, reg.minDose, curUnit));
-      const maxDisp = Math.max(minDisp * 2, fromCanonicalAmount(reg, reg.maxDose, curUnit));
+      const maxDispRaw = Math.max(minDisp * 2, fromCanonicalAmount(reg, reg.maxDose, curUnit));
+      const maxDisp = curUnit === 'mol' ? Number(maxDispRaw.toFixed(4)) : Number(maxDispRaw.toFixed(2));
       const stepDisp = curUnit === 'mol' ? 0.001 : reg.step;
       const convPreview = formatUnitConversions(reg, st.amount, curUnit);
       const presets =
@@ -357,7 +358,7 @@ export class DosingModal {
                   <span class="text-xs font-semibold">${curUnit}</span>
                 </div>
               </div>
-              <input id="dosing-slider" type="range" min="${minDisp}" max="${maxDisp}" step="${stepDisp}" value="${dispValRaw}" class="w-full accent-blue-500" />
+              <input id="dosing-slider" type="range" min="0" max="${maxDisp}" step="${stepDisp}" value="${dispValRaw}" class="w-full accent-blue-500" />
               <div class="flex flex-wrap gap-1.5 mt-0.5">
                 ${presets
                   .map(
@@ -651,8 +652,10 @@ export class DosingModal {
       const parsed = Number(dispVal);
       if (!Number.isFinite(parsed)) return;
       const minCanon = reg ? reg.minDose : 0.05;
-      const maxCanon = reg ? reg.maxDose : Math.max(0.1, Number(slider?.max) || 500);
-      const canon = reg ? toCanonicalAmount(reg, parsed, unit) : parsed;
+      const maxCanon = reg ? Math.max(reg.maxDose, reg.kind === 'solid' ? 1000 : 2000) : Math.max(0.1, Number(slider?.max) || 500);
+      const canonRaw = reg ? toCanonicalAmount(reg, parsed, unit) : parsed;
+      const snapSliderMax = fromSliderOrPreset && reg && Math.abs(parsed - Number(slider?.max || 0)) <= (reg.step || 0.1) * 0.51;
+      const canon = snapSliderMax ? reg.maxDose : canonRaw;
       this.state.amount = Math.max(minCanon, Math.min(maxCanon, canon));
       if (fromSliderOrPreset && numInput) {
         const clampedDisp = reg ? fromCanonicalAmount(reg, this.state.amount, unit) : this.state.amount;

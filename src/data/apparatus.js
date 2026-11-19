@@ -303,6 +303,7 @@ export const APPARATUS = {
     id: 'pipette_10',
     kind: 'pipette',
     category: 'titration',
+    flippable: true,
     i18nKey: 'eq_pipette_10',
     isoStandard: 'ISO 835 Class A · Mohr Dropper (10 mL)',
     materialSpec: 'Borosilicate 3.3 + Silicone',
@@ -581,9 +582,25 @@ export const APPARATUS = {
     maxThermalStressK: 1723,
     maxVolumeMl: 15,
     tareMassG: 28.0,
-    width: 118,
-    height: 28,
+    width: 30,
+    height: 118,
     fragilityDropPx: Infinity,
+  },
+  thermometer: {
+    id: 'thermometer',
+    kind: 'thermometer',
+    category: 'thermal',
+    flippable: true,
+    breakable: true,
+    supportsClamp: true,
+    clampOffsetY: -24,
+    i18nKey: 'eq_thermometer',
+    isoStandard: 'ASTM / DIN Immersion Lab Thermometer (-50–450 °C)',
+    materialSpec: 'Borosilicate 3.3 + Spirit / K-Type Sensor',
+    tareMassG: 32.0,
+    width: 24,
+    height: 150,
+    fragilityDropPx: 230,
   },
   porcelain_dish: {
     id: 'porcelain_dish',
@@ -708,6 +725,7 @@ export const APPARATUS = {
     kind: 'burette',
     category: 'titration',
     supportsClamp: true,
+    flippable: true,
     breakable: true,
     i18nKey: 'eq_burette_50',
     isoStandard: 'ISO 385 Class AS · PTFE Stopcock (50 mL)',
@@ -1106,7 +1124,6 @@ export const APPARATUS_ORDER = [
   'crucible_porcelain',
   'quartz_tube',
   'quartz_u_tube',
-  'porcelain_dish',
   'water_trough',
   'mortar_pestle',
   'filter_funnel',
@@ -1123,6 +1140,7 @@ export const APPARATUS_ORDER = [
   'ice_bath',
   'crucible_tongs',
   'iron_spoon',
+  'thermometer',
   'gas_syringe',
   'splint',
   'flame_loop',
@@ -1254,9 +1272,33 @@ export function getProbeTipPos(item) {
     return { x: item.x + dir * 64, y: item.y, dir };
   }
   if (item.kind === 'spoon') {
-    return { x: item.x + dir * 48, y: item.y + 2, dir };
+    const tip = rotatePointAround(item.x + dir * 2, item.y + 46, item.x, item.y, item.tiltAngle || 0);
+    return { x: tip.x, y: tip.y, dir };
+  }
+  if (item.kind === 'thermometer') {
+    const tip = rotatePointAround(item.x, item.y + 68, item.x, item.y, item.tiltAngle || 0);
+    return { x: tip.x, y: tip.y, dir };
   }
   return { x: item.x, y: item.y, dir };
+}
+
+export function getItemRotatedHalfExtentY(spec, item = null) {
+  if (!spec) return 40;
+  const hw = (spec.width || 60) * 0.5;
+  const hh = (spec.height || 60) * 0.5;
+  let rad = 0;
+  if (item) {
+    if (item.kind === 'condenser') {
+      const dir = item.flippedX ? -1 : 1;
+      rad = dir * 0.14 + ((Number(item.rotationDeg) || 0) * Math.PI) / 180;
+    } else if (item.tiltAngle) {
+      rad = item.tiltAngle;
+    } else if (item.tiltDeg) {
+      rad = ((item.tiltDir < 0 ? -1 : 1) * (item.tiltDeg || 0) * Math.PI) / 180;
+    }
+  }
+  if (Math.abs(rad) < 1e-4) return hh;
+  return Math.abs(hh * Math.cos(rad)) + Math.abs(hw * Math.sin(rad));
 }
 
 export function rotatePointAround(px, py, cx, cy, rad) {

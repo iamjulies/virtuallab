@@ -241,9 +241,14 @@ export class LabManager {
     const speciesIds = Object.entries(snap.moles || {})
       .filter(([, n]) => Number(n) > 1e-12)
       .map(([spId]) => spId);
-    const gasIds = Object.entries(snap.headspaceGasMoles || {})
-      .filter(([g, n]) => g !== 'H2O_g' && Number(n) > 1e-10)
-      .map(([g]) => g);
+    const gasIds = [
+      ...Object.entries(snap.headspaceGasMoles || {})
+        .filter(([g, n]) => g !== 'H2O_g' && Number(n) > 1e-10)
+        .map(([g]) => g),
+      ...Object.entries(snap.gasMoles || {})
+        .filter(([g, n]) => g !== 'H2O_g' && Number(n) > 1e-10)
+        .map(([g]) => g),
+    ];
 
     const entry = {
       id: `cab_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -251,7 +256,13 @@ export class LabManager {
       apparatusId: snap.typeId,
       kind: snap.kind,
       speciesIds: Array.from(new Set([...speciesIds, ...gasIds])),
-      hasChemicals: speciesIds.length > 0 || gasIds.length > 0 || (snap.volumeMl || 0) > 0,
+      hasChemicals:
+        speciesIds.length > 0 ||
+        gasIds.length > 0 ||
+        (snap.volumeMl || 0) > 0 ||
+        (snap.condensedWaterMol || 0) > 1e-6 ||
+        (snap.condensedEtOHMol || 0) > 1e-6 ||
+        (snap.frozenWaterMol || 0) > 1e-6,
       stickyLabel: snap.stickyLabel ? { ...snap.stickyLabel } : null,
       tempK: snap.tempK ?? CONSTANTS.T_STD_K,
       snapshot: snap,

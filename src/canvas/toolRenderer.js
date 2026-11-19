@@ -1,4 +1,5 @@
 import { APPARATUS, getCondenserPorts, getProbeTipPos, getSyringeGeometry, getTubeDestTipPos } from '../data/apparatus.js';
+import { buildRigidTubePoints, samplePolylineAt } from '../engine/gasNetwork.js';
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, computeSolutionVisuals, computePH } from '../engine/equilibrium.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
@@ -964,6 +965,7 @@ export function renderElectrodeCollectorTubes(ctx, items, isDark, timeNow = 0) {
     const midY = Math.min(p0.y, p3.y) - 48;
     const p1 = { x: p0.x, y: midY };
     const p2 = { x: p3.x, y: midY };
+    const points = buildRigidTubePoints(p0, p1, p2, p3, target, { archLift: 46 });
 
     ctx.save();
     // Small bell hood cap over electrode + translucent silicone delivery tubing
@@ -975,9 +977,15 @@ export function renderElectrodeCollectorTubes(ctx, items, isDark, timeNow = 0) {
     ctx.strokeStyle = isDark ? 'rgba(71, 85, 105, 0.78)' : 'rgba(51, 65, 85, 0.65)';
     ctx.lineWidth = 6;
     ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     ctx.beginPath();
-    ctx.moveTo(p0.x, p0.y);
-    ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+    if (points.length >= 2) {
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    } else {
+      ctx.moveTo(p0.x, p0.y);
+      ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+    }
     ctx.stroke();
 
     ctx.strokeStyle = isDark ? 'rgba(186, 230, 253, 0.45)' : 'rgba(226, 232, 240, 0.75)';
@@ -988,11 +996,9 @@ export function renderElectrodeCollectorTubes(ctx, items, isDark, timeNow = 0) {
       ctx.fillStyle = el.gasBubbleType === 'Cl2_g' ? 'rgba(217, 249, 157, 0.92)' : 'rgba(186, 230, 253, 0.9)';
       for (let k = 0; k < 3; k++) {
         const u = (timeNow * 1.25 + k * 0.33) % 1;
-        const omt = 1 - u;
-        const bx = omt ** 3 * p0.x + 3 * omt ** 2 * u * p1.x + 3 * omt * u ** 2 * p2.x + u ** 3 * p3.x;
-        const by = omt ** 3 * p0.y + 3 * omt ** 2 * u * p1.y + 3 * omt * u ** 2 * p2.y + u ** 3 * p3.y;
+        const bp = samplePolylineAt(points, u);
         ctx.beginPath();
-        ctx.arc(bx, by, 2.2, 0, Math.PI * 2);
+        ctx.arc(bp.x, bp.y, 2.2, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -1447,9 +1453,11 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
   const dir = item.flippedX ? 1 : -1;
-  const bowlX = x + dir * 48;
-  const bowlY = y + 2;
-  const handleEndX = x - dir * 52;
+  // Vertical deflagrating combustion spoon: hanging loop at TOP, vertical stem down to cup bowl at BOTTOM
+  const stemX = x + dir * 2;
+  const bowlX = stemX;
+  const bowlY = y + 46;
+  const topRingY = y - 50;
   const tilt = item.tiltAngle || 0;
 
   ctx.save();
@@ -1460,20 +1468,19 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
   }
   drawSelectionGlow(ctx, isSelected, false);
 
-  // Heat-resistant stainless/iron stem + hanging loop ring + neck bend
+  // Top hanging ring & vertical steel rod down to cup neck
   ctx.strokeStyle = isSelected ? '#3b82f6' : isDark ? '#cbd5e1' : '#334155';
-  ctx.lineWidth = 3.2;
-  ctx.lineCap = 'round';
+  ctx.lineWidth = 2.4;
   ctx.beginPath();
-  ctx.moveTo(handleEndX, y - 3);
-  ctx.lineTo(x + dir * 24, y - 3);
-  ctx.quadraticCurveTo(x + dir * 34, y - 3, bowlX - dir * 10, bowlY);
+  ctx.arc(stemX, topRingY, 5.5, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Rear hanging ring
-  ctx.lineWidth = 2.2;
+  ctx.lineWidth = 3.0;
+  ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.arc(handleEndX - dir * 5, y - 3, 5, 0, Math.PI * 2);
+  ctx.moveTo(stemX, topRingY + 5.5);
+  ctx.lineTo(stemX, bowlY - 3);
+  ctx.quadraticCurveTo(stemX, bowlY + 1, bowlX - dir * 8.5, bowlY + 1);
   ctx.stroke();
 
   // Deep deflagrating spoon cup bowl (glows cherry-orange when heated > 720 K)
@@ -1516,13 +1523,13 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
           : isFeSparks
           ? 'rgba(251, 146, 60, 0.95)'
           : 'rgba(253, 224, 71, 0.95)';
-      const fGrad = ctx.createRadialGradient(bowlX, bowlY - 4, 2, bowlX, bowlY - 10, 26);
+      const fGrad = ctx.createRadialGradient(bowlX, bowlY - 6, 2, bowlX, bowlY - 12, 26);
       fGrad.addColorStop(0, '#ffffff');
       fGrad.addColorStop(0.45, fCol);
       fGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
       ctx.fillStyle = fGrad;
       ctx.beginPath();
-      ctx.arc(bowlX, bowlY - 8, 23 + Math.sin(timeNow * 25) * 3, 0, Math.PI * 2);
+      ctx.arc(bowlX, bowlY - 10, 23 + Math.sin(timeNow * 25) * 3, 0, Math.PI * 2);
       ctx.fill();
       if (isFeSparks) {
         ctx.strokeStyle = '#fef08a';
@@ -1557,10 +1564,92 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
     : labelFormula
     ? `${item.label} · ${labelFormula}`
     : item.label;
-  drawLabelPill(ctx, x, y - 22, pillText, {
+  drawLabelPill(ctx, x, y - 70, pillText, {
     pal,
     borderColor: item.hoveredActionLabel ? '#10b981' : isSelected ? '#3b82f6' : pal.badgeBorder,
     font: '600 10px system-ui, sans-serif',
+    height: 17,
+    itemId: item.id,
+  });
+  ctx.restore();
+}
+
+export function renderThermometer(ctx, item, isSelected, isDark, langCode = 'vi') {
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const spec = APPARATUS.thermometer || { width: 24, height: 150 };
+  if (item.isBroken) {
+    renderBrokenToolShards(ctx, item, pal, isSelected, 34, spec.height);
+    return;
+  }
+  const h = spec.height;
+  const tilt = item.tiltAngle || 0;
+  const tempK = Number.isFinite(item.measuredTempK) ? item.measuredTempK : item.tempK ?? 298.15;
+  const tempC = tempK - 273.15;
+  const frac = Math.max(0.05, Math.min(1, (tempC + 50) / 500)); // -50..450 C
+
+  ctx.save();
+  if (Math.abs(tilt) > 0.01) {
+    ctx.translate(x, y);
+    ctx.rotate(tilt);
+    ctx.translate(-x, -y);
+  }
+  drawSelectionGlow(ctx, isSelected, false);
+
+  const topY = y - h / 2 + 8;
+  const botY = y + h / 2 - 12;
+  const stemTop = topY + 6;
+  const stemBot = botY - 8;
+
+  // Outer glass sheath
+  ctx.fillStyle = isDark ? 'rgba(226, 232, 240, 0.14)' : 'rgba(255, 255, 255, 0.72)';
+  ctx.strokeStyle = isSelected ? '#3b82f6' : pal.glassStroke;
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.roundRect(x - 5.5, stemTop, 11, stemBot - stemTop + 6, 5.5);
+  ctx.fill();
+  ctx.stroke();
+
+  // Scale backing strip & crisp tick marks
+  ctx.fillStyle = isDark ? 'rgba(248, 250, 252, 0.88)' : '#f8fafc';
+  ctx.fillRect(x - 2.5, stemTop + 6, 5, stemBot - stemTop - 6);
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 0.8;
+  for (let i = 0; i <= 10; i++) {
+    const ty = stemBot - 6 - (i / 10) * (stemBot - stemTop - 16);
+    ctx.beginPath();
+    ctx.moveTo(x - 4.5, ty);
+    ctx.lineTo(x + (i % 5 === 0 ? 4.2 : 1.8), ty);
+    ctx.stroke();
+  }
+
+  // Red alcohol/spirit column & sensing bulb
+  const fillCol = tempC >= 120 ? '#ef4444' : tempC <= 5 ? '#38bdf8' : '#e11d48';
+  const colBot = stemBot - 4;
+  const colTop = stemBot - 8 - frac * (stemBot - stemTop - 18);
+  ctx.strokeStyle = fillCol;
+  ctx.lineWidth = 2.4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x, colBot);
+  ctx.lineTo(x, colTop);
+  ctx.stroke();
+
+  // Sensing bulb at bottom
+  ctx.fillStyle = fillCol;
+  ctx.strokeStyle = isSelected ? '#3b82f6' : pal.glassStroke;
+  ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  ctx.arc(x, botY + 3, 6.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Live crisp temperature readout pill
+  const tagText = `${item.label} · ${tempC.toFixed(1)}°C`;
+  drawLabelPill(ctx, x, topY - 11, tagText, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : tempC >= 80 ? '#f97316' : tempC <= 5 ? '#38bdf8' : pal.badgeBorder,
+    font: '700 10px ui-monospace, monospace',
     height: 17,
     itemId: item.id,
   });

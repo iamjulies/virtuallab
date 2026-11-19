@@ -85,7 +85,11 @@ export function computeWashBottleStreamArc(
     const vyNow = vy0 + gravityPxS2 * t;
 
     if (vyNow >= -10 && i >= 6) {
-      for (const dst of items) {
+      const scanOrder = [
+        ...items.filter((d) => d.kind === 'filter_funnel'),
+        ...items.filter((d) => d.kind === 'vessel'),
+      ];
+      for (const dst of scanOrder) {
         if (dst.id === wb.id || dst.isShattered || dst.isBroken || dst.isInverted) continue;
         if (dst.kind !== 'vessel' && dst.kind !== 'filter_funnel') continue;
         const dSpec = APPARATUS[dst.typeId];
@@ -1105,6 +1109,8 @@ export function stepApparatusTools(sim, dt, realDeltaSec) {
       stepCrucibleTongs(sim, it, dt);
     } else if (it.kind === 'spoon') {
       stepIronSpoon(sim, it, dt);
+    } else if (it.kind === 'thermometer') {
+      checkThermometerInteractions(sim, it, dt);
     } else if (it.kind === 'vessel') {
       if ((it.magStirRpm || 0) > 0 && it.hasStirBar && !it.isFrozenSolid) {
         it.stirTimer = Math.max(it.stirTimer || 0, 0.35);
@@ -1692,4 +1698,57 @@ function stepIronSpoon(sim, spoon, dt) {
 
 function mOrZero(v) {
   return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+export function checkThermometerInteractions(sim, therm, dt = 0.05) {
+  if (!sim || !therm || therm.isBroken) return;
+  const { x: bx, y: by } = getProbeTipPos(therm);
+  let targetK = sim.environment?.tempK ?? CONSTANTS.T_STD_K;
+  let contactKind = 'ambient';
+  let contactLabel = '';
+
+  // Check vessels, funnels, baths, syringes containing or touching thermometer bulb
+  for (let i = sim.items.length - 1; i >= 0; i--) {
+    const it = sim.items[i];
+    if (it.id === therm.id || it.isShattered || it.isBroken) continue;
+    const spec = APPARATUS[it.typeId];
+    if (!spec) continue;
+    if (it.kind === 'vessel' || it.kind === 'filter_funnel') {
+      const hw = Math.max(18, spec.width * 0.46);
+      const hh = Math.max(20, spec.height * 0.52);
+      if (Math.abs(bx - it.x) <= hw && by >= it.y - hh - 4 && by <= it.y + hh + 4) {
+        targetK = it.tempK ?? targetK;
+        contactKind = it.kind;
+        contactLabel = it.label || it.typeId;
+        break;
+      }
+    } else if (it.kind === 'bath') {
+      if (Math.abs(bx - it.x) <= spec.width * 0.46 && by >= it.y - spec.height * 0.5 && by <= it.y + spec.height * 0.5) {
+        targetK = it.bathTempK ?? (it.bathMode === 'ice_salt' ? 263.15 : 273.15);
+        contactKind = 'bath';
+        contactLabel = it.label || it.typeId;
+        break;
+      }
+    } else if (it.kind === 'burner' && (it.powerW || 0) > 0) {
+      if (Math.abs(bx - it.x) <= 30 && by <= it.y + 8 && by >= it.y - spec.height * 0.5 - 68) {
+        const bTbl = it.typeId === 'bunsen_burner' && it.airHoleOpen === false ? spec.yellowFlameK : spec.effectiveFlameK;
+        const fl = Math.max(1, Math.min(3, Math.round(it.flameLevel || 1)));
+        const maxFlame = Math.min(723.15, bTbl?.[fl] || 650);
+        targetK = Math.max(targetK, maxFlame);
+        contactKind = 'burner';
+        contactLabel = it.label || it.typeId;
+        break;
+      }
+    }
+  }
+
+  therm.contactKind = contactKind;
+  therm.contactLabel = contactLabel;
+  if (!Number.isFinite(therm.measuredTempK)) {
+    therm.measuredTempK = targetK;
+  } else {
+    const alpha = Math.min(1, 1 - Math.exp(-4.2 * Math.max(0.01, dt)));
+    therm.measuredTempK = therm.measuredTempK + (targetK - therm.measuredTempK) * alpha;
+  }
+  therm.tempK = therm.measuredTempK;
 }

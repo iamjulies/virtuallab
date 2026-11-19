@@ -24,6 +24,7 @@
       clampItemToStandY,
       getClampNeckOffsetY,
       getCondenserPorts,
+      getItemRotatedHalfExtentY,
       getProbeTipPos,
       getStandGeometry,
       getSyringeGeometry,
@@ -94,7 +95,7 @@
     } from '../src/engine/chemistry.js';
     import { LabManager } from '../src/engine/labManager.js';
     import { LabSimulation } from '../src/engine/simulation.js';
-    import { computeWashBottleStreamArc, syncDockedToolPositions } from '../src/engine/apparatusTools.js';
+    import { checkThermometerInteractions, computeWashBottleStreamArc, syncDockedToolPositions } from '../src/engine/apparatusTools.js';
     import { calcEvaporationRateMol, computeSteamOpacity } from '../src/engine/thermodynamics.js';
     import {
       computeAqueousVolumeL,
@@ -2461,7 +2462,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.15';
+      const expectedBuild = 'virlab_beta_v3+build.16';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -4553,7 +4554,7 @@
       sim22.addReagentToVessel(bSrc.id, 'zn', 3.0, { silentAnim: true, silentEmit: true });
       const burner = sim22.createApparatus('burner', 360, 434);
       sim22.setBurnerFlame(burner.id, 3);
-      const spoon = sim22.createApparatus('iron_spoon', 408, 380); // Bowl at x = 408 - 48 = 360 (directly in burner flame!)
+      const spoon = sim22.createApparatus('iron_spoon', 362, 326); // Vertical bowl at x = 360, y = 372 (directly in burner flame!)
       const scooped = sim22.spoonScoopFromVessel(spoon.id, bSrc.id, 1.5);
       const znOnSpoonBefore = spoon.moles.Zn_s || 0;
       stepSeconds(sim22, 3.5, 0.05);
@@ -6441,9 +6442,9 @@
       const bathToggledOnce = bathW.bathMode === 'ice_salt';
 
       const lid0 = crucW.lidState;
-      wbW.handleCanvasWheel({ x: crucW.x, y: crucW.y }, 25);
+      wbW.handleCanvasWheel({ x: crucW.x, y: crucW.y }, 25, true);
       const lidNoJitter = crucW.lidState === lid0;
-      wbW.handleCanvasWheel({ x: crucW.x, y: crucW.y }, 60); // 85 >= 80
+      wbW.handleCanvasWheel({ x: crucW.x, y: crucW.y }, 60, true); // 85 >= 80 with Shift -> cycles lid
       const lidStepped = crucW.lidState !== lid0;
 
       wbW.handleCanvasWheel({ x: elW.x, y: elW.y }, 85);
@@ -6886,6 +6887,79 @@
         'Prompt 32 build 15 engine & tubing consistency checks passed',
         typeof simB15.syncAttachedMouthTools === 'function',
         'build.15'
+      );
+    }
+
+    // TEST 148: Prompt 33 — Gas Syringe w/ Gas Classified as Non-Empty Gas Entry in Cabinet
+    {
+      const lm = new LabManager();
+      const s = lm.getActiveSim();
+      s.clearBench?.();
+      const syr = s.createApparatus('gas_syringe', 300, 320);
+      syr.gasMoles = { H2_g: 0.008 };
+      const entry = lm.storeItemToCabinet(syr.id, s);
+      const out = lm.withdrawFromCabinet(entry.id, { mode: 'clone', simOverride: lm.labs[0].sim });
+      assert(
+        'Gas syringe containing gas is stored as non-empty gas entry in cabinet and restores gas intact',
+        Boolean(entry?.hasChemicals) &&
+          Array.isArray(entry?.speciesIds) &&
+          entry.speciesIds.includes('H2_g') &&
+          (out?.gasMoles?.H2_g || 0) > 0.007,
+        `hasChem=${entry?.hasChemicals}, gas=${out?.gasMoles?.H2_g}`
+      );
+    }
+
+    // TEST 149: Prompt 33 — Thermometer Probe, Rotated Floor Clamping, and Porcelain Dish Shelf Removal
+    {
+      const simTh = new LabSimulation();
+      const bkHot = simTh.createApparatus('beaker_250', 260, 400);
+      simTh.addReagentToVessel(bkHot.id, 'h2o', 80, { silentAnim: true });
+      bkHot.tempK = 353.15;
+      const th = simTh.createApparatus('thermometer', 260, 338);
+      checkThermometerInteractions(simTh, th, 1.5);
+      const condR = simTh.createApparatus('liebig_condenser', 450, 480);
+      condR.rotationDeg = 45;
+      const condMaxHalf = getItemRotatedHalfExtentY(APPARATUS.liebig_condenser, condR);
+      const dishRemovedFromShelf = !APPARATUS_ORDER.includes('porcelain_dish');
+      const thermOnShelf = APPARATUS_ORDER.includes('thermometer');
+      assert(
+        'Thermometer equilibrates with hot solution, rotated condenser half-extent prevents floor clipping, and porcelain_dish removed from shelf',
+        th.measuredTempK > 345 && th.contactKind === 'vessel' && condMaxHalf > 60 && dishRemovedFromShelf && thermOnShelf,
+        `T=${th.measuredTempK.toFixed(1)}K, halfY=${condMaxHalf.toFixed(1)}, noDish=${dishRemovedFromShelf}`
+      );
+    }
+
+    // TEST 150: Prompt 33 — Mounted Filter Funnel Priority During Pouring
+    {
+      const simF = new LabSimulation();
+      const rxv = simF.createApparatus('beaker_250', 420, 427);
+      const fnl = simF.createApparatus('filter_funnel', 420, 330);
+      fnl.mountedOnVesselId = rxv.id;
+      fnl.restingOnId = rxv.id;
+      const src = simF.createApparatus('beaker_250', 240, 427);
+      src.moles = { H2O_l: 2.0, BaSO4_s: 0.02, Na_aq: 0.04, Cl_aq: 0.04 };
+      simF.pourBetweenVessels(src.id, rxv.id, 30, true, { silentUndo: true });
+      const solidInFunnel = fnl.moles.BaSO4_s || 0;
+      const solidBypassedToRxv = rxv.moles.BaSO4_s || 0;
+      assert(
+        'Pouring targeting vessel holding mounted filter_funnel routes suspension through funnel (retains precipitate)',
+        solidInFunnel > 0.005 && solidBypassedToRxv < 1e-6,
+        `fnlBaSO4=${solidInFunnel.toFixed(4)}, rxvBaSO4=${solidBypassedToRxv.toFixed(4)}`
+      );
+    }
+
+    // TEST 151: Prompt 33 — Expanded Dose Ceilings, Left-Right Flip, and Build 16 Anchor
+    {
+      const simB16 = new LabSimulation();
+      const wb = simB16.createApparatus('wash_bottle', 300, 422);
+      const flip0 = Boolean(wb.flippedX);
+      const okFlip = simB16.flipItemLR(wb.id) && Boolean(wb.flippedX) !== flip0;
+      const phenReg = STARTER_REAGENTS.find((r) => r.id === 'phen');
+      const hclReg = STARTER_REAGENTS.find((r) => r.id === 'hcl_37');
+      assert(
+        'Starter reagents support generous maxDose, flipItemLR flips asymmetric tools, and build.16 invariants pass',
+        okFlip && (phenReg?.maxDose || 0) >= 200 && (hclReg?.maxDose || 0) >= 500 && APPARATUS.iron_spoon.height > APPARATUS.iron_spoon.width,
+        `flip=${okFlip}, phenMax=${phenReg?.maxDose}, hclMax=${hclReg?.maxDose}, spoon=${APPARATUS.iron_spoon.width}x${APPARATUS.iron_spoon.height}`
       );
     }
 

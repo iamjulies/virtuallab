@@ -80,7 +80,9 @@ function apparatusSvg(typeId) {
     case 'crucible_tongs':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 26l10-10 11-8M11 29l7-11 9-4"/><circle cx="17" cy="16" r="1.5" fill="currentColor"/></svg>`;
     case 'iron_spoon':
-      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="6.5" cy="17" r="2.2"/><path d="M9 17h13l2 3"/><path d="M22 20a5.5 5.5 0 0010 0H22z" fill="currentColor" opacity="0.3"/></svg>`;
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="18" cy="6.5" r="2.5"/><path d="M18 9v15"/><path d="M12.5 24a5.5 5.5 0 0011 0H12.5z" fill="currentColor" opacity="0.3"/></svg>`;
+    case 'thermometer':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="14.5" y="4" width="7" height="21" rx="3.5"/><circle cx="18" cy="27" r="4.2" fill="#e11d48" stroke="currentColor" stroke-width="1.4"/><line x1="18" y1="11" x2="18" y2="25" stroke="#e11d48" stroke-width="2.2"/><path d="M18 8h2M18 12h2M18 16h2M18 20h2" opacity="0.65"/></svg>`;
     case 'ice_bath':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="13" width="28" height="16" rx="3" fill="rgba(56,189,248,0.22)"/><path d="M3 13h30" stroke-width="2.2"/><rect x="8" y="16" width="6" height="5" rx="1" fill="rgba(255,255,255,0.65)"/><rect x="16" y="17" width="6" height="5" rx="1" fill="rgba(255,255,255,0.65)"/><rect x="23" y="15" width="5" height="5" rx="1" fill="rgba(255,255,255,0.65)"/><path d="M18 6v4M16 8h4" stroke="#38bdf8" stroke-width="1.4"/></svg>`;
     default:

@@ -4,16 +4,33 @@ import { kelvinToCelsius } from '../data/constants.js';
 import {
   beginCanvasLabelFrame,
   flushCanvasLabelFrame,
+  renderBurner,
   renderGasSyringe,
   renderPipette,
+  renderRetortStand,
+  renderScale,
   renderVessel,
 } from '../canvas/vesselRenderer.js';
 import {
   renderBurette,
+  renderCrucibleTongs,
+  renderDcPowerAndWires,
+  renderDiffusionTube,
+  renderElectrodeRod,
   renderFilterFunnel,
+  renderFlameLoop,
   renderIceBath,
+  renderIndicatorStrip,
   renderIronSpoon,
   renderLiebigCondenser,
+  renderPhenCotton,
+  renderRubberStopper,
+  renderSaltBridge,
+  renderSplint,
+  renderStirBar,
+  renderThermometer,
+  renderVoltAmmeterAndWires,
+  renderWashBottle,
 } from '../canvas/toolRenderer.js';
 import {
   VLAB_SCOPES,
@@ -26,8 +43,11 @@ import { soundEngine } from '../audio/soundEngine.js';
 const CABINET_PAGE_SIZE = 12; // 6 x 2 equal locker cubbies
 
 function classifyEntryFilter(entry) {
-  if (!entry?.hasChemicals) return 'apparatus';
-  const spList = entry.speciesIds || [];
+  const spList = entry?.speciesIds || [];
+  const hasGasMoles =
+    Object.values(entry?.snapshot?.gasMoles || {}).some((n) => Number(n) > 1e-9) ||
+    Object.entries(entry?.snapshot?.headspaceGasMoles || {}).some(([g, n]) => g !== 'H2O_g' && Number(n) > 1e-9);
+  if (!entry?.hasChemicals && !hasGasMoles) return 'apparatus';
   if (spList.includes('H_aq') || spList.includes('H2CO3_aq') || spList.some((id) => /^HCl|^HNO3|^H2SO4/.test(id))) {
     return 'acid';
   }
@@ -36,6 +56,9 @@ function classifyEntryFilter(entry) {
   }
   if (spList.some((id) => ['Na_s', 'Zn_s', 'Fe_s', 'Cu_s', 'Ag_s'].includes(id))) {
     return 'metal';
+  }
+  if (hasGasMoles || spList.some((id) => id.endsWith('_g'))) {
+    return 'gas';
   }
   return 'salt';
 }
@@ -56,21 +79,40 @@ function drawCubbyThumbnail(canvas, entry) {
   clone.landingTilt = 0;
   const spec = APPARATUS[clone.typeId] || { width: 72, height: 96 };
   const scale = Math.min((cw - 14) / Math.max(30, spec.width || 72), (ch - 10) / Math.max(30, spec.height || 96), 1.0);
-  const isDark = document.documentElement.getAttribute('data-theme') !== 'light' && document.documentElement.getAttribute('data-theme') !== 'olivia';
+  const themeName = document.documentElement.getAttribute('data-theme') || 'dark';
+  const isDark = themeName !== 'light' && themeName !== 'olivia';
 
   ctx.save();
   ctx.translate(cw * 0.5, ch * 0.52);
   ctx.scale(scale, scale);
-  beginCanvasLabelFrame(new Set(), false);
+  beginCanvasLabelFrame(new Set([clone.id || '__cab']), false);
   try {
-    if (clone.kind === 'vessel') renderVessel(ctx, clone, false, false, isDark, 0, 'vi', 'dark');
-    else if (clone.kind === 'gas_syringe') renderGasSyringe(ctx, clone, false, false, isDark, 0, 'vi');
-    else if (clone.kind === 'pipette') renderPipette(ctx, clone, false, false, isDark);
+    if (clone.kind === 'vessel') {
+      renderVessel(ctx, clone, { isSelected: false, isDropTarget: false, isDark, themeName, timeNow: 0, langCode: 'vi' });
+    } else if (clone.kind === 'gas_syringe') renderGasSyringe(ctx, clone, false, isDark, { tempK: clone.tempK || 298.15, pressureBar: 1.0 }, 'vi', 0);
+    else if (clone.kind === 'pipette') renderPipette(ctx, clone, false, isDark, 'vi', 0);
     else if (clone.kind === 'filter_funnel') renderFilterFunnel(ctx, clone, false, false, isDark, 'vi', 0);
     else if (clone.kind === 'burette') renderBurette(ctx, clone, false, false, isDark, 0);
-    else if (clone.kind === 'condenser') renderLiebigCondenser(ctx, clone, false, false, isDark, 0);
+    else if (clone.kind === 'condenser') renderLiebigCondenser(ctx, clone, false, isDark, 0, 'vi');
     else if (clone.kind === 'spoon') renderIronSpoon(ctx, clone, false, isDark, 0);
+    else if (clone.kind === 'thermometer') renderThermometer(ctx, clone, false, isDark, 'vi');
     else if (clone.kind === 'bath') renderIceBath(ctx, clone, false, isDark, 0, 'vi');
+    else if (clone.kind === 'burner') renderBurner(ctx, clone, false, false, isDark, 0);
+    else if (clone.kind === 'stand') renderRetortStand(ctx, clone, false, isDark);
+    else if (clone.kind === 'scale') renderScale(ctx, clone, false, isDark);
+    else if (clone.kind === 'wash_bottle') renderWashBottle(ctx, clone, false, isDark, 'vi', 0);
+    else if (clone.kind === 'splint') renderSplint(ctx, clone, false, isDark, 0);
+    else if (clone.kind === 'flame_loop') renderFlameLoop(ctx, clone, false, isDark, 0);
+    else if (clone.kind === 'indicator_strip') renderIndicatorStrip(ctx, clone, false, isDark, 'vi');
+    else if (clone.kind === 'tongs') renderCrucibleTongs(ctx, clone, false, isDark, 0);
+    else if (clone.kind === 'stir_bar') renderStirBar(ctx, clone, false, isDark);
+    else if (clone.kind === 'electrode') renderElectrodeRod(ctx, clone, false, isDark, 0);
+    else if (clone.kind === 'salt_bridge') renderSaltBridge(ctx, clone, [clone], false, isDark, 0, 'vi');
+    else if (clone.kind === 'rubber_stopper') renderRubberStopper(ctx, clone, false, isDark, null);
+    else if (clone.kind === 'phen_cotton') renderPhenCotton(ctx, clone, false, isDark);
+    else if (clone.kind === 'dc_power') renderDcPowerAndWires(ctx, [clone], null, isDark);
+    else if (clone.kind === 'volt_ammeter') renderVoltAmmeterAndWires(ctx, [clone], null, isDark);
+    else if (clone.kind === 'diffusion_tube') renderDiffusionTube(ctx, clone, false, false, isDark, 'vi');
   } catch {}
   flushCanvasLabelFrame(ctx);
   ctx.restore();
@@ -184,6 +226,7 @@ export class StorageCabinetModal {
       { id: 'base', label: t('cabinetFilterBase') },
       { id: 'salt', label: t('cabinetFilterSalt') },
       { id: 'metal', label: t('cabinetFilterMetal') },
+      { id: 'gas', label: t('cabinetFilterGas') },
       { id: 'apparatus', label: t('cabinetFilterApparatus') },
     ];
 
@@ -198,7 +241,11 @@ export class StorageCabinetModal {
       const appTitle = spec.i18nKey ? t(spec.i18nKey) : entry.apparatusId;
       const tempC = kelvinToCelsius(entry.tempK ?? 298.15).toFixed(0);
       const stickyTxt = entry.stickyLabel?.text ? ` · ${entry.stickyLabel.text}` : '';
-      const molesEntries = Object.entries(entry.snapshot?.moles || {})
+      const molesEntries = [
+        ...Object.entries(entry.snapshot?.moles || {}),
+        ...Object.entries(entry.snapshot?.gasMoles || {}),
+        ...Object.entries(entry.snapshot?.headspaceGasMoles || {}).filter(([g]) => g !== 'H2O_g'),
+      ]
         .filter(([, n]) => Number(n) > 1e-10)
         .sort((a, b) => Number(b[1]) - Number(a[1]))
         .slice(0, 2);
@@ -206,7 +253,7 @@ export class StorageCabinetModal {
       slotsHtml.push(`
         <div class="storage-cubby" data-entry-id="${entry.id}" title="${appTitle}${stickyTxt} (${tempC}°C)">
           <div class="storage-cubby-preview">
-            <canvas class="cab-thumb-canvas" width="94" height="72" data-entry-id="${entry.id}"></canvas>
+            <canvas class="cab-thumb-canvas" width="124" height="92" data-entry-id="${entry.id}"></canvas>
           </div>
           <div class="storage-cubby-meta">${chemLine ? `${chemLine} · ` : ''}${appTitle}${stickyTxt}</div>
           <div class="storage-cubby-actions">
@@ -346,6 +393,17 @@ export class StorageCabinetModal {
         soundEngine.playTrashCrumple();
         this.render();
         this.callbacks.onRefresh?.();
+      });
+    });
+
+    this.rootEl.querySelectorAll('.storage-cubby[data-entry-id]').forEach((cubby) => {
+      cubby.addEventListener('contextmenu', (e) => {
+        if (!this.callbacks.onCubbyContextMenu) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const entries = Array.isArray(this.labManager?.storageCabinet) ? this.labManager.storageCabinet : [];
+        const entry = entries.find((item) => item.id === cubby.dataset.entryId);
+        if (entry) this.callbacks.onCubbyContextMenu(e.clientX, e.clientY, entry);
       });
     });
 

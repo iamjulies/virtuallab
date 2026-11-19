@@ -6,7 +6,15 @@ import {
   NON_STEAM_GAS_IDS,
   SPECIES,
 } from '../data/species.js';
-import { APPARATUS, getCondenserPorts, getSyringeGeometry, getTubeDestTipPos, getVesselEndPorts, getVesselTubingPort } from '../data/apparatus.js';
+import {
+  APPARATUS,
+  getCondenserPorts,
+  getSyringeGeometry,
+  getTubeDestTipPos,
+  getVesselEndPorts,
+  getVesselTubingPort,
+  rotatePointAround,
+} from '../data/apparatus.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, solutionFreezingPointK } from './equilibrium.js';
 
 export const NON_STEAM_GASES = NON_STEAM_GAS_IDS;
@@ -117,6 +125,53 @@ export function isTubeTipSubmerged(sourceVessel, targetVessel) {
  * (1.15 px/mm calibrated to ISO glassware scale) with fixed inner bore diameter (6.0 mm)
  * to compute exact liquid hold-up volume capacity in mL (cm^3).
  */
+export function samplePolylineAt(points, u) {
+  if (!Array.isArray(points) || points.length === 0) return { x: 0, y: 0 };
+  if (points.length === 1) return points[0];
+  const clamped = Math.max(0, Math.min(1, u));
+  const scaled = clamped * (points.length - 1);
+  const idx = Math.min(points.length - 2, Math.floor(scaled));
+  const f = scaled - idx;
+  const a = points[idx];
+  const b = points[idx + 1];
+  return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+}
+
+export function buildRigidTubePoints(p0, p1, p2, p3, target = null, opts = {}) {
+  const tSpec = target ? APPARATUS[target.typeId] : null;
+  const routeOverMouth = Boolean(
+    target &&
+      target.kind === 'vessel' &&
+      !target.isInverted &&
+      !tSpec?.hasTwoEnds &&
+      !tSpec?.isHorizontalTube
+  );
+  const points = [];
+  if (routeOverMouth && tSpec) {
+    const tTilt = ((target.tiltDir < 0 ? -1 : 1) * (target.tiltDeg || 0) * Math.PI) / 180 + (target.landingTilt || 0);
+    const pMouth = rotatePointAround(target.x, target.y - tSpec.height * 0.5 - 6, target.x, target.y, tTilt);
+    const archTop = Math.min(p0.y, pMouth.y) - (opts.archLift || 46);
+    const c1 = opts.c1 || { x: p0.x + (opts.dxStart || 0), y: Math.min(p0.y - 12, archTop) };
+    const c2 = { x: pMouth.x, y: archTop };
+    const stepsArch = 20;
+    for (let i = 0; i <= stepsArch; i++) {
+      points.push(cubicBezierPoint(i / stepsArch, p0, c1, c2, pMouth));
+    }
+    const mouthDepth = Math.hypot(p3.x - pMouth.x, p3.y - pMouth.y);
+    const stepsDip = mouthDepth > 6 ? 8 : 2;
+    for (let j = 1; j <= stepsDip; j++) {
+      const f = j / stepsDip;
+      points.push({ x: pMouth.x + (p3.x - pMouth.x) * f, y: pMouth.y + (p3.y - pMouth.y) * f });
+    }
+    return points;
+  }
+  const steps = 28;
+  for (let i = 0; i <= steps; i++) {
+    points.push(cubicBezierPoint(i / steps, p0, p1, p2, p3));
+  }
+  return points;
+}
+
 export function computeTubingGeometry(vessel, target) {
   const vSpec = APPARATUS[vessel.typeId] || APPARATUS.erlenmeyer_250;
   const tSpec = APPARATUS[target.typeId] || APPARATUS.gas_syringe;
@@ -163,16 +218,13 @@ export function computeTubingGeometry(vessel, target) {
       ? { x: p3.x + (tSide === 'left' ? -28 : 28), y: archTopY }
       : { x: p3.x, y: archTopY };
 
-  const steps = 28;
-  const points = [];
+  const points = buildRigidTubePoints(p0, p1, p2, p3, target, {
+    archLift: vessel.isInverted ? -28 : vSpec.isHorizontalTube ? 38 : 54,
+    dxStart: vSpec.isHorizontalTube ? (vSide === 'left' ? -26 : 26) : 0,
+  });
   let arcLengthPx = 0;
-  let prev = cubicBezierPoint(0, p0, p1, p2, p3);
-  points.push(prev);
-  for (let i = 1; i <= steps; i++) {
-    const pt = cubicBezierPoint(i / steps, p0, p1, p2, p3);
-    arcLengthPx += Math.hypot(pt.x - prev.x, pt.y - prev.y);
-    points.push(pt);
-    prev = pt;
+  for (let i = 1; i < points.length; i++) {
+    arcLengthPx += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
   }
 
   const pxPerCm = (CONSTANTS.PX_PER_MM || 1.15) * 10;
@@ -203,10 +255,7 @@ export function computeCondenserOutletGeometry(cond, receiver) {
   const midX = 0.5 * (p0.x + p3.x);
   const p1 = { x: p0.x + dir * 22, y: p0.y + 18 };
   const p2 = { x: midX + (p3.x - midX) * 0.4, y: p3.y - 34 };
-  const points = [];
-  for (let i = 0; i <= 20; i++) {
-    points.push(cubicBezierPoint(i / 20, p0, p1, p2, p3));
-  }
+  const points = buildRigidTubePoints(p0, p1, p2, p3, receiver, { archLift: 28, c1: { x: p0.x + dir * 24, y: p0.y - 12 } });
   return { p0, p1, p2, p3, points };
 }
 

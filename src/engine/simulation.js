@@ -5,7 +5,15 @@ import {
   SPECIES,
   STARTER_REAGENTS,
 } from '../data/species.js';
-import { APPARATUS, clampItemToStandY, getProbeTipPos, getStandGeometry, getSyringeGeometry, getVesselEndPorts } from '../data/apparatus.js';
+import {
+  APPARATUS,
+  clampItemToStandY,
+  getItemRotatedHalfExtentY,
+  getProbeTipPos,
+  getStandGeometry,
+  getSyringeGeometry,
+  getVesselEndPorts,
+} from '../data/apparatus.js';
 import { getInnerPolygonPx, getVesselHoldVolumeMl } from '../data/vesselGeometry.js';
 import {
   calcSolidTransferRatio,
@@ -676,6 +684,14 @@ export class LabSimulation {
         pinkLevel: 0,
         dampness: 0.85,
       });
+    } else if (spec.kind === 'thermometer') {
+      Object.assign(base, {
+        measuredTempK: this.environment.tempK,
+        tempK: this.environment.tempK,
+        contactKind: 'ambient',
+        contactLabel: '',
+        tiltAngle: 0,
+      });
     }
 
     this.items.push(base);
@@ -1164,7 +1180,8 @@ export class LabSimulation {
 
   getSupportSurfaceForItem(item) {
     const spec = APPARATUS[item.typeId];
-    const floorCenterY = SIM_BENCH_FLOOR_Y - spec.height / 2 + 2;
+    const halfExtY = getItemRotatedHalfExtentY(spec, item);
+    const floorCenterY = SIM_BENCH_FLOOR_Y - halfExtY + 2;
     let bestCenterY = floorCenterY;
     let bestSupport = null;
 
@@ -1173,7 +1190,7 @@ export class LabSimulation {
       for (const sup of this.items) {
         if (sup.kind !== 'burner') continue;
         const supSpec = APPARATUS[sup.typeId] || APPARATUS.burner;
-        const flameSeatY = sup.y - supSpec.height / 2 - 14;
+        const flameSeatY = sup.y - supSpec.height / 2 - 58;
         if (Math.abs(bowlX - sup.x) <= 44 && (item.restingOnId === sup.id || item.y <= sup.y - 6)) {
           return { centerY: flameSeatY, support: sup };
         }
@@ -1199,6 +1216,7 @@ export class LabSimulation {
       item.kind === 'splint' ||
       item.kind === 'flame_loop' ||
       item.kind === 'indicator_strip' ||
+      item.kind === 'thermometer' ||
       item.kind === 'tongs' ||
       item.kind === 'salt_bridge'
     ) {
@@ -1286,7 +1304,7 @@ export class LabSimulation {
         it.y = centerY;
         if (it.kind === 'spoon') {
           const dir = it.flippedX ? 1 : -1;
-          if (Math.abs(it.x + dir * 48 - support.x) < 28) it.x = support.x - dir * 48;
+          if (Math.abs(it.x + dir * 2 - support.x) < 28) it.x = support.x - dir * 2;
         } else if (Math.abs(it.x - support.x) < 28) {
           it.x = support.x;
         }
@@ -1687,9 +1705,9 @@ export class LabSimulation {
       const vSpec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
       const spoonDir = v.x >= anim.startX ? 1 : -1;
       spoon.flippedX = spoonDir > 0;
-      const hoverX = v.x - spoonDir * 48;
-      const hoverTopY = v.y - vSpec.height / 2 - 20;
-      const scoopDipY = Math.min(v.y + 6, v.y - vSpec.height / 2 + 26);
+      const hoverX = v.x - spoonDir * 2;
+      const hoverTopY = v.y - vSpec.height / 2 - 58;
+      const scoopDipY = Math.min(v.y + 4, hoverTopY + 34);
 
       anim.phase = Math.min(1.0, anim.phase + dt / (anim.duration || 0.72));
       const p = anim.phase;
@@ -2973,8 +2991,18 @@ export class LabSimulation {
    */
   pourBetweenVessels(sourceId, targetId, volumeMl, shakeBeforePour = false, streamOpts = {}) {
     const src = this.getItem(sourceId);
-    const dst = this.getItem(targetId);
+    let dst = this.getItem(targetId);
     if (!src || !dst || src.id === dst.id || src.isShattered || dst.isShattered || src.isBroken || dst.isBroken) return 0;
+    // Redirect pouring into a mounted Filter Funnel sitting inside target vessel's mouth
+    if (dst.kind === 'vessel' && src.kind !== 'filter_funnel') {
+      const mountedFunnel = this.items.find(
+        (f) => f.kind === 'filter_funnel' && !f.isBroken && (f.mountedOnVesselId === dst.id || f.restingOnId === dst.id)
+      );
+      if (mountedFunnel && mountedFunnel.id !== src.id) {
+        dst = mountedFunnel;
+        targetId = mountedFunnel.id;
+      }
+    }
     const dstValid = dst.kind === 'vessel' || dst.kind === 'filter_funnel' || dst.kind === 'burette';
     if (!dstValid) return 0;
     if (!streamOpts?.silentUndo && !streamOpts?.pouredMlTotal) this.recordUndo();
@@ -5031,6 +5059,21 @@ export class LabSimulation {
     return true;
   }
 
+  flipItemLR(itemId) {
+    const it = this.getItem(itemId);
+    if (!it) return false;
+    const spec = APPARATUS[it.typeId];
+    if (!spec?.flippable && !spec?.hasTwoEnds) return false;
+    it.flippedX = !it.flippedX;
+    if (it.kind === 'wash_bottle') {
+      it.squirtArc = computeWashBottleStreamArc(it, this.items, SIM_BENCH_FLOOR_Y, CONSTANTS.GRAVITY_PX_S2 || 1800);
+      it.sprayTargetId = it.squirtArc.hitTarget ? it.squirtArc.hitTarget.id : null;
+    }
+    this.updateSupportAttachments();
+    this.emitChange();
+    return true;
+  }
+
   setWashBottleAngle(wbId, deg) {
     const wb = this.getItem(wbId);
     if (!wb || wb.kind !== 'wash_bottle') return false;
@@ -5084,7 +5127,7 @@ export class LabSimulation {
     const spoutY = v.y + lipLocal.x * sinL + lipLocal.y * cosL;
     const pourX = spoutX;
     let dst = null;
-    let bestDist = Infinity;
+    let bestScore = Infinity;
     for (const cand of this.items) {
       if (
         cand.id === v.id ||
@@ -5098,10 +5141,19 @@ export class LabSimulation {
       }
       const cSpec = APPARATUS[cand.typeId] || APPARATUS.beaker_250;
       const dx = Math.abs(cand.x - pourX);
-      if (dx <= Math.max(48, cSpec.width * 0.55) && cand.y >= v.y - 28 && dx < bestDist) {
-        bestDist = dx;
-        dst = cand;
+      if (dx <= Math.max(48, cSpec.width * 0.55) && cand.y >= v.y - 28) {
+        const score = dx - (cand.kind === 'filter_funnel' ? 28 : 0);
+        if (score < bestScore) {
+          bestScore = score;
+          dst = cand;
+        }
       }
+    }
+    if (dst && dst.kind === 'vessel' && v.kind !== 'filter_funnel') {
+      const mf = this.items.find(
+        (f) => f.kind === 'filter_funnel' && !f.isBroken && (f.mountedOnVesselId === dst.id || f.restingOnId === dst.id)
+      );
+      if (mf && mf.id !== v.id) dst = mf;
     }
     const dstSpec = dst ? APPARATUS[dst.typeId] || APPARATUS.beaker_250 : null;
 
@@ -5122,8 +5174,9 @@ export class LabSimulation {
           v.phenIrrevFrac || 0
         ).css;
         if (dst) {
-          if (v.kind === 'vessel' && dst.kind === 'vessel') {
-            this.pourBetweenVessels(v.id, dst.id, dMl, false, { silentUndo: true, silentEmit: true });
+          if (v.kind === 'vessel' && (dst.kind === 'vessel' || dst.kind === 'filter_funnel')) {
+            const carrySuspended = dst.kind === 'filter_funnel' && ((v.stirTimer || 0) > 0 || (v.tiltDeg || 0) >= 35);
+            this.pourBetweenVessels(v.id, dst.id, dMl, carrySuspended, { silentUndo: true, silentEmit: true });
           } else {
             for (const [spId, n] of Object.entries({ ...v.moles })) {
               const sp = SPECIES[spId];
@@ -5206,8 +5259,8 @@ export class LabSimulation {
         if (nowMs - (v._lastTiltSolidMs || 0) >= 80) {
           v._lastTiltSolidMs = nowMs;
           this.visualHooks.onAlert?.('tilt_solid_spill', v, {
-            fromX: v.kind === 'spoon' ? v.x + (v.flippedX ? 46 : -46) : spoutX,
-            fromY: v.kind === 'spoon' ? v.y + 4 : spoutY,
+            fromX: v.kind === 'spoon' ? getProbeTipPos(v).x : spoutX,
+            fromY: v.kind === 'spoon' ? getProbeTipPos(v).y : spoutY,
             toY: dst ? dst.y - (dstSpec?.height || 90) * 0.2 : SIM_BENCH_FLOOR_Y,
             catchX: dst ? dst.x : null,
             color: domColor,

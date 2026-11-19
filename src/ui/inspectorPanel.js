@@ -237,6 +237,10 @@ export class InspectorPanel {
       const nestedCnt = this.sim.items.filter((i) => i.submergedInBathId === item.id).length;
       return `bath|${item.id}|${item.bathMode || 'ice'}|${nestedCnt}|${langCode}|${logLen}`;
     }
+    if (item.kind === 'thermometer') {
+      return `therm|${item.id}|${item.isBroken ? 1 : 0}|${item.contactKind || ''}|${item.contactLabel || ''}|${langCode}|${logLen}`;
+    }
+
     if (item.kind === 'burner') {
       return `b|${item.id}|${item.typeId}|${item.airHoleOpen !== false ? 1 : 0}|${langCode}|${logLen}`;
     }
@@ -409,12 +413,16 @@ export class InspectorPanel {
       const powerTbl = isBunsen && !airOpen ? bSpec.yellowPowerLevelsW : bSpec.powerLevelsW;
       const maxPowerW = isBunsen && !airOpen ? (bSpec.yellowPowerLevelsW[3] || 820) : (bSpec.maxPowerW || 650);
       const powerW = item.powerW ?? (powerTbl[item.flameLevel || 0] || 0);
+      const isEn = langCode === 'en';
       const levels = [
         { lvl: 0, label: t('burnerOff'), w: powerTbl[0] ?? 0 },
-        { lvl: 1, label: t('burnerLow'), w: powerTbl[1] ?? 160 },
-        { lvl: 2, label: t('burnerMed'), w: powerTbl[2] ?? 360 },
-        { lvl: 3, label: t('burnerHigh'), w: powerTbl[3] ?? maxPowerW },
+        { lvl: 1, label: `${isEn ? 'Low' : 'Nhỏ'} (${powerTbl[1] ?? 160}W)`, w: powerTbl[1] ?? 160 },
+        { lvl: 2, label: `${isEn ? 'Med' : 'Vừa'} (${powerTbl[2] ?? 360}W)`, w: powerTbl[2] ?? 360 },
+        { lvl: 3, label: `${isEn ? 'High' : 'Mạnh'} (${powerTbl[3] ?? maxPowerW}W)`, w: powerTbl[3] ?? maxPowerW },
       ];
+      const sliderRangeLbl = isEn
+        ? `Continuous power (0–${maxPowerW} W):`
+        : `Điều chỉnh công suất (0–${maxPowerW} W):`;
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between">
@@ -441,7 +449,7 @@ export class InspectorPanel {
             <strong class="text-sm font-mono ${isBunsen && airOpen ? 'text-sky-400' : 'text-orange-400'}" id="live-burner-power">${Math.round(powerW)} W</strong>
           </div>
           <div class="flex flex-col gap-1">
-            <label class="text-[11px] text-muted">${t('burnerSliderLabel')}</label>
+            <label class="text-[11px] text-muted">${sliderRangeLbl}</label>
             <input type="range" id="burner-power-slider" min="0" max="${maxPowerW}" step="5" value="${Math.round(powerW)}" class="w-full accent-orange-500 cursor-pointer" />
             <div class="flex justify-between text-[10px] font-mono text-muted">
               <span>${levels[0].w} W</span><span>${levels[1].w} W</span><span>${levels[2].w} W</span><span>${levels[3].w} W</span>
@@ -1271,6 +1279,34 @@ export class InspectorPanel {
             }
           </div>
           <p class="text-[11px] text-muted leading-relaxed">${t('cottonHint')}</p>
+        </div>
+      `;
+    } else if (item.kind === 'thermometer') {
+      const mTempK = Number.isFinite(item.measuredTempK) ? item.measuredTempK : item.tempK ?? 298.15;
+      const mTempC = mTempK - 273.15;
+      const contactStr = item.contactLabel
+        ? `${item.contactLabel}`
+        : t('thermAmbient');
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">🌡️ ${t('eq_thermometer')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${APPARATUS.thermometer.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-3 rounded-lg border border-theme bg-surface flex flex-col gap-2 text-xs">
+            <div class="flex items-center justify-between">
+              <span class="text-muted">${t('thermReadingLabel')}</span>
+              <strong id="live-therm-reading" class="text-base font-mono ${mTempC >= 80 ? 'text-orange-400' : mTempC <= 5 ? 'text-sky-400' : 'text-emerald-400'}">${mTempC.toFixed(1)} °C (${mTempK.toFixed(2)} K)</strong>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-muted">${t('thermTargetLabel')}</span>
+              <span id="live-therm-contact" class="font-semibold">${contactStr}</span>
+            </div>
+          </div>
+          <p class="text-[11px] text-muted leading-relaxed">${t('eq_thermometer_desc')}</p>
         </div>
       `;
     } else if (item.kind === 'vessel') {
@@ -2393,6 +2429,16 @@ export class InspectorPanel {
     if (item.kind === 'scale') {
       const el = this.container.querySelector('#live-scale-readout');
       if (el) el.textContent = `${(item.measuredG || 0).toFixed(2)} g`;
+      return;
+    }
+
+    if (item.kind === 'thermometer') {
+      const tEl = this.container.querySelector('#live-therm-reading');
+      const cEl = this.container.querySelector('#live-therm-contact');
+      const mTempK = Number.isFinite(item.measuredTempK) ? item.measuredTempK : item.tempK ?? 298.15;
+      const mTempC = mTempK - 273.15;
+      if (tEl) tEl.textContent = `${mTempC.toFixed(1)} °C (${mTempK.toFixed(2)} K)`;
+      if (cEl) cEl.textContent = item.contactLabel || t('thermAmbient');
       return;
     }
 

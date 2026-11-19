@@ -938,6 +938,12 @@ function openCanvasContextMenu(clientX, clientY, logicalPt, hitItem) {
     },
     ...(moveSubmenu.length > 0 ? [{ label: t('ctxMoveToBench'), submenu: moveSubmenu }] : []),
     ...(hitItem.kind === 'vessel' ? [{ label: t('ctxStickyLabel'), onClick: () => openStickyLabelEditor(hitItem) }] : []),
+    ...(APPARATUS[hitItem.typeId]?.flippable || APPARATUS[hitItem.typeId]?.hasTwoEnds
+      ? [{ label: t('ctxFlipLR'), onClick: () => { soundEngine.playUiClick(); sim.flipItemLR(hitItem.id); } }]
+      : []),
+    ...(APPARATUS[hitItem.typeId]?.invertible
+      ? [{ label: t('ctxInvertVessel'), onClick: () => { soundEngine.playUiClick(); sim.toggleVesselInverted(hitItem.id); } }]
+      : []),
     { label: t('ctxStoreCabinet'), onClick: () => storeSelectedToCabinet(hitItem.id) },
     { separator: true },
     {
@@ -1523,8 +1529,59 @@ const cabinetModal = new StorageCabinetModal(labManager, getTranslator, () => ap
   },
   onOpenChange: (isOpen) => {
     appState.viewingStorage = Boolean(isOpen);
+    document.getElementById('bench-top-toolbar')?.classList.toggle('hidden', appState.viewingStorage);
+    document.getElementById('canvas-zoom-hud')?.classList.toggle('hidden', appState.viewingStorage);
     renderLabTabs(getTranslator());
     if (!isOpen) setTimeout(() => workbench.resize(), 20);
+  },
+  onCubbyContextMenu: (clientX, clientY, entry) => {
+    const t = getTranslator();
+    const takeSubmenu = labManager.labs.map((lb, idx) => ({
+      label: getLabTitle(lb, t),
+      onClick: () => {
+        const moved = labManager.withdrawFromCabinet(entry.id, { mode: 'move', simOverride: lb.sim });
+        if (moved) {
+          saveToLocalStorage(labManager);
+          soundEngine.playGlassClink(moved.typeId, 0.8);
+          labManager.switchLab(idx);
+          cabinetModal.close();
+          syncActiveLabRefs();
+          refreshChrome(true);
+          showToast(`📤 ${t('cabinetWithdrawnToast')}`);
+        }
+      },
+    }));
+    const cloneSubmenu = labManager.labs.map((lb, idx) => ({
+      label: getLabTitle(lb, t),
+      onClick: () => {
+        const cloned = labManager.withdrawFromCabinet(entry.id, { mode: 'clone', simOverride: lb.sim });
+        if (cloned) {
+          saveToLocalStorage(labManager);
+          soundEngine.playGlassClink(cloned.typeId, 0.8);
+          labManager.switchLab(idx);
+          cabinetModal.close();
+          syncActiveLabRefs();
+          refreshChrome(true);
+          showToast(`🧬 ${t('cabinetWithdrawnToast')}`);
+        }
+      },
+    }));
+    contextUI.showMenu(clientX, clientY, [
+      { label: t('ctxCabTakeToLab'), submenu: takeSubmenu },
+      { label: t('ctxCabCloneToLab'), submenu: cloneSubmenu },
+      { separator: true },
+      {
+        label: t('ctxCabDelete'),
+        danger: true,
+        onClick: () => {
+          labManager.removeFromCabinet(entry.id);
+          saveToLocalStorage(labManager);
+          soundEngine.playTrashCrumple();
+          cabinetModal.render();
+          refreshChrome(true);
+        },
+      },
+    ]);
   },
 });
 

@@ -29,6 +29,7 @@ import {
   computeTubingGeometry,
   cubicBezierPoint,
   getSyringeNozzlePos,
+  samplePolylineAt,
 } from '../engine/gasNetwork.js';
 import { renderVesselSolids } from './chemicalVisuals.js';
 
@@ -1471,13 +1472,19 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
     const { p0, p1, p2, p3, points, arcLengthCm, capacityMl } = geom;
 
     ctx.save();
-    // Outer translucent silicone/rubber tubing jacket
+    // Outer translucent silicone/rubber tubing jacket traced cleanly along over-mouth polyline
     ctx.strokeStyle = isDark ? 'rgba(71, 85, 105, 0.72)' : 'rgba(51, 65, 85, 0.62)';
     ctx.lineWidth = 7;
     ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     ctx.beginPath();
-    ctx.moveTo(p0.x, p0.y);
-    ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+    if (points.length >= 2) {
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    } else {
+      ctx.moveTo(p0.x, p0.y);
+      ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+    }
     ctx.stroke();
 
     // Inner bore dark contrast channel
@@ -1523,7 +1530,7 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
         for (let k = 0; k < 5; k++) {
           const raw = (timeNow * (isFountainPull ? 2.2 : 1.4) * dir + k * 0.2) % 1;
           const tFlow = ((raw + 1) % 1) * (isFountainPull ? 1.0 : fillFrac);
-          const fPt = cubicBezierPoint(tFlow, p0, p1, p2, p3);
+          const fPt = points.length >= 2 ? samplePolylineAt(points, tFlow) : cubicBezierPoint(tFlow, p0, p1, p2, p3);
           ctx.beginPath();
           ctx.arc(fPt.x, fPt.y, isFountainPull ? 2.6 : 1.9, 0, Math.PI * 2);
           ctx.fill();
@@ -1616,14 +1623,20 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
     if (cond.kind !== 'condenser' || cond.isBroken || !cond.outletTargetId) continue;
     const receiver = items.find((it) => it.id === cond.outletTargetId && !it.isShattered);
     if (!receiver) continue;
-    const { p0, p1, p2, p3 } = computeCondenserOutletGeometry(cond, receiver);
+    const { p0, p1, p2, p3, points } = computeCondenserOutletGeometry(cond, receiver);
     ctx.save();
     ctx.strokeStyle = isDark ? 'rgba(56, 189, 248, 0.72)' : 'rgba(14, 165, 233, 0.65)';
     ctx.lineWidth = 6;
     ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     ctx.beginPath();
-    ctx.moveTo(p0.x, p0.y);
-    ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+    if (points.length >= 2) {
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    } else {
+      ctx.moveTo(p0.x, p0.y);
+      ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+    }
     ctx.stroke();
     ctx.strokeStyle = isDark ? 'rgba(186, 230, 253, 0.55)' : 'rgba(241, 245, 249, 0.72)';
     ctx.lineWidth = 2.6;
@@ -1632,7 +1645,7 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
       ctx.fillStyle = 'rgba(224, 242, 254, 0.92)';
       for (let k = 0; k < 3; k++) {
         const u = ((timeNow * 1.45 + k * 0.33) % 1);
-        const dp = cubicBezierPoint(u, p0, p1, p2, p3);
+        const dp = points.length >= 2 ? samplePolylineAt(points, u) : cubicBezierPoint(u, p0, p1, p2, p3);
         ctx.beginPath();
         ctx.arc(dp.x, dp.y, 2.2, 0, Math.PI * 2);
         ctx.fill();
