@@ -2685,26 +2685,26 @@ export class LabWorkbenchCanvas {
    * - 'thermal': Whole-bench FLIR false-color thermal imaging heatmap (-15°C indigo -> 1000°C white-hot) with MSX silhouettes.
    */
   renderMultiSpectralOpticsOverlay(ctx, timeNow, mode) {
-    const drawArrowHead = (tipX, tipY, ang, color, size = 6) => {
+    const drawArrowHead = (tipX, tipY, ang, color, size = 4.0) => {
       ctx.save();
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.moveTo(tipX, tipY);
-      ctx.lineTo(tipX - size * Math.cos(ang - 0.52), tipY - size * Math.sin(ang - 0.52));
-      ctx.lineTo(tipX - size * Math.cos(ang + 0.52), tipY - size * Math.sin(ang + 0.52));
+      ctx.lineTo(tipX - size * Math.cos(ang - 0.5), tipY - size * Math.sin(ang - 0.5));
+      ctx.lineTo(tipX - size * Math.cos(ang + 0.5), tipY - size * Math.sin(ang + 0.5));
       ctx.closePath();
       ctx.fill();
       ctx.restore();
     };
 
-    const drawFlowStreamline = (pts, color, width = 2.0, dashOffset = 0, label = '') => {
+    const drawFlowStreamline = (pts, color, width = 1.4, dashOffset = 0, label = '', arrowSize = 4.0) => {
       if (pts.length < 2) return;
       ctx.save();
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.setLineDash([12, 8]);
+      ctx.setLineDash([7, 6]);
       ctx.lineDashOffset = dashOffset;
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
@@ -2719,13 +2719,13 @@ export class LabWorkbenchCanvas {
       ctx.stroke();
       ctx.setLineDash([]);
       const ang = Math.atan2(last.y - prev.y, last.x - prev.x);
-      drawArrowHead(last.x, last.y, ang, color, 6.2);
+      drawArrowHead(last.x, last.y, ang, color, arrowSize);
       if (label) {
         const mid = pts[Math.floor(pts.length * 0.5)];
-        ctx.font = 'bold 10px ui-monospace, monospace';
+        ctx.font = 'bold 9.5px ui-monospace, monospace';
         ctx.fillStyle = color;
         ctx.textAlign = 'center';
-        ctx.fillText(formatCanvasText(label), mid.x, mid.y - 8);
+        ctx.fillText(formatCanvasText(label), mid.x, mid.y - 7);
       }
       ctx.restore();
     };
@@ -2735,6 +2735,7 @@ export class LabWorkbenchCanvas {
         CO2_g: { rgba: 'rgba(139, 92, 246, 0.34)', core: 'rgba(167, 139, 250, 0.72)', stroke: '#a78bfa', formula: 'CO₂ (M=44 ↓)' },
         Cl2_g: { rgba: 'rgba(132, 204, 22, 0.34)', core: 'rgba(163, 230, 53, 0.72)', stroke: '#a3e635', formula: 'Cl₂ (M=71 ↓)' },
         HCl_g: { rgba: 'rgba(16, 185, 129, 0.30)', core: 'rgba(52, 211, 153, 0.68)', stroke: '#34d399', formula: 'HCl (M=36.5 ↓)' },
+        HNO3_g: { rgba: 'rgba(244, 63, 94, 0.28)', core: 'rgba(251, 113, 133, 0.64)', stroke: '#fb7185', formula: 'HNO₃ (M=63 ↓)' },
         NO2_g: { rgba: 'rgba(249, 115, 22, 0.34)', core: 'rgba(251, 146, 60, 0.72)', stroke: '#fb923c', formula: 'NO₂ (M=46 ↓)' },
         NO_g: { rgba: 'rgba(245, 158, 11, 0.30)', core: 'rgba(251, 191, 36, 0.68)', stroke: '#fbbf24', formula: 'NO (M=30 ↓)' },
         O2_g: { rgba: 'rgba(14, 165, 233, 0.28)', core: 'rgba(56, 189, 248, 0.64)', stroke: '#38bdf8', formula: 'O₂ (M=32 ↓)' },
@@ -2743,6 +2744,20 @@ export class LabWorkbenchCanvas {
         SO3_g: { rgba: 'rgba(244, 63, 94, 0.32)', core: 'rgba(251, 113, 133, 0.70)', stroke: '#fb7185', formula: 'SO₃ (M=80 ↓)' },
         SO2_g: { rgba: 'rgba(148, 163, 184, 0.34)', core: 'rgba(203, 213, 225, 0.72)', stroke: '#94a3b8', formula: 'SO₂ (M=64 ↓)' },
         H2S_g: { rgba: 'rgba(234, 179, 8, 0.30)', core: 'rgba(250, 204, 21, 0.68)', stroke: '#eab308', formula: 'H₂S (M=34 ↓)' },
+        C2H5OH_g: { rgba: 'rgba(56, 189, 248, 0.26)', core: 'rgba(125, 211, 252, 0.60)', stroke: '#7dd3fc', formula: 'C₂H₅OH (M=46 ↓)' },
+        C2H5Cl_g: { rgba: 'rgba(168, 85, 247, 0.28)', core: 'rgba(192, 132, 252, 0.62)', stroke: '#c084fc', formula: 'C₂H₅Cl (M=64.5 ↓)' },
+      };
+      const getGasPal = (spId) => {
+        if (GAS_PAL[spId]) return GAS_PAL[spId];
+        const sp = SPECIES[spId];
+        const mm = sp?.molarMass || 30;
+        const sym = sp?.formula || spId.replace(/_g$/, '');
+        return {
+          rgba: 'rgba(148, 163, 184, 0.30)',
+          core: 'rgba(203, 213, 225, 0.66)',
+          stroke: '#cbd5e1',
+          formula: `${sym} (M=${Math.round(mm)} ${mm >= 29 ? '↓' : '↑'})`,
+        };
       };
       ctx.save();
       ctx.fillStyle = this.isDark ? 'rgba(2, 6, 23, 0.26)' : 'rgba(15, 23, 42, 0.14)';
@@ -2752,50 +2767,52 @@ export class LabWorkbenchCanvas {
       for (const v of this.sim.items) {
         if (v.kind !== 'vessel' || v.isShattered) continue;
         const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
-        const entries = Object.entries(v.headspaceGasMoles || {})
-          .map(([g, n]) => [g, (n || 0) + (v.lastGasRateMap?.[g] || 0) * 0.45])
+        const entries = Object.entries({ ...(v.headspaceGasMoles || {}), ...(v.lastGasRateMap || {}) })
+          .map(([g]) => [g, (v.headspaceGasMoles?.[g] || 0) + (v.lastGasRateMap?.[g] || 0) * 0.45])
           .filter(([g, val]) => g !== 'H2O_g' && val > 1e-6);
         if (entries.length === 0) continue;
         hasActiveFlow = true;
         entries.sort((a, b) => b[1] - a[1]);
         const [domGas] = entries[0];
-        const pal = GAS_PAL[domGas] || GAS_PAL.O2_g;
+        const pal = getGasPal(domGas);
         const molarMass = SPECIES[domGas]?.molarMass || 30;
         const isHeavy = molarMass >= 29;
         const dirSign = v.tiltDir < 0 ? -1 : 1;
-        const rad = ((v.tiltDeg || 0) * Math.PI) / 180;
-        const rimX = v.x + dirSign * Math.sin(rad) * (spec.height * 0.44);
-        const rimY = v.y - Math.cos(rad) * (spec.height * 0.44);
-        const scrollPhase = -(timeNow * 42);
+        const effRad = (v.tiltAngle || 0) + (v.landingTilt || 0);
+        const rimX = v.x - Math.sin(effRad) * (-spec.height * 0.44);
+        const rimY = v.y + Math.cos(effRad) * (-spec.height * 0.44);
+        const scrollPhase = -(timeNow * 40);
 
         if (isHeavy && (v.tiltDeg || 0) >= 12) {
-          const spreadG = ctx.createLinearGradient(rimX, rimY, rimX + dirSign * 40, BENCH_FLOOR_Y);
+          const spreadG = ctx.createLinearGradient(rimX, rimY, rimX + dirSign * 44, BENCH_FLOOR_Y);
           spreadG.addColorStop(0, pal.core);
           spreadG.addColorStop(0.65, pal.rgba);
           spreadG.addColorStop(1, 'rgba(0,0,0,0)');
           ctx.fillStyle = spreadG;
           ctx.beginPath();
-          ctx.moveTo(rimX - 12, rimY);
-          ctx.lineTo(rimX + 14, rimY);
-          ctx.bezierCurveTo(rimX + dirSign * 42, rimY + 40, rimX + dirSign * 75, BENCH_FLOOR_Y - 22, rimX + dirSign * 145, BENCH_FLOOR_Y);
-          ctx.lineTo(rimX - dirSign * 85, BENCH_FLOOR_Y);
-          ctx.bezierCurveTo(rimX - dirSign * 26, BENCH_FLOOR_Y - 18, rimX - 16, rimY + 35, rimX - 12, rimY);
+          ctx.moveTo(rimX - 10, rimY);
+          ctx.lineTo(rimX + 12, rimY);
+          ctx.bezierCurveTo(rimX + dirSign * 44, rimY + 38, rimX + dirSign * 78, BENCH_FLOOR_Y - 22, rimX + dirSign * 140, BENCH_FLOOR_Y);
+          ctx.lineTo(rimX - dirSign * 70, BENCH_FLOOR_Y);
+          ctx.bezierCurveTo(rimX - dirSign * 18, BENCH_FLOOR_Y - 16, rimX - 14, rimY + 35, rimX - 10, rimY);
           ctx.closePath();
           ctx.fill();
 
-          for (let s = -2; s <= 2; s++) {
-            const lat = s * 22 * dirSign;
+          for (let s = -3; s <= 3; s++) {
+            const u = s / 3;
+            const sway = Math.sin(timeNow * 2.2 + s * 0.9) * 3.5;
             const pts = [
-              { x: v.x + s * 4, y: rimY - 4 },
-              { x: rimX + s * 6 + dirSign * 12, y: rimY + 26 },
-              { x: rimX + dirSign * 28 + lat * 0.7, y: Math.min(BENCH_FLOOR_Y - 14, (rimY + BENCH_FLOOR_Y) * 0.55) },
-              { x: rimX + dirSign * 56 + lat * 1.4, y: BENCH_FLOOR_Y - 10 - Math.abs(s) * 4 },
+              { x: rimX + s * 2.2, y: rimY + 2 },
+              { x: rimX + dirSign * (14 + u * 8) + sway * 0.4, y: rimY + 30 },
+              { x: rimX + dirSign * (32 + u * 26) + sway, y: Math.min(BENCH_FLOOR_Y - 16, (rimY + BENCH_FLOOR_Y) * 0.56) },
+              { x: rimX + dirSign * (46 + u * 58), y: BENCH_FLOOR_Y - 10 - Math.abs(s) * 2 },
             ];
-            drawFlowStreamline(pts, pal.stroke, s === 0 ? 2.4 : 1.6, scrollPhase + s * 8, s === 0 ? pal.formula : '');
+            drawFlowStreamline(pts, pal.stroke, s === 0 ? 1.6 : 1.2, scrollPhase + s * 6, s === 0 ? pal.formula : '', 3.8);
           }
         } else if (isHeavy) {
-          // Rigid-wall gas containment: keep dense gas inside vessel interior; spill ONLY over the open top rim!
+          // Rigid-wall gas containment + dense internal streamlines inside gradient plume & rim spillover jets
           const topMouthY = v.y - spec.height * 0.45;
+          const mouthSpan = Math.max(10, spec.neckRadius || spec.width * 0.34);
           ctx.save();
           ctx.beginPath();
           ctx.rect(v.x - spec.width * 0.44, topMouthY, spec.width * 0.88, spec.height * 0.88);
@@ -2809,23 +2826,56 @@ export class LabWorkbenchCanvas {
           ctx.beginPath();
           ctx.ellipse(v.x, plumeY, spec.width * 0.38, spec.height * 0.36, 0, 0, Math.PI * 2);
           ctx.fill();
+          for (let k = -2; k <= 2; k++) {
+            const xOff = k * (spec.width * 0.12);
+            const sw = Math.sin(timeNow * 2.4 + k) * 3;
+            drawFlowStreamline(
+              [
+                { x: v.x + xOff * 0.55, y: topMouthY + spec.height * 0.14 },
+                { x: v.x + xOff + sw, y: plumeY },
+                { x: v.x + xOff * 1.15, y: v.y + spec.height * 0.36 },
+              ],
+              pal.stroke,
+              1.15,
+              scrollPhase + k * 5,
+              '',
+              3.4
+            );
+          }
           ctx.restore();
 
           if (!v.isStoppered && !v.isInverted) {
-            const mouthSpan = Math.max(12, spec.neckRadius || spec.width * 0.36);
+            const spillFloorY = Math.min(BENCH_FLOOR_Y - 8, v.y + spec.height * 0.42);
             for (const side of [-1, 1]) {
-              const wv = Math.sin(timeNow * 2.2 + side) * 4;
-              drawFlowStreamline(
-                [
-                  { x: v.x + side * (mouthSpan * 0.35), y: topMouthY + 6 },
-                  { x: v.x + side * (mouthSpan + 10), y: topMouthY - 10 + wv },
-                  { x: v.x + side * (spec.width * 0.62 + 18), y: Math.min(BENCH_FLOOR_Y - 8, v.y + spec.height * 0.36) },
-                ],
-                pal.stroke,
-                1.7,
-                scrollPhase,
-                side === 1 ? pal.formula : ''
-              );
+              const sideG = ctx.createLinearGradient(v.x + side * mouthSpan * 0.4, topMouthY, v.x + side * (spec.width * 0.65), spillFloorY);
+              sideG.addColorStop(0, pal.core);
+              sideG.addColorStop(0.7, pal.rgba);
+              sideG.addColorStop(1, 'rgba(0,0,0,0)');
+              ctx.fillStyle = sideG;
+              ctx.beginPath();
+              ctx.moveTo(v.x + side * (mouthSpan * 0.15), topMouthY + 4);
+              ctx.quadraticCurveTo(v.x + side * (mouthSpan + 18), topMouthY - 10, v.x + side * (spec.width * 0.64 + 14), spillFloorY);
+              ctx.lineTo(v.x + side * (spec.width * 0.46), spillFloorY);
+              ctx.quadraticCurveTo(v.x + side * (mouthSpan + 6), topMouthY + 4, v.x + side * (mouthSpan * 0.05), topMouthY + 10);
+              ctx.closePath();
+              ctx.fill();
+
+              for (let f = 0; f < 3; f++) {
+                const frac = (f - 1) * 4.5;
+                const wv = Math.sin(timeNow * 2.3 + side + f) * 2.8;
+                drawFlowStreamline(
+                  [
+                    { x: v.x + side * (mouthSpan * (0.28 + f * 0.14)), y: topMouthY + 8 },
+                    { x: v.x + side * (mouthSpan + 7 + f * 4.5), y: topMouthY - 6 + wv },
+                    { x: v.x + side * (spec.width * 0.56 + 6 + frac), y: spillFloorY - 4 },
+                  ],
+                  pal.stroke,
+                  1.25,
+                  scrollPhase + f * 6,
+                  side === 1 && f === 1 ? pal.formula : '',
+                  3.7
+                );
+              }
             }
           } else {
             drawFlowStreamline(
@@ -2834,31 +2884,35 @@ export class LabWorkbenchCanvas {
                 { x: v.x, y: v.y + spec.height * 0.22 },
               ],
               pal.stroke,
-              2.2,
+              1.6,
               scrollPhase,
-              pal.formula
+              pal.formula,
+              4.0
             );
           }
         } else {
-          const basePlumeY = v.y - spec.height * 0.45;
-          const domeG = ctx.createRadialGradient(v.x, basePlumeY - 35, 8, v.x, basePlumeY - 45, 110);
+          const basePlumeX = rimX;
+          const basePlumeY = rimY;
+          const domeRadius = Math.max(46, spec.width * 0.58);
+          const domeG = ctx.createRadialGradient(basePlumeX, basePlumeY - 38, 8, basePlumeX, basePlumeY - 48, 102);
           domeG.addColorStop(0, pal.core);
-          domeG.addColorStop(0.55, pal.rgba);
+          domeG.addColorStop(0.58, pal.rgba);
           domeG.addColorStop(1, 'rgba(0,0,0,0)');
           ctx.fillStyle = domeG;
           ctx.beginPath();
-          ctx.ellipse(v.x, basePlumeY - 38, spec.width * 0.85, 88, 0, 0, Math.PI * 2);
+          ctx.ellipse(basePlumeX, basePlumeY - 42, domeRadius, 82, 0, 0, Math.PI * 2);
           ctx.fill();
 
-          for (let s = -1; s <= 1; s++) {
-            const sw = Math.sin(timeNow * 2.8 + s * 1.4) * 10;
+          for (let s = -2; s <= 2; s++) {
+            const u = s / 2;
+            const sw = Math.sin(timeNow * 2.8 + s * 1.1) * 5;
             const pts = [
-              { x: v.x + s * 8, y: v.y - spec.height * 0.1 },
-              { x: v.x + s * 18 + sw, y: basePlumeY - 12 },
-              { x: v.x + s * 34 - sw * 0.7, y: Math.max(24, basePlumeY - 62) },
-              { x: v.x + s * 52, y: Math.max(16, basePlumeY - 108) },
+              { x: basePlumeX + u * Math.min(12, spec.neckRadius || 12), y: basePlumeY + 12 },
+              { x: basePlumeX + u * (domeRadius * 0.42) + sw * 0.5, y: basePlumeY - 18 },
+              { x: basePlumeX + u * (domeRadius * 0.65) - sw * 0.4, y: Math.max(24, basePlumeY - 62) },
+              { x: basePlumeX + u * (domeRadius * 0.78), y: Math.max(16, basePlumeY - 102 + Math.abs(s) * 4) },
             ];
-            drawFlowStreamline(pts, pal.stroke, s === 0 ? 2.4 : 1.7, scrollPhase + s * 7, s === 0 ? pal.formula : '');
+            drawFlowStreamline(pts, pal.stroke, s === 0 ? 1.65 : 1.25, scrollPhase + s * 6, s === 0 ? pal.formula : '', 3.8);
           }
         }
       }
@@ -2892,10 +2946,10 @@ export class LabWorkbenchCanvas {
     }
 
     if (mode === 'thermal') {
-      // High-sharpness 240 x 135 thermal diffusion field -> Ironbow/Rainbow FLIR LUT
-      const GW = 240;
-      const GH = 135;
-      if (!this._thermalCanvas) {
+      // High-sharpness 480 x 270 thermal diffusion field -> Ironbow/Rainbow FLIR LUT
+      const GW = 480;
+      const GH = 270;
+      if (!this._thermalCanvas || this._thermalCanvas.width !== GW || this._thermalCanvas.height !== GH) {
         this._thermalCanvas = document.createElement('canvas');
         this._thermalCanvas.width = GW;
         this._thermalCanvas.height = GH;
@@ -2995,13 +3049,27 @@ export class LabWorkbenchCanvas {
           const sC = (it.tempK || 298.15) - 273.15;
           obsMaxC = Math.max(obsMaxC, sC);
           splatHeat(it.x, it.y, 44, 24, sC, 0.88);
+        } else if (it.kind === 'splint' && (it.mode === 'burning' || it.mode === 'glowing')) {
+          const tip = getProbeTipPos(it);
+          const splC = it.mode === 'burning' ? 680 : 520;
+          obsMaxC = Math.max(obsMaxC, splC);
+          splatHeat(tip.x, tip.y, 18, 18, splC, 0.96);
+          splatHeat(tip.x, tip.y - 14, 24, 22, splC * 0.55, 0.58);
         } else if (it.kind === 'condenser' && it.waterFlowOn) {
-          obsMinC = Math.min(obsMinC, 14);
-          splatHeat(it.x, it.y, 58, 22, 14, 0.72);
+          const ports = getCondenserPorts(it);
+          const coolC = 6;
+          obsMinC = Math.min(obsMinC, coolC);
+          for (let s = 0; s < 5; s++) {
+            const u = s / 4;
+            const px = ports.inlet.x + (ports.outlet.x - ports.inlet.x) * u;
+            const py = ports.inlet.y + (ports.outlet.y - ports.inlet.y) * u;
+            splatHeat(px, py, 26, 20, coolC, 0.94);
+          }
+          splatHeat(it.x, it.y, 38, 22, coolC + 2, 0.88);
         }
       }
 
-      for (let pass = 0; pass < 3; pass++) {
+      for (let pass = 0; pass < 2; pass++) {
         for (let gy = 0; gy < GH; gy++) {
           for (let gx = 0; gx < GW; gx++) {
             const c = grid[gy * GW + gx];

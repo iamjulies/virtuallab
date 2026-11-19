@@ -450,6 +450,9 @@ export class ParticleSystem {
     } else if (vaporIntensity > 0.08 && !vessel.isStoppered) {
       const mistRate = Math.min(58, vaporIntensity * 26);
       const count = Math.floor(mistRate * dt) + (Math.random() < (mistRate * dt) % 1 ? 1 : 0);
+      const effTilt = (vessel.tiltAngle || 0) + (vessel.landingTilt || 0);
+      const cosT = Math.cos(effTilt);
+      const sinT = Math.sin(effTilt);
       for (let i = 0; i < count; i++) {
         const fromCrystal = metrics.isDehydrating && Math.random() < 0.55;
         const clearGap = metrics.isBoiling ? 5 : 0;
@@ -459,16 +462,28 @@ export class ParticleSystem {
           ? surfaceY - 4
           : Math.min(surfaceY - clearGap, vessel.y - spec.height / 2 + 8);
         const spreadX = fromCrystal ? halfW * 1.15 : Math.max(8, (spec.neckRadius || 20) * 0.9);
+        const lx = (Math.random() - 0.5) * spreadX;
+        const ly = fromCrystal
+          ? startY - vessel.y
+          : Math.abs(effTilt) > 0.015
+          ? -spec.height / 2 + 6
+          : startY - vessel.y;
+        const px = vessel.x + lx * cosT - ly * sinT;
+        const py = vessel.y + lx * sinT + ly * cosT;
+        const outSkewVx = Math.sin(effTilt) * 18;
 
         if (hasFilaments && Math.random() < dominantPlume.filamentProb) {
+          const lxFil = (Math.random() - 0.5) * spreadX * 0.6;
+          const fx = vessel.x + lxFil * cosT - ly * sinT;
+          const fy = vessel.y + lxFil * sinT + ly * cosT;
           this.particles.push({
             kind: 'gas_filament',
-            x: vessel.x + (Math.random() - 0.5) * spreadX * 0.6,
-            y: startY,
-            vx: (Math.random() - 0.5) * 16,
+            x: fx,
+            y: fy,
+            vx: outSkewVx + (Math.random() - 0.5) * 16,
             vy: -(38 + Math.random() * 36),
             phase: Math.random() * Math.PI * 2,
-            trail: [{ x: vessel.x, y: startY }],
+            trail: [{ x: fx, y: fy }],
             w: dominantPlume.filamentWidth || 2.8,
             life: 0,
             maxLife: 1.5 + Math.random() * 0.7,
@@ -480,9 +495,9 @@ export class ParticleSystem {
               dominantPlume && (dominantPlume.kind === 'colored_filament' || dominantPlume.kind === 'colored_cloud')
                 ? 'gas_cloud'
                 : 'mist',
-            x: vessel.x + (Math.random() - 0.5) * spreadX,
-            y: startY,
-            vx: (Math.random() - 0.5) * (fromCrystal ? 12 : 20),
+            x: px,
+            y: py,
+            vx: outSkewVx + (Math.random() - 0.5) * (fromCrystal ? 12 : 20),
             vy: -(28 + Math.random() * 34 + (metrics.isBoiling ? 12 : 0)),
             phase: Math.random() * Math.PI * 2,
             r: (fromCrystal ? 3.8 : 4.5 + steamVis * 2.2) + Math.random() * 5.8,
@@ -500,13 +515,18 @@ export class ParticleSystem {
       const innerRate = Math.min(26, vaporIntensity * 14);
       const count = Math.floor(innerRate * dt) + (Math.random() < (innerRate * dt) % 1 ? 1 : 0);
       const neckW = Math.max(7, (spec.neckRadius || 16) * 0.85);
+      const effTilt = (vessel.tiltAngle || 0) + (vessel.landingTilt || 0);
+      const cosT = Math.cos(effTilt);
+      const sinT = Math.sin(effTilt);
       for (let i = 0; i < count; i++) {
         const fromBottom = metrics.isDehydrating && Math.random() < 0.6;
         const startY = fromBottom ? bottomY - 10 : Math.min(surfaceY - 4, vessel.y - spec.height / 2 + 34);
+        const lx = (Math.random() - 0.5) * (fromBottom ? halfW * 1.05 : neckW);
+        const ly = startY - vessel.y;
         this.particles.push({
           kind: 'mist',
-          x: vessel.x + (Math.random() - 0.5) * (fromBottom ? halfW * 1.05 : neckW),
-          y: startY,
+          x: vessel.x + lx * cosT - ly * sinT,
+          y: vessel.y + lx * sinT + ly * cosT,
           vx: (Math.random() - 0.5) * 10,
           vy: -(16 + Math.random() * 18),
           r: 3.2 + Math.random() * 4.2,

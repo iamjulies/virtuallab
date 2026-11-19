@@ -27,7 +27,7 @@ function arrheniusFactor(eaJ, tempK) {
  */
 export function getNaIgnitionTempK(vessel, env = null) {
   const pCnt = vessel?.particleCounts?.Na_s ?? 1;
-  if (vessel?.groundPowderMap?.Na_s || pCnt >= 120) return 296.15;
+  if (pCnt >= 120) return 296.15;
   const massG = (vessel?.moles?.Na_s || 0) * SPECIES.Na_s.molarMass;
   if (pCnt <= 1 && massG >= 1.5 && (vessel?.naTarnishFrac || 0) > 0.2) {
     return 523.15; // 250 C quiescent pooled Na with oxide crust
@@ -40,7 +40,7 @@ export function getNaIgnitionTempK(vessel, env = null) {
  */
 export function getKIgnitionTempK(vessel, env = null) {
   const pCnt = vessel?.particleCounts?.K_s ?? 1;
-  if (vessel?.groundPowderMap?.K_s || pCnt >= 120) return 290.15;
+  if (pCnt >= 120) return 290.15;
   const massG = (vessel?.moles?.K_s || 0) * SPECIES.K_s.molarMass;
   if (pCnt <= 1 && massG >= 2.0 && (vessel?.kTarnishFrac || 0) > 0.25) {
     return 433.15; // 160 C crusted bulk Potassium
@@ -156,6 +156,9 @@ function getReactantAvailableMol(vessel, spId, env) {
       return purgeFrac > 0.08 ? headVal + 20.0 : headVal;
     }
     return headVal;
+  }
+  if (spId === 'H2O_g') {
+    return headVal + ((vessel.tempK || 298) > 373.65 ? (vessel.moles.H2O_l || 0) : 0);
   }
   if (spId !== 'O2_g') return headVal;
 
@@ -488,9 +491,25 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     if (!hasWater || iceMob <= 0) return 0;
     const nMg = moles.Mg_s || 0;
     if (nMg <= 1e-10 || (moles.H_aq || 0) > 0.01) return 0;
+    // Above 100.5 °C steam combustion (mg_steam_burn) takes over completely
+    if (T > 373.65) return 0;
     const area = computeSolidSurfaceAreaM2('Mg_s', nMg, vessel.particleCounts?.Mg_s ?? 6);
-    const hotBoost = T >= 333.15 ? 5.2 : 0.08;
-    return rxn.k298 * arrheniusFactor(rxn.eaJ || 42000, T) * Math.max(1e-5, area) * hotBoost * stirBoost * iceMob * 8.0;
+    // < 80 °C (353.15 K): passivated by Mg(OH)2 film -> negligible rate; 80–100 °C: brisk bubbling
+    if (T < 353.15) {
+      return rxn.k298 * arrheniusFactor(rxn.eaJ || 42000, T) * Math.max(1e-5, area) * 0.002 * iceMob;
+    }
+    const hotFactor = 4.2 + Math.min(4.0, (T - 353.15) * 0.22);
+    return rxn.k298 * arrheniusFactor(rxn.eaJ || 42000, T) * Math.max(1e-5, area) * hotFactor * stirBoost * iceMob * 9.0;
+  }
+
+  if (rxn.type === 'mg_steam_rxn') {
+    if (T <= (rxn.minTempK || 373.65)) return 0;
+    const nMg = moles.Mg_s || 0;
+    const nSteam = (vessel.headspaceGasMoles?.H2O_g || 0) + (moles.H2O_l || 0);
+    if (nMg <= 1e-10 || nSteam <= 1e-9) return 0;
+    const area = computeSolidSurfaceAreaM2('Mg_s', nMg, vessel.particleCounts?.Mg_s ?? 6);
+    const k = (rxn.kAtThreshold || 0.42) * arrheniusFactor(rxn.eaJ || 36000, T - 373.65 + CONSTANTS.T_STD_K);
+    return Math.min(nMg * 0.9, nSteam * 0.9, k * Math.max(1e-4, area) * 14.0);
   }
 
   if (rxn.type === 'al_alkali') {
@@ -764,17 +783,26 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     const solidId = rxn.solidId || 'Zn_s';
     const pCount = vessel.particleCounts?.[solidId] ?? 6;
     const isFineMetal = Boolean(vessel.groundPowderMap?.[solidId]) || pCount >= 20;
+    const isFineAl =
+      solidId === 'Al_s' &&
+      !vessel.flattenedMetalMap?.Al_s &&
+      (Boolean(vessel.groundPowderMap?.Al_s) || pCount >= 120);
+    const pO2 = getVesselEffectiveO2Bar(vessel, options.environment);
+    const inEnrichedO2 = (vessel.headspaceGasMoles?.O2_g || 0) > 1e-4 || pO2 > 0.35;
+    // Al foil (or ductile hammered foil in mortar) does NOT burn in ordinary air!
+    if (solidId === 'Al_s' && !isFineAl && !inEnrichedO2) return 0;
     const minTK =
       solidId === 'Zn_s'
         ? getZnIgnitionTempK(vessel, options.environment)
         : solidId === 'Fe_s'
         ? (isFineMetal ? 610 : rxn.minTempK || 760)
+        : solidId === 'Al_s'
+        ? (isFineAl ? 823.15 : 1073.15)
         : (rxn.minTempK || 585);
     if (T < minTK) return 0;
-    const pO2 = getVesselEffectiveO2Bar(vessel, options.environment);
     // Fe_s in ordinary air is governed by fe_air_combustion (powder spark combustion vs nail protective 3-layer scale);
     // fe_o2_burn activates specifically in pure/enriched O2 (>0.35 bar or headspace O2 > 1e-4)
-    if (solidId === 'Fe_s' && pO2 <= 0.35 && (vessel.headspaceGasMoles?.O2_g || 0) <= 1e-4) return 0;
+    if (solidId === 'Fe_s' && !inEnrichedO2) return 0;
     if (pO2 <= 0.015) return 0;
     const nSolid = moles[solidId] || 0;
     if (nSolid <= 1e-10) return 0;
@@ -3069,6 +3097,10 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
           vessel.headspaceGasMoles[spId] = Math.max(0, headAvail - fromHead);
         }
         const rem = used - fromHead;
+        if (rem > 0 && spId === 'H2O_g' && (vessel.tempK || 298) > 373.65) {
+          vessel.moles.H2O_l = Math.max(0, (vessel.moles.H2O_l || 0) - rem);
+          if (vessel.moles.H2O_l < 1e-14) delete vessel.moles.H2O_l;
+        }
         if (rem > 0 && spId === 'O2_g') {
           if ((vessel.isStoppered || vessel.lidState === 'closed') && (vessel.sealedAirO2Moles || 0) > 0) {
             const fromAir = Math.min(vessel.sealedAirO2Moles, rem);
@@ -3103,7 +3135,14 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     } else if (item.rxn.id === 'zn_o2_burn' && dXi > 1e-10) {
       vessel.znCombustionTimer = 1.0;
       vessel.znFlameColor = 'cyan_blue';
-    } else if ((item.rxn.id === 'mg_o2_burn' || item.rxn.id === 'mg_co2_burn' || item.rxn.id === 'mg_n2_burn' || item.rxn.id === 'mg_cl2_burn') && dXi > 1e-10) {
+    } else if (
+      (item.rxn.id === 'mg_o2_burn' ||
+        item.rxn.id === 'mg_co2_burn' ||
+        item.rxn.id === 'mg_n2_burn' ||
+        item.rxn.id === 'mg_cl2_burn' ||
+        (item.rxn.id === 'mg_steam_burn' && (vessel.tempK || 298) >= 423.15)) &&
+      dXi > 1e-10
+    ) {
       vessel.mgCombustionTimer = 1.25;
     } else if ((item.rxn.id === 'al_o2_burn' || item.rxn.id === 'al_cl2_burn' || item.rxn.id === 'al_fe2o3_thermite') && dXi > 1e-10) {
       vessel.alCombustionTimer = 1.2;

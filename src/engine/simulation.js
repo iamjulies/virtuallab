@@ -1524,6 +1524,10 @@ export class LabSimulation {
     const spoon = this.getItem(spoonId);
     const v = this.getItem(vesselId);
     if (!spoon || spoon.kind !== 'spoon' || !v || v.kind !== 'vessel' || v.isShattered) return false;
+    const SPOON_MAX_VOL_ML = APPARATUS.iron_spoon?.maxVolumeMl || 2.8;
+    const curSpoonBulkMl = computeSolidVolumeMl(spoon.moles || {}) * 1.25;
+    const remVolMl = Math.max(0, SPOON_MAX_VOL_ML - curSpoonBulkMl);
+    if (remVolMl <= 0.02) return false;
     const priorityOrder = ['Zn_s', 'Mg_s', 'Al_s', 'Na_s', 'K_s', 'CaCO3_s', 'CuO_s', 'CuSO4_5H2O_s', 'Fe_s', 'Cu_s', 'CaO_s'];
     const allSolidKeys = [
       ...priorityOrder.filter((k) => (v.moles?.[k] || 0) > 1e-8),
@@ -1536,7 +1540,9 @@ export class LabSimulation {
     const spId = allSolidKeys[0];
     const sp = SPECIES[spId];
     const availMol = v.moles[spId] || 0;
-    const takeMol = Math.min(availMol, maxGrams / Math.max(10, sp?.molarMass || 60));
+    const capByVolG = (remVolMl / 1.25) * (sp?.density || 2.2);
+    const takeG = Math.min(maxGrams, capByVolG);
+    const takeMol = Math.min(availMol, takeG / Math.max(10, sp?.molarMass || 60));
     if (takeMol <= 1e-9) return false;
 
     v.moles[spId] = availMol - takeMol;
@@ -1548,6 +1554,10 @@ export class LabSimulation {
     if (v.groundPowderMap?.[spId]) {
       spoon.groundPowderMap = spoon.groundPowderMap || {};
       spoon.groundPowderMap[spId] = true;
+    }
+    if (v.flattenedMetalMap?.[spId]) {
+      spoon.flattenedMetalMap = spoon.flattenedMetalMap || {};
+      spoon.flattenedMetalMap[spId] = true;
     }
     spoon.tempK = v.tempK || this.environment.tempK;
     this.recomputeScaleReadings();
@@ -2712,7 +2722,30 @@ export class LabSimulation {
       const curMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
       amt = Math.min(amt, Math.max(0, 50.0 - curMl));
     } else if (v.kind === 'spoon') {
-      amt = Math.min(amt, 15.0);
+      const SPOON_MAX_VOL_ML = APPARATUS.iron_spoon?.maxVolumeMl || 2.8;
+      if (reg.kind === 'liquid') {
+        const curLiqMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
+        const curSolBulkMl = computeSolidVolumeMl(v.moles) * 1.25;
+        amt = Math.min(amt, Math.max(0, SPOON_MAX_VOL_ML - curLiqMl - curSolBulkMl));
+      } else if (reg.kind === 'solid') {
+        const sp = SPECIES[reg.speciesId];
+        const curSolBulkMl = computeSolidVolumeMl(v.moles) * 1.25;
+        const curLiqMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
+        const remVolMl = Math.max(0, SPOON_MAX_VOL_ML - curSolBulkMl - curLiqMl);
+        const maxFitG = (remVolMl / 1.25) * (sp?.density || 2.2);
+        if (maxFitG <= 0.005) {
+          if (!options?.silentEmit) {
+            this.addLog({ type: 'alert', key: 'alertOverflow', vesselLabel: v.label });
+          }
+          return false;
+        }
+        if (amt > maxFitG) {
+          amt = maxFitG;
+          if (!options?.silentEmit) {
+            this.addLog({ type: 'alert', key: 'alertOverflow', vesselLabel: v.label });
+          }
+        }
+      }
     }
     if (amt <= 0) return false;
     if (!options?.silentUndo && !options?.silentEmit) this.recordUndo();
@@ -2786,19 +2819,20 @@ export class LabSimulation {
       addedHeatCap += addMol * (sp.cp || 30);
 
       const particleCount = options.fine
-        ? (reg.id === 'caco3' ? 400 : reg.id === 'fe' ? 48 : 30)
-        : reg.id === 'na'
+        ? (reg.id === 'caco3' ? 400 : (reg.id === 'na' || reg.id === 'k') ? 48 : 180)
+        : reg.id === 'na' || reg.id === 'k'
         ? 1
         : reg.id === 'fe'
-        ? 2
+        ? Math.min(42, Math.max(2, Math.round(amt / 4.0)))
         : reg.id === 'caco3'
-        ? Math.max(2, Math.round(amt * 2))
+        ? Math.min(18, Math.max(2, Math.round(amt * 1.2)))
         : 6;
       v.particleCounts[reg.speciesId] =
         (v.particleCounts[reg.speciesId] || 0) + particleCount;
-      if (options.fine && (reg.id === 'caco3' || reg.id === 'fe')) {
+      if (options.fine) {
         v.groundPowderMap = v.groundPowderMap || {};
         v.groundPowderMap[reg.speciesId] = true;
+        if (v.flattenedMetalMap?.[reg.speciesId]) delete v.flattenedMetalMap[reg.speciesId];
       }
     }
 
@@ -3974,18 +4008,26 @@ export class LabSimulation {
     const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
     const liqMl = liqL * 1000;
     const solMl = computeSolidVolumeMl(vessel.moles);
+    const solPackedMl = solMl * 1.25;
     const totalMl = liqMl + solMl;
+    const isSolidOver = liqMl <= 0.05 && solPackedMl > brimMl + 0.05;
 
-    if (totalMl <= brimMl + 0.05 || liqMl <= 0.05) return;
+    if ((totalMl <= brimMl + 0.05 || liqMl <= 0.05) && !isSolidOver) return;
 
-    const excessMl = totalMl - brimMl;
-    const vis = computeSolutionVisuals(
-      vessel.moles,
-      liqL,
-      computePH(vessel.moles, liqL, vessel.tempK),
-      spec.opticalPathCm,
-      vessel.phenBleachFrac
-    );
+    const excessMl = isSolidOver ? solPackedMl - brimMl : totalMl - brimMl;
+    let visCss = 'rgba(203, 213, 225, 0.88)';
+    if (liqMl > 0.05) {
+      visCss = computeSolutionVisuals(
+        vessel.moles,
+        liqL,
+        computePH(vessel.moles, liqL, vessel.tempK),
+        spec.opticalPathCm,
+        vessel.phenBleachFrac
+      ).css;
+    } else {
+      const domSol = Object.entries(vessel.moles || {}).find(([k, n]) => n > 1e-8 && SPECIES[k]?.phase === 's');
+      if (domSol) visCss = SPECIES[domSol[0]]?.color || visCss;
+    }
 
     if (vessel.isStoppered) {
       vessel.overflowRateMlS = 0;
@@ -3995,18 +4037,18 @@ export class LabSimulation {
         // Hard rubber stopper without tubing: hydraulic excess pops the stopper!
         this.popStopper(vessel, 'alertHydroOverflowPop', {
           hydraulic: true,
-          liquidColor: vis.css,
+          liquidColor: visCss,
         });
         vessel.overflowRateMlS = 36 + excessMl * 4.2;
-        vessel.overflowColor = vis.css;
-        vessel.spilledPuddleColor = vis.css;
+        vessel.overflowColor = visCss;
+        vessel.spilledPuddleColor = visCss;
       }
       return;
     }
 
     vessel.overflowRateMlS = 36 + excessMl * 4.2;
-    vessel.overflowColor = vis.css;
-    vessel.spilledPuddleColor = vis.css;
+    vessel.overflowColor = visCss;
+    vessel.spilledPuddleColor = visCss;
     if (!vessel.wasOverflowing) {
       vessel.wasOverflowing = true;
       this.addLog({
@@ -4015,7 +4057,7 @@ export class LabSimulation {
         vesselLabel: `${spec.id} ${vessel.label}`,
       });
       if (this.visualHooks.onAlert) {
-        this.visualHooks.onAlert('overflow', vessel, { liquidColor: vis.css });
+        this.visualHooks.onAlert('overflow', vessel, { liquidColor: visCss });
       }
     }
   }
@@ -4169,7 +4211,32 @@ export class LabSimulation {
       return;
     }
 
-    // Case 1: Open vessel rim overflow waterfall
+    // Case 1: Open vessel rim overflow waterfall (liquid OR excess bulk solid pile past brim)
+    const solPackedMl = solMl * 1.25;
+    if (liqMl <= 0.02 && solPackedMl > brimMl + 0.05) {
+      const excessSolMl = solPackedMl - brimMl;
+      const rateMlS = 36 + excessSolMl * 4.2;
+      const drainMl = Math.min(solPackedMl, excessSolMl, rateMlS * dt);
+      const fracSol = Math.min(1, drainMl / Math.max(1e-6, solPackedMl));
+      let domSolCol = '#cbd5e1';
+      let maxSolM = 0;
+      for (const [spId, n] of Object.entries({ ...vessel.moles })) {
+        const sp = SPECIES[spId];
+        if (!sp || sp.phase !== 's' || n <= 0) continue;
+        if (n > maxSolM) {
+          maxSolM = n;
+          domSolCol = sp.color || domSolCol;
+        }
+        const rem = n * (1 - fracSol);
+        if (rem < 1e-12) delete vessel.moles[spId];
+        else vessel.moles[spId] = rem;
+      }
+      vessel.overflowRateMlS = drainMl / Math.max(1e-4, dt);
+      vessel.overflowColor = domSolCol;
+      vessel.spilledPuddleColor = domSolCol;
+      return;
+    }
+
     if (totalMl <= brimMl + 0.02 || liqMl <= 0.02) {
       vessel.overflowRateMlS = 0;
       vessel.wasOverflowing = false;
@@ -4839,6 +4906,25 @@ export class LabSimulation {
           flameLevel: p.fl * horizFrac * vertFrac,
           powerW: effW,
           flameTempK: p.flameTempK,
+        };
+      }
+    }
+
+    // Lit or glowing wooden splint acts as a gentle mini handheld heater
+    for (const spl of this.items) {
+      if (spl.kind !== 'splint' || (spl.mode !== 'burning' && spl.mode !== 'glowing')) continue;
+      const tip = getProbeTipPos(spl);
+      const dx = Math.abs(tip.x - vessel.x);
+      if (dx > Math.max(24, vSpec.width * 0.44)) continue;
+      if (tip.y < vessel.y - vSpec.height * 0.25 || tip.y > vBot + 36) continue;
+      const prox = 1 - (dx / Math.max(26, vSpec.width * 0.46)) * 0.45;
+      const splintW = (spl.mode === 'burning' ? 28 : 12) * prox;
+      if (!best || splintW > best.powerW) {
+        best = {
+          burner: spl,
+          flameLevel: spl.mode === 'burning' ? 0.4 : 0.2,
+          powerW: splintW,
+          flameTempK: spl.mode === 'burning' ? 953.15 : 793.15,
         };
       }
     }

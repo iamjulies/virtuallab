@@ -137,6 +137,18 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
   }
 
   // 2. Crystalline & Pelleted Starter / Evaporated Solids resting on bottom
+  const totalBottomBulkMl = SORTED_BOTTOM_SOLID_SPECIES.reduce((sum, sp) => {
+    if (moltenIds.has(sp.id) || sp.visualType === 'water_ice') return sum;
+    const n = moles[sp.id] || 0;
+    if (n <= 1e-7) return sum;
+    return sum + ((n * sp.molarMass) / (sp.density || 2.5)) * 1.25;
+  }, 0);
+  const availH = Math.max(12, bottom - (bounds.top ?? bottom - 80) - 2);
+  const totalSolidPileH =
+    bounds.solidPileTopY != null
+      ? Math.max(0, Math.min(availH, bottom - bounds.solidPileTopY))
+      : Math.min(availH, 3 + Math.sqrt(totalBottomBulkMl) * 5.5);
+
   for (const sp of SORTED_BOTTOM_SOLID_SPECIES) {
     const spId = sp.id;
     if (moltenIds.has(spId)) continue;
@@ -146,16 +158,14 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     const vType = sp.visualType || 'white_powder';
     if (vType === 'water_ice') continue; // Rendered as translucent crystalline ice matrix in vesselRenderer.js
 
+    const thisBulkMl = ((massG) / (sp.density || 2.5)) * 1.25;
+    const volShare = totalBottomBulkMl > 1e-6 ? thisBulkMl / totalBottomBulkMl : 1;
+    const scaledPileH = Math.min(availH, Math.max(4.5, totalSolidPileH * volShare));
     const pCntSp = vessel.particleCounts?.[spId] || 0;
-    const isLimestoneChips = spId === 'CaCO3_s' && !vessel.groundPowderMap?.[spId] && pCntSp > 0 && pCntSp < 45;
-    const isFePowder = spId === 'Fe_s' && (Boolean(vessel.groundPowderMap?.Fe_s) || pCntSp >= 25);
-    const isGroundPowder =
-      isFePowder ||
-      (!isLimestoneChips &&
-        !sp.isDenseMetal &&
-        spId !== 'Na_s' &&
-        (Boolean(vessel.groundPowderMap?.[spId]) || pCntSp >= 120 || (spId === 'CaCO3_s' && pCntSp === 0)));
     const isFlattenedMetal = Boolean(vessel.flattenedMetalMap?.[spId]);
+    const isGroundPowder =
+      !isFlattenedMetal &&
+      (Boolean(vessel.groundPowderMap?.[spId]) || pCntSp >= 120);
 
     if (
       isGroundPowder ||
@@ -167,44 +177,73 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       vType === 'porous_lime' ||
       vType === 'powder'
     ) {
-      const heapH = Math.min(24, 3 + Math.sqrt(massG) * 5.5);
+      const heapH = Math.min(availH * 0.96, Math.max(3.5 + Math.sqrt(massG) * 3.8, scaledPileH));
+      const peakY = Math.max((bounds.top ?? bottom - 80) + 2, bottom - heapH * 1.18);
       const isNeutralWhite =
         (vType === 'white_powder' || isGroundPowder) &&
         (sp.color === '#e2e8f0' || sp.color === '#f8fafc' || sp.color === '#f1f5f9');
-      let fillCol = isNeutralWhite ? '#f1f5f9' : sp.color || '#f1f5f9';
+      let fillCol =
+        spId === 'Fe_s'
+          ? '#475569'
+          : spId === 'Zn_s'
+          ? '#94a3b8'
+          : spId === 'Mg_s'
+          ? '#e2e8f0'
+          : spId === 'Al_s'
+          ? '#dce4ee'
+          : spId === 'CaCO3_s'
+          ? '#f8fafc'
+          : isNeutralWhite
+          ? '#f1f5f9'
+          : sp.color || '#f1f5f9';
       const hotThreshK = sp.hotColorTempK || 460;
       if (sp.hotColor && vessel.tempK > hotThreshK) {
         const hotFrac = Math.min(1, (vessel.tempK - hotThreshK) / 140);
         if (hotFrac > 0.15) fillCol = sp.hotColor;
       }
-      if (isFePowder && vessel.tempK >= 773.15) {
+      if (spId === 'Fe_s' && vessel.tempK >= 773.15) {
         // Fine Iron powder blackbody glow: 500 °C dull red -> 760 °C orange -> 1100 °C bright yellow-white
         if (vessel.tempK >= 1373.15) fillCol = '#fef08a';
         else if (vessel.tempK >= 1033.15) fillCol = '#fb923c';
         else fillCol = '#ef4444';
       }
       const strokeCol =
-        isNeutralWhite && sp.highlightColor === '#ffffff' ? '#cbd5e1' : sp.highlightColor || '#cbd5e1';
+        spId === 'Fe_s'
+          ? '#94a3b8'
+          : isNeutralWhite && sp.highlightColor === '#ffffff'
+          ? '#cbd5e1'
+          : sp.highlightColor || '#cbd5e1';
 
       ctx.save();
       ctx.fillStyle = fillCol;
       ctx.beginPath();
-      ctx.moveTo(left + 4, bottom);
-      ctx.quadraticCurveTo(left + width * 0.5, bottom - heapH * 1.6, right - 4, bottom);
+      ctx.moveTo(left + 3, bottom);
+      if (heapH >= availH * 0.52) {
+        const flatTop = Math.max((bounds.top ?? bottom - 80) + 4, bottom - heapH);
+        ctx.lineTo(left + 3, flatTop + 4);
+        ctx.quadraticCurveTo(left + width * 0.5, flatTop - 6, right - 3, flatTop + 4);
+        ctx.lineTo(right - 3, bottom);
+      } else {
+        ctx.quadraticCurveTo(left + width * 0.5, peakY, right - 3, bottom);
+      }
       ctx.closePath();
       ctx.fill();
       ctx.strokeStyle = strokeCol;
       ctx.lineWidth = 0.8;
       ctx.stroke();
 
-      // Fine crystalline micro-powder / porous quicklime pores overlay for zoomed detail!
+      // Fine crystalline micro-powder / metallic filings / porous quicklime pores overlay for zoomed detail!
       if (isGroundPowder || vType === 'porous_lime' || vType === 'yellow_powder') {
-        const speckCount = Math.min(64, Math.max(22, Math.round(20 + massG * 10)));
-        const spanW = Math.max(10, width - 14);
+        const speckCount = Math.min(140, Math.max(24, Math.round(20 + scaledPileH * 1.4 + massG * 4)));
+        const spanW = Math.max(10, width - 12);
+        const effPeakH = Math.max(3, bottom - peakY);
         for (let k = 0; k < speckCount; k++) {
           const ux = seeded(k, spId.length * 19 + 7);
-          const archMaxH = Math.max(2, heapH * 0.85 * (1 - Math.abs(ux - 0.5) * 1.55));
-          const sx = left + 7 + ux * spanW;
+          const archMaxH =
+            heapH >= availH * 0.52
+              ? Math.max(3, heapH * 0.94)
+              : Math.max(2, effPeakH * 0.62 * (1 - Math.abs(ux - 0.5) * 1.45));
+          const sx = left + 6 + ux * spanW;
           const sy = bottom - 1.5 - seeded(k, 89) * archMaxH;
           const sr = 0.65 + seeded(k, 43) * 0.78;
           ctx.fillStyle =
@@ -218,7 +257,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
                 : '#fef9c3'
               : k % 3 === 0
               ? strokeCol
-              : 'rgba(255, 255, 255, 0.52)';
+              : 'rgba(255, 255, 255, 0.58)';
           ctx.beginPath();
           ctx.arc(sx, sy, sr, 0, Math.PI * 2);
           ctx.fill();
@@ -230,13 +269,18 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
 
     const grainCount =
       vType === 'iron_solid'
-        ? Math.min(4, Math.max(1, pCntSp || 1))
-        : Math.min(isFlattenedMetal ? 28 : 22, Math.max(2, Math.round(2 + Math.sqrt(massG) * 5)));
-    const baseSize = Math.min(8.5, 3.2 + Math.cbrt(massG) * 2.2);
+        ? Math.min(48, Math.max(1, Math.round(massG / 4.0), Math.min(12, pCntSp || 1)))
+        : vType === 'magnesium_ribbon'
+        ? Math.min(26, Math.max(3, Math.round(3 + Math.sqrt(massG) * 4.5)))
+        : vType === 'aluminium_foil'
+        ? Math.min(26, Math.max(3, Math.round(3 + Math.sqrt(massG) * 4.5)))
+        : Math.min(isFlattenedMetal ? 32 : 42, Math.max(2, Math.round(2 + Math.sqrt(massG) * 5.2)));
+    const baseSize = Math.min(9.5, 3.4 + Math.cbrt(massG) * 2.1);
+    const maxStackY = Math.max(4, Math.min(availH - 4, scaledPileH));
 
     for (let i = 0; i < grainCount; i++) {
-      const gx = left + 10 + seeded(i, spId.length * 13) * Math.max(8, width - 20);
-      const gy = bottom - 3 - seeded(i, 97) * Math.min(12, 2 + massG * 1.1);
+      const gx = left + 9 + seeded(i, spId.length * 13) * Math.max(8, width - 18);
+      const gy = bottom - 3.5 - seeded(i, 97) * maxStackY;
       const r = baseSize * (0.65 + seeded(i, 31) * 0.5);
 
       ctx.save();
@@ -245,7 +289,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       if (isFlattenedMetal) ctx.scale(1.38, 0.52);
 
       if (vType === 'iron_solid') {
-        const nailLen = Math.min(width * 0.42, Math.max(16, 15 + Math.cbrt(massG) * 5.5));
+        const nailLen = Math.min(width * 0.42, Math.max(15, 14 + Math.cbrt(Math.min(massG, 30)) * 4.5));
         const hasCuCoat = (moles.Cu_s || 0) > 1e-6;
         const tempC = (vessel.tempK || 298.15) - 273.15;
         const nailGrad = ctx.createLinearGradient(-nailLen * 0.5, -3, nailLen * 0.5, 3);
@@ -289,6 +333,82 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+      } else if (vType === 'magnesium_ribbon') {
+        // Distinct curled bright silver Magnesium ribbon coils / wavy spiral strips
+        const ribGrad = ctx.createLinearGradient(-r * 1.4, -r, r * 1.4, r);
+        ribGrad.addColorStop(0, '#ffffff');
+        ribGrad.addColorStop(0.5, '#e2e8f0');
+        ribGrad.addColorStop(1, '#94a3b8');
+        ctx.strokeStyle = ribGrad;
+        ctx.lineWidth = Math.max(2.0, r * 0.42);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(-r * 1.35, r * 0.35);
+        ctx.bezierCurveTo(-r * 0.75, -r * 1.15, r * 0.25, r * 1.05, r * 1.35, -r * 0.32);
+        ctx.stroke();
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = 0.75;
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        ctx.moveTo(-r * 1.1, r * 0.15);
+        ctx.bezierCurveTo(-r * 0.6, -r * 0.8, r * 0.2, r * 0.75, r * 1.05, -r * 0.25);
+        ctx.stroke();
+        if ((vessel.mgCombustionTimer || 0) > 0.02) {
+          const flareR = r * (5.2 + Math.min(3.5, vessel.mgCombustionTimer * 2.4));
+          const mgGrad = ctx.createRadialGradient(0, -r * 0.35, r * 0.35, 0, -r * 0.35, flareR);
+          mgGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+          mgGrad.addColorStop(0.32, 'rgba(248, 250, 252, 0.96)');
+          mgGrad.addColorStop(0.62, 'rgba(186, 230, 253, 0.52)');
+          mgGrad.addColorStop(1, 'rgba(224, 242, 254, 0)');
+          ctx.fillStyle = mgGrad;
+          ctx.beginPath();
+          ctx.arc(0, -r * 0.35, flareR, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else if (vType === 'aluminium_foil') {
+        // Distinct crinkled thin shiny silver Aluminium foil leaf sheets
+        const foilW = r * 1.65;
+        const foilH = r * 0.78;
+        const fGrad = ctx.createLinearGradient(-foilW, -foilH, foilW, foilH);
+        fGrad.addColorStop(0, '#f8fafc');
+        fGrad.addColorStop(0.45, '#cbd5e1');
+        fGrad.addColorStop(0.7, '#ffffff');
+        fGrad.addColorStop(1, '#94a3b8');
+        ctx.fillStyle = fGrad;
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = 0.65;
+        ctx.beginPath();
+        ctx.moveTo(-foilW, -foilH * 0.4);
+        ctx.lineTo(-foilW * 0.15, -foilH);
+        ctx.lineTo(foilW * 0.85, -foilH * 0.65);
+        ctx.lineTo(foilW, foilH * 0.45);
+        ctx.lineTo(foilW * 0.12, foilH * 0.92);
+        ctx.lineTo(-foilW * 0.78, foilH * 0.35);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        // Diagonal foil crinkle crease highlight
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.lineWidth = 0.75;
+        ctx.beginPath();
+        ctx.moveTo(-foilW * 0.55, -foilH * 0.1);
+        ctx.lineTo(0, foilH * 0.35);
+        ctx.lineTo(foilW * 0.6, -foilH * 0.35);
+        ctx.stroke();
+        if ((vessel.alCombustionTimer || 0) > 0.02) {
+          const flareR = r * (3.6 + Math.min(2.6, vessel.alCombustionTimer * 1.8));
+          const alGrad = ctx.createRadialGradient(0, -r * 0.3, r * 0.25, 0, -r * 0.3, flareR);
+          alGrad.addColorStop(0, 'rgba(255, 255, 255, 0.98)');
+          alGrad.addColorStop(0.45, 'rgba(253, 224, 71, 0.80)');
+          alGrad.addColorStop(0.75, 'rgba(251, 146, 60, 0.35)');
+          alGrad.addColorStop(1, 'rgba(251, 146, 60, 0)');
+          ctx.fillStyle = alGrad;
+          ctx.beginPath();
+          ctx.arc(0, -r * 0.3, flareR, 0, Math.PI * 2);
+          ctx.fill();
+        }
       } else if (vType === 'white_pellet' || vType === 'pellet') {
         if (sp.id === 'NaOH_s' && (vessel.naohDeliquesceFrac || 0) > 0.08) {
           ctx.beginPath();
@@ -585,31 +705,73 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     } else {
       const mx = left + width * cfg.dryAnchorX;
       const flatMet = Boolean(vessel.flattenedMetalMap?.[cfg.speciesId]);
+      const isAlkaliPowder = !flatMet && Boolean(vessel.groundPowderMap?.[cfg.speciesId]);
       const tarnish = vessel[cfg.tarnishKey] || 0;
       const isDryBurn = (vessel[cfg.dryBurnKey] || 0) > 0.02;
-      const rectW = flatMet ? radius * 2.75 : radius * 2;
-      const rectH = flatMet ? radius * 0.72 : radius * 1.5;
-      const my = bottom - rectH * 0.5 - 1;
-      if (isDryBurn) {
-        const dryGlow = ctx.createRadialGradient(mx, my, radius * 0.4, mx, my, radius * 3.6);
-        dryGlow.addColorStop(0, cfg.dryCore);
-        dryGlow.addColorStop(0.45, cfg.dryMid);
-        dryGlow.addColorStop(1, cfg.haloEdge);
-        ctx.fillStyle = dryGlow;
+      if (isAlkaliPowder) {
+        const availHMet = Math.max(10, bottom - (bounds.top ?? bottom - 80) - 2);
+        const thisMetBulkMl = (massMet / (SPECIES[cfg.speciesId]?.density || 0.9)) * 1.25;
+        const heapH = Math.min(availHMet * 0.92, Math.max(4 + Math.sqrt(massMet) * 5.2, (thisMetBulkMl / Math.max(1e-6, bounds.solidBulkMl || thisMetBulkMl)) * (bounds.solidPileTopY != null ? bottom - bounds.solidPileTopY : 18)));
+        const powderCol = isDryBurn
+          ? cfg.dryFill
+          : cfg.speciesId === 'K_s'
+          ? tarnish > 0.45 ? '#a78bfa' : '#ede9fe'
+          : tarnish > 0.45 ? '#94a3b8' : '#f1f5f9';
+        if (isDryBurn) {
+          const dryGlow = ctx.createRadialGradient(mx, bottom - heapH * 0.45, radius * 0.4, mx, bottom - heapH * 0.45, radius * 3.8);
+          dryGlow.addColorStop(0, cfg.dryCore);
+          dryGlow.addColorStop(0.45, cfg.dryMid);
+          dryGlow.addColorStop(1, cfg.haloEdge);
+          ctx.fillStyle = dryGlow;
+          ctx.beginPath();
+          ctx.arc(mx, bottom - heapH * 0.45, radius * 3.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = powderCol;
+        ctx.strokeStyle = isDryBurn ? cfg.sphereHotEdge : cfg.speciesId === 'K_s' ? '#a78bfa' : '#94a3b8';
+        ctx.lineWidth = 0.85;
         ctx.beginPath();
-        ctx.arc(mx, my, radius * 3.6, 0, Math.PI * 2);
+        ctx.moveTo(left + 4, bottom);
+        ctx.quadraticCurveTo(mx, Math.max((bounds.top ?? bottom - 80) + 3, bottom - heapH * 1.25), right - 4, bottom);
+        ctx.closePath();
         ctx.fill();
-      }
-      ctx.fillStyle = isDryBurn ? cfg.dryFill : tarnish > 0.55 ? '#94a3b8' : tarnish > 0.2 ? '#b6c2cf' : '#e2e8f0';
-      ctx.strokeStyle = isDryBurn ? cfg.sphereHotEdge : tarnish > 0.3 ? '#475569' : '#94a3b8';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.roundRect(mx - rectW * 0.5, my - rectH * 0.5, rectW, rectH, flatMet ? 3 : 1);
-      ctx.fill();
-      ctx.stroke();
-      if (tarnish > 0.25) {
-        ctx.fillStyle = `rgba(71, 85, 105, ${(0.35 * tarnish).toFixed(2)})`;
-        ctx.fillRect(mx - rectW * 0.44, my - rectH * 0.44, rectW * 0.88, rectH * 0.32);
+        ctx.stroke();
+        const specks = Math.min(80, Math.max(18, Math.round(16 + heapH * 1.8)));
+        for (let k = 0; k < specks; k++) {
+          const ux = seeded(k, cfg.speciesId.charCodeAt(0) * 11 + 3);
+          const sx = left + 7 + ux * Math.max(8, width - 14);
+          const sy = bottom - 1.5 - seeded(k, 73) * Math.max(2, heapH * 0.72 * (1 - Math.abs(ux - 0.5) * 1.45));
+          ctx.fillStyle = k % 2 === 0 ? '#ffffff' : cfg.speciesId === 'K_s' ? '#c4b5fd' : '#cbd5e1';
+          ctx.beginPath();
+          ctx.arc(sx, sy, 0.7 + seeded(k, 29) * 0.7, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else {
+        const scaleVol = Math.min(2.6, Math.max(1.0, Math.cbrt(Math.max(0.2, massMet)) * 0.85));
+        const rectW = Math.min(width - 8, (flatMet ? radius * 2.75 : radius * 2) * scaleVol);
+        const rectH = Math.min(Math.max(12, bottom - (bounds.top ?? bottom - 80) - 4), (flatMet ? radius * 0.72 : radius * 1.45) * scaleVol);
+        const my = bottom - rectH * 0.5 - 1;
+        if (isDryBurn) {
+          const dryGlow = ctx.createRadialGradient(mx, my, radius * 0.4, mx, my, radius * 3.6);
+          dryGlow.addColorStop(0, cfg.dryCore);
+          dryGlow.addColorStop(0.45, cfg.dryMid);
+          dryGlow.addColorStop(1, cfg.haloEdge);
+          ctx.fillStyle = dryGlow;
+          ctx.beginPath();
+          ctx.arc(mx, my, radius * 3.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = isDryBurn ? cfg.dryFill : tarnish > 0.55 ? '#94a3b8' : tarnish > 0.2 ? '#b6c2cf' : '#e2e8f0';
+        ctx.strokeStyle = isDryBurn ? cfg.sphereHotEdge : tarnish > 0.3 ? '#475569' : '#94a3b8';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(mx - rectW * 0.5, my - rectH * 0.5, rectW, rectH, flatMet ? 3 : 1);
+        ctx.fill();
+        ctx.stroke();
+        if (tarnish > 0.25) {
+          ctx.fillStyle = `rgba(71, 85, 105, ${(0.35 * tarnish).toFixed(2)})`;
+          ctx.fillRect(mx - rectW * 0.44, my - rectH * 0.44, rectW * 0.88, rectH * 0.32);
+        }
       }
     }
     ctx.restore();

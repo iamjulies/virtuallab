@@ -314,10 +314,8 @@ export class InspectorPanel {
       return `tg|${item.id}|${item.grippedVesselId || ''}|${sampleFlag}|${vCnt}|${langCode}|${logLen}`;
     }
     if (item.kind === 'spoon') {
-      const spKeys = Object.keys(item.moles || {})
-        .filter((k) => item.moles[k] > 1e-10)
-        .sort()
-        .join(',');
+      const spEntries = Object.entries(item.moles || {}).filter(([, n]) => n > 1e-10);
+      const spKeys = spEntries.map(([k]) => `${k}:${item.groundPowderMap?.[k] ? 1 : 0}`).sort().join(',');
       const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered).length;
       return `spn|${item.id}|${item.flippedX ? 1 : 0}|${spKeys}|${vCnt}|${langCode}|${logLen}`;
     }
@@ -1169,12 +1167,14 @@ export class InspectorPanel {
     } else if (item.kind === 'spoon') {
       const spSpec = APPARATUS.iron_spoon;
       const entries = Object.entries(item.moles || {}).filter(([, n]) => n > 1e-10);
-      const summary =
-        entries.length > 0
-          ? entries
-              .map(([k, n]) => `${SPECIES[k]?.formula || k}: ${(n * (SPECIES[k]?.molarMass || 0)).toFixed(2)} g`)
-              .join(' · ')
-          : t('spoonEmpty');
+      const maxBowlMl = spSpec.maxVolumeMl || 2.8;
+      let bowlBulkMl = 0;
+      for (const [k, n] of entries) {
+        const sp = SPECIES[k];
+        if (sp?.phase === 's' && sp.density) {
+          bowlBulkMl += ((n * sp.molarMass) / sp.density) * 1.25;
+        }
+      }
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
@@ -1193,9 +1193,44 @@ export class InspectorPanel {
               <div class="font-mono font-bold text-sm mt-0.5" id="live-spoon-temp">${(item.tempK || 298.15).toFixed(1)} K (${kelvinToCelsius(item.tempK || 298.15).toFixed(1)}°C)</div>
             </div>
             <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs">
-              <div class="text-muted">${t('spoonContentsLabel')}</div>
-              <div class="font-mono font-semibold text-xs mt-0.5 truncate" id="live-spoon-contents">${summary}</div>
+              <div class="text-muted">${t('metricVolume')}</div>
+              <div class="font-mono font-bold text-sm mt-0.5" id="live-spoon-vol">${bowlBulkMl.toFixed(2)} / ${maxBowlMl.toFixed(1)} mL</div>
             </div>
+          </div>
+          <div class="rounded-lg border border-theme bg-surface p-2.5">
+            <div class="text-xs font-bold uppercase tracking-wider text-muted mb-1.5">${t('spoonContentsLabel')}</div>
+            ${
+              entries.length === 0
+                ? `<p class="text-xs text-muted">${t('spoonEmpty')}</p>`
+                : `
+                <table class="w-full text-xs">
+                  <thead>
+                    <tr class="text-muted border-b border-theme">
+                      <th class="text-left pb-1 font-medium">${t('colSpecies')}</th>
+                      <th class="text-right pb-1 font-medium">${t('colMoles')}</th>
+                      <th class="text-right pb-1 font-medium">${t('colMass')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${entries
+                      .map(([spId, n]) => {
+                        const sp = SPECIES[spId];
+                        if (!sp) return '';
+                        const massG = n * sp.molarMass;
+                        const molStr = n >= 0.01 ? `${n.toFixed(4)}` : `${(n * 1000).toFixed(3)}m`;
+                        return `
+                          <tr class="border-b border-theme/50 last:border-0">
+                            <td class="py-1 font-semibold">${sp.formula}</td>
+                            <td class="py-1 text-right font-mono" id="live-spoon-mol-${spId}">${molStr}</td>
+                            <td class="py-1 text-right font-mono" id="live-spoon-mass-${spId}">${massG.toFixed(3)}g</td>
+                          </tr>
+                        `;
+                      })
+                      .join('')}
+                  </tbody>
+                </table>
+                `
+            }
           </div>
           <div class="flex flex-col gap-1.5">
             <button type="button" id="ins-spoon-scoop" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent text-left">${t('spoonScoopBtn')}</button>
@@ -2409,18 +2444,25 @@ export class InspectorPanel {
 
     if (item.kind === 'spoon') {
       const tEl = this.container.querySelector('#live-spoon-temp');
-      const cEl = this.container.querySelector('#live-spoon-contents');
+      const vEl = this.container.querySelector('#live-spoon-vol');
       if (tEl) {
         tEl.textContent = `${(item.tempK || 298.15).toFixed(1)} K (${kelvinToCelsius(item.tempK || 298.15).toFixed(1)}°C)`;
       }
-      if (cEl) {
-        const entries = Object.entries(item.moles || {}).filter(([, n]) => n > 1e-10);
-        cEl.textContent =
-          entries.length > 0
-            ? entries
-                .map(([k, n]) => `${SPECIES[k]?.formula || k}: ${(n * (SPECIES[k]?.molarMass || 0)).toFixed(2)} g`)
-                .join(' · ')
-            : t('spoonEmpty');
+      const maxBowlMl = APPARATUS.iron_spoon?.maxVolumeMl || 2.8;
+      let bowlBulkMl = 0;
+      for (const [spId, n] of Object.entries(item.moles || {})) {
+        if (n <= 1e-10) continue;
+        const sp = SPECIES[spId];
+        if (sp?.phase === 's' && sp.density) {
+          bowlBulkMl += ((n * sp.molarMass) / sp.density) * 1.25;
+        }
+        const mEl = this.container.querySelector(`#live-spoon-mol-${spId}`);
+        const gEl = this.container.querySelector(`#live-spoon-mass-${spId}`);
+        if (mEl) mEl.textContent = n >= 0.01 ? `${n.toFixed(4)}` : `${(n * 1000).toFixed(3)}m`;
+        if (gEl && sp) gEl.textContent = `${(n * sp.molarMass).toFixed(3)}g`;
+      }
+      if (vEl) {
+        vEl.textContent = `${bowlBulkMl.toFixed(2)} / ${maxBowlMl.toFixed(1)} mL`;
       }
       return;
     }

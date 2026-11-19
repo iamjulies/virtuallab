@@ -1521,11 +1521,22 @@ function stepIronSpoon(sim, spoon, dt) {
   const { x: bowlX, y: bowlY } = getProbeTipPos(spoon);
   spoon.burnTimer = Math.max(0, (spoon.burnTimer || 0) - dt);
 
-  // 1. Check thermal coupling with any active Alcohol or Bunsen burner flame plume
+  // 1. Check thermal coupling with any active Alcohol or Bunsen burner (or lit wooden splint)
   let flameTargetK = sim.environment.tempK || CONSTANTS.T_STD_K;
   let kHeat = 0.14;
   let inBurnerFlame = false;
   for (const b of sim.items) {
+    if (b.kind === 'splint' && (b.mode === 'burning' || b.mode === 'glowing')) {
+      const tip = getProbeTipPos(b);
+      if (Math.hypot(bowlX - tip.x, bowlY - tip.y) <= 28) {
+        const splTargetK = b.mode === 'burning' ? 793.15 : 653.15;
+        if (splTargetK > flameTargetK) {
+          flameTargetK = splTargetK;
+          kHeat = Math.max(kHeat, 0.32);
+        }
+      }
+      continue;
+    }
     if (b.kind !== 'burner' || (b.powerW || 0) <= 0) continue;
     const bSpec = APPARATUS[b.typeId] || APPARATUS.burner;
     const nozzleY = b.typeId === 'bunsen_burner' ? b.y + bSpec.height / 2 - 68 : b.y + bSpec.height / 2 - 46;

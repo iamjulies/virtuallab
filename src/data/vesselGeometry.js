@@ -196,10 +196,92 @@ export function getMaxHoldVolume(innerVertices, totalAreaPx, maxCapacityMl, thet
   return maxCapacityMl * compute2DHoldFraction(innerVertices, clAngle);
 }
 
+function getTiltSlabFrame(spec, geom) {
+  const w = spec.width || 68;
+  const h = spec.height || 92;
+  const footH = spec.shape === 'cylinder' ? 9 : 3.5;
+  const baseBottomLocal = h / 2 - footH;
+  const topYLocal = -h / 2 + 4;
+  const spanH = Math.max(10, baseBottomLocal - topYLocal);
+  const maxH = Math.max(0.5, geom.maxHeightCm || 1);
+  const scaleX = (w / 2) / Math.max(0.1, geom.bodyMaxRadiusCm || 1);
+  const scaleY = spanH / maxH;
+
+  if (!geom._tiltedSlabs) {
+    const nSlabs = 32;
+    const dyCm = maxH / nSlabs;
+    const slabs = [];
+    for (let i = 0; i < nSlabs; i++) {
+      const y0 = i * dyCm;
+      const y1 = (i + 1) * dyCm;
+      const yMid = (y0 + y1) * 0.5;
+      const slice =
+        geom.slices.find((s) => yMid >= s.y0 - 1e-9 && yMid <= s.y1 + 1e-9) ||
+        geom.slices[geom.slices.length - 1];
+      const interpR = (yc) => {
+        const sl =
+          geom.slices.find((s) => yc >= s.y0 - 1e-9 && yc <= s.y1 + 1e-9) || slice;
+        return Math.max(0.02, sl.r0 + sl.slope * (yc - sl.y0));
+      };
+      const r0 = interpR(y0);
+      const r1 = interpR(y1);
+      const rMid = (r0 + r1) * 0.5;
+      const dV = ((Math.PI * dyCm) / 3) * (r0 * r0 + r0 * r1 + r1 * r1);
+      slabs.push({
+        py: baseBottomLocal - yMid * scaleY,
+        rx: Math.max(1, rMid * scaleX - 2.2),
+        dV,
+      });
+    }
+    geom._tiltedSlabs = slabs;
+  }
+
+  const topSlice = geom.slices[geom.slices.length - 1];
+  const topR = topSlice?.r1 ?? topSlice?.r0 ?? geom.bodyMaxRadiusCm ?? 1;
+  return {
+    slabs: geom._tiltedSlabs,
+    lipX: Math.max(1, topR * scaleX - 2.2),
+    lipY: topYLocal,
+  };
+}
+
+function sumSlabsVolumeBelow(slabs, cutY, cosT, absSinT) {
+  let vol = 0;
+  for (let i = 0; i < slabs.length; i++) {
+    const sb = slabs[i];
+    const rhs = sb.py * cosT - cutY;
+    const denom = sb.rx * absSinT;
+    if (denom <= 1e-6) {
+      if (rhs >= 0) vol += sb.dV;
+    } else {
+      const u = rhs / denom;
+      if (u >= 1) {
+        vol += sb.dV;
+      } else if (u > -1) {
+        vol += sb.dV * ((Math.acos(-u) + u * Math.sqrt(Math.max(0, 1 - u * u))) / Math.PI);
+      }
+    }
+  }
+  return vol;
+}
+
 export function getVesselHoldVolumeMl(spec, thetaDeg, maxCapOverride = null) {
   const maxCap = maxCapOverride ?? spec?.maxVolumeMl ?? 250;
+  const clAngle = Math.max(0, Math.min(180, Number(thetaDeg) || 0));
+  if (clAngle <= 0.1) return maxCap;
+  const geom = spec?.geometry;
+  if (geom && Array.isArray(geom.slices) && geom.slices.length > 0 && Array.isArray(geom._tiltedSlabs || geom.slices)) {
+    const { slabs, lipX, lipY } = getTiltSlabFrame(spec, geom);
+    const tiltRad = (clAngle * Math.PI) / 180;
+    const cosT = Math.cos(tiltRad);
+    const absSinT = Math.abs(Math.sin(tiltRad));
+    const rimWorldY = lipY * cosT + lipX * absSinT;
+    const heldRaw = sumSlabsVolumeBelow(slabs, rimWorldY, cosT, absSinT);
+    const maxV = Math.max(1e-6, geom.maxVolumeMl || maxCap);
+    return Math.max(0, Math.min(maxCap, heldRaw * (maxCap / maxV)));
+  }
   const { vertices, totalAreaPx } = getInnerPolygonPx(spec);
-  return getMaxHoldVolume(vertices, totalAreaPx, maxCap, thetaDeg);
+  return getMaxHoldVolume(vertices, totalAreaPx, maxCap, clAngle);
 }
 
 /**
@@ -251,46 +333,7 @@ export function findTiltClipY3D(spec, targetMl, tiltRad) {
   const maxV = Math.max(1e-6, geom.maxVolumeMl);
   if (V >= maxV - 1e-5) return -Infinity;
 
-  const w = spec.width || 68;
-  const h = spec.height || 92;
-  const footH = spec.shape === 'cylinder' ? 9 : 3.5;
-  const baseBottomLocal = h / 2 - footH;
-  const topYLocal = -h / 2 + 4;
-  const spanH = Math.max(10, baseBottomLocal - topYLocal);
-  const maxH = Math.max(0.5, geom.maxHeightCm || 1);
-  const scaleX = (w / 2) / Math.max(0.1, geom.bodyMaxRadiusCm || 1);
-  const scaleY = spanH / maxH;
-
-  if (!geom._tiltedSlabs) {
-    const nSlabs = 32;
-    const dyCm = maxH / nSlabs;
-    const slabs = [];
-    for (let i = 0; i < nSlabs; i++) {
-      const y0 = i * dyCm;
-      const y1 = (i + 1) * dyCm;
-      const yMid = (y0 + y1) * 0.5;
-      const slice =
-        geom.slices.find((s) => yMid >= s.y0 - 1e-9 && yMid <= s.y1 + 1e-9) ||
-        geom.slices[geom.slices.length - 1];
-      const interpR = (yc) => {
-        const sl =
-          geom.slices.find((s) => yc >= s.y0 - 1e-9 && yc <= s.y1 + 1e-9) || slice;
-        return Math.max(0.02, sl.r0 + sl.slope * (yc - sl.y0));
-      };
-      const r0 = interpR(y0);
-      const r1 = interpR(y1);
-      const rMid = (r0 + r1) * 0.5;
-      const dV = ((Math.PI * dyCm) / 3) * (r0 * r0 + r0 * r1 + r1 * r1);
-      slabs.push({
-        py: baseBottomLocal - yMid * scaleY,
-        rx: Math.max(1, rMid * scaleX - 2.2),
-        dV,
-      });
-    }
-    geom._tiltedSlabs = slabs;
-  }
-
-  const slabs = geom._tiltedSlabs;
+  const { slabs } = getTiltSlabFrame(spec, geom);
   const cosT = Math.cos(tiltRad);
   const absSinT = Math.abs(Math.sin(tiltRad));
 
@@ -308,22 +351,7 @@ export function findTiltClipY3D(spec, targetMl, tiltRad) {
   let hi = maxY + 4;
   for (let it = 0; it < 18; it++) {
     const mid = 0.5 * (lo + hi);
-    let vol = 0;
-    for (let i = 0; i < slabs.length; i++) {
-      const sb = slabs[i];
-      const rhs = sb.py * cosT - mid;
-      const denom = sb.rx * absSinT;
-      if (denom <= 1e-6) {
-        if (rhs >= 0) vol += sb.dV;
-      } else {
-        const u = rhs / denom;
-        if (u >= 1) {
-          vol += sb.dV;
-        } else if (u > -1) {
-          vol += sb.dV * ((Math.acos(-u) + u * Math.sqrt(Math.max(0, 1 - u * u))) / Math.PI);
-        }
-      }
-    }
+    const vol = sumSlabsVolumeBelow(slabs, mid, cosT, absSinT);
     if (vol > V) {
       lo = mid;
     } else {

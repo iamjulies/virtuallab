@@ -580,7 +580,7 @@ export const APPARATUS = {
     isoStandard: 'Deflagrating & Combustion Spoon · Fe–Cr Steel (Max 1450 °C)',
     materialSpec: 'Heat-Resistant Steel (Fe–Cr)',
     maxThermalStressK: 1723,
-    maxVolumeMl: 15,
+    maxVolumeMl: 2.8,
     tareMassG: 28.0,
     width: 30,
     height: 118,

@@ -2286,6 +2286,8 @@ export function renderVessel(ctx, vessel, opts) {
   // Draw solids, crystals, precipitates, and floating Na inside clipped region
   const currentWidthAtBottom = w - 6;
   const naInterfaceY = vessel.naInterfaceMl != null && strat.hasLightCover ? volumeMlToY(vessel.naInterfaceMl) : null;
+  const solidBulkMl = solMl * 1.25;
+  const solidPileTopY = solidBulkMl > 1e-4 ? Math.max(top + 2, volumeMlToY(Math.min(spec.maxVolumeMl * 1.04, solidBulkMl))) : interiorBottom;
   renderVesselSolids(
     ctx,
     vessel,
@@ -2296,6 +2298,8 @@ export function renderVessel(ctx, vessel, opts) {
       top,
       width: currentWidthAtBottom,
       naInterfaceY,
+      solidPileTopY,
+      solidBulkMl,
     },
     hasWater,
     surfaceY

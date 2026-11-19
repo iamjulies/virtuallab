@@ -1896,7 +1896,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 20 &&
+          STARTER_REAGENTS.length === 19 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.5';
+      const expectedBuild = 'virlab_beta_v4+build.6';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,9 +2515,9 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v3+build.6 parity: All 39 apparatus & 15 starter reagents translated in VI/EN, Prompt 26 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.6 parity: All 40 apparatus & 19 starter reagents translated in VI/EN, Prompt 40 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
-          STARTER_REAGENTS.length === 20 &&
+          STARTER_REAGENTS.length === 19 &&
           !APPARATUS.clay_triangle &&
           allTranslated &&
           newKeysPresent &&
@@ -2768,7 +2768,7 @@
       assert(
         'Reagent filters work, Clean Bench clears 0 items, Quick Presets populate cleanly, and Zn + 0.125M NaOH evolves H2 & [Zn(OH)4]2-',
         REAGENT_CATEGORIES.length >= 5 &&
-          acidCount === 4 &&
+          acidCount === 3 &&
           cleanCount === 0 &&
           daniellCount >= 5 &&
           diffCount === 1 &&
@@ -7129,26 +7129,30 @@
       );
     }
 
-    // TEST 156: Prompt 38 (beta_v4+build.4) — H2SO4 dilute (from HCl) vs H2SO4 conc (from HNO3):
-    // 1) h2so4_dil on shelf: 2 H+ eq, ZERO ambient acid fuming, BaSO4 ppt with BaCl2, CaSO4 crust slows coarse CaCO3 vs HCl
+    // TEST 156: H2SO4 dilute (via h2so4_98 + h2o) vs H2SO4 conc:
+    // 1) Dilute H2SO4: 2 H+ eq, ZERO ambient acid fuming, BaSO4 ppt with BaCl2, CaSO4 crust slows coarse CaCO3 vs HCl
     // 2) Boiling down dilute H2SO4 >78% regenerates molecular H2SO4_l -> releases HCl from NaCl & zero NO2 leak; >=300C evolves SO3 mist
     {
       const simS = new LabSimulation();
       // A. Non-volatile ambient check + BaSO4 + coarse CaCO3 slowdown vs HCl
       const bDil = simS.createApparatus('beaker_250', 140, 427);
-      simS.addReagentToVessel(bDil.id, 'h2so4_dil', 15.0, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bDil.id, 'h2o', 13.5, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bDil.id, 'h2so4_98', 1.65, { silentAnim: true, silentEmit: true });
+      bDil.tempK = 298.15;
       const bBa = simS.createApparatus('beaker_250', 290, 427);
-      simS.addReagentToVessel(bBa.id, 'h2so4_dil', 15.0, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bBa.id, 'h2o', 13.5, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bBa.id, 'h2so4_98', 1.65, { silentAnim: true, silentEmit: true });
       simS.addReagentToVessel(bBa.id, 'bacl2_2h2o', 2.44, { silentAnim: true, silentEmit: true });
       const bCaHCl = simS.createApparatus('beaker_250', 440, 427);
       simS.addReagentToVessel(bCaHCl.id, 'h2o', 10.0, { silentAnim: true, silentEmit: true });
       simS.addReagentToVessel(bCaHCl.id, 'hcl_37', 5.0, { silentAnim: true, silentEmit: true });
       simS.addReagentToVessel(bCaHCl.id, 'caco3', 4.0, { fine: false, silentAnim: true, silentEmit: true });
       const bCaH2SO4 = simS.createApparatus('beaker_250', 590, 427);
-      simS.addReagentToVessel(bCaH2SO4.id, 'h2so4_dil', 15.0, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bCaH2SO4.id, 'h2o', 13.5, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bCaH2SO4.id, 'h2so4_98', 1.65, { silentAnim: true, silentEmit: true });
       simS.addReagentToVessel(bCaH2SO4.id, 'caco3', 4.0, { fine: false, silentAnim: true, silentEmit: true });
       stepSeconds(simS, 3.0, 0.05);
-      const nonVolOk = (bDil.escapedGasMoles?.SO3_g || 0) === 0 && (bDil.escapedGasMoles?.HCl_g || 0) === 0 && (bDil.escapedGasMoles?.NO2_g || 0) === 0 && !STARTER_REAGENTS.find(r => r.id === 'h2so4_dil')?.bottleStyle?.isFuming;
+      const nonVolOk = (bDil.escapedGasMoles?.SO3_g || 0) === 0 && (bDil.escapedGasMoles?.HCl_g || 0) === 0 && (bDil.escapedGasMoles?.NO2_g || 0) === 0;
       const baPptOk = (bBa.moles.BaSO4_s || 0) > 0.005;
       const caCrustOk = (bCaH2SO4.moles.CaSO4_s || 0) > 1e-4 && (bCaH2SO4.moles.CaCO3_s || 0) > (bCaHCl.moles.CaCO3_s || 0);
 
@@ -7174,13 +7178,13 @@
       const hotSO3Ok = (bFumeHot.escapedGasMoles?.SO3_g || 0) > 1e-4 && (bFumeHot.escapedGasMoles?.NO2_g || 0) === 0;
 
       assert(
-        'Prompt 38 H2SO4 dil/conc parity: non-fuming H2SO4 2M (20 reagents), BaSO4 ppt, CaSO4 crust slows coarse CaCO3 vs HCl, >78% reconverts H2SO4_l unlocking NaCl->HCl, NaHSO4 1:1 cryst & >=300C SO3 (0 NO2)',
+        'H2SO4 dil/conc parity: diluted H2SO4 2M non-fuming, BaSO4 ppt, CaSO4 crust slows coarse CaCO3 vs HCl, >78% reconverts H2SO4_l unlocking NaCl->HCl, NaHSO4 1:1 cryst & >=300C SO3 (0 NO2)',
         nonVolOk && baPptOk && caCrustOk && concReunlockOk && bisulfateCrystOk && hotSO3Ok,
         `nonVol=${nonVolOk}, baSO4=${baPptOk}(${(bBa.moles.BaSO4_s||0).toFixed(4)}), caCrust=${caCrustOk}(CaSO4=${(bCaH2SO4.moles.CaSO4_s||0).toFixed(4)},remH2SO4=${(bCaH2SO4.moles.CaCO3_s||0).toFixed(4)},remHCl=${(bCaHCl.moles.CaCO3_s||0).toFixed(4)}), reconv=${concReunlockOk}(molL=${reconvertedMol.toFixed(4)},HCl=${(bConc.escapedGasMoles?.HCl_g||0).toFixed(4)}), naHSO4=${bisulfateCrystOk}(${(bAcidSalt.moles.NaHSO4_s||0).toFixed(4)}), hotSO3=${hotSO3Ok}(${(bFumeHot.escapedGasMoles?.SO3_g||0).toFixed(4)})`
       );
     }
 
-    // TEST 157: Prompt 39 (beta_v4+build.5) — 3D tilted meniscus parity (NO abnormal rise on tilt across round_flask_1000, beaker_1000, erlenmeyer_1000) & H2SO4 dosing preview
+    // TEST 157: Prompt 39 (beta_v4+build.5) — 3D tilted meniscus parity (NO abnormal rise on tilt across round_flask_1000, beaker_1000, erlenmeyer_1000) & H2SO4 98% preview
     {
       const checkTiltedParity = (typeId, volMl) => {
         const spec = APPARATUS[typeId];
@@ -7200,13 +7204,121 @@
       const bk1 = checkTiltedParity('beaker_1000', 871.0);
       const erl1 = checkTiltedParity('erlenmeyer_1000', 851.0);
       const h2so4ConcReg = STARTER_REAGENTS.find((r) => r.id === 'h2so4_98');
-      const h2so4DilReg = STARTER_REAGENTS.find((r) => r.id === 'h2so4_dil');
-      const prevModeOk = h2so4ConcReg?.previewMode === 'acid_h2so4_conc' && h2so4DilReg?.previewMode === 'acid_h2so4_dil';
+      const noDilReg = !STARTER_REAGENTS.some((r) => r.id === 'h2so4_dil');
+      const prevModeOk = h2so4ConcReg?.previewMode === 'acid_h2so4_conc' && noDilReg;
 
       assert(
-        'Prompt 39 tilted meniscus 3D parity & H2SO4 preview: round_flask_1000/beaker_1000/erlenmeyer_1000 show <=4px tilt transition & zero abnormal level rise, distinct H2SO4 preview modes',
+        'Prompt 39 tilted meniscus 3D parity & H2SO4 preview: round_flask_1000/beaker_1000/erlenmeyer_1000 show <=4px tilt transition & zero abnormal level rise, h2so4_dil removed cleanly',
         rbf.contOk && rbf.noSpikeOk && bk1.contOk && bk1.noSpikeOk && erl1.contOk && erl1.noSpikeOk && prevModeOk,
         `rbf=(up=${rbf.upY.toFixed(1)},t0=${rbf.smallTiltY.toFixed(1)},t12=${rbf.modTiltY.toFixed(1)}), bk=(up=${bk1.upY.toFixed(1)},t12=${bk1.modTiltY.toFixed(1)}), erl=(up=${erl1.upY.toFixed(1)},t12=${erl1.modTiltY.toFixed(1)}), prev=${prevModeOk}`
+      );
+    }
+
+    // TEST 158: Prompt 40 (virlab_beta_v4+build.6) — 3D hold volume for round_flask_1000@25°, Mg+H2O 3 regimes, Al powder vs foil in air, coarse vs fine solid visuals + 1000g Fe overflow in 50 mL tube, Spoon 2.8mL cap & Table, Splint mini-heater & Condenser FLIR
+    {
+      // 1) 3D tilted hold volume: round_flask_1000 with 165.7 mL at 25° tilt MUST NOT pour!
+      const holdRbf25 = getVesselHoldVolumeMl(APPARATUS.round_flask_1000, 25);
+      const sim1 = new LabSimulation();
+      const rf = sim1.createApparatus('round_flask_1000', 280, 350);
+      sim1.addReagentToVessel(rf.id, 'h2o', 165.7, { silentAnim: true, silentEmit: true });
+      sim1.setVesselTiltDeg(rf.id, 25, 1);
+      stepSeconds(sim1, 2.0, 0.05);
+      const liqAfter25 = computeLiquidVolumeL(rf.moles, rf.tempK) * 1000;
+      const noPrematurePourOk = holdRbf25 > 600 && Math.abs(liqAfter25 - 165.7) < 1.5 && (rf.tiltPourRateMlS || 0) === 0;
+
+      // 2) Mg + H2O 3 temperature regimes (<80C negligible, 80-100C Mg(OH)2, >100C steam -> MgO + mgCombustionTimer)
+      const simMg = new LabSimulation();
+      const bMgCold = simMg.createApparatus('beaker_250', 140, 427);
+      simMg.addReagentToVessel(bMgCold.id, 'h2o', 50, { silentAnim: true });
+      simMg.addReagentToVessel(bMgCold.id, 'mg', 0.48, { silentAnim: true });
+      bMgCold.tempK = 298.15;
+      const bMgHot = simMg.createApparatus('beaker_250', 300, 427);
+      simMg.addReagentToVessel(bMgHot.id, 'h2o', 50, { silentAnim: true });
+      simMg.addReagentToVessel(bMgHot.id, 'mg', 0.48, { silentAnim: true });
+      bMgHot.tempK = 365.15; // 92 °C
+      const bMgSteam = simMg.createApparatus('crucible_porcelain', 460, 427);
+      bMgSteam.moles = { Mg_s: 0.02, H2O_l: 0.02 };
+      bMgSteam.headspaceGasMoles = { H2O_g: 0.015 };
+      bMgSteam.tempK = 520.0; // > 100 °C steam
+      stepSeconds(simMg, 1.5, 0.05);
+      const mgRegimeOk =
+        (bMgCold.moles.MgOH2_s || 0) < 1e-4 &&
+        (bMgHot.moles.MgOH2_s || 0) > 1e-4 &&
+        (bMgHot.escapedGasMoles?.H2_g || 0) > 1e-4 &&
+        (bMgSteam.moles.MgO_s || 0) > 1e-3 &&
+        (bMgSteam.mgCombustionTimer || 0) > 0;
+
+      // 3) Al powder vs Al foil (including mortar-flattened Al foil) in air at 620 °C
+      const simAl = new LabSimulation();
+      const cAlPow = simAl.createApparatus('crucible_porcelain', 150, 427);
+      simAl.addReagentToVessel(cAlPow.id, 'al', 0.54, { fine: true, silentAnim: true });
+      cAlPow.tempK = 895.0; // 622 °C (550-760 °C)
+      const cAlFoil = simAl.createApparatus('crucible_porcelain', 300, 427);
+      simAl.addReagentToVessel(cAlFoil.id, 'al', 0.54, { fine: false, silentAnim: true });
+      cAlFoil.tempK = 955.0; // 682 °C
+      const mAlFlat = simAl.createApparatus('mortar_pestle', 450, 427);
+      simAl.addReagentToVessel(mAlFlat.id, 'al', 0.54, { fine: false, silentAnim: true });
+      simAl.grindMortar(mAlFlat.id);
+      mAlFlat.tempK = 955.0;
+      stepSeconds(simAl, 1.5, 0.05);
+      const alParityOk =
+        (cAlPow.moles.Al2O3_s || 0) > 1e-4 &&
+        (cAlFoil.moles.Al2O3_s || 0) === 0 &&
+        mAlFlat.flattenedMetalMap?.Al_s === true &&
+        (mAlFlat.moles.Al2O3_s || 0) === 0;
+
+      // 4) Distinct coarse vs fine solids + scaled Fe nails + 1000g Fe overflow in 50 mL test tube
+      const simV = new LabSimulation();
+      const tFe1000 = simV.createApparatus('test_tube_50', 180, 380);
+      simV.addReagentToVessel(tFe1000.id, 'fe', 1000, { fine: false, silentAnim: true });
+      const startedOverflowing = Boolean(tFe1000.wasOverflowing);
+      stepSeconds(simV, 3.5, 0.05);
+      const remFeMl = computeSolidVolumeMl(tFe1000.moles) * 1.25;
+      const tubeBrimMl = APPARATUS.test_tube_50.geometry.maxVolumeMl * 0.96;
+      const solidOverflowOk =
+        (tFe1000.particleCounts.Fe_s || 0) >= 20 &&
+        !tFe1000.groundPowderMap?.Fe_s &&
+        startedOverflowing &&
+        remFeMl <= tubeBrimMl + 10.0 &&
+        simV.logs.some((l) => l.key === 'alertOverflow');
+
+      const bFineCheck = simV.createApparatus('beaker_250', 340, 427);
+      simV.addReagentToVessel(bFineCheck.id, 'mg', 1.0, { fine: true, silentAnim: true });
+      simV.addReagentToVessel(bFineCheck.id, 'al', 1.0, { fine: true, silentAnim: true });
+      simV.addReagentToVessel(bFineCheck.id, 'na', 0.5, { fine: true, silentAnim: true });
+      simV.addReagentToVessel(bFineCheck.id, 'k', 0.5, { fine: true, silentAnim: true });
+      const bCoarseCa = simV.createApparatus('beaker_250', 480, 427);
+      simV.addReagentToVessel(bCoarseCa.id, 'caco3', 25.0, { fine: false, silentAnim: true });
+      const visualMetaOk =
+        SPECIES.Mg_s.visualType === 'magnesium_ribbon' &&
+        SPECIES.Al_s.visualType === 'aluminium_foil' &&
+        bFineCheck.groundPowderMap?.Mg_s === true &&
+        bFineCheck.groundPowderMap?.Al_s === true &&
+        bFineCheck.groundPowderMap?.Na_s === true &&
+        bFineCheck.groundPowderMap?.K_s === true &&
+        !bCoarseCa.groundPowderMap?.CaCO3_s &&
+        (bCoarseCa.particleCounts?.CaCO3_s || 0) < 45;
+
+      // 5) Spoon 2.8 mL volume cap + scoop preserves coarse state + Splint mini-heater + no H2SO4 dil starter
+      const spoon = simV.createApparatus('iron_spoon', 600, 400);
+      simV.addReagentToVessel(spoon.id, 'k', 15.0, { silentAnim: true });
+      const kFitG = (spoon.moles.K_s || 0) * SPECIES.K_s.molarMass;
+      const spoonCapOk = (APPARATUS.iron_spoon.maxVolumeMl || 0) <= 3.0 && kFitG > 0.5 && kFitG <= 2.3;
+
+      const simSpl = new LabSimulation();
+      const bSpl = simSpl.createApparatus('beaker_250', 300, 427);
+      simSpl.addReagentToVessel(bSpl.id, 'h2o', 20, { silentAnim: true });
+      const spl = simSpl.createApparatus('splint', 352, 430);
+      spl.mode = 'burning';
+      const srcSpl = simSpl.getBurnerHeatingSource(bSpl);
+      const tSplBefore = bSpl.tempK;
+      stepSeconds(simSpl, 2.0, 0.05);
+      const splintHeatOk = Boolean(srcSpl && srcSpl.powerW > 5 && bSpl.tempK > tSplBefore);
+
+      assert(
+        'Prompt 40 invariants: round_flask_1000@25° keeps 165.7mL, Mg+H2O 3 regimes, Al powder burns 550-760C vs non-burning foil/mortar, fine vs coarse assets + 1000g Fe overflow in 50mL tube, Spoon 2.8mL cap & Splint mini-heater',
+        noPrematurePourOk && mgRegimeOk && alParityOk && solidOverflowOk && visualMetaOk && spoonCapOk && splintHeatOk,
+        `hold25=${holdRbf25.toFixed(1)}mL/rem=${liqAfter25.toFixed(1)}, mgReg=${mgRegimeOk}, al=${alParityOk}(Al2O3=${(cAlPow.moles.Al2O3_s||0).toFixed(4)},foil=${(cAlFoil.moles.Al2O3_s||0).toFixed(4)}), solOv=${solidOverflowOk}(remMl=${remFeMl.toFixed(1)}), vis=${visualMetaOk}, spoonK=${kFitG.toFixed(2)}g, spl=${splintHeatOk}`
       );
     }
 

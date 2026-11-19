@@ -283,7 +283,7 @@ export class DosingModal {
       const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
       const cardW = Math.min(410, Math.max(300, vw - 24));
       let cardLeft = Math.round((vw - cardW) * 0.5);
-      let cardTop = Math.round(Math.max(16, (vh - 460) * 0.5));
+      let cardTop = Math.round(Math.max(10, (vh - 500) * 0.28));
       let spotHtml = '';
       let backdropBg = 'rgba(2, 6, 23, 0.55)';
       if (spot && spot.width > 10 && spot.height > 10) {
@@ -300,13 +300,13 @@ export class DosingModal {
         } else {
           cardLeft = spot.centerX < vw * 0.5 ? Math.max(12, vw - cardW - 16) : 12;
         }
-        cardTop = Math.max(12, Math.min(Math.max(12, vh - 600), Math.round(spot.centerY - 260)));
+        cardTop = Math.max(10, Math.min(Math.max(10, vh - 580), Math.round(spot.centerY - 310)));
       }
       return `
         <div class="fixed inset-0 z-50" style="background:${backdropBg}" id="dosing-backdrop">
           ${spotHtml}
-          <div id="dosing-card" style="position:fixed;z-index:51;left:${cardLeft}px;top:${cardTop}px;width:${cardW}px;max-height:calc(100vh - 24px);overflow-y:auto;"
-            class="rounded-2xl border border-theme bg-surface p-4 shadow-2xl flex flex-col gap-2.5 text-main">
+          <div id="dosing-card" style="position:fixed;z-index:51;left:${cardLeft}px;top:${cardTop}px;width:${cardW}px;max-height:calc(100vh - 52px);overflow-y:auto;"
+            class="rounded-2xl border border-theme bg-surface p-3 shadow-2xl flex flex-col gap-2 text-main">
             ${innerCardHtml}
           </div>
         </div>
@@ -347,7 +347,7 @@ export class DosingModal {
               t
             )}
 
-            <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2">
+            <div class="p-2.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-1.5">
               <div class="flex items-center justify-between gap-2">
                 <div class="flex items-center gap-1" role="group">
                   ${unitList
@@ -397,7 +397,7 @@ export class DosingModal {
               </div>
               `
                 : `
-              <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2">
+              <div class="p-2.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-1.5">
                 <div class="flex items-center justify-between text-xs">
                   <span class="text-muted">${t('flowRateLabel')}</span>
                   <span class="font-mono font-semibold text-accent" id="live-poured-counter">+${st.pouredLive.toFixed(2)} mL</span>
@@ -413,11 +413,11 @@ export class DosingModal {
                     st.rateMlS === 25 ? 'border-accent bg-accent/15 font-semibold' : 'border-theme bg-surface'
                   }" data-rate="25">${t('rateFast')}</button>
                 </div>
-                <div class="grid grid-cols-2 gap-2 mt-1">
-                  <button type="button" id="btn-hold-pour" class="py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500 active:scale-[0.98] transition select-none">
+                <div class="grid grid-cols-2 gap-2 mt-0.5">
+                  <button type="button" id="btn-hold-pour" class="py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500 active:scale-[0.98] transition select-none">
                     💧 ${t('btnHoldPour')}
                   </button>
-                  <button type="button" id="btn-single-drop" class="py-2 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent transition">
+                  <button type="button" id="btn-single-drop" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent transition">
                     + ${t('btnAddDrop')}
                   </button>
                 </div>
@@ -425,14 +425,14 @@ export class DosingModal {
               `
             }
 
-            <div class="flex items-center justify-end gap-2 pt-1">
+            <div class="flex items-center justify-end gap-2 pt-0.5">
               ${
                 !isSolid
-                  ? `<button type="button" id="btn-draw-pipette" class="mr-auto px-3 py-2 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent transition">🧪 +2 mL Pipette</button>`
+                  ? `<button type="button" id="btn-draw-pipette" class="mr-auto px-3 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent transition">🧪 +2 mL Pipette</button>`
                   : ''
               }
-              <button type="button" id="dosing-cancel" class="px-3 py-2 rounded-lg border border-theme text-xs font-medium text-muted hover:text-main">${t('btnClose')}</button>
-              <button type="button" id="dosing-confirm" class="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 transition">
+              <button type="button" id="dosing-cancel" class="px-3 py-1.5 rounded-lg border border-theme text-xs font-medium text-muted hover:text-main">${t('btnClose')}</button>
+              <button type="button" id="dosing-confirm" class="px-4 py-1.5 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 transition">
                 ${reg.confirmKey ? t(reg.confirmKey) : t('btnAddExact')}
               </button>
             </div>
@@ -611,18 +611,20 @@ export class DosingModal {
       `;
     }
 
-    // Ensure floating dosing card fits cleanly inside viewport without bottom button clipping
+    // Ensure floating dosing card fits cleanly higher inside viewport with generous bottom margin so it never hides behind taskbar
     const mountedCard = this.container.querySelector('#dosing-card');
     if (mountedCard && typeof window !== 'undefined') {
       const vhNow = window.innerHeight || 800;
       const vwNow = window.innerWidth || 1280;
-      const pad = 12;
+      const pad = 10;
+      const botPad = 42;
       const rect = mountedCard.getBoundingClientRect();
       const clampedLeft = Math.max(pad, Math.min(vwNow - rect.width - pad, rect.left));
-      const clampedTop = Math.max(pad, Math.min(vhNow - rect.height - pad, rect.top));
+      const maxTopAllowed = Math.max(pad, vhNow - rect.height - botPad);
+      const clampedTop = Math.max(pad, Math.min(maxTopAllowed, rect.top));
       mountedCard.style.left = `${Math.round(clampedLeft)}px`;
       mountedCard.style.top = `${Math.round(clampedTop)}px`;
-      mountedCard.style.maxHeight = `${Math.max(220, vhNow - Math.round(clampedTop) - pad)}px`;
+      mountedCard.style.maxHeight = `${Math.max(220, vhNow - Math.round(clampedTop) - botPad)}px`;
     }
 
     this.bindModalEvents();
