@@ -128,11 +128,12 @@ function reagentIconSvg(reg) {
       <rect x="9" y="14" width="18" height="16" rx="2" fill="rgba(234, 179, 8, 0.34)"/>
       <rect x="12" y="19" width="8" height="8" rx="0.8" fill="#e2e8f0" stroke="#64748b" stroke-width="0.9"/>
       <rect x="20" y="21" width="5" height="6" rx="0.6" fill="#cbd5e1" stroke="#64748b" stroke-width="0.8"/>`;
-  } else if (contentsKind === 'blue_crystals') {
+  } else if (contentsKind === 'blue_crystals' || contentsKind === 'purple_crystals') {
+    const isPurple = contentsKind === 'purple_crystals';
     contentsSvg = `
-      <polygon points="10,29 14,19 20,23 18,30" fill="${style.solidColor || '#0284c7'}" stroke="#bae6fd" stroke-width="0.9"/>
-      <polygon points="18,30 22,20 27,26 24,30" fill="#0369a1" stroke="#bae6fd" stroke-width="0.9"/>
-      <polygon points="15,21 19,16 22,21" fill="#38bdf8" stroke="#e0f2fe" stroke-width="0.7"/>`;
+      <polygon points="10,29 14,19 20,23 18,30" fill="${style.solidColor || (isPurple ? '#4c1d95' : '#0284c7')}" stroke="${isPurple ? '#c084fc' : '#bae6fd'}" stroke-width="0.9"/>
+      <polygon points="18,30 22,20 27,26 24,30" fill="${isPurple ? '#2e1065' : '#0369a1'}" stroke="${isPurple ? '#c084fc' : '#bae6fd'}" stroke-width="0.9"/>
+      <polygon points="15,21 19,16 22,21" fill="${isPurple ? '#7e22ce' : '#38bdf8'}" stroke="${isPurple ? '#e9d5ff' : '#e0f2fe'}" stroke-width="0.7"/>`;
   } else if (contentsKind === 'granules') {
     contentsSvg = `
       <polygon points="10,29 13,21 18,24 16,29" fill="${style.solidColor || '#94a3b8'}" stroke="#e2e8f0" stroke-width="0.8"/>

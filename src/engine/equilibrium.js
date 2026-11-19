@@ -12,7 +12,8 @@ export function computeAqueousVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
   const nEtOH = Math.max(0, moles.C2H5OH_l || 0);
   const nH2SO4L = Math.max(0, moles.H2SO4_l || 0);
   const nHNO3L = Math.max(0, moles.HNO3_l || 0);
-  if (nH2O <= 1e-12 && nEtOH <= 1e-12 && nH2SO4L <= 1e-12 && nHNO3L <= 1e-12) return 0;
+  const nMn2O7L = Math.max(0, moles.Mn2O7_l || 0);
+  if (nH2O <= 1e-12 && nEtOH <= 1e-12 && nH2SO4L <= 1e-12 && nHNO3L <= 1e-12 && nMn2O7L <= 1e-12) return 0;
 
   const T = Number.isFinite(tempK) ? Math.max(155, Math.min(800, tempK)) : CONSTANTS.T_STD_K;
   const rho = waterDensityGPerMl(T);
@@ -20,9 +21,10 @@ export function computeAqueousVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
   const etohVolMl = (nEtOH * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density;
   const h2so4VolMl = nH2SO4L > 1e-12 ? (nH2SO4L * SPECIES.H2SO4_l.molarMass) / SPECIES.H2SO4_l.density : 0;
   const hno3VolMl = nHNO3L > 1e-12 ? (nHNO3L * SPECIES.HNO3_l.molarMass) / SPECIES.HNO3_l.density : 0;
+  const mn2o7VolMl = nMn2O7L > 1e-12 ? (nMn2O7L * SPECIES.Mn2O7_l.molarMass) / SPECIES.Mn2O7_l.density : 0;
   // Ethanol-water mixtures exhibit ~3.5% excess volume contraction
   const mixFactor = nH2O > 1e-9 && nEtOH > 1e-9 ? 0.965 : 1.0;
-  const solventVolMl = (waterVolMl + etohVolMl) * mixFactor + h2so4VolMl + hno3VolMl;
+  const solventVolMl = (waterVolMl + etohVolMl) * mixFactor + h2so4VolMl + hno3VolMl + mn2o7VolMl;
 
   let diluteVolDeltaMl = 0;
   let totalSoluteMoles = 0;

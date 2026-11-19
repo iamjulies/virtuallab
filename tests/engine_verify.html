@@ -1896,7 +1896,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 19 &&
+          STARTER_REAGENTS.length === 20 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.6';
+      const expectedBuild = 'virlab_beta_v4+build.7';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,9 +2515,9 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.6 parity: All 40 apparatus & 19 starter reagents translated in VI/EN, Prompt 40 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.7 parity: All 40 apparatus & 20 starter reagents translated in VI/EN, Prompt 40/41 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
-          STARTER_REAGENTS.length === 19 &&
+          STARTER_REAGENTS.length === 20 &&
           !APPARATUS.clay_triangle &&
           allTranslated &&
           newKeysPresent &&
@@ -7319,6 +7319,94 @@
         'Prompt 40 invariants: round_flask_1000@25° keeps 165.7mL, Mg+H2O 3 regimes, Al powder burns 550-760C vs non-burning foil/mortar, fine vs coarse assets + 1000g Fe overflow in 50mL tube, Spoon 2.8mL cap & Splint mini-heater',
         noPrematurePourOk && mgRegimeOk && alParityOk && solidOverflowOk && visualMetaOk && spoonCapOk && splintHeatOk,
         `hold25=${holdRbf25.toFixed(1)}mL/rem=${liqAfter25.toFixed(1)}, mgReg=${mgRegimeOk}, al=${alParityOk}(Al2O3=${(cAlPow.moles.Al2O3_s||0).toFixed(4)},foil=${(cAlFoil.moles.Al2O3_s||0).toFixed(4)}), solOv=${solidOverflowOk}(remMl=${remFeMl.toFixed(1)}), vis=${visualMetaOk}, spoonK=${kFitG.toFixed(2)}g, spl=${splintHeatOk}`
+      );
+    }
+
+    // TEST 159: Prompt 41 (virlab_beta_v4+build.7) — KMnO4, K2MnO4 (+6), MnO2 (+4), Mn(II) & Mn2O7 Hazard Chemistry
+    {
+      // 1) Limited solubility (~6.4 g/100 g at 20 °C -> increases hot) + Purple MnO4- vs Green MnO4^2- optics + IUPAC
+      const simSol = new LabSimulation();
+      const bCold = simSol.createApparatus('beaker_250', 140, 427);
+      simSol.addReagentToVessel(bCold.id, 'h2o', 100, { silentAnim: true });
+      simSol.addReagentToVessel(bCold.id, 'kmno4', 12.0, { silentAnim: true });
+      bCold.tempK = 293.15;
+      stepSeconds(simSol, 3.0, 0.05);
+      const coldMnO4Mol = bCold.moles.MnO4_aq || 0;
+      const coldLeftSolid = bCold.moles.KMnO4_s || 0;
+      const purpleOpt = computeSolutionVisuals(bCold.moles, computeLiquidVolumeL(bCold.moles, 293.15), 7, 4, 0, 0);
+      bCold.tempK = 335.15; // 62 °C unlocks higher solubility!
+      stepSeconds(simSol, 2.0, 0.05);
+      const hotMnO4Mol = bCold.moles.MnO4_aq || 0;
+      const solOk = coldMnO4Mol > 0.015 && coldLeftSolid > 0.015 && hotMnO4Mol > coldMnO4Mol * 1.25 && purpleOpt.b > purpleOpt.g && purpleOpt.r > purpleOpt.g;
+
+      // 2) Thermal decomposition: 2KMnO4 -> K2MnO4 + MnO2 + O2 (>= 240 °C)
+      const simTh = new LabSimulation();
+      const cTh = simTh.createApparatus('crucible_porcelain', 220, 427);
+      simTh.addReagentToVessel(cTh.id, 'kmno4', 3.16, { silentAnim: true }); // 0.02 mol
+      cTh.tempK = 525.0; // ~252 °C
+      stepSeconds(simTh, 3.0, 0.05);
+      const thOk = (cTh.moles.K2MnO4_s || 0) > 0.002 && (cTh.moles.MnO2_s || 0) > 0.002 && ((cTh.escapedGasMoles?.O2_g || 0) + (cTh.headspaceGasMoles?.O2_g || 0)) > 0.002;
+
+      // 3) pH-dependent KMnO4 + H2O2 (Acidic -> Mn2+ colorless; Neutral -> MnO2 ppt) & conc HCl -> Cl2 & conc H2SO4 -> Mn2O7 hazard
+      const simRx = new LabSimulation();
+      const bAcidPer = simRx.createApparatus('beaker_250', 140, 427);
+      bAcidPer.moles = { H2O_l: 2.5, K_aq: 0.01, MnO4_aq: 0.01, H_aq: 0.2, SO4_2_aq: 0.1 };
+      simRx.addReagentToVessel(bAcidPer.id, 'h2o2_30', 5.0, { silentAnim: true });
+      const bNeutPer = simRx.createApparatus('beaker_250', 300, 427);
+      bNeutPer.moles = { H2O_l: 2.5, K_aq: 0.01, MnO4_aq: 0.01 };
+      simRx.addReagentToVessel(bNeutPer.id, 'h2o2_30', 5.0, { silentAnim: true });
+      const bHClCl2 = simRx.createApparatus('beaker_250', 460, 427);
+      simRx.addReagentToVessel(bHClCl2.id, 'hcl_37', 25.0, { silentAnim: true });
+      simRx.addReagentToVessel(bHClCl2.id, 'kmno4', 1.58, { silentAnim: true });
+      const bHazard = simRx.createApparatus('crucible_porcelain', 620, 427);
+      simRx.addReagentToVessel(bHazard.id, 'h2so4_98', 8.0, { silentAnim: true });
+      simRx.addReagentToVessel(bHazard.id, 'kmno4', 1.58, { silentAnim: true });
+      stepSeconds(simRx, 3.0, 0.05);
+      const acidRedOk = (bAcidPer.moles.Mn2_aq || 0) > 0.005 && (bAcidPer.moles.MnO4_aq || 0) < 0.002 && (bAcidPer.moles.MnO2_s || 0) < 1e-4;
+      const neutRedOk = (bNeutPer.moles.MnO2_s || 0) > 0.004 && (bNeutPer.escapedGasMoles?.O2_g || 0) > 0.005;
+      const cl2KmnOk = (bHClCl2.escapedGasMoles?.Cl2_g || 0) > 0.005 && (bHClCl2.moles.Mn2_aq || 0) > 0.002;
+      const hazardOk = (bHazard.moles.MnO2_s || 0) > 0.002 && (bHazard.escapedGasMoles?.O2_g || 0) > 0.001 && simRx.logs.some((l) => l.key === 'alertMn2O7Hazard');
+
+      // 4) K2MnO4 green optics + acidic disproportionation (green -> purple MnO4- + MnO2↓)
+      const simK2 = new LabSimulation();
+      const bAlk = simK2.createApparatus('beaker_250', 180, 427);
+      bAlk.moles = { H2O_l: 2.5, K_aq: 0.06, OH_aq: 0.02, MnO4_2_aq: 0.02 };
+      const greenOpt = computeSolutionVisuals(bAlk.moles, computeLiquidVolumeL(bAlk.moles, 298.15), 13.5, 4, 0, 0);
+      stepSeconds(simK2, 1.5, 0.05);
+      const alkStabOk = (bAlk.moles.MnO4_2_aq || 0) > 0.018 && greenOpt.g > greenOpt.r && greenOpt.g > greenOpt.b;
+      simK2.addReagentToVessel(bAlk.id, 'hcl_37', 5.0, { silentAnim: true });
+      stepSeconds(simK2, 1.5, 0.05);
+      const dispropOk = (bAlk.moles.MnO4_aq || 0) > 0.005 && (bAlk.moles.MnO2_s || 0) > 0.003;
+
+      // 5) MnO2 catalysis on H2O2 (conserves MnO2!) + cold dil H2SO4 inert vs hot conc HCl -> Cl2
+      const simMnO2 = new LabSimulation();
+      const bCat = simMnO2.createApparatus('beaker_250', 160, 427);
+      simMnO2.addReagentToVessel(bCat.id, 'h2o2_30', 20.0, { silentAnim: true });
+      bCat.moles.MnO2_s = 0.01;
+      const bMnColdAcid = simMnO2.createApparatus('beaker_250', 320, 427);
+      bMnColdAcid.moles = { H2O_l: 2.0, H_aq: 0.15, SO4_2_aq: 0.075, MnO2_s: 0.01 };
+      const bnMn = simMnO2.createApparatus('burner', 480, 480);
+      simMnO2.setBurnerPower(bnMn.id, 450);
+      const bMnHotHCl = simMnO2.createApparatus('beaker_250', 480, 427);
+      bMnHotHCl.restingOnId = bnMn.id;
+      simMnO2.addReagentToVessel(bMnHotHCl.id, 'hcl_37', 25.0, { silentAnim: true });
+      bMnHotHCl.moles.MnO2_s = 0.02;
+      bMnHotHCl.particleCounts.MnO2_s = 400;
+      bMnHotHCl.tempK = 342.0; // ~69 °C (60–80 °C) over active burner!
+      stepSeconds(simMnO2, 2.0, 0.05);
+      const catOk = Math.abs((bCat.moles.MnO2_s || 0) - 0.01) < 1e-6 && (bCat.escapedGasMoles?.O2_g || 0) > 0.02;
+      const cl2HotTot = (bMnHotHCl.escapedGasMoles?.Cl2_g || 0) + (bMnHotHCl.headspaceGasMoles?.Cl2_g || 0);
+      const mno2AcidOk = Math.abs((bMnColdAcid.moles.MnO2_s || 0) - 0.01) < 1e-6 && cl2HotTot > 0.002 && (bMnHotHCl.moles.Mn2_aq || 0) > 0.002;
+
+      const iupacKmno4Ok =
+        STARTER_REAGENTS.length === 20 &&
+        STARTER_REAGENTS.some((r) => r.id === 'kmno4') &&
+        !/\b(kali|mangan|axit|clo|oxi(?! hóa))\b/i.test(`${I18N.vi.reg_kmno4} ${I18N.vi.reg_kmno4_desc} ${I18N.vi.alertMn2O7Hazard}`);
+
+      assert(
+        'Prompt 41 KMnO4 / K2MnO4 / MnO2 invariants: temp-limited purple KMnO4 dissolution, 240°C O2 thermal decomp, pH-dependent H2O2 redox, Cl2 with HCl, Mn2O7 conc. H2SO4 hazard, green K2MnO4 acid disprop & MnO2 H2O2 catalysis + hot HCl Cl2',
+        solOk && thOk && acidRedOk && neutRedOk && cl2KmnOk && hazardOk && alkStabOk && dispropOk && catOk && mno2AcidOk && iupacKmno4Ok,
+        `sol=${solOk}(cold=${coldMnO4Mol.toFixed(3)},hot=${hotMnO4Mol.toFixed(3)}), th=${thOk}, pH=(${acidRedOk}/${neutRedOk}), Cl2=${cl2KmnOk}, Mn2O7=${hazardOk}, K2=(${alkStabOk}/${dispropOk}), MnO2=(cat=${catOk},coldLeft=${(bMnColdAcid.moles.MnO2_s||0).toFixed(4)},Cl2=${cl2HotTot.toFixed(4)},Mn2=${(bMnHotHCl.moles.Mn2_aq||0).toFixed(4)},T=${(bMnHotHCl.tempK-273.15).toFixed(0)}C), iupac=${iupacKmno4Ok}`
       );
     }
 

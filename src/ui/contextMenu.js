@@ -185,6 +185,7 @@ export class FloatingContextUI {
       mg: { spId: 'Mg_s', formula: 'Mg', iupac: 'Magnesium', cas: '7439-95-4', mm: '24.305 g/mol', density: '1.738 g/cm³', melt: '650.0 °C (923.2 K)', boil: '1090.0 °C (1363 K)', conc: 'Pure Metal (s)', wiki: 'Magnesium', pubchem: '5462224' },
       al: { spId: 'Al_s', formula: 'Al', iupac: 'Aluminium', cas: '7429-90-5', mm: '26.982 g/mol', density: '2.700 g/cm³', melt: '660.3 °C (933.5 K)', boil: '2470.0 °C (2743 K)', conc: 'Pure Metal (s)', wiki: 'Aluminium', pubchem: '5359268' },
       k: { spId: 'K_s', formula: 'K', iupac: 'Potassium', cas: '7440-09-7', mm: '39.098 g/mol', density: '0.862 g/cm³', melt: '63.5 °C (336.7 K)', boil: '759.0 °C (1032 K)', conc: 'Pure Metal (in oil)', wiki: 'Potassium', pubchem: '5462222' },
+      kmno4: { spId: 'KMnO4_s', formula: 'KMnO₄', iupac: 'Potassium permanganate', cas: '7722-64-7', mm: '158.034 g/mol', density: '2.703 g/cm³', melt: 'Decomposes before melting (~240 °C)', boil: '2KMnO₄ → K₂MnO₄ + MnO₂ + O₂↑', conc: 'Pure Crystalline Oxidizer', wiki: 'Potassium_permanganate', pubchem: '516875' },
     };
 
     if (kind === 'reagent') {

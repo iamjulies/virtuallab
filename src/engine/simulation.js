@@ -1528,7 +1528,7 @@ export class LabSimulation {
     const curSpoonBulkMl = computeSolidVolumeMl(spoon.moles || {}) * 1.25;
     const remVolMl = Math.max(0, SPOON_MAX_VOL_ML - curSpoonBulkMl);
     if (remVolMl <= 0.02) return false;
-    const priorityOrder = ['Zn_s', 'Mg_s', 'Al_s', 'Na_s', 'K_s', 'CaCO3_s', 'CuO_s', 'CuSO4_5H2O_s', 'Fe_s', 'Cu_s', 'CaO_s'];
+    const priorityOrder = ['Zn_s', 'Mg_s', 'Al_s', 'Na_s', 'K_s', 'KMnO4_s', 'MnO2_s', 'K2MnO4_s', 'CaCO3_s', 'CuO_s', 'CuSO4_5H2O_s', 'Fe_s', 'Cu_s', 'CaO_s'];
     const allSolidKeys = [
       ...priorityOrder.filter((k) => (v.moles?.[k] || 0) > 1e-8),
       ...Object.keys(v.moles || {}).filter(
@@ -2826,6 +2826,8 @@ export class LabSimulation {
         ? Math.min(42, Math.max(2, Math.round(amt / 4.0)))
         : reg.id === 'caco3'
         ? Math.min(18, Math.max(2, Math.round(amt * 1.2)))
+        : reg.id === 'kmno4'
+        ? Math.min(28, Math.max(4, Math.round(amt * 3)))
         : 6;
       v.particleCounts[reg.speciesId] =
         (v.particleCounts[reg.speciesId] || 0) + particleCount;
@@ -5693,6 +5695,20 @@ export class LabSimulation {
         if (thermRes.isBoiling) frameBoiling = true;
         if ((thermRes.steamOpacity || 0) > frameSteamOpacity) {
           frameSteamOpacity = thermRes.steamOpacity;
+        }
+        if (v._mn2o7HazardPending) {
+          v._mn2o7HazardPending = false;
+          if ((this.timeSec - (v.seenReactions.mn2o7_hazard ?? -99)) > 4.5) {
+            v.seenReactions.mn2o7_hazard = this.timeSec;
+            this.addLog({
+              type: 'alert',
+              key: 'alertMn2O7Hazard',
+              vesselLabel: v.label,
+            });
+            if (this.visualHooks.onAlert) {
+              this.visualHooks.onAlert('oxyhydrogen_detonation', { x: v.x, y: v.y }, { blastScale: 0.65 });
+            }
+          }
         }
         if (chemRes.naEvent === 'explosion' || (chemRes.naEvent === 'ignition_flame' && frameNaEvent !== 'explosion') || (!frameNaEvent && chemRes.naEvent)) {
           frameNaEvent = chemRes.naEvent;

@@ -726,7 +726,7 @@ export function checkFlameLoopInteractions(sim, loop) {
       const hasK =
         (m.K_aq || 0) + (m.K_s || 0) + (m.KOH_s || 0) + (m.KCl_s || 0) +
         (m.KNO3_s || 0) + (m.K2SO4_s || 0) + (m.K2CO3_s || 0) + (m.KHCO3_s || 0) +
-        (m.KHSO4_s || 0) + (m.KO2_s || 0) + (m.K2O_s || 0) > 1e-6;
+        (m.KHSO4_s || 0) + (m.KO2_s || 0) + (m.K2O_s || 0) + (m.KMnO4_s || 0) + (m.K2MnO4_s || 0) > 1e-6;
       if (hasNa) {
         // Exp 17: 589 nm Na D-doublet quantum emission overwhelms & masks weaker Cu2+ / Ca2+ / Ba2+ / K+ bands
         loop.sampledIon = 'Na⁺';
@@ -1797,6 +1797,13 @@ function stepIronSpoon(sim, spoon, dt) {
     moles.CaCO3_s -= d;
     if (moles.CaCO3_s < 1e-10) delete moles.CaCO3_s;
     moles.CaO_s = (moles.CaO_s || 0) + d;
+  }
+  if ((moles.KMnO4_s || 0) > 1e-8 && spoon.tempK >= 485) {
+    const d = Math.min(moles.KMnO4_s / 2, moles.KMnO4_s * 0.48 * dt);
+    moles.KMnO4_s -= 2 * d;
+    if (moles.KMnO4_s < 1e-10) delete moles.KMnO4_s;
+    moles.K2MnO4_s = (moles.K2MnO4_s || 0) + d;
+    moles.MnO2_s = (moles.MnO2_s || 0) + d;
   }
 }
 

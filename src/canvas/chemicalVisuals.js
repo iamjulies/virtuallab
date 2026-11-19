@@ -423,11 +423,38 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         ctx.strokeStyle = '#94a3b8';
         ctx.lineWidth = 0.7;
         ctx.stroke();
-      } else if (vType === 'blue_crystal' || vType === 'brown_crystal') {
+      } else if (vType === 'blue_crystal' || vType === 'brown_crystal' || vType === 'purple_crystal' || vType === 'green_crystal') {
         const cGrad = ctx.createLinearGradient(-r, -r, r, r);
-        cGrad.addColorStop(0, vType === 'brown_crystal' ? '#fbbf24' : '#38bdf8');
-        cGrad.addColorStop(0.55, vType === 'brown_crystal' ? '#d97706' : sp.color || '#0284c7');
-        cGrad.addColorStop(1, vType === 'brown_crystal' ? '#78350f' : '#0369a1');
+        cGrad.addColorStop(
+          0,
+          vType === 'brown_crystal'
+            ? '#fbbf24'
+            : vType === 'purple_crystal'
+            ? '#a855f7'
+            : vType === 'green_crystal'
+            ? '#10b981'
+            : '#38bdf8'
+        );
+        cGrad.addColorStop(
+          0.55,
+          vType === 'brown_crystal'
+            ? '#d97706'
+            : vType === 'purple_crystal'
+            ? '#4c1d95'
+            : vType === 'green_crystal'
+            ? '#065f46'
+            : sp.color || '#0284c7'
+        );
+        cGrad.addColorStop(
+          1,
+          vType === 'brown_crystal'
+            ? '#78350f'
+            : vType === 'purple_crystal'
+            ? '#1e1b4b'
+            : vType === 'green_crystal'
+            ? '#022c22'
+            : '#0369a1'
+        );
         ctx.beginPath();
         ctx.moveTo(-r, -r * 0.42);
         ctx.lineTo(r * 0.38, -r * 0.88);
@@ -437,7 +464,14 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         ctx.closePath();
         ctx.fillStyle = cGrad;
         ctx.fill();
-        ctx.strokeStyle = vType === 'brown_crystal' ? '#fde68a' : '#bae6fd';
+        ctx.strokeStyle =
+          vType === 'brown_crystal'
+            ? '#fde68a'
+            : vType === 'purple_crystal'
+            ? '#c084fc'
+            : vType === 'green_crystal'
+            ? '#34d399'
+            : '#bae6fd';
         ctx.lineWidth = 0.75;
         ctx.stroke();
         // Crystalline internal cleavage rib highlight

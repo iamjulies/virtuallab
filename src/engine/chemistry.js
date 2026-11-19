@@ -655,8 +655,8 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     const theta = (K_L * cH2O2) / (1 + K_L * cH2O2);
     vessel.langmuirCoverage = theta;
     vessel.langmuirOrder = 1 - theta;
-    // Effective exposed catalyst area scales linearly with fine precipitated Ag2O mass/particle count
-    const catArea = Math.min(0.18, nCat * 18.0);
+    // Effective exposed catalyst area scales linearly with fine precipitated Ag2O / MnO2 mass/particle count
+    const catArea = Math.min(0.24, nCat * (rxn.solidId === 'MnO2_s' ? 28.0 : 18.0));
     const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T) * (vessel.stirTimer > 0 ? 1.18 : 1.0);
     return Math.min(moles.H2O2_aq / 2, k * catArea * theta * 1.45) * iceMob;
   }
@@ -1125,6 +1125,103 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     return ((moles.H2O2_aq || 0) / 2) * rxn.k298 * arrheniusFactor(rxn.eaJ || 26000, T) * concBoost;
   }
 
+  // --- Manganese Redox & Disproportionation Kinetics ---
+  if (rxn.type === 'mn_redox_h2o2_acid' || rxn.type === 'mn_redox_h2o2_neutral') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const cMnO4 = (moles.MnO4_aq || 0) / liquidVolL;
+    const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    if (cMnO4 <= 1e-7 || cH2O2 <= 1e-6) return 0;
+    if (rxn.type === 'mn_redox_h2o2_acid') {
+      if (cH < 0.01) return 0;
+      const ext = Math.min((moles.MnO4_aq || 0) / 2, (moles.H2O2_aq || 0) / 5, (moles.H_aq || 0) / 6);
+      return ext * getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0) * Math.min(2.5, 0.5 + cH * 0.5) * iceMob;
+    }
+    if (cH >= 0.01) return 0;
+    const ext = Math.min((moles.MnO4_aq || 0) / 2, (moles.H2O2_aq || 0) / 3);
+    return ext * getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0) * iceMob;
+  }
+
+  if (rxn.type === 'mn_hcl_cl2' || rxn.type === 'mn_solid_hcl_cl2') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    const cCl = (moles.Cl_aq || 0) / liquidVolL;
+    if (cH < 1.2 || cCl < 1.2) return 0;
+    const concDrive = Math.min(3.5, Math.pow(Math.min(cH, cCl) / 4.0, 1.4));
+    const mnSrc = rxn.type === 'mn_hcl_cl2' ? (moles.MnO4_aq || 0) : (moles.KMnO4_s || 0);
+    if (mnSrc <= 1e-9) return 0;
+    const ext = Math.min(mnSrc / 2, (moles.H_aq || 0) / 16, (moles.Cl_aq || 0) / 10);
+    return ext * getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0) * concDrive * iceMob;
+  }
+
+  if (rxn.type === 'kmno4_conc_h2so4') {
+    const sulf = computeSulfuricAcidState(moles);
+    if (sulf.w < 0.72 || (moles.H2SO4_l || 0) <= 1e-6 || (moles.KMnO4_s || 0) <= 1e-9) return 0;
+    const ext = Math.min((moles.KMnO4_s || 0) / 2, (moles.H2SO4_l || 0) / 2);
+    return ext * rxn.k298 * arrheniusFactor(rxn.eaJ || 18000, T);
+  }
+
+  if (rxn.type === 'mn2o7_decomp') {
+    const nMn2O7 = moles.Mn2O7_l || 0;
+    if (nMn2O7 <= 1e-10) return 0;
+    return (nMn2O7 / 2) * rxn.k298 * arrheniusFactor(rxn.eaJ || 12000, T);
+  }
+
+  if (rxn.type === 'kmno4_alkali_hot') {
+    if (!hasWater || iceMob <= 0 || T < 333.15) return 0;
+    const cOH = (moles.OH_aq || 0) / liquidVolL;
+    if (cOH < 3.0 || (moles.MnO4_aq || 0) <= 1e-8) return 0;
+    const ext = Math.min((moles.MnO4_aq || 0) / 4, (moles.OH_aq || 0) / 4);
+    return ext * rxn.k298 * arrheniusFactor(rxn.eaJ || 36000, T) * Math.min(3.0, cOH / 4.0) * iceMob;
+  }
+
+  if (rxn.type === 'mn_fe2_acid') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    if (cH < 0.005 || (moles.MnO4_aq || 0) <= 1e-9 || (moles.Fe2_aq || 0) <= 1e-9) return 0;
+    const ext = Math.min(moles.MnO4_aq || 0, (moles.Fe2_aq || 0) / 5, (moles.H_aq || 0) / 8);
+    return ext * getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0) * iceMob;
+  }
+
+  if (rxn.type === 'k2mno4_disprop_acid' || rxn.type === 'k2mno4_disprop_neutral') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nMnO42 = moles.MnO4_2_aq || 0;
+    if (nMnO42 <= 1e-9) return 0;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    const cOH = (moles.OH_aq || 0) / liquidVolL;
+    if (rxn.type === 'k2mno4_disprop_acid') {
+      if (cH < 1e-4) return 0;
+      const ext = Math.min(nMnO42 / 3, (moles.H_aq || 0) / 4);
+      return ext * getEffectiveRateConstant(rxn, T, false) * iceMob;
+    }
+    if (cH >= 1e-4 || cOH >= 0.08) return 0;
+    const stabDamp = Math.max(0.05, 1 - cOH / 0.08);
+    return Math.min(nMnO42 / 3, (moles.H2O_l || 0) / 2) * rxn.k298 * arrheniusFactor(rxn.eaJ || 24000, T) * stabDamp * iceMob;
+  }
+
+  if (rxn.type === 'mno2_hcl_hot') {
+    if (!hasWater || iceMob <= 0 || T < (rxn.minTempK || 318.15)) return 0;
+    const nMnO2 = moles.MnO2_s || 0;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    const cCl = (moles.Cl_aq || 0) / liquidVolL;
+    if (nMnO2 <= 1e-9 || cH < 2.2 || cCl < 2.2) return 0;
+    const area = computeSolidSurfaceAreaM2('MnO2_s', nMnO2, vessel.particleCounts?.MnO2_s ?? 400);
+    const k = (rxn.kAtThreshold || 2.2) * arrheniusFactor(rxn.eaJ || 34000, T - 318.15 + CONSTANTS.T_STD_K);
+    return Math.min(nMnO2, (moles.H_aq || 0) / 4, (moles.Cl_aq || 0) / 2, k * Math.max(1e-4, area) * Math.min(5.0, (Math.min(cH, cCl) - 1.5) * 0.65) * 42.0) * iceMob;
+  }
+
+  if (rxn.type === 'mno2_reductant_acid') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nMnO2 = moles.MnO2_s || 0;
+    const cH = (moles.H_aq || 0) / liquidVolL;
+    if (nMnO2 <= 1e-9 || cH < 0.02) return 0;
+    let minExt = Math.min(nMnO2, (moles.H_aq || 0) / (rxn.reactants.H_aq || 2));
+    if (rxn.reactants.H2O2_aq) minExt = Math.min(minExt, moles.H2O2_aq || 0);
+    if (rxn.reactants.Fe2_aq) minExt = Math.min(minExt, (moles.Fe2_aq || 0) / 2);
+    if (minExt <= 1e-10) return 0;
+    return minExt * getEffectiveRateConstant(rxn, T, vessel.stirTimer > 0) * Math.min(2.5, cH * 0.8) * iceMob;
+  }
+
   if (rxn.type === 'metal_h2so4_redox') {
     // Unified Sulfuric Acid Concentration-Tier Metal Solver runs in stepMetalSulfuricSolver()
     return 0;
@@ -1290,6 +1387,10 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
     { cat: 'K_aq', cCat: 1, an: 'Cl_aq', cAn: 1, solid: 'KCl_s', formula: 'KCl', sol298: 4.8, coeff: 0.008, etohRel: 0.01, crystHeatJ: -17200 },
     { cat: 'K_aq', cCat: 2, an: 'CO3_2_aq', cAn: 1, solid: 'K2CO3_s', formula: 'K₂CO₃', sol298: 8.1, coeff: 0.006, etohRel: 0.01, crystHeatJ: 30900 },
     { cat: 'K_aq', cCat: 1, an: 'OH_aq', cAn: 1, solid: 'KOH_s', formula: 'KOH', sol298: 21.5, coeff: 0.020, etohRel: 0.14, crystHeatJ: 57600 },
+    { cat: 'K_aq', cCat: 1, an: 'MnO4_aq', cAn: 1, solid: 'KMnO4_s', formula: 'KMnO₄', sol298: 0.475, coeff: 0.032, etohRel: 0.02, crystHeatJ: -43600 },
+    { cat: 'K_aq', cCat: 2, an: 'MnO4_2_aq', cAn: 1, solid: 'K2MnO4_s', formula: 'K₂MnO₄', sol298: 1.85, coeff: 0.015, etohRel: 0.01, crystHeatJ: -18000 },
+    { cat: 'Mn2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'MnCl2_s', formula: 'MnCl₂', sol298: 6.1, coeff: 0.012, etohRel: 0.15, crystHeatJ: 67000 },
+    { cat: 'Mn2_aq', cCat: 1, an: 'SO4_2_aq', cAn: 1, solid: 'MnSO4_s', formula: 'MnSO₄', sol298: 4.1, coeff: 0.002, etohRel: 0.01, crystHeatJ: 58000 },
     { cat: 'Mg2_aq', cCat: 1, an: 'SO4_2_aq', cAn: 1, solid: 'MgSO4_s', formula: 'MgSO₄', sol298: 2.95, coeff: 0.012, etohRel: 0.02, crystHeatJ: 12000 },
     { cat: 'Mg2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'MgCl2_s', formula: 'MgCl₂', sol298: 5.7, coeff: 0.009, etohRel: 0.15, crystHeatJ: 15500 },
     { cat: 'Mg2_aq', cCat: 1, an: 'NO3_aq', cAn: 2, solid: 'MgNO3_2_s', formula: 'Mg(NO₃)₂', sol298: 4.8, coeff: 0.014, etohRel: 0.05, crystHeatJ: 6000 },
@@ -2146,6 +2247,11 @@ export const DRY_SALT_PAIRINGS = [
   ['K_aq', 1, 'NO3_aq', 1, 'KNO3_s', 1, false],
   ['K_aq', 1, 'C2H5O_aq', 1, 'C2H5OK_s', 1, false],
   ['K_aq', 1, 'OH_aq', 1, 'KOH_s', 1, false],
+  ['K_aq', 1, 'MnO4_aq', 1, 'KMnO4_s', 1, false],
+  ['K_aq', 2, 'MnO4_2_aq', 1, 'K2MnO4_s', 1, false],
+  ['Mn2_aq', 1, 'OH_aq', 2, 'MnOH2_s', 1, false],
+  ['Mn2_aq', 1, 'SO4_2_aq', 1, 'MnSO4_s', 1, false],
+  ['Mn2_aq', 1, 'Cl_aq', 2, 'MnCl2_s', 1, false],
   ['H_aq', 1, 'OH_aq', 1, 'H2O_g', 1, true],
   ['H_aq', 1, 'Cl_aq', 1, 'HCl_g', 1, true],
   ['H_aq', 1, 'NO3_aq', 1, 'HNO3_g', 1, true],
@@ -3152,6 +3258,8 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
       vessel.naDryBurnTimer = 1.0;
     } else if ((item.rxn.id === 'k_o2_burn' || item.rxn.id === 'k_cl2_burn') && dXi > 1e-10) {
       vessel.kDryBurnTimer = 1.0;
+    } else if (item.rxn.id === 'mn2o7_explosive_decomp' && dXi > 1e-8) {
+      vessel._mn2o7HazardPending = true;
     } else if (item.rxn.id === 'calcine_caco3' && dXi > 1e-10) {
       if (!vessel.particleCounts) vessel.particleCounts = {};
       vessel.particleCounts.CaO_s = Math.max(vessel.particleCounts.CaO_s || 0, 180);

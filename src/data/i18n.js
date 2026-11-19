@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.6',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.7',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -145,6 +145,8 @@ export const I18N = {
     reg_al_desc: 'Lá / Bột kim loại lưỡng tính (2,70 g/cm³) · Tan cả trong acid lẫn kiềm (H₂↑), thụ động HNO₃/H₂SO₄ đặc nguội',
     reg_k: 'Potassium (K)',
     reg_k_desc: 'Kim loại kiềm mềm ngâm dầu · Nóng chảy 63,5 °C, phản ứng mãnh liệt với nước kèm ngọn lửa tím 766 nm',
+    reg_kmno4: 'Potassium permanganate (KMnO₄)',
+    reg_kmno4_desc: 'Tinh thể lăng trụ tím đen (2,70 g/cm³ · tan 6,4 g/100 g H₂O ở 20 °C) · Nhiệt phân sinh O₂↑, oxi hóa mạnh phụ thuộc pH & xúc tác MnO₂',
 
     // Workbench & Actions
     noSelection: 'Chưa chọn dụng cụ',
@@ -645,6 +647,7 @@ export const I18N = {
     alertSilverMirrorCleaned: '✨ HNO₃ đã hòa tan sạch lớp gương bạc Ag khỏi thành bình!',
     alertThermalShock: '💥 Sốc nhiệt thủy tinh (>350 °C → nước đá 0 °C)! Bình nứt vỡ do co giãn đột ngột!',
     alertWaterIntoConcAcid: '⚠️ Nguy hiểm! Đã rót nước trực tiếp vào H₂SO₄ đặc gây tỏa nhiệt cực mạnh & sôi bắn! Luôn rót từ từ acid vào nước!',
+    alertMn2O7Hazard: '💥 Cảnh báo hóa chất không bền! KMnO₄ + H₂SO₄ đặc (98%) sinh ra Manganese(VII) heptoxide (Mn₂O₇) tự phân hủy mạnh tỏa nhiệt & giải phóng khí Oxygen!',
     wallMemorySilverTag: '🪞 Phủ gương bạc Ag (Rửa bằng HNO₃)',
     wallMemoryResidueTag: '🪨 Bám cặn thành bình',
     themeCureTitle: 'the cure',
@@ -664,7 +667,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.6',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.7',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -798,6 +801,8 @@ export const I18N = {
     reg_al_desc: 'Foil/powder (2.70 g/cm³) · Amphoteric (dissolves in acids & alkalis), passivated by cold conc. HNO₃/H₂SO₄',
     reg_k: 'Potassium (K)',
     reg_k_desc: 'Soft alkali metal in mineral oil · Melts 63.5 °C, vigorous H₂ ignition with lilac-violet 766 nm flame',
+    reg_kmno4: 'Potassium permanganate (KMnO₄)',
+    reg_kmno4_desc: 'Dark purple-black crystals (2.70 g/cm³ · 6.4 g/100 g H₂O at 20 °C) · Thermal O₂ generator, pH-dependent strong oxidizer & MnO₂ source',
 
     noSelection: 'No apparatus selected',
     selectVesselTip: 'Click any vessel on the bench, or drag apparatus & reagents directly onto the workbench.',
@@ -1294,6 +1299,7 @@ export const I18N = {
     alertSilverMirrorCleaned: '✨ HNO₃ oxidized and dissolved the Silver mirror from the glass wall!',
     alertThermalShock: '💥 Borosilicate thermal shock (>350 °C → ice bath)! Vessel cracked & shattered!',
     alertWaterIntoConcAcid: '⚠️ Hazard: Pouring water directly onto conc. H₂SO₄ causes violent localized heat & spatter! Always add acid slowly to water.',
+    alertMn2O7Hazard: '💥 Unstable oxidizer hazard! Solid KMnO₄ + conc. H₂SO₄ (98%) forms explosive Manganese(VII) heptoxide (Mn₂O₇) rapidly decomposing with heat & O₂ burst!',
     wallMemorySilverTag: '🪞 Silver Mirror Coat (Clean w/ HNO₃)',
     wallMemoryResidueTag: '🪨 Wall Residue Crust',
     themeCureTitle: 'the cure',
