@@ -1896,7 +1896,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 19 &&
+          STARTER_REAGENTS.length === 20 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.3';
+      const expectedBuild = 'virlab_beta_v4+build.4';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2517,7 +2517,7 @@
       assert(
         'Build virlab_beta_v3+build.6 parity: All 39 apparatus & 15 starter reagents translated in VI/EN, Prompt 26 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
-          STARTER_REAGENTS.length === 19 &&
+          STARTER_REAGENTS.length === 20 &&
           !APPARATUS.clay_triangle &&
           allTranslated &&
           newKeysPresent &&
@@ -2768,7 +2768,7 @@
       assert(
         'Reagent filters work, Clean Bench clears 0 items, Quick Presets populate cleanly, and Zn + 0.125M NaOH evolves H2 & [Zn(OH)4]2-',
         REAGENT_CATEGORIES.length >= 5 &&
-          acidCount === 3 &&
+          acidCount === 4 &&
           cleanCount === 0 &&
           daniellCount >= 5 &&
           diffCount === 1 &&
@@ -7126,6 +7126,57 @@
         'Prompt 37 metal parity (K vs Na, Mg vs Zn, Al vs Fe): K instant H2 lilac ignite & air tarnish, Mg>Zn rate & non-amphoteric Mg(OH)2 & flash, Al cold H2SO4 98% passivation & gel Al(OH)3',
         kInstantIgniteOk && kFasterNaOk && mgFasterZnOk && mgNonAmphOk && mgFlashOk && alConcH2SO4PassOk && alGelVisualOk,
         `kIgn=${kInstantIgniteOk}(${kIgnInfo}), kFast=${kFasterNaOk}(K_OH=${(bKW2.moles.OH_aq||0).toFixed(4)},Na_OH=${(bNaW.moles.OH_aq||0).toFixed(4)},kTarn=${(bKDry.kTarnishFrac||0).toFixed(2)}), mgFast=${mgFasterZnOk}(Mg2=${(bMgA.moles.Mg2_aq||0).toFixed(4)},Zn2=${(bZnA.moles.Zn2_aq||0).toFixed(4)}), mgNoAmph=${mgNonAmphOk}, mgFlash=${mgFlashOk}(timer=${(bMgBurn.mgCombustionTimer||0).toFixed(2)}), alSulfatePass=${alConcH2SO4PassOk}, alGel=${alGelVisualOk}`
+      );
+    }
+
+    // TEST 156: Prompt 38 (beta_v4+build.4) — H2SO4 dilute (from HCl) vs H2SO4 conc (from HNO3):
+    // 1) h2so4_dil on shelf: 2 H+ eq, ZERO ambient acid fuming, BaSO4 ppt with BaCl2, CaSO4 crust slows coarse CaCO3 vs HCl
+    // 2) Boiling down dilute H2SO4 >78% regenerates molecular H2SO4_l -> releases HCl from NaCl & zero NO2 leak; >=300C evolves SO3 mist
+    {
+      const simS = new LabSimulation();
+      // A. Non-volatile ambient check + BaSO4 + coarse CaCO3 slowdown vs HCl
+      const bDil = simS.createApparatus('beaker_250', 140, 427);
+      simS.addReagentToVessel(bDil.id, 'h2so4_dil', 15.0, { silentAnim: true, silentEmit: true });
+      const bBa = simS.createApparatus('beaker_250', 290, 427);
+      simS.addReagentToVessel(bBa.id, 'h2so4_dil', 15.0, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bBa.id, 'bacl2_2h2o', 2.44, { silentAnim: true, silentEmit: true });
+      const bCaHCl = simS.createApparatus('beaker_250', 440, 427);
+      simS.addReagentToVessel(bCaHCl.id, 'h2o', 10.0, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bCaHCl.id, 'hcl_37', 5.0, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bCaHCl.id, 'caco3', 4.0, { fine: false, silentAnim: true, silentEmit: true });
+      const bCaH2SO4 = simS.createApparatus('beaker_250', 590, 427);
+      simS.addReagentToVessel(bCaH2SO4.id, 'h2so4_dil', 15.0, { silentAnim: true, silentEmit: true });
+      simS.addReagentToVessel(bCaH2SO4.id, 'caco3', 4.0, { fine: false, silentAnim: true, silentEmit: true });
+      stepSeconds(simS, 3.0, 0.05);
+      const nonVolOk = (bDil.escapedGasMoles?.SO3_g || 0) === 0 && (bDil.escapedGasMoles?.HCl_g || 0) === 0 && (bDil.escapedGasMoles?.NO2_g || 0) === 0 && !STARTER_REAGENTS.find(r => r.id === 'h2so4_dil')?.bottleStyle?.isFuming;
+      const baPptOk = (bBa.moles.BaSO4_s || 0) > 0.005;
+      const caCrustOk = (bCaH2SO4.moles.CaSO4_s || 0) > 1e-4 && (bCaH2SO4.moles.CaCO3_s || 0) > (bCaHCl.moles.CaCO3_s || 0);
+
+      // B. Concentrating dilute H2SO4 >78% regenerates H2SO4_l -> releases HCl from NaCl & SO3>=300C, 0 NO2 leak; plus NaHSO4 1:1 crystallization
+      const simS2 = new LabSimulation();
+      const bConc = simS2.createApparatus('beaker_250', 160, 427);
+      bConc.moles = { H_aq: 0.2, SO4_2_aq: 0.1, H2O_l: 0.12 }; // w = 9.8 / (9.8+2.16) = 81.9% >= 78%
+      stepSeconds(simS2, 1.0, 0.05);
+      const reconvertedMol = bConc.moles.H2SO4_l || 0;
+      simS2.addReagentToVessel(bConc.id, 'nacl', 2.0, { silentAnim: true, silentEmit: true });
+      stepSeconds(simS2, 2.0, 0.05);
+      const concReunlockOk = reconvertedMol > 0.05 && (bConc.escapedGasMoles?.HCl_g || 0) > 0.002 && (bConc.escapedGasMoles?.NO2_g || 0) === 0;
+
+      const bAcidSalt = simS2.createApparatus('crucible_porcelain', 340, 427);
+      bAcidSalt.moles = { Na_aq: 0.05, HSO4_aq: 0.05, H_aq: 0.005, SO4_2_aq: 0.005, H2O_l: 0.25 };
+      stepSeconds(simS2, 1.5, 0.05);
+      const bisulfateCrystOk = (bAcidSalt.moles.NaHSO4_s || 0) > 0.01;
+
+      const bFumeHot = simS2.createApparatus('crucible_porcelain', 500, 427);
+      bFumeHot.moles = { H2SO4_l: 0.1 };
+      bFumeHot.tempK = 595.0; // 322 C -> above 300 C evolves SO3 mist
+      stepSeconds(simS2, 1.0, 0.05);
+      const hotSO3Ok = (bFumeHot.escapedGasMoles?.SO3_g || 0) > 1e-4 && (bFumeHot.escapedGasMoles?.NO2_g || 0) === 0;
+
+      assert(
+        'Prompt 38 H2SO4 dil/conc parity: non-fuming H2SO4 2M (20 reagents), BaSO4 ppt, CaSO4 crust slows coarse CaCO3 vs HCl, >78% reconverts H2SO4_l unlocking NaCl->HCl, NaHSO4 1:1 cryst & >=300C SO3 (0 NO2)',
+        nonVolOk && baPptOk && caCrustOk && concReunlockOk && bisulfateCrystOk && hotSO3Ok,
+        `nonVol=${nonVolOk}, baSO4=${baPptOk}(${(bBa.moles.BaSO4_s||0).toFixed(4)}), caCrust=${caCrustOk}(CaSO4=${(bCaH2SO4.moles.CaSO4_s||0).toFixed(4)},remH2SO4=${(bCaH2SO4.moles.CaCO3_s||0).toFixed(4)},remHCl=${(bCaHCl.moles.CaCO3_s||0).toFixed(4)}), reconv=${concReunlockOk}(molL=${reconvertedMol.toFixed(4)},HCl=${(bConc.escapedGasMoles?.HCl_g||0).toFixed(4)}), naHSO4=${bisulfateCrystOk}(${(bAcidSalt.moles.NaHSO4_s||0).toFixed(4)}), hotSO3=${hotSO3Ok}(${(bFumeHot.escapedGasMoles?.SO3_g||0).toFixed(4)})`
       );
     }
 

@@ -897,6 +897,9 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
       if (nSO4Tot > 1e-4 && ((moles.CaSO4_s || 0) > 2e-5 || (moles.SO4_2_aq || 0) / liquidVolL > 0.15)) {
         const coatRatio = Math.min(1, ((moles.CaSO4_s || 0) * 18.0) / Math.max(0.01, nSolid));
         sulfatePassivMult = isFineCaCO3 ? Math.max(0.35, 1 - 0.55 * coatRatio) : Math.max(0.015, 1 - 0.96 * coatRatio);
+        vessel.caso4Passivated = !isFineCaCO3 && (moles.CaSO4_s || 0) > 2e-5 && sulfatePassivMult < 0.65;
+      } else {
+        vessel.caso4Passivated = false;
       }
     }
     return Math.min(nSolid, (moles[rxn.aqueousId] || 0) / 2, k * Math.max(1e-5, area) * Math.min(12.0, cH) * 6.5 * iceMob * sulfatePassivMult);
@@ -1019,6 +1022,27 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     // Stay molecular when bulk mass fraction w >= 0.78; hydrate vigorously into ions + heat below 78% w/w
     if (computeSulfuricAcidState(moles).w >= 0.78) return 0;
     return nH2SO4L * 16.0 * iceMob;
+  }
+
+  if (rxn.type === 'h2so4_concentrate') {
+    const sulf = computeSulfuricAcidState(moles);
+    if (sulf.w < 0.78 || sulf.nAcidEq <= 1e-9) return 0;
+    const totalCl = (moles.Cl_aq || 0) + 4 * (moles.CuCl4_2_aq || 0) + 2 * (moles.AgCl2_aq || 0) + 3 * (moles.AgCl3_2_aq || 0);
+    const nFreeH = Math.max(0, (moles.H_aq || 0) - totalCl - (moles.NO3_aq || 0));
+    let ext = Infinity;
+    for (const [spId, st] of Object.entries(rxn.reactants)) {
+      const avail = spId === 'H_aq' ? nFreeH : (moles[spId] || 0);
+      ext = Math.min(ext, avail / st);
+    }
+    if (ext <= 1e-11 || !Number.isFinite(ext)) return 0;
+    return ext * rxn.k298 * arrheniusFactor(rxn.eaJ || 8000, T);
+  }
+
+  if (rxn.type === 'h2so4_boil_fume') {
+    if (T < (rxn.minTempK || 573.15)) return 0;
+    const nH2SO4L = moles.H2SO4_l || 0;
+    if (nH2SO4L <= 1e-8) return 0;
+    return nH2SO4L * (rxn.kAtThreshold || 0.14) * arrheniusFactor(rxn.eaJ || 48000, T - (rxn.minTempK || 573.15) + CONSTANTS.T_STD_K);
   }
 
   if (rxn.type === 'h2so4_nacl_hcl') {
@@ -1232,6 +1256,7 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
     { cat: 'Fe2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'FeCl2_s', formula: 'FeCl₂', sol298: 5.1, coeff: 0.012, etohRel: 0.25, crystHeatJ: 8000 },
     { cat: 'Fe3_aq', cCat: 1, an: 'Cl_aq', cAn: 3, solid: 'FeCl3_s', formula: 'FeCl₃', sol298: 5.6, coeff: 0.014, etohRel: 0.30, crystHeatJ: 8000 },
     { cat: 'K_aq', cCat: 1, an: 'HCO3_aq', cAn: 1, solid: 'KHCO3_s', formula: 'KHCO₃', sol298: 3.3, coeff: 0.015, etohRel: 0.01, crystHeatJ: -21000 },
+    { cat: 'K_aq', cCat: 1, an: 'HSO4_aq', cAn: 1, solid: 'KHSO4_s', formula: 'KHSO₄', sol298: 3.6, coeff: 0.024, etohRel: 0.01, crystHeatJ: -4500 },
     { cat: 'K_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'K2SO4_s', formula: 'K₂SO₄', sol298: 0.69, coeff: 0.012, etohRel: 0.01, crystHeatJ: -23800 },
     { cat: 'K_aq', cCat: 1, an: 'NO3_aq', cAn: 1, solid: 'KNO3_s', formula: 'KNO₃', sol298: 3.75, coeff: 0.029, etohRel: 0.02, crystHeatJ: -34900 },
     { cat: 'K_aq', cCat: 1, an: 'Cl_aq', cAn: 1, solid: 'KCl_s', formula: 'KCl', sol298: 4.8, coeff: 0.008, etohRel: 0.01, crystHeatJ: -17200 },
@@ -1244,10 +1269,12 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
     { cat: 'Al3_aq', cCat: 1, an: 'Cl_aq', cAn: 3, solid: 'AlCl3_s', formula: 'AlCl₃', sol298: 3.4, coeff: 0.009, etohRel: 0.15, crystHeatJ: 32500 },
     { cat: 'Al3_aq', cCat: 1, an: 'NO3_aq', cAn: 3, solid: 'AlNO3_3_s', formula: 'Al(NO₃)₃', sol298: 3.1, coeff: 0.015, etohRel: 0.05, crystHeatJ: 10000 },
     { cat: 'Na_aq', cCat: 1, an: 'HCO3_aq', cAn: 1, solid: 'NaHCO3_s', formula: 'NaHCO₃', sol298: 1.15, coeff: 0.016, etohRel: 0.01, crystHeatJ: -17500, useKsp: true },
+    { cat: 'Na_aq', cCat: 1, an: 'HSO4_aq', cAn: 1, solid: 'NaHSO4_s', formula: 'NaHSO₄', sol298: 2.38, coeff: 0.025, etohRel: 0.02, crystHeatJ: 2400 },
     { cat: 'Na_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'Na2SO4_s', formula: 'Na₂SO₄', sol298: 1.98, coeff: 0.032, etohRel: 0.02, crystHeatJ: 8000 },
     { cat: 'Na_aq', cCat: 2, an: 'CO3_2_aq', cAn: 1, solid: 'Na2CO3_s', formula: 'Na₂CO₃', sol298: 2.9, coeff: 0.015, etohRel: 0.01, crystHeatJ: 26700 },
     { cat: 'Zn2_aq', cCat: 1, an: 'SO4_2_aq', cAn: 1, solid: 'ZnSO4_s', formula: 'ZnSO₄', sol298: 3.57, coeff: 0.012, etohRel: 0.02, crystHeatJ: 8000 },
     { cat: 'Cu2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'CuCl2_s', formula: 'CuCl₂', sol298: 5.6, coeff: 0.010, etohRel: 0.35, crystHeatJ: 8000 },
+    { cat: 'NH4_aq', cCat: 1, an: 'HSO4_aq', cAn: 1, solid: 'NH4HSO4_s', formula: 'NH₄HSO₄', sol298: 5.2, coeff: 0.018, etohRel: 0.02, crystHeatJ: 1800 },
     { cat: 'NH4_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'NH4_2_SO4_s', formula: '(NH₄)₂SO₄', sol298: 5.7, coeff: 0.008, etohRel: 0.01, crystHeatJ: 6600 },
     { cat: 'Na_aq', cCat: 1, an: 'Cl_aq', cAn: 1, solid: 'NaCl_s', formula: 'NaCl', sol298: 6.15, coeff: 0.0014, etohRel: 0.01, crystHeatJ: 3900 },
     { cat: 'Ca2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'CaCl2_s', formula: 'CaCl₂', sol298: 7.3, coeff: 0.014, etohRel: 0.18, crystHeatJ: -81300 },
@@ -1265,6 +1292,14 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
   for (const pair of crystallizePairs) {
     // Do not strand free H+ + SO4^2- by precipitating volatile HCl/HNO3 anions with Cu2+/Zn2+
     if ((pair.an === 'Cl_aq' || pair.an === 'NO3_aq') && (moles.H_aq || 0) > 1e-6 && (moles.SO4_2_aq || 0) > 1e-6) {
+      continue;
+    }
+    // Prefer bisulfate crystallization (NaHSO4 / KHSO4 / NH4HSO4) over neutral sulfate while acid HSO4- predominates
+    if (
+      pair.an === 'SO4_2_aq' &&
+      (pair.cat === 'Na_aq' || pair.cat === 'K_aq' || pair.cat === 'NH4_aq') &&
+      (moles.HSO4_aq || 0) > (moles.SO4_2_aq || 0) * 0.6
+    ) {
       continue;
     }
     const nPair = Math.min((moles[pair.cat] || 0) / pair.cCat, (moles[pair.an] || 0) / pair.cAn);
@@ -3211,8 +3246,34 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   reactionHeatJ += kBal.reactionHeatDeltaJ;
   const kEvent = kBal.event;
 
-  // 4. Reversible [CuCl4]2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, ammine complexes, carbonate CO2 equilibria, Nernst extraction & chemisorption/garden equilibria
+  // 4. Reversible [CuCl4]2-, diprotic HSO4- <-> H+ + SO4^2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, ammine complexes, carbonate CO2 equilibria, Nernst extraction & chemisorption/garden equilibria
+  if ((vessel.moles.CaCO3_s || 0) <= 1e-10) {
+    vessel.caso4Passivated = false;
+  }
   if (computeIceMobilityFactor(vessel) > 0) {
+    if (liquidVolL > 1e-6 && computeSulfuricAcidState(vessel.moles).w < 0.78) {
+      const m = vessel.moles;
+      const nH = m.H_aq || 0;
+      const nSO4 = m.SO4_2_aq || 0;
+      const nHSO4 = m.HSO4_aq || 0;
+      if (nHSO4 > 1e-12) {
+        const Ka2 = 0.0102;
+        const cH = nH / liquidVolL;
+        const cSO4 = nSO4 / liquidVolL;
+        const cHSO4 = nHSO4 / liquidVolL;
+        const b = cH + cSO4 + Ka2;
+        const disc = Math.max(0, b * b - 4 * (cH * cSO4 - Ka2 * cHSO4));
+        const dxConc = (-b + Math.sqrt(disc)) * 0.5;
+        const stepMol = dxConc * liquidVolL * Math.min(1, 18.0 * dt);
+        if (stepMol > 1e-12) {
+          const takeHSO4 = Math.min(nHSO4, stepMol);
+          m.HSO4_aq = Math.max(0, nHSO4 - takeHSO4);
+          if (m.HSO4_aq < 1e-14) delete m.HSO4_aq;
+          m.H_aq = nH + takeHSO4;
+          m.SO4_2_aq = nSO4 + takeHSO4;
+        }
+      }
+    }
     reactionHeatJ += stepCarbonateAndCO2Equilibria(vessel, liquidVolL, dt, activeReactions, gasProduced);
     reactionHeatJ += stepChlorocuprateEquilibrium(vessel, liquidVolL, dt, activeReactions);
     reactionHeatJ += stepAmphotericHydroxideEquilibria(vessel, liquidVolL, dt, activeReactions);
