@@ -40,11 +40,25 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
   if (moltenMassG > 0 && moltenPrimary) {
     const meltH = Math.min(28, 5.5 + Math.sqrt(moltenMassG) * 4.9);
     const poolTop = bottom - meltH;
-    const baseCol = moltenPrimary.sp.moltenColor || moltenPrimary.sp.color || '#f1f5f9';
+    let baseCol = moltenPrimary.sp.moltenColor || moltenPrimary.sp.color || '#f1f5f9';
+    let botCol = moltenPrimary.sp.highlightColor || baseCol;
+    if (moltenPrimary.sp.id === 'S_s') {
+      // Sulfur melt thermochromism + polymerization viscosity shift (~160-200 C darkens & thickens dramatically)
+      if (vessel.tempK >= 493.15) {
+        baseCol = '#7c2d12';
+        botCol = '#451a03';
+      } else if (vessel.tempK >= 433.15) {
+        baseCol = '#b45309';
+        botCol = '#78350f';
+      } else {
+        baseCol = '#eab308';
+        botCol = '#facc15';
+      }
+    }
     ctx.save();
     const mGrad = ctx.createLinearGradient(0, poolTop, 0, bottom);
     mGrad.addColorStop(0, baseCol);
-    mGrad.addColorStop(1, moltenPrimary.sp.highlightColor || baseCol);
+    mGrad.addColorStop(1, botCol);
     ctx.globalAlpha = 0.86;
     ctx.fillStyle = mGrad;
     ctx.beginPath();
@@ -615,7 +629,25 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     }
   }
 
-  // 2b. Osmotic Chemical Garden: hollow vertical blue Cu(OH)2 coral spires growing upwards!
+  // 2b. Pale-blue / bright violet-blue Sulfur combustion flame over burning S(s/l)
+  if ((vessel.sulfurFlameTimer || 0) > 0.02) {
+    const flIntensity = Math.min(1, vessel.sulfurFlameTimer);
+    const flR = Math.min(24, 9 + width * 0.24) * (vessel.sulfurO2Flame ? 1.35 : 0.9);
+    const cx = left + width * 0.5;
+    const cy = bottom - 6;
+    ctx.save();
+    const sGrad = ctx.createRadialGradient(cx, cy - flR * 0.35, flR * 0.1, cx, cy - flR * 0.35, flR);
+    sGrad.addColorStop(0, vessel.sulfurO2Flame ? `rgba(199, 210, 254, ${0.92 * flIntensity})` : `rgba(186, 230, 253, ${0.72 * flIntensity})`);
+    sGrad.addColorStop(0.45, vessel.sulfurO2Flame ? `rgba(99, 102, 241, ${0.75 * flIntensity})` : `rgba(56, 189, 248, ${0.50 * flIntensity})`);
+    sGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+    ctx.fillStyle = sGrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy - flR * 0.35, flR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // 2c. Osmotic Chemical Garden: hollow vertical blue Cu(OH)2 coral spires growing upwards!
   if (hasWater && vessel.gardenActive && (vessel.gardenGrowth || 0) > 0.02 && surfaceY < bottom - 12) {
     const growth = Math.max(0.02, Math.min(1, vessel.gardenGrowth || 0));
     const colH = Math.max(12, bottom - surfaceY - 4);

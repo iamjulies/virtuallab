@@ -188,6 +188,7 @@ export class FloatingContextUI {
       kmno4: { spId: 'KMnO4_s', formula: 'KMnO₄', iupac: 'Potassium permanganate', cas: '7722-64-7', mm: '158.034 g/mol', density: '2.703 g/cm³', melt: 'Decomposes before melting (~240 °C)', boil: '2KMnO₄ → K₂MnO₄ + MnO₂ + O₂↑', conc: 'Pure Crystalline Oxidizer', wiki: 'Potassium_permanganate', pubchem: '516875' },
       br2: { spId: 'Br2_l', formula: 'Br₂', iupac: 'Bromine', cas: '7726-95-6', mm: '159.808 g/mol', density: '3.110 g/cm³ (20 °C)', melt: '-7.2 °C (265.95 K)', boil: '58.8 °C (331.95 K)', conc: 'Pure Liquid Halogen (23.3 kPa @ 20 °C)', wiki: 'Bromine', pubchem: '24408' },
       i2: { spId: 'I2_s', formula: 'I₂', iupac: 'Iodine', cas: '7553-56-2', mm: '253.809 g/mol', density: '4.930 g/cm³', melt: '113.7 °C (386.85 K, sublimes readily)', boil: '184.3 °C (457.45 K)', conc: 'Pure Crystalline Halogen', wiki: 'Iodine', pubchem: '807' },
+      s: { spId: 'S_s', formula: 'S', iupac: 'Sulfur', cas: '7704-34-9', mm: '32.065 g/mol', density: '2.070 g/cm³ (α) / 1.96 g/cm³ (β)', melt: '115.2 °C (388.35 K, viscous dark melt ~187–200 °C)', boil: '444.6 °C (717.75 K)', conc: 'Pure Lemon-Yellow Powder (S₈)', wiki: 'Sulfur', pubchem: '5362487' },
     };
 
     if (kind === 'reagent') {

@@ -241,6 +241,9 @@ export function solutionBoilingPointK(moles, P_bar) {
       1 / (1 / 331.95 - (CONSTANTS.R_J_MOL_K / 29960) * Math.log(pSafe / CONSTANTS.P_STD_BAR));
     return Math.max(266, pureBr2BpK);
   }
+  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nPureHNO3 <= 1e-10 && (moles.S_s || 0) > 1e-8) {
+    return 717.75; // Sulfur normal boiling point 444.6 C
+  }
   if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10) return baseK;
 
   const mH2O = nH2O * CONSTANTS.M_H2O;

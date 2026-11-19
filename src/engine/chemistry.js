@@ -2391,6 +2391,311 @@ function stepHalogenRedoxAndAlkali(vessel, liquidVolL, dt, activeReactions, gasP
   return heatJ;
 }
 
+/**
+ * Sulfur (S) thermal combustion, metal/H2 synthesis, oxidizer attack (HNO3/H2SO4/Cl2),
+ * Al2S3/S2- hydrolysis, H2S reversible pyrolysis & plastic sulfur relaxation.
+ */
+function stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, iceMob = 1, options = {}) {
+  if (!vessel?.moles || dt <= 0) return 0;
+  const moles = vessel.moles;
+  const T = vessel.tempK || CONSTANTS.T_STD_K;
+  let heatJ = 0;
+
+  if ((vessel._fesPropagateTimer || 0) > 0) {
+    vessel._fesPropagateTimer = Math.max(0, vessel._fesPropagateTimer - dt);
+  }
+  if ((vessel._al2s3PropagateTimer || 0) > 0) {
+    vessel._al2s3PropagateTimer = Math.max(0, vessel._al2s3PropagateTimer - dt);
+  }
+
+  // 0. Plastic sulfur (S_plastic_s) gradually reverts to brittle yellow crystalline S_s
+  const nPlast = moles.S_plastic_s || 0;
+  if (nPlast > 1e-10) {
+    const kRelax = T >= 323.15 ? 0.35 : 0.04;
+    const dRel = nPlast * (1 - Math.exp(-kRelax * dt));
+    if (dRel > 1e-12) {
+      moles.S_plastic_s = nPlast - dRel;
+      if (moles.S_plastic_s < 1e-13) delete moles.S_plastic_s;
+      moles.S_s = (moles.S_s || 0) + dRel;
+    }
+  }
+
+  // 1. Dry/hot combustion S + O2 -> SO2 (pale blue flame >= 250 C in air; bright violet-blue >= 230 C in O2)
+  const nSulf = moles.S_s || 0;
+  const nH2O = moles.H2O_l || 0;
+  const pO2 = getVesselEffectiveO2Bar(vessel, options.environment);
+  if (nSulf > 1e-9 && nH2O < 0.04 && pO2 >= 0.06) {
+    const isConcO2 = pO2 >= 0.38;
+    const igniteK = isConcO2 ? 503.15 : 523.15;
+    if (T >= igniteK || ((vessel.sulfurFlameTimer || 0) > 0.02 && T >= 440.0)) {
+      const rateBurn = (isConcO2 ? 2.4 : 0.85) * Math.min(2.5, Math.max(0.4, pO2 / 0.21));
+      const dBurn = Math.min(nSulf, rateBurn * 0.08 * dt);
+      if (dBurn > 1e-11) {
+        moles.S_s = nSulf - dBurn;
+        if (moles.S_s < 1e-13) delete moles.S_s;
+        gasProduced.SO2_g = (gasProduced.SO2_g || 0) + dBurn;
+        heatJ += dBurn * 296800;
+        vessel.sulfurFlameTimer = 1.4;
+        vessel.sulfurO2Flame = isConcO2;
+        activeReactions.push({
+          id: isConcO2 ? 's_o2_burn_conc' : 's_o2_burn_air',
+          equation: 'S(s/l) + O₂(g) —(t°)→ SO₂(g)↑',
+          nameVi: isConcO2 ? 'Sulfur cháy mãnh liệt trong O₂ với ngọn lửa xanh tím' : 'Sulfur cháy trong không khí với ngọn lửa xanh nhạt sinh khí SO₂',
+          nameEn: isConcO2 ? 'Sulfur burns brilliantly with violet-blue flame in O₂' : 'Sulfur burns in air with pale-blue flame forming SO₂',
+          descVi: isConcO2 ? 'Trong O₂ tinh khiết (≥ 230 °C), S cháy mạnh phát ánh sáng xanh tím sinh khí hắc SO₂.' : 'Trong không khí (≥ 250 °C), S cháy nhẹ tạo ngọn lửa xanh và khí SO₂.',
+          descEn: isConcO2 ? 'In concentrated O₂ (≥ 230 °C), S burns briskly with bright violet-blue flame.' : 'In air (≥ 250 °C), S burns gently with a pale-blue flame yielding SO₂.',
+          rateMolS: dBurn / dt,
+          vigorousGas: true,
+          dXi: dBurn,
+        });
+      }
+    }
+  }
+
+  // 2. Direct Metal + Sulfur synthesis (reacts with S_s OR refluxing S_g vapor; self-propagating exothermic after ignition!)
+  if (((moles.S_s || 0) > 1e-9 || (vessel.headspaceGasMoles?.S_g || 0) > 1e-9) && nH2O < 0.05) {
+    const metalSulfurSpecs = [
+      { id: 'K', sId: 'K_s', cM: 2, cS: 1, minK: 312, rate: 5.5, prodS: 'K2S_s', heatJ: 381000, eq: '2K(s) + S(s) → K₂S(s)', nameVi: 'Potassium phản ứng mãnh liệt với Sulfur tạo K₂S', nameEn: 'Potassium reacts vigorously with Sulfur forming K₂S' },
+      { id: 'Na', sId: 'Na_s', cM: 2, cS: 1, minK: 325, rate: 4.5, prodS: 'Na2S_s', heatJ: 365000, eq: '2Na(s) + S(s) → Na₂S(s)', nameVi: 'Sodium hóa hợp tỏa nhiệt mạnh với Sulfur tạo Na₂S', nameEn: 'Sodium combines vigorously with Sulfur forming Na₂S' },
+      { id: 'Zn', sId: 'Zn_s', cM: 1, cS: 1, minK: 423.15, rate: 3.2, prodS: 'ZnS_s', heatJ: 206000, timer: 'znCombustionTimer', eq: 'Zn(s) + S(s) —(t° ≥ 150 °C)→ ZnS(s)', nameVi: 'Zinc hóa hợp mạnh với Sulfur tạo bột trắng ZnS', nameEn: 'Zinc reacts exothermically with Sulfur forming white ZnS' },
+      { id: 'Al', sId: 'Al_s', cM: 2, cS: 3, minK: 473.15, rate: 2.8, prodS: 'Al2S3_s', propKey: '_al2s3PropagateTimer', heatJ: 724000, timer: 'alCombustionTimer', eq: '2Al(s) + 3S(s) —(t° ≥ 200 °C)→ Al₂S₃(s)', nameVi: 'Aluminium phản ứng tỏa nhiệt rất mạnh với Sulfur tạo Al₂S₃', nameEn: 'Aluminium reacts strongly with Sulfur yielding Al₂S₃' },
+      { id: 'Fe', sId: 'Fe_s', cM: 1, cS: 1, minK: 673.15, rate: 9.5, prodS: 'FeS_s', propKey: '_fesPropagateTimer', heatJ: 95000, eq: 'Fe(s) + S(l/g) —(t° ≥ 450–500 °C)→ FeS(s)', nameVi: 'Iron hóa hợp với Sulfur nóng đỏ tạo Iron(II) sulfide (FeS đen xám)', nameEn: 'Iron combines with Sulfur at red heat forming black non-magnetic FeS' },
+    ];
+    for (const ms of metalSulfurSpecs) {
+      const curS = moles.S_s || 0;
+      const curSG = vessel.headspaceGasMoles?.S_g || 0;
+      const nM = moles[ms.sId] || 0;
+      if (nM <= 1e-9 || (curS <= 1e-9 && curSG <= 1e-9)) continue;
+      const propagated = ms.propKey && (vessel[ms.propKey] || 0) > 0 && T >= 450;
+      if (T < ms.minK && !propagated) continue;
+      const srcIsGas = curS < curSG && curSG > 1e-9;
+      const availS = srcIsGas ? curSG : curS;
+      const dXi = Math.min(nM / ms.cM, availS / ms.cS) * (1 - Math.exp(-ms.rate * dt));
+      if (dXi <= 1e-11) continue;
+      if (srcIsGas && vessel.headspaceGasMoles) {
+        vessel.headspaceGasMoles.S_g = Math.max(0, curSG - ms.cS * dXi);
+        heatJ += applyEquilibriumShift({
+          moles,
+          dXi,
+          deltas: { [ms.sId]: -ms.cM, [ms.prodS]: 1 },
+          heatPerMolJ: ms.heatJ,
+          dt,
+          activeReactions,
+          logThresholdRate: 1e-6,
+          buildMeta: () => ({
+            id: `metal_${ms.id.toLowerCase()}_s`,
+            equation: ms.eq,
+            nameVi: ms.nameVi,
+            nameEn: ms.nameEn,
+            descVi: `${ms.nameVi}, tự duy trì phản ứng nhờ nhiệt lượng tỏa ra lớn.`,
+            descEn: `${ms.nameEn}, self-propagating exothermically once initiated.`,
+          }),
+        });
+      } else {
+        heatJ += applyEquilibriumShift({
+          moles,
+          dXi,
+          deltas: { [ms.sId]: -ms.cM, S_s: -ms.cS, [ms.prodS]: 1 },
+          heatPerMolJ: ms.heatJ,
+          dt,
+          activeReactions,
+          logThresholdRate: 1e-6,
+          buildMeta: () => ({
+            id: `metal_${ms.id.toLowerCase()}_s`,
+            equation: ms.eq,
+            nameVi: ms.nameVi,
+            nameEn: ms.nameEn,
+            descVi: `${ms.nameVi}, tự duy trì phản ứng nhờ nhiệt lượng tỏa ra lớn.`,
+            descEn: `${ms.nameEn}, self-propagating exothermically once initiated.`,
+          }),
+        });
+      }
+      if (ms.propKey) vessel[ms.propKey] = 2.0;
+      if (ms.timer) vessel[ms.timer] = 1.4;
+    }
+  }
+
+  // 3. Reversible H2(g) + S <-> H2S(g) (forward ~350-400 C; thermally dissociates above 450-500 C!)
+  const headH2 = vessel.headspaceGasMoles?.H2_g || 0;
+  const headH2S = vessel.headspaceGasMoles?.H2S_g || 0;
+  if (T >= 613.15 && ((headH2 > 1e-9 && (moles.S_s || 0) > 1e-9) || headH2S > 1e-9)) {
+    const kEqH2S = T < 683.15 ? 24.0 : Math.max(0.25, 24.0 * Math.exp(-0.028 * (T - 683.15)));
+    const curS = moles.S_s || 0;
+    const desiredRatio = kEqH2S; // [H2S] / [H2] at sulfur saturation
+    const curRatio = headH2 > 1e-10 ? headH2S / headH2 : 1e6;
+    if (curRatio < desiredRatio && curS > 1e-9 && headH2 > 1e-9) {
+      const targetH2S = (headH2 + headH2S) * (desiredRatio / (1 + desiredRatio));
+      const dFwd = Math.min(curS, headH2, Math.max(0, targetH2S - headH2S)) * (1 - Math.exp(-1.5 * dt));
+      if (dFwd > 1e-11 && vessel.headspaceGasMoles) {
+        vessel.headspaceGasMoles.H2_g = Math.max(0, headH2 - dFwd);
+        moles.S_s = Math.max(0, curS - dFwd);
+        if (moles.S_s < 1e-13) delete moles.S_s;
+        gasProduced.H2S_g = (gasProduced.H2S_g || 0) + dFwd;
+        heatJ += dFwd * 20600;
+        activeReactions.push({
+          id: 'h2_s_to_h2s',
+          equation: 'H₂(g) + S(l/g) ⇌ H₂S(g) (350–400 °C)',
+          nameVi: 'Hydrogen tác dụng với Sulfur tạo khí Hydrogen sulfide (H₂S)',
+          nameEn: 'Reversible synthesis of Hydrogen sulfide (H₂ + S ⇌ H₂S)',
+          descVi: 'Ở 350–400 °C, H₂ khử S thành khí H₂S; đun nóng quá 450–500 °C H₂S phân hủy ngược một phần về H₂ + S.',
+          descEn: 'At 350–400 °C H₂ reduces S to H₂S; above 450–500 °C thermal dissociation lowers equilibrium yield.',
+          rateMolS: dFwd / dt,
+          vigorousGas: false,
+          dXi: dFwd,
+        });
+      }
+    } else if (curRatio > desiredRatio * 1.15 && headH2S > 1e-9 && vessel.headspaceGasMoles) {
+      const targetH2S = (headH2 + headH2S) * (desiredRatio / (1 + desiredRatio));
+      const dRev = Math.min(headH2S, Math.max(0, headH2S - targetH2S)) * (1 - Math.exp(-1.6 * dt));
+      if (dRev > 1e-11) {
+        vessel.headspaceGasMoles.H2S_g = Math.max(0, headH2S - dRev);
+        moles.S_s = (moles.S_s || 0) + dRev;
+        gasProduced.H2_g = (gasProduced.H2_g || 0) + dRev;
+        heatJ -= dRev * 20600;
+        activeReactions.push({
+          id: 'h2s_thermal_decomp',
+          equation: 'H₂S(g) ⇌ H₂(g) + S (nhiệt phân > 450 °C)',
+          nameVi: 'Nhiệt phân một phần H₂S thành H₂ và Sulfur ở nhiệt độ cao',
+          nameEn: 'Partial thermal dissociation of H₂S above 450 °C',
+          descVi: 'Trên 450–500 °C, H₂S kém bền nhiệt tách ngược trở lại H₂ và hơi/tinh thể Sulfur.',
+          descEn: 'Above 450–500 °C, H₂S partially dissociates back into H₂ and S.',
+          rateMolS: dRev / dt,
+          vigorousGas: false,
+          dXi: dRev,
+        });
+      }
+    }
+  }
+
+  // Stop aqueous/hydrolysis sulfur reactions if solvent frozen or absent
+  if (iceMob <= 0 || liquidVolL <= 1e-6 || nH2O <= 1e-5) {
+    return heatJ;
+  }
+
+  // 4. Vigorous Al2S3(s) hydrolysis: Al2S3 + 6 H2O -> 2 Al(OH)3(s) + 3 H2S(g)
+  const nAl2S3 = moles.Al2S3_s || 0;
+  if (nAl2S3 > 1e-9 && nH2O >= 1e-4) {
+    const dHyd = Math.min(nAl2S3, nH2O / 6) * (1 - Math.exp(-4.5 * dt));
+    if (dHyd > 1e-11) {
+      moles.Al2S3_s = nAl2S3 - dHyd;
+      if (moles.Al2S3_s < 1e-13) delete moles.Al2S3_s;
+      moles.H2O_l = nH2O - 6 * dHyd;
+      if (moles.H2O_l < 1e-13) delete moles.H2O_l;
+      moles.AlOH3_s = (moles.AlOH3_s || 0) + 2 * dHyd;
+      gasProduced.H2S_g = (gasProduced.H2S_g || 0) + 3 * dHyd;
+      heatJ += dHyd * 290000;
+      activeReactions.push({
+        id: 'al2s3_hydrolysis',
+        equation: 'Al₂S₃(s) + 6H₂O(l) → 2Al(OH)₃(s)↓ + 3H₂S(g)↑',
+        nameVi: 'Thủy phân hoàn toàn Aluminium sulfide (Al₂S₃) sinh khí H₂S và Al(OH)₃',
+        nameEn: 'Complete hydrolysis of Aluminium sulfide yielding Al(OH)₃↓ and H₂S↑',
+        descVi: 'Al₂S₃ bị nước thủy phân mạnh và hoàn toàn ngay ở nhiệt độ thường tạo kết tủa keo trắng Al(OH)₃ và sủi bọt khí H₂S.',
+        descEn: 'Aluminium sulfide hydrolyzes completely in water forming gelatinous white Al(OH)₃ and vigorous H₂S gas.',
+        rateMolS: dHyd / dt,
+        vigorousGas: true,
+        dXi: dHyd,
+      });
+    }
+  }
+
+  // 5. Hot strong oxidizers attacking Sulfur: hot conc. HNO3 (>= 60 C), hot conc. H2SO4 (>= 150 C), aq Cl2
+  const nSnow = moles.S_s || 0;
+  if (nSnow > 1e-9) {
+    const nNO3Tot = (moles.NO3_aq || 0) + (moles.HNO3_l || 0);
+    const nHTot = (moles.H_aq || 0) + (moles.HNO3_l || 0);
+    const mHNO3 = Math.min(nNO3Tot, nHTot) * 63.013;
+    const wHNO3 = mHNO3 / Math.max(1e-9, mHNO3 + (moles.H2O_l || 0) * 18.015);
+    if (wHNO3 >= 0.45 && T >= 333.15 && (moles.H_aq || 0) > 1e-4 && (moles.NO3_aq || 0) > 1e-4) {
+      const dOxN = Math.min(nSnow, (moles.H_aq || 0) / 6, (moles.NO3_aq || 0) / 6) * (1 - Math.exp(-0.55 * dt));
+      if (dOxN > 1e-11) {
+        moles.S_s = nSnow - dOxN;
+        if (moles.S_s < 1e-13) delete moles.S_s;
+        moles.H_aq = Math.max(0, moles.H_aq - 4 * dOxN); // 6 HNO3 consumed, 2 H+ produced -> net -4 H+
+        moles.NO3_aq = Math.max(0, moles.NO3_aq - 6 * dOxN);
+        moles.SO4_2_aq = (moles.SO4_2_aq || 0) + dOxN;
+        moles.H2O_l = (moles.H2O_l || 0) + 2 * dOxN;
+        gasProduced.NO2_g = (gasProduced.NO2_g || 0) + 6 * dOxN;
+        heatJ += dOxN * 410000;
+        activeReactions.push({
+          id: 's_hno3_conc_hot',
+          equation: 'S(s) + 6HNO₃(đặc) —(t° ≥ 60 °C)→ H₂SO₄ + 6NO₂(g)↑ + 2H₂O',
+          nameVi: 'Sulfur bị HNO₃ đặc nóng oxi hóa lên SO₄²⁻ và giải phóng khí NO₂ nâu đỏ',
+          nameEn: 'Hot concentrated Nitric acid oxidizes Sulfur to Sulfate + NO₂↑',
+          descVi: 'HNO₃ đặc nóng oxi hóa Sulfur thành Sulfuric acid đồng thời giải phóng khí nâu đỏ NO₂.',
+          descEn: 'Hot concentrated HNO₃ oxidizes S to Sulfate liberating brown NO₂ gas.',
+          rateMolS: dOxN / dt,
+          vigorousGas: true,
+          dXi: dOxN,
+        });
+      }
+    }
+
+    const sulf = computeSulfuricAcidState(moles);
+    if ((moles.S_s || 0) > 1e-9 && sulf.w >= 0.72 && T >= 423.15 && (moles.H2SO4_l || 0) > 1e-5) {
+      const dOxS = Math.min(moles.S_s, (moles.H2SO4_l || 0) / 2) * (1 - Math.exp(-0.45 * dt));
+      if (dOxS > 1e-11) {
+        moles.S_s -= dOxS;
+        if (moles.S_s < 1e-13) delete moles.S_s;
+        moles.H2SO4_l = Math.max(0, moles.H2SO4_l - 2 * dOxS);
+        if (moles.H2SO4_l < 1e-13) delete moles.H2SO4_l;
+        moles.H2O_l = (moles.H2O_l || 0) + 2 * dOxS;
+        gasProduced.SO2_g = (gasProduced.SO2_g || 0) + 3 * dOxS;
+        heatJ += dOxS * 120000;
+        activeReactions.push({
+          id: 's_h2so4_conc_hot',
+          equation: 'S(s) + 2H₂SO₄(đặc) —(t° ≥ 150 °C)→ 3SO₂(g)↑ + 2H₂O',
+          nameVi: 'Sulfur khử H₂SO₄ đặc nóng sinh khí SO₂',
+          nameEn: 'Sulfur reduces hot concentrated Sulfuric acid evolving SO₂↑',
+          descVi: 'Ở nhiệt độ cao (≥ 150 °C), H₂SO₄ đặc oxi hóa S thành khí hắc SO₂.',
+          descEn: 'Hot concentrated H₂SO₄ oxidizes S to SO₂ gas.',
+          rateMolS: dOxS / dt,
+          vigorousGas: true,
+          dXi: dOxS,
+        });
+      }
+    }
+
+    if ((moles.S_s || 0) > 1e-9 && (moles.Cl2_aq || 0) > 1e-8 && (moles.H2O_l || 0) > 0.01) {
+      const dClS = Math.min(moles.S_s, (moles.Cl2_aq || 0) / 3) * (1 - Math.exp(-0.35 * dt));
+      if (dClS > 1e-11) {
+        heatJ += applyEquilibriumShift({
+          moles,
+          dXi: dClS,
+          deltas: { S_s: -1, Cl2_aq: -3, H2O_l: -4, SO4_2_aq: 1, Cl_aq: 6, H_aq: 8 },
+          heatPerMolJ: 540000,
+          dt,
+          activeReactions,
+          logThresholdRate: 1e-6,
+          buildMeta: () => ({
+            id: 's_cl2_aq_ox',
+            equation: 'S(s) + 3Cl₂(aq) + 4H₂O → SO₄²⁻ + 6Cl⁻ + 8H⁺',
+            nameVi: 'Nước Chlorine oxi hóa Sulfur thành acid',
+            nameEn: 'Aqueous Chlorine oxidizes Sulfur to Sulfate and Chloride acid',
+            descVi: 'Cl₂ trong nước oxi hóa chậm S về ion SO₄²⁻ + HCl.',
+            descEn: 'Aqueous Chlorine slowly oxidizes S to Sulfate and acid.',
+          }),
+        });
+      }
+    }
+  }
+
+  // 6. Aqueous sulfide / acid equilibria: S2- + H2O <-> HS- + OH- and acidification -> H2S(g)
+  if ((moles.H_aq || 0) > 1e-9 && ((moles.S2_aq || 0) > 1e-9 || (moles.HS_aq || 0) > 1e-9)) {
+    const d1 = Math.min(moles.S2_aq || 0, moles.H_aq || 0) * Math.min(1, 22.0 * dt);
+    if (d1 > 1e-12) applyEquilibriumShift({ moles, dXi: d1, deltas: { S2_aq: -1, H_aq: -1, HS_aq: 1 }, heatPerMolJ: 35000, dt, activeReactions });
+    const d2 = Math.min(moles.HS_aq || 0, moles.H_aq || 0) * Math.min(1, 20.0 * dt);
+    if (d2 > 1e-12) {
+      moles.HS_aq = Math.max(0, (moles.HS_aq || 0) - d2);
+      if (moles.HS_aq < 1e-13) delete moles.HS_aq;
+      moles.H_aq = Math.max(0, (moles.H_aq || 0) - d2);
+      if (moles.H_aq < 1e-13) delete moles.H_aq;
+      gasProduced.H2S_g = (gasProduced.H2S_g || 0) + d2;
+    }
+  }
+
+  return heatJ;
+}
+
 function stepAmmineComplexEquilibria(vessel, liquidVolL, dt, activeReactions) {
   const moles = vessel.moles;
   if ((moles.H2O_l || 0) <= 1e-7 || liquidVolL <= 1e-6) return 0;
@@ -2805,6 +3110,8 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   HBrO_aq: { H2O_g: 0.5, Br2_g: 0.5, O2_g: 0.25 },
   I2_aq: { I2_s: 1 },
   I3_aq: { I2_s: 1, I_aq: 1 },
+  H2S_aq: { H2S_g: 1 },
+  HS_aq: { H2S_g: 0.5, S2_aq: 0.5 },
 };
 
 export const DRY_SALT_PAIRINGS = [
@@ -2915,7 +3222,20 @@ export const DRY_SALT_PAIRINGS = [
   ['H_aq', 1, 'Cl_aq', 1, 'HCl_g', 1, true],
   ['H_aq', 1, 'Br_aq', 1, 'HBr_g', 1, true],
   ['H_aq', 1, 'I_aq', 1, 'HI_g', 1, true],
+  ['H_aq', 1, 'HS_aq', 1, 'H2S_g', 1, true],
+  ['H_aq', 2, 'S2_aq', 1, 'H2S_g', 1, true],
   ['H_aq', 1, 'NO3_aq', 1, 'HNO3_g', 1, true],
+  ['Ag_aq', 2, 'S2_aq', 1, 'Ag2S_s', 1, false],
+  ['Cu2_aq', 1, 'S2_aq', 1, 'CuS_s', 1, false],
+  ['Fe2_aq', 1, 'S2_aq', 1, 'FeS_s', 1, false],
+  ['Zn2_aq', 1, 'S2_aq', 1, 'ZnS_s', 1, false],
+  ['Mn2_aq', 1, 'S2_aq', 1, 'MnS_s', 1, false],
+  ['Mg2_aq', 1, 'S2_aq', 1, 'MgS_s', 1, false],
+  ['Ca2_aq', 1, 'S2_aq', 1, 'CaS_s', 1, false],
+  ['Ba2_aq', 1, 'S2_aq', 1, 'BaS_s', 1, false],
+  ['Al3_aq', 2, 'S2_aq', 3, 'Al2S3_s', 1, false],
+  ['Na_aq', 2, 'S2_aq', 1, 'Na2S_s', 1, false],
+  ['K_aq', 2, 'S2_aq', 1, 'K2S_s', 1, false],
 ];
 
 /**
@@ -4090,11 +4410,13 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     reactionHeatJ += stepMetalNitrateSolver(vessel, liquidVolL, dt, activeReactions, gasProduced);
     reactionHeatJ += stepMetalSulfuricSolver(vessel, liquidVolL, dt, activeReactions, gasProduced);
     reactionHeatJ += stepHalogenRedoxAndAlkali(vessel, liquidVolL, dt, activeReactions, gasProduced, strat, computeIceMobilityFactor(vessel));
+    reactionHeatJ += stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
     stepLiquidLiquidPartition(vessel, strat, dt);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
   } else {
-    // Only allow dry chemisorption & dry halogen reactions when no aqueous transport exists
+    // Only allow dry chemisorption & dry halogen/sulfur reactions when no aqueous transport exists
     reactionHeatJ += stepHalogenRedoxAndAlkali(vessel, 0, dt, activeReactions, gasProduced, strat, 0);
+    reactionHeatJ += stepSulfurChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, 0, dt, activeReactions);
   }
 
@@ -4127,7 +4449,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
 
   // 7. Ambient atmosphere surface reactions: Na & K surface oxide tarnishing, combustion flash timers, humid-air NaOH deliquescence & open CaO cooling carbonation
   const atmMode = options.environment?.atmosphereMode || 'air';
-  for (const timerKey of ['znCombustionTimer', 'mgCombustionTimer', 'alCombustionTimer', 'feSparkBurning', 'naDryBurnTimer', 'kDryBurnTimer']) {
+  for (const timerKey of ['znCombustionTimer', 'mgCombustionTimer', 'alCombustionTimer', 'feSparkBurning', 'naDryBurnTimer', 'kDryBurnTimer', 'sulfurFlameTimer']) {
     if ((vessel[timerKey] || 0) > 0) {
       vessel[timerKey] = Math.max(0, vessel[timerKey] - dt);
     }

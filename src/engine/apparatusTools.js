@@ -1305,6 +1305,38 @@ export function grindMortarSolids(sim, mortarId) {
     }
   }
 
+  // Mechanochemical Alkali Metal + Sulfur reaction on grinding in mortar: 2M + S -> M2S
+  for (const [mKey, sProd, eqS, heatJ] of [
+    ['Na_s', 'Na2S_s', '2Na(s) + S(s) —(Nghiền)→ Na₂S(s)', 365000],
+    ['K_s', 'K2S_s', '2K(s) + S(s) —(Nghiền)→ K₂S(s)', 381000],
+  ]) {
+    const nAlk = m.moles[mKey] || 0;
+    const nSulf = m.moles.S_s || 0;
+    if (nAlk > 1e-7 && nSulf > 1e-7) {
+      const dMS = Math.min(nAlk / 2, nSulf) * 0.92;
+      if (dMS > 1e-8) {
+        const cTot = computeHeatCapacityJK(m);
+        m.moles[mKey] = nAlk - 2 * dMS;
+        if (m.moles[mKey] < 1e-12) delete m.moles[mKey];
+        m.moles.S_s = nSulf - dMS;
+        if (m.moles.S_s < 1e-12) delete m.moles.S_s;
+        m.moles[sProd] = (m.moles[sProd] || 0) + dMS;
+        m.particleCounts[sProd] = 800;
+        m.tempK = Math.min(820, m.tempK + (dMS * heatJ) / Math.max(40, cTot));
+        groundAny = true;
+        sim.addLog({
+          type: 'reaction',
+          equation: eqS,
+          nameVi: `Phản ứng tỏa nhiệt mạnh khi nghiền ${SPECIES[mKey]?.formula} với Sulfur`,
+          nameEn: `Vigorous mechanochemical reaction of ${SPECIES[mKey]?.formula} with Sulfur`,
+          descVi: 'Kim loại kiềm phản ứng ngay với bột Sulfur khi nghiền/va chạm tạo muối sulfide và tỏa nhiệt lớn.',
+          descEn: 'Alkali metal reacts vigorously on grinding with Sulfur powder yielding sulfide salt and heat.',
+          vesselLabel: m.label,
+        });
+      }
+    }
+  }
+
   if (groundAny) {
     m.grindAnimTimer = 1.1;
     if (brittleNames.length > 0) {

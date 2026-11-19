@@ -1239,7 +1239,15 @@ export function stepVesselGasAndPressure(
     }
   }
 
-  // Cool-surface desublimation I2(g) -> I2(s) crystals & Br2(g) -> Br2(l) condensation inside chilled/cooling vessel
+  // Cool-surface desublimation I2(g) -> I2(s) & S(g) -> S(s) & Br2(g) -> Br2(l) condensation inside vessel
+  const headS = vessel.headspaceGasMoles.S_g || 0;
+  if (headS > 1e-8 && vessel.tempK < 650.0) {
+    const depS = headS * (vessel.tempK < 395 ? 0.55 : 0.22);
+    if (depS > 1e-12) {
+      vessel.headspaceGasMoles.S_g = Math.max(0, headS - depS);
+      vessel.moles.S_s = (vessel.moles.S_s || 0) + depS;
+    }
+  }
   const headI2 = vessel.headspaceGasMoles.I2_g || 0;
   if (headI2 > 1e-8 && vessel.tempK < 323.15) {
     const pSubBar = 0.00041 * Math.exp((62400 / CONSTANTS.R_J_MOL_K) * (1 / 298.15 - 1 / Math.max(200, vessel.tempK)));
@@ -1423,7 +1431,15 @@ export function stepOpenGasBuoyancy(vessel, env, dt) {
     vessel.wallCondenseLevel = Math.min(1.0, (vessel.wallCondenseLevel || 0) + 0.55 * dt);
   }
 
-  // Direct cool-surface desublimation I2(g) -> I2(s) in open vessels as purple vapor meets cool glass (< 50 C)
+  // Direct cool-surface desublimation I2(g) -> I2(s) & S(g) -> S(s) in open vessels as vapors meet cool walls
+  const headSOpen = head.S_g || 0;
+  if (headSOpen > 1e-8 && (vessel.tempK || 298.15) < 650.0) {
+    const dDepS = headSOpen * (1 - Math.exp(-(vessel.tempK < 395 ? 2.6 : 0.9) * dt));
+    if (dDepS > 1e-12) {
+      head.S_g = Math.max(0, headSOpen - dDepS);
+      vessel.moles.S_s = (vessel.moles.S_s || 0) + dDepS;
+    }
+  }
   const headI2Open = head.I2_g || 0;
   if (headI2Open > 1e-8 && (vessel.tempK || 298.15) < 323.15) {
     const kDep = (vessel.tempK || 298.15) < 303.15 ? 2.4 : 0.85;

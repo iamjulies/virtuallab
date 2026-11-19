@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.8',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.9',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -151,6 +151,8 @@ export const I18N = {
     reg_br2_desc: 'Chất lỏng nâu đỏ thẫm nặng (3,11 g/cm³ · sôi 58,8 °C · áp suất hơi 23,3 kPa ở 20 °C) · Bốc hơi độc nâu đỏ, chìm dưới nước (tan ~3,5 g/100 g) & đẩy Iodine khỏi I⁻',
     reg_i2: 'Iodine (I₂)',
     reg_i2_desc: 'Tinh thể vảy tím đen ánh kim (4,93 g/cm³ · thăng hoa mạnh ra hơi tím ở 50–114 °C) · Rất ít tan trong H₂O (~0,032 g/100 mL), tan mạnh trong KI tạo I₃⁻ nâu đỏ & Al + H₂O bốc cháy',
+    reg_s: 'Sulfur (S)',
+    reg_s_desc: 'Bột màu vàng tươi (2,07 g/cm³ · nóng chảy 115,2 °C → quánh sẫm ở 187–200 °C · sôi 444,6 °C) · Cháy ngọn lửa xanh sinh SO₂↑, hóa hợp kim loại nóng thành sulfide (FeS, ZnS, Al₂S₃)',
 
     // Workbench & Actions
     noSelection: 'Chưa chọn dụng cụ',
@@ -671,7 +673,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.8',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.9',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -811,6 +813,8 @@ export const I18N = {
     reg_br2_desc: 'Dense dark reddish-brown liquid (3.11 g/cm³ · bp 58.8 °C · 23.3 kPa @ 20 °C) · Heavy toxic red-brown fumes, sinks under H₂O (~3.5 g/100 g) & displaces Iodine from I⁻',
     reg_i2: 'Iodine (I₂)',
     reg_i2_desc: 'Lustrous dark purple-black flakes (4.93 g/cm³ · sublimes briskly as violet vapor at 50–114 °C) · Trace H₂O solubility (~0.032 g/100 mL), dissolves in KI as red-brown I₃⁻ & ignites with Al + H₂O',
+    reg_s: 'Sulfur (S)',
+    reg_s_desc: 'Bright lemon-yellow powder (2.07 g/cm³ · mp 115.2 °C → dark viscous melt 187–200 °C · bp 444.6 °C) · Burns with blue flame to SO₂↑ & combines hot with metals into sulfides (FeS, ZnS, Al₂S₃)',
 
     noSelection: 'No apparatus selected',
     selectVesselTip: 'Click any vessel on the bench, or drag apparatus & reagents directly onto the workbench.',

@@ -285,6 +285,7 @@ export function stepVesselThermodynamics(
   let nh3ProducedMol = 0;
   let br2ProducedMol = 0;
   let i2ProducedMol = 0;
+  let sProducedMol = 0;
   let evapCoolingJ = 0;
   const nWater = vessel.moles.H2O_l || 0;
   const nEthanol = vessel.moles.C2H5OH_l || 0;
@@ -554,7 +555,19 @@ export function stepVesselThermodynamics(
     }
   }
   const remBr2After = vessel.moles.Br2_l || 0;
-  if (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 <= 1e-7 && remBr2After > 1e-7 && newTempK >= boilingPointK) {
+  const remainingSulfur = vessel.moles.S_s || 0;
+  if (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 <= 1e-7 && remBr2After <= 1e-7 && remainingSulfur > 1e-7 && newTempK >= 717.75) {
+    isBoiling = true;
+    const excessSJ = (newTempK - 717.75) * cTotal;
+    const boilS = Math.min(remainingSulfur, excessSJ / 9600);
+    if (boilS > 1e-12) {
+      vessel.moles.S_s = Math.max(0, remainingSulfur - boilS);
+      if (vessel.moles.S_s < 1e-13) delete vessel.moles.S_s;
+      sProducedMol += boilS;
+    }
+    const leftoverSJ = Math.max(0, excessSJ - boilS * 9600);
+    newTempK = 717.75 + leftoverSJ / cTotal;
+  } else if (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 <= 1e-7 && remBr2After > 1e-7 && newTempK >= boilingPointK) {
     isBoiling = true;
     const excessJ = (newTempK - boilingPointK) * cTotal;
     const boilBr2 = Math.min(remBr2After, excessJ / 29960);
@@ -721,6 +734,7 @@ export function stepVesselThermodynamics(
     nh3ProducedMol,
     br2ProducedMol,
     i2ProducedMol,
+    sProducedMol,
     isBoiling,
     boilingPointK,
     steamOpacity,

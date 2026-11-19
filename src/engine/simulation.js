@@ -2,6 +2,7 @@ import { CONSTANTS, waterBoilingPointK } from '../data/constants.js';
 import {
   ALL_GAS_IDS,
   createZeroGasMap,
+  isSolidMoltenAtTemp,
   SPECIES,
   STARTER_REAGENTS,
 } from '../data/species.js';
@@ -3080,8 +3081,16 @@ export class LabSimulation {
 
     const srcLiqL = computeLiquidVolumeL(src.moles, src.tempK);
     const srcLiqMl = srcLiqL * 1000;
+    let moltenMl = 0;
+    for (const [id, n] of Object.entries(src.moles)) {
+      const spM = SPECIES[id];
+      if (n > 1e-7 && isSolidMoltenAtTemp(spM, src.tempK, src.moles) && spM.density > 0) {
+        moltenMl += (n * spM.molarMass) / spM.density;
+      }
+    }
+    const effPourableMl = srcLiqMl + moltenMl;
     const srcSpec = APPARATUS[src.typeId] || APPARATUS.beaker_250;
-    if (srcLiqMl <= 0.01) {
+    if (effPourableMl <= 0.01) {
       // Allow dry pouring solids cleanly from Mortar & Pestle or Filter Funnel paper into another vessel
       if ((srcSpec.isMortar || src.kind === 'filter_funnel') && dst.kind === 'vessel') {
         const moved = this.withUndoSuppressed(() => this.transferSolidsToVessel(sourceId, targetId, 1.0));
@@ -3090,13 +3099,13 @@ export class LabSimulation {
       return 0;
     }
 
-    let actualMl = Math.min(srcLiqMl, Math.max(0, volumeMl));
+    let actualMl = Math.min(effPourableMl, Math.max(0, volumeMl));
     if (dst.kind === 'burette') {
       const dstLiqMl = computeLiquidVolumeL(dst.moles, dst.tempK) * 1000;
       actualMl = Math.min(actualMl, Math.max(0, 50.0 - dstLiqMl));
       if (actualMl <= 1e-4) return 0;
     }
-    const frac = actualMl >= srcLiqMl - 0.05 ? 1.0 : Math.min(1, actualMl / srcLiqMl);
+    const frac = actualMl >= effPourableMl - 0.05 ? 1.0 : Math.min(1, actualMl / effPourableMl);
     if (frac <= 0) return 0;
 
     // Effective density of the liquid phase (g/cm3)
@@ -3129,7 +3138,7 @@ export class LabSimulation {
       if (!sp) continue;
 
       let moveRatio = 0;
-      if (sp.phase === 'l' || sp.phase === 'aq') {
+      if (sp.phase === 'l' || sp.phase === 'aq' || isSolidMoltenAtTemp(sp, src.tempK, src.moles)) {
         moveRatio = frac;
       } else if (sp.phase === 's' && dst.kind !== 'burette') {
         moveRatio = srcSpec.isMortar
@@ -3152,7 +3161,14 @@ export class LabSimulation {
       if (spId === 'K_s') movedKMol = moveMol;
       src.moles[spId] = n - moveMol;
       if (src.moles[spId] < 1e-13) delete src.moles[spId];
-      dst.moles[spId] = (dst.moles[spId] || 0) + moveMol;
+      // Quenching hot molten Sulfur (>= 260 C) into cold water forms rubbery Plastic Sulfur!
+      const isPlasticQuench =
+        spId === 'S_s' &&
+        src.tempK >= 533.15 &&
+        (dst.moles.H2O_l || 0) >= 0.05 &&
+        (dst.tempK || CONSTANTS.T_STD_K) < 335.0;
+      const dstSpId = isPlasticQuench ? 'S_plastic_s' : spId;
+      dst.moles[dstSpId] = (dst.moles[dstSpId] || 0) + moveMol;
       cMoved += moveMol * Math.max(0, sp.cp || 0);
 
       if (sp.phase === 's') {
@@ -5681,6 +5697,7 @@ export class LabSimulation {
         combinedGas.C2H5OH_g += thermRes.ethanolProducedMol || 0;
         combinedGas.Br2_g += thermRes.br2ProducedMol || 0;
         combinedGas.I2_g += thermRes.i2ProducedMol || 0;
+        combinedGas.S_g += thermRes.sProducedMol || 0;
 
         const gasEvents = stepVesselGasAndPressure(
           v,

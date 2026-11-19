@@ -1896,7 +1896,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 22 &&
+          STARTER_REAGENTS.length === 23 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.8';
+      const expectedBuild = 'virlab_beta_v4+build.9';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,9 +2515,9 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.8 parity: All apparatus & 22 starter reagents translated in VI/EN, Prompt 40/41/42 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.9 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-43 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
-          STARTER_REAGENTS.length === 22 &&
+          STARTER_REAGENTS.length === 23 &&
           !APPARATUS.clay_triangle &&
           allTranslated &&
           newKeysPresent &&
@@ -7399,7 +7399,7 @@
       const mno2AcidOk = Math.abs((bMnColdAcid.moles.MnO2_s || 0) - 0.01) < 1e-6 && cl2HotTot > 0.002 && (bMnHotHCl.moles.Mn2_aq || 0) > 0.002;
 
       const iupacKmno4Ok =
-        STARTER_REAGENTS.length === 22 &&
+        STARTER_REAGENTS.length === 23 &&
         STARTER_REAGENTS.some((r) => r.id === 'kmno4') &&
         !/\b(kali|mangan|axit|clo|oxi(?! hóa))\b/i.test(`${I18N.vi.reg_kmno4} ${I18N.vi.reg_kmno4_desc} ${I18N.vi.alertMn2O7Hazard}`);
 
@@ -7513,7 +7513,7 @@
         (vIRoom.moles.IO3_aq || 0) > (vIRoom.moles.IO_aq || 0) * 4;
 
       const iupacHalOk =
-        STARTER_REAGENTS.length === 22 &&
+        STARTER_REAGENTS.length === 23 &&
         STARTER_REAGENTS.some((r) => r.id === 'br2') &&
         STARTER_REAGENTS.some((r) => r.id === 'i2') &&
         !/\b(brom|iot|clo|kali|natri|nhôm|sắt|axit)\b/i.test(`${I18N.vi.reg_br2} ${I18N.vi.reg_br2_desc} ${I18N.vi.reg_i2} ${I18N.vi.reg_i2_desc}`);
@@ -7522,6 +7522,121 @@
         'Prompt 42 Br2 & I2 invariants: heavy Br2 sinking & bp 58.8C fuming, I2 trace solubility vs KI I3- complex, direct I2 sublimation & cold deposition, Cl2>Br2>I2 displacement, Al+I2+H2O flare, FeBr3 vs FeI2, & Cl2/Br2/I2+OH- temp matrix',
         brHeavyBottomOk && brBoilOk && i2SolOk && i3ComplexOk && i2SublOk && i2DepOk && dispOk && alFlareOk && feValenceOk && clMatrixOk && brMatrixOk && iMatrixOk && iupacHalOk,
         `br=(${brHeavyBottomOk}/${brBoilOk}), i2=(sol=${i2SolOk},I3=${i3ComplexOk},subl=${i2SublOk},dep=${i2DepOk}), redox=(disp=${dispOk},al=${alFlareOk}[dry=${bAlI2Dry.moles.AlI3_s||0},wetAlI3=${(bAlI2.moles.AlI3_s||0).toFixed(4)},T=${(bAlI2.tempK-273.15).toFixed(1)}C,I2g=${((bAlI2.escapedGasMoles?.I2_g||0)+(bAlI2.headspaceGasMoles?.I2_g||0)).toFixed(4)}],fe=${feValenceOk}), OH=(Cl=${clMatrixOk},Br=${brMatrixOk},I=${iMatrixOk}), iupac=${iupacHalOk}`
+      );
+    }
+
+    // TEST 161: Prompt 43 (virlab_beta_v4+build.9) — Sulfur (S): Room-T Inertness, Melt/Boil 444.6C & Plastic S Quench, Blue-Flame Combustion -> SO2, Metal+S (FeS/ZnS/Al2S3/Na2S), FeS+Acid -> H2S, Al2S3 Hydrolysis, H2+S <-> H2S & Hot HNO3/H2SO4
+    {
+      // 1) Room-temp inertness in H2O, HCl37, dil NaOH, AgNO3, CuSO4 + Plastic Sulfur quenching when pouring molten S (>=260 C) into cold H2O
+      const sim1 = new LabSimulation();
+      const bInert1 = sim1.createApparatus('beaker_250', 120, 427);
+      sim1.addReagentToVessel(bInert1.id, 'h2o', 30.0, { silentAnim: true });
+      sim1.addReagentToVessel(bInert1.id, 's', 1.6, { silentAnim: true });
+      const bInert2 = sim1.createApparatus('beaker_250', 220, 427);
+      sim1.addReagentToVessel(bInert2.id, 'hcl_37', 20.0, { silentAnim: true });
+      sim1.addReagentToVessel(bInert2.id, 's', 1.6, { silentAnim: true });
+      const bMelt = sim1.createApparatus('beaker_250', 340, 427);
+      sim1.addReagentToVessel(bMelt.id, 's', 3.2, { silentAnim: true });
+      bMelt.tempK = 600.0; // ~327 C molten viscous sulfur
+      const bColdH2O = sim1.createApparatus('beaker_250', 460, 427);
+      sim1.addReagentToVessel(bColdH2O.id, 'h2o', 40.0, { silentAnim: true });
+      sim1.pourBetweenVessels(bMelt.id, bColdH2O.id, 1.0);
+      const bSBoil = sim1.createApparatus('beaker_250', 580, 427);
+      bSBoil.moles = { S_s: 0.05 };
+      bSBoil.tempK = 724.0; // > 444.6 C boil
+      stepSeconds(sim1, 1.5, 0.05);
+      const inertOk = Math.abs((bInert1.moles.S_s || 0) - 1.6 / SPECIES.S_s.molarMass) < 1e-4 && Math.abs((bInert2.moles.S_s || 0) - 1.6 / SPECIES.S_s.molarMass) < 1e-4;
+      const plasticOk = (bColdH2O.moles.S_plastic_s || 0) > 0.02;
+      const sBoilOk = (bSBoil.escapedGasMoles?.S_g || 0) + (bSBoil.headspaceGasMoles?.S_g || 0) > 0.002;
+
+      // 2) Combustion in air (250 C) vs conc O2 (230 C) & Metal + S synthesis (FeS, ZnS, Al2S3)
+      const sim2 = new LabSimulation();
+      const bnAir = sim2.createApparatus('burner', 140, 480);
+      sim2.setBurnerPower(bnAir.id, 650);
+      const bAirBurn = sim2.createApparatus('beaker_250', 140, 427);
+      bAirBurn.restingOnId = bnAir.id;
+      bAirBurn.moles = { S_s: 0.03 };
+      bAirBurn.tempK = 545.0; // 272 C > 250 C air ignition
+      const bnO2 = sim2.createApparatus('burner', 260, 480);
+      sim2.setBurnerPower(bnO2.id, 420);
+      const bO2Burn = sim2.createApparatus('round_flask_1000', 260, 427);
+      bO2Burn.restingOnId = bnO2.id;
+      bO2Burn.moles = { S_s: 0.03 };
+      bO2Burn.isStoppered = true;
+      bO2Burn.headspaceGasMoles.O2_g = 0.025;
+      bO2Burn.sealedAirMoles = 0.015;
+      bO2Burn.sealedAirO2Moles = 0.003;
+      bO2Burn.tempK = 512.0; // 239 C: > 230 C conc-O2 ignition!
+      const bnFeS = sim2.createApparatus('burner', 380, 480);
+      sim2.setBurnerPower(bnFeS.id, 650);
+      const bFeS = sim2.createApparatus('crucible_porcelain', 380, 427);
+      bFeS.restingOnId = bnFeS.id;
+      bFeS.lidState = 'closed';
+      bFeS.moles = { Fe_s: 0.04, S_s: 0.04 };
+      bFeS.tempK = 685.0; // ~412 C -> initiates red-hot self-propagating Fe + S -> FeS!
+      const bZnS = sim2.createApparatus('beaker_250', 500, 427);
+      bZnS.moles = { Zn_s: 0.04, S_s: 0.04 };
+      bZnS.tempK = 445.0; // ~172 C
+      const bAlS = sim2.createApparatus('beaker_250', 620, 427);
+      bAlS.moles = { Al_s: 0.04, S_s: 0.06 };
+      bAlS.tempK = 490.0; // ~217 C
+      stepSeconds(sim2, 1.5, 0.05);
+      const combOk =
+        ((bAirBurn.escapedGasMoles?.SO2_g || 0) + (bAirBurn.headspaceGasMoles?.SO2_g || 0)) > 0.001 &&
+        ((bO2Burn.headspaceGasMoles?.SO2_g || 0) + (bO2Burn.escapedGasMoles?.SO2_g || 0)) > 0.002 &&
+        bO2Burn.sulfurO2Flame === true;
+      const metalSOk =
+        (bFeS.moles.FeS_s || 0) > 0.01 &&
+        (bZnS.moles.ZnS_s || 0) > 0.01 &&
+        (bAlS.moles.Al2S3_s || 0) > 0.005;
+
+      // 3) Follow-up: FeS + HCl -> Fe2+ + H2S(g); Al2S3 + H2O -> Al(OH)3 + H2S(g); H2 + S <-> H2S (380 C vs > 500 C); S + hot conc HNO3 -> NO2
+      const sim3 = new LabSimulation();
+      const bFeSHCl = sim3.createApparatus('beaker_250', 120, 427);
+      bFeSHCl.moles = { H2O_l: 2.0, H_aq: 0.2, Cl_aq: 0.2, FeS_s: 0.02 };
+      const bAlHyd = sim3.createApparatus('beaker_250', 240, 427);
+      bAlHyd.moles = { H2O_l: 2.0, Al2S3_s: 0.01 };
+      const bH2S_380 = sim3.createApparatus('quartz_tube', 360, 427);
+      bH2S_380.isStoppered = true;
+      bH2S_380.moles = { S_s: 0.02 };
+      bH2S_380.headspaceGasMoles.H2_g = 0.0012;
+      bH2S_380.sealedAirMoles = 0.0003;
+      bH2S_380.tempK = 653.15; // 380 C (safe inside fused quartz!)
+      const bH2S_hot = sim3.createApparatus('quartz_tube', 480, 427);
+      bH2S_hot.isStoppered = true;
+      bH2S_hot.headspaceGasMoles.H2S_g = 0.0012;
+      bH2S_hot.sealedAirMoles = 0.0003;
+      bH2S_hot.tempK = 793.15; // 520 C partial decomp (safe inside fused quartz!)
+      const bSHNO3 = sim3.createApparatus('beaker_250', 600, 427);
+      sim3.addReagentToVessel(bSHNO3.id, 'hno3_68', 20.0, { silentAnim: true });
+      bSHNO3.moles.S_s = 0.02;
+      bSHNO3.tempK = 355.0; // 82 C
+      for (let k = 0; k < 40; k++) {
+        bH2S_380.tempK = 653.15;
+        bH2S_hot.tempK = 793.15;
+        sim3.step(0.05);
+      }
+      const followUpOk =
+        (bFeSHCl.escapedGasMoles?.H2S_g || 0) > 0.002 &&
+        (bFeSHCl.moles.Fe2_aq || 0) > 0.002 &&
+        (bAlHyd.moles.AlOH3_s || 0) > 0.01 &&
+        (bAlHyd.escapedGasMoles?.H2S_g || 0) > 0.015;
+      const h2sRevOk =
+        ((bH2S_380.headspaceGasMoles?.H2S_g || 0) + (bH2S_380.escapedGasMoles?.H2S_g || 0)) > 0.0005 &&
+        ((bH2S_hot.headspaceGasMoles?.H2_g || 0) + (bH2S_hot.escapedGasMoles?.H2_g || 0)) > 0.0002;
+      const oxAcidOk =
+        ((bSHNO3.escapedGasMoles?.NO2_g || 0) + (bSHNO3.headspaceGasMoles?.NO2_g || 0)) > 0.01 &&
+        (bSHNO3.moles.SO4_2_aq || 0) > 0.001;
+
+      const iupacSulfOk =
+        STARTER_REAGENTS.length === 23 &&
+        STARTER_REAGENTS.some((r) => r.id === 's') &&
+        !/\b(lưu huỳnh|sunfua|hiđro|axit|oxi(?! hóa)|etanol)\b/i.test(`${I18N.vi.reg_s} ${I18N.vi.reg_s_desc}`);
+
+      assert(
+        'Prompt 43 Sulfur (S) invariants: room-T inertness, molten plastic quench & 444.6C bp, air/O2 blue-flame SO2, FeS/ZnS/Al2S3 synthesis, FeS+HCl->H2S, Al2S3 hydrolysis, H2+S<->H2S reversible, hot HNO3->SO4+NO2 & IUPAC',
+        inertOk && plasticOk && sBoilOk && combOk && metalSOk && followUpOk && h2sRevOk && oxAcidOk && iupacSulfOk,
+        `inert=${inertOk}, plastic=${plasticOk}, boil=${sBoilOk}, comb=${combOk}, metalS=(FeS:${(bFeS.moles.FeS_s||0).toFixed(4)},ZnS:${(bZnS.moles.ZnS_s||0).toFixed(4)},Al2S3:${(bAlS.moles.Al2S3_s||0).toFixed(4)}), follow=${followUpOk}, h2sRev=${h2sRevOk}(fwd:${((bH2S_380.headspaceGasMoles?.H2S_g||0)+(bH2S_380.escapedGasMoles?.H2S_g||0)).toFixed(4)},revH2:${((bH2S_hot.headspaceGasMoles?.H2_g||0)+(bH2S_hot.escapedGasMoles?.H2_g||0)).toFixed(4)}), ox=${oxAcidOk}, iupac=${iupacSulfOk}`
       );
     }
 
