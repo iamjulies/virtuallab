@@ -1464,7 +1464,7 @@ export class LabSimulation {
     const tongs = this.getItem(tongsId);
     const v = this.getItem(vesselId);
     if (!tongs || tongs.kind !== 'tongs' || !v || v.kind !== 'vessel' || v.isShattered) return false;
-    for (const spId of ['Zn_s', 'Na_s', 'Fe_s', 'Cu_s']) {
+    for (const spId of ['Zn_s', 'Mg_s', 'Al_s', 'Na_s', 'K_s', 'Fe_s', 'Cu_s']) {
       const avail = v.moles?.[spId] || 0;
       if (avail > 1e-6) {
         const take = Math.min(avail, spId === 'Na_s' ? 0.015 : 0.02);
@@ -1512,7 +1512,7 @@ export class LabSimulation {
     const spoon = this.getItem(spoonId);
     const v = this.getItem(vesselId);
     if (!spoon || spoon.kind !== 'spoon' || !v || v.kind !== 'vessel' || v.isShattered) return false;
-    const priorityOrder = ['Zn_s', 'Na_s', 'CaCO3_s', 'CuO_s', 'CuSO4_5H2O_s', 'Fe_s', 'Cu_s', 'CaO_s'];
+    const priorityOrder = ['Zn_s', 'Mg_s', 'Al_s', 'Na_s', 'K_s', 'CaCO3_s', 'CuO_s', 'CuSO4_5H2O_s', 'Fe_s', 'Cu_s', 'CaO_s'];
     const allSolidKeys = [
       ...priorityOrder.filter((k) => (v.moles?.[k] || 0) > 1e-8),
       ...Object.keys(v.moles || {}).filter(

@@ -181,6 +181,9 @@ export class FloatingContextUI {
       fe: { spId: 'Fe_s', formula: 'Fe', iupac: 'Iron', cas: '7439-89-6', mm: '55.845 g/mol', density: '7.874 g/cm³', melt: '1538.0 °C (1811 K)', boil: '2862.0 °C (3135 K)', conc: 'Pure Metal (s)', wiki: 'Iron', pubchem: '23925' },
       bacl2_2h2o: { spId: 'BaCl2_2H2O_s', formula: 'BaCl₂·2H₂O', iupac: 'Barium chloride dihydrate', cas: '10326-27-9', mm: '244.264 g/mol', density: '3.097 g/cm³', melt: '113 °C (-2 H₂O) / 962 °C (anhyd.)', boil: '1560.0 °C (1833 K)', conc: 'Pure Hydrate Solid', wiki: 'Barium_chloride', pubchem: '25204' },
       nacl: { spId: 'NaCl_s', formula: 'NaCl', iupac: 'Sodium chloride', cas: '7647-14-5', mm: '58.443 g/mol', density: '2.165 g/cm³', melt: '801.0 °C (1074 K)', boil: '1465.0 °C (1738 K)', conc: 'Pure Ionic Solid', wiki: 'Sodium_chloride', pubchem: '5234' },
+      mg: { spId: 'Mg_s', formula: 'Mg', iupac: 'Magnesium', cas: '7439-95-4', mm: '24.305 g/mol', density: '1.738 g/cm³', melt: '650.0 °C (923.2 K)', boil: '1090.0 °C (1363 K)', conc: 'Pure Metal (s)', wiki: 'Magnesium', pubchem: '5462224' },
+      al: { spId: 'Al_s', formula: 'Al', iupac: 'Aluminium', cas: '7429-90-5', mm: '26.982 g/mol', density: '2.700 g/cm³', melt: '660.3 °C (933.5 K)', boil: '2470.0 °C (2743 K)', conc: 'Pure Metal (s)', wiki: 'Aluminium', pubchem: '5359268' },
+      k: { spId: 'K_s', formula: 'K', iupac: 'Potassium', cas: '7440-09-7', mm: '39.098 g/mol', density: '0.862 g/cm³', melt: '63.5 °C (336.7 K)', boil: '759.0 °C (1032 K)', conc: 'Pure Metal (in oil)', wiki: 'Potassium', pubchem: '5462222' },
     };
 
     if (kind === 'reagent') {

@@ -589,4 +589,42 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     }
     ctx.restore();
   }
+
+  // 4. Potassium (K) floating reactive silver-lilac droplet + characteristic 766 nm violet flame halo on water
+  const nK = moles.K_s || 0;
+  if (nK > 1e-7) {
+    const massK = nK * SPECIES.K_s.molarMass;
+    const radius = Math.min(12, Math.max(3.8, 3.2 + Math.cbrt(massK) * 5.2));
+    ctx.save();
+    if (hasWater && surfaceY < bottom - 4) {
+      const kx = left + width * 0.5 + Math.sin((vessel.tempK || 298) * 1.7) * Math.max(6, width * 0.22);
+      const ky = surfaceY + 1;
+      const haloGrad = ctx.createRadialGradient(kx, ky, radius * 0.3, kx, ky, radius * 3.4);
+      haloGrad.addColorStop(0, 'rgba(255, 255, 255, 0.94)');
+      haloGrad.addColorStop(0.45, 'rgba(192, 132, 252, 0.85)');
+      haloGrad.addColorStop(1, 'rgba(168, 85, 247, 0)');
+      ctx.fillStyle = haloGrad;
+      ctx.beginPath();
+      ctx.arc(kx, ky, radius * 3.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#f1f5f9';
+      ctx.strokeStyle = '#9333ea';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.arc(kx, ky, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      const kx = left + width * 0.55;
+      const ky = bottom - radius * 0.65;
+      ctx.fillStyle = '#e2e8f0';
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(kx - radius * 0.8, ky - radius * 0.65, radius * 1.6, radius * 1.3, 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 }

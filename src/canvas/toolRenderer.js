@@ -1400,11 +1400,17 @@ export function renderCrucibleTongs(ctx, item, isSelected, isDark, timeNow = 0) 
     if (burning) {
       const isCyanZn = item.heldFlameColor === 'cyan_zn';
       const isFeSparks = item.heldFlameColor === 'sparks_fe';
-      const fGrad = ctx.createRadialGradient(tipX, y, 2, tipX, y - 4, 24);
+      const isVioletK = item.heldFlameColor === 'violet_k';
+      const isWhiteMg = item.heldFlameColor === 'white_mg';
+      const fGrad = ctx.createRadialGradient(tipX, y, 2, tipX, y - 4, isWhiteMg ? 30 : 24);
       fGrad.addColorStop(0, '#ffffff');
       fGrad.addColorStop(
         0.45,
-        isCyanZn
+        isWhiteMg
+          ? 'rgba(241, 245, 249, 0.98)'
+          : isVioletK
+          ? 'rgba(192, 132, 252, 0.94)'
+          : isCyanZn
           ? 'rgba(103, 232, 249, 0.92)'
           : isFeSparks
           ? 'rgba(251, 146, 60, 0.95)'
@@ -1516,7 +1522,11 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
     if ((item.burnTimer || 0) > 0.04) {
       const isFeSparks = item.flameColor === 'sparks_fe';
       const fCol =
-        item.flameColor === 'cyan_zn'
+        item.flameColor === 'white_mg'
+          ? 'rgba(248, 250, 252, 0.98)'
+          : item.flameColor === 'violet_k'
+          ? 'rgba(192, 132, 252, 0.94)'
+          : item.flameColor === 'cyan_zn'
           ? 'rgba(103, 232, 249, 0.92)'
           : item.flameColor === 'emerald_cu'
           ? 'rgba(52, 211, 153, 0.90)'

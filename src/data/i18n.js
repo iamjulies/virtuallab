@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.1',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.2',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -137,6 +137,12 @@ export const I18N = {
     reg_caco3_desc: 'Tinh thể đá vôi / bột mịn · Nhiệt phân CaCO₃ ⇌ CaO + CO₂ & điều chế CO₂ với acid',
     reg_nacl: 'Sodium chloride (NaCl)',
     reg_nacl_desc: 'Tinh thể muối ăn · Điện phân dung dịch/nóng chảy (801 °C), quy trình Solvay & kết tủa AgCl',
+    reg_mg: 'Magnesium (Mg)',
+    reg_mg_desc: 'Mảnh / Dây kim loại nhẹ (1,74 g/cm³) · Cháy sáng chói trong O₂/CO₂/N₂, tan nhanh trong acid & đẩy Zn/Fe/Cu',
+    reg_al: 'Aluminium (Al)',
+    reg_al_desc: 'Lá / Bột kim loại lưỡng tính (2,70 g/cm³) · Tan cả trong acid lẫn kiềm (H₂↑), thụ động HNO₃/H₂SO₄ đặc nguội',
+    reg_k: 'Potassium (K)',
+    reg_k_desc: 'Kim loại kiềm mềm ngâm dầu · Nóng chảy 63,5 °C, phản ứng mãnh liệt với nước kèm ngọn lửa tím 766 nm',
 
     // Workbench & Actions
     noSelection: 'Chưa chọn dụng cụ',
@@ -246,6 +252,7 @@ export const I18N = {
     btnAddExact: 'Thêm đúng lượng này',
     btnClose: 'Đóng',
     btnCutDropNa: 'Cắt & Thả vào bình',
+    btnCutDropK: 'Cắt Potassium & Thả vào bình',
     solidParticleCount: 'Chia hạt:',
     fineGranules: 'Nghiền mịn (phản ứng nhanh)',
     ironNailForm: 'Đinh / Khối (Nail)',
@@ -651,7 +658,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.1',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.2',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -777,6 +784,12 @@ export const I18N = {
     reg_caco3_desc: 'Limestone chips / powder · Reversible calcination CaCO₃ ⇌ CaO + CO₂ & acid CO₂ source',
     reg_nacl: 'Sodium chloride (NaCl)',
     reg_nacl_desc: 'Crystalline salt · Brine/molten electrolysis (801 °C), Solvay NaHCO₃ synthesis & AgCl test',
+    reg_mg: 'Magnesium (Mg)',
+    reg_mg_desc: 'Light ribbon/turnings (1.74 g/cm³) · Dazzling white flash in O₂/CO₂/N₂, fast H₂ in acids & displaces Zn/Fe/Cu',
+    reg_al: 'Aluminium (Al)',
+    reg_al_desc: 'Foil/powder (2.70 g/cm³) · Amphoteric (dissolves in acids & alkalis), passivated by cold conc. HNO₃/H₂SO₄',
+    reg_k: 'Potassium (K)',
+    reg_k_desc: 'Soft alkali metal in mineral oil · Melts 63.5 °C, vigorous H₂ ignition with lilac-violet 766 nm flame',
 
     noSelection: 'No apparatus selected',
     selectVesselTip: 'Click any vessel on the bench, or drag apparatus & reagents directly onto the workbench.',
@@ -884,6 +897,7 @@ export const I18N = {
     btnAddExact: 'Add Exact Amount',
     btnClose: 'Close',
     btnCutDropNa: 'Cut & Drop into Vessel',
+    btnCutDropK: 'Cut Potassium & Drop into Vessel',
     solidParticleCount: 'Particle size:',
     fineGranules: 'Fine powder / granules (faster)',
     ironNailForm: 'Iron Nail / Chip',

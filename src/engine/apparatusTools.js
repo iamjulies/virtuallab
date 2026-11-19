@@ -722,11 +722,16 @@ export function checkFlameLoopInteractions(sim, loop) {
       const hasFe =
         (m.Fe2_aq || 0) + (m.Fe3_aq || 0) + (m.FeCl2_s || 0) + (m.FeCl3_s || 0) +
         (m.FeSO4_s || 0) + (m.FeNO3_2_s || 0) + (m.FeNO3_3_s || 0) > 1e-6;
+      const hasK =
+        (m.K_aq || 0) + (m.K_s || 0) + (m.KOH_s || 0) + (m.KCl_s || 0) +
+        (m.KNO3_s || 0) + (m.K2SO4_s || 0) + (m.K2CO3_s || 0) + (m.KHCO3_s || 0) +
+        (m.KHSO4_s || 0) + (m.KO2_s || 0) + (m.K2O_s || 0) > 1e-6;
       if (hasNa) {
-        // Exp 17: 589 nm Na D-doublet quantum emission overwhelms & masks weaker Cu2+ / Ca2+ / Ba2+ bands
+        // Exp 17: 589 nm Na D-doublet quantum emission overwhelms & masks weaker Cu2+ / Ca2+ / Ba2+ / K+ bands
         loop.sampledIon = 'Na⁺';
         loop.sampledColor = '#facc15';
         const maskedList = [];
+        if (hasK) maskedList.push('K⁺');
         if (hasCa) maskedList.push('Ca²⁺');
         if (hasBa) maskedList.push('Ba²⁺');
         if (hasCu) maskedList.push('Cu²⁺');
@@ -734,6 +739,11 @@ export function checkFlameLoopInteractions(sim, loop) {
         loop.sampleLabel = maskedLabel;
         loop.maskedCuByNa = maskedList.length > 0;
         loop.maskedTargetName = maskedList[0] || 'Cu²⁺';
+      } else if (hasK) {
+        loop.sampledIon = 'K⁺';
+        loop.sampledColor = '#c084fc';
+        loop.sampleLabel = 'K⁺ (Tím hoa cà · 766 nm)';
+        loop.maskedCuByNa = false;
       } else if (hasBa) {
         loop.sampledIon = 'Ba²⁺';
         loop.sampledColor = '#84cc16';
@@ -1461,6 +1471,42 @@ function stepCrucibleTongs(sim, tongs, dt) {
             vesselLabel: tongs.label,
           });
         }
+      } else if (sample.speciesId === 'Mg_s' && sample.tempK >= 723.15) {
+        const dBurn = Math.min(sample.moles, Math.max(1e-5, sample.moles * 1.5 * dt));
+        sample.moles -= dBurn;
+        tongs.heldBurnTimer = 1.1;
+        tongs.heldFlameColor = 'white_mg';
+        if (sample.moles < 1e-7) {
+          sample.speciesId = 'MgO_s';
+          sample.moles = dBurn;
+          sim.addLog({
+            type: 'reaction',
+            equation: '2Mg(s) + O₂(g) → 2MgO(s) (sáng chói)',
+            nameVi: 'Đốt cháy Magnesium trên kẹp kim loại (ánh sáng trắng chói → MgO)',
+            nameEn: 'Magnesium ribbon combustion on crucible tongs (brilliant white flash → MgO)',
+            descVi: 'Magnesium cháy sáng chói tỏa nhiệt mạnh tạo bột trắng MgO (kèm một ít Mg₃N₂ trong không khí).',
+            descEn: 'Magnesium ribbon burns with blinding white brilliance forming white MgO ash.',
+            vesselLabel: tongs.label,
+          });
+        }
+      } else if (sample.speciesId === 'K_s' && sample.tempK >= 336.0) {
+        const dBurn = Math.min(sample.moles, Math.max(1e-5, sample.moles * 1.6 * dt));
+        sample.moles -= dBurn;
+        tongs.heldBurnTimer = 0.95;
+        tongs.heldFlameColor = 'violet_k';
+        if (sample.moles < 1e-7) {
+          sample.speciesId = 'KO2_s';
+          sample.moles = dBurn;
+          sim.addLog({
+            type: 'reaction',
+            equation: 'K(s/l) + O₂(g) → KO₂(s) (ngọn lửa tím 766 nm)',
+            nameVi: 'Đốt cháy Potassium trên kẹp kim loại (ngọn lửa tím hoa cà → KO₂)',
+            nameEn: 'Potassium combustion on crucible tongs (lilac flame → KO₂)',
+            descVi: 'Potassium bốc cháy với ngọn lửa tím đặc trưng tạo KO₂ vàng cam.',
+            descEn: 'Potassium burns with a characteristic lilac flame yielding yellow-orange KO₂.',
+            vesselLabel: tongs.label,
+          });
+        }
       }
     }
   }
@@ -1667,6 +1713,40 @@ function stepIronSpoon(sim, spoon, dt) {
     moles.FeO_s = (moles.FeO_s || 0) + dScale * 0.5;
     moles.Fe3O4_s = (moles.Fe3O4_s || 0) + dScale * 0.1;
     moles.Fe2O3_s = (moles.Fe2O3_s || 0) + dScale * 0.1;
+  }
+
+  // C3. Magnesium & Potassium combustion on spoon
+  const nMgSpoon = moles.Mg_s || 0;
+  if (nMgSpoon > 1e-8 && spoon.tempK >= 723.15 && (inO2Jar || inOpenAir)) {
+    const dBurn = Math.min(nMgSpoon, inO2Jar ? headO2 * 2 : nMgSpoon, Math.max(1e-4 * dt, nMgSpoon * 1.4 * dt));
+    if (dBurn > 1e-10) {
+      moles.Mg_s -= dBurn;
+      if (moles.Mg_s < 1e-10) delete moles.Mg_s;
+      moles.MgO_s = (moles.MgO_s || 0) + dBurn * (inOpenAir ? 0.85 : 1.0);
+      if (inOpenAir) moles.Mg3N2_s = (moles.Mg3N2_s || 0) + dBurn * 0.05;
+      if (inO2Jar && hostV?.headspaceGasMoles) hostV.headspaceGasMoles.O2_g = Math.max(0, headO2 - 0.5 * dBurn);
+      spoon.burnTimer = 1.05;
+      spoon.flameColor = 'white_mg';
+      spoon.tempK = Math.max(spoon.tempK, 1650);
+    }
+  }
+  const nKSpoon = moles.K_s || 0;
+  if (nKSpoon > 1e-8 && spoon.tempK >= 336.0 && (inO2Jar || inOpenAir || inCl2Jar)) {
+    const dBurn = Math.min(nKSpoon, Math.max(1e-4 * dt, nKSpoon * 1.6 * dt));
+    if (dBurn > 1e-10) {
+      moles.K_s -= dBurn;
+      if (moles.K_s < 1e-10) delete moles.K_s;
+      if (inCl2Jar) {
+        moles.KCl_s = (moles.KCl_s || 0) + dBurn;
+        hostV.headspaceGasMoles.Cl2_g = Math.max(0, headCl2 - 0.5 * dBurn);
+      } else {
+        moles.KO2_s = (moles.KO2_s || 0) + dBurn;
+        if (inO2Jar && hostV?.headspaceGasMoles) hostV.headspaceGasMoles.O2_g = Math.max(0, headO2 - dBurn);
+      }
+      spoon.burnTimer = 0.95;
+      spoon.flameColor = 'violet_k';
+      spoon.tempK = Math.max(spoon.tempK, 1020);
+    }
   }
 
   // D. Solid thermal decompositions directly on heated spoon (CuSO4.5H2O, Cu(OH)2, CuCO3, CaCO3)

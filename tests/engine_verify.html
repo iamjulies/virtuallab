@@ -126,6 +126,7 @@
       computeTubingGeometry,
       isTubeTipSubmerged,
     } from '../src/engine/gasNetwork.js';
+    import { checkFlameLoopInteractions } from '../src/engine/apparatusTools.js';
 
     const results = [];
     const details = [];
@@ -1503,6 +1504,7 @@
       const solidSpecies = Object.values(SPECIES).filter((s) => s.phase === 's');
       const coveredSolidIds = new Set([
         'Na_s',
+        'K_s',
         ...SORTED_PRECIPITATE_SPECIES.map((s) => s.id),
         ...SORTED_BOTTOM_SOLID_SPECIES.map((s) => s.id),
       ]);
@@ -1894,7 +1896,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 16 &&
+          STARTER_REAGENTS.length === 19 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2462,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.1';
+      const expectedBuild = 'virlab_beta_v4+build.2';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,7 +2517,7 @@
       assert(
         'Build virlab_beta_v3+build.6 parity: All 39 apparatus & 15 starter reagents translated in VI/EN, Prompt 26 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
-          STARTER_REAGENTS.length === 16 &&
+          STARTER_REAGENTS.length === 19 &&
           !APPARATUS.clay_triangle &&
           allTranslated &&
           newKeysPresent &&
@@ -7024,6 +7026,55 @@
         'H2SO4 98% dehydrates CuSO4·5H2O, passivates cold Fe (SO2+Fe3+ when hot), evolves H2+Fe2+ when diluted & releases HCl from NaCl',
         okDehydrate && coldPassiv && hotFe3 && dilExothermOk && dilFe2H2Ok && okNaHCl,
         `dehy=${okDehydrate}, coldPass=${coldPassiv}, hotFe3=${hotFe3}, exo=${dilExothermOk}, dilH2=${dilFe2H2Ok}, naHCl=${okNaHCl}`
+      );
+    }
+
+    // TEST 154: Prompt 36 (beta_v4+build.2) — Magnesium (Mg), Aluminium (Al) & Potassium (K + Lilac Flame Test)
+    {
+      const simM = new LabSimulation();
+      // 1. Mg burning in CO2 -> MgO + C soot (in heat-resistant quartz tube filled with pure CO2, no O2)
+      simM.environment.atmosphereMode = 'inert';
+      const bMgCO2 = simM.createApparatus('quartz_tube', 180, 427);
+      bMgCO2.isStoppered = true;
+      bMgCO2.stopperMode = 'solid';
+      bMgCO2.sealedAirMoles = 0;
+      bMgCO2.sealedAirO2Moles = 0;
+      bMgCO2.moles = { Mg_s: 0.02 };
+      bMgCO2.headspaceGasMoles.CO2_g = 0.0014;
+      bMgCO2.tempK = 960.0;
+      stepSeconds(simM, 2.5, 0.05);
+      simM.environment.atmosphereMode = 'air';
+      const mgCo2Ok = (bMgCO2.moles.MgO_s || 0) > 0.002 && (bMgCO2.moles.C_s || 0) > 0.001;
+
+      // 2. Al amphoteric dissolution in NaOH -> [Al(OH)4]- + H2, and cold HNO3 passivation
+      const bAlBase = simM.createApparatus('beaker_250', 340, 427);
+      simM.addReagentToVessel(bAlBase.id, 'h2o', 40.0, { silentAnim: true, silentEmit: true });
+      simM.addReagentToVessel(bAlBase.id, 'naoh', 4.0, { silentAnim: true, silentEmit: true });
+      simM.addReagentToVessel(bAlBase.id, 'al', 0.54, { silentAnim: true, silentEmit: true });
+      stepSeconds(simM, 4.0, 0.05);
+      const alAlkaliOk = (bAlBase.moles.AlOH4_aq || 0) > 1e-3 && (bAlBase.escapedGasMoles?.H2_g || 0) > 1e-3;
+
+      const bAlPass = simM.createApparatus('beaker_250', 500, 427);
+      simM.addReagentToVessel(bAlPass.id, 'hno3_68', 20.0, { silentAnim: true, silentEmit: true });
+      simM.addReagentToVessel(bAlPass.id, 'al', 0.54, { silentAnim: true, silentEmit: true });
+      const alMol0 = bAlPass.moles.Al_s || 0;
+      stepSeconds(simM, 2.0, 0.05);
+      const alPassOk = bAlPass.alPassivated === true && Math.abs((bAlPass.moles.Al_s || 0) - alMol0) < 1e-6;
+
+      // 3. Potassium + Water -> KOH + H2 & Flame Test K+ lilac-violet
+      const bKW = simM.createApparatus('beaker_250', 660, 427);
+      simM.addReagentToVessel(bKW.id, 'h2o', 80.0, { silentAnim: true, silentEmit: true });
+      simM.addReagentToVessel(bKW.id, 'k', 0.39, { silentAnim: true, silentEmit: true });
+      stepSeconds(simM, 3.0, 0.05);
+      const kWaterOk = (bKW.moles.K_aq || 0) > 0.005 && (bKW.moles.OH_aq || 0) > 0.005 && (bKW.escapedGasMoles?.H2_g || 0) > 0.002;
+      const loop = simM.createApparatus('flame_loop', 710, 427);
+      checkFlameLoopInteractions(simM, loop);
+      const kFlameOk = loop.sampledIon === 'K⁺' && loop.sampledColor === '#c084fc';
+
+      assert(
+        'Mg, Al & K metals: Mg reduces CO2->MgO+C, Al dissolves in NaOH & passivates in cold HNO3, K+H2O->KOH+H2 & lilac 766nm Flame Test',
+        mgCo2Ok && alAlkaliOk && alPassOk && kWaterOk && kFlameOk,
+        `mgCO2=${mgCo2Ok}(MgO=${(bMgCO2.moles.MgO_s||0).toFixed(4)},C=${(bMgCO2.moles.C_s||0).toFixed(4)},T=${bMgCO2.tempK.toFixed(1)},stop=${bMgCO2.isStoppered},shat=${bMgCO2.isShattered},co2=${(bMgCO2.headspaceGasMoles?.CO2_g||0).toFixed(4)},mg=${(bMgCO2.moles.Mg_s||0).toFixed(4)}), alOH=${alAlkaliOk}, alPass=${alPassOk}, kWater=${kWaterOk}, kFlame=${kFlameOk}`
       );
     }
 

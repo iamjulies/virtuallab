@@ -136,9 +136,16 @@ function getReactantAvailableMol(vessel, spId, env) {
     return Math.max(0, vessel.moles?.[spId] || 0);
   }
   const headVal = Math.max(0, vessel.headspaceGasMoles?.[spId] || 0);
+  const atmMode = env?.atmosphereMode || 'air';
+  if (spId === 'N2_g') {
+    if (atmMode === 'air' && !vessel.isStoppered && !vessel.isInverted && vessel.lidState !== 'closed') {
+      const purgeFrac = vessel.airO2PurgeFrac ?? 1.0;
+      return purgeFrac > 0.08 ? headVal + 20.0 : headVal;
+    }
+    return headVal;
+  }
   if (spId !== 'O2_g') return headVal;
 
-  const atmMode = env?.atmosphereMode || 'air';
   if (atmMode === 'inert') return headVal;
   if (vessel.isStoppered || vessel.lidState === 'closed') {
     return headVal + Math.max(0, vessel.sealedAirO2Moles ?? 0);
@@ -425,14 +432,92 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
 
   if (rxn.type === 'na_alcohol') {
     if (liquidVolL <= 1e-6 || (moles.C2H5OH_l || 0) <= 1e-6) return 0;
-    const nNa = moles.Na_s || 0;
-    const pCount = vessel.particleCounts?.Na_s ?? 1;
-    const area = computeSolidSurfaceAreaM2('Na_s', nNa, pCount);
+    const solidId = rxn.solidId || 'Na_s';
+    const nAlcMet = moles[solidId] || 0;
+    const pCount = vessel.particleCounts?.[solidId] ?? 1;
+    const area = computeSolidSurfaceAreaM2(solidId, nAlcMet, pCount);
     const nW = moles.H2O_l || 0;
     const nE = moles.C2H5OH_l || 0;
     const xEtOH = nE / Math.max(1e-9, nW + nE);
     const k = rxn.k298 * arrheniusFactor(rxn.eaJ, vessel.naTempK ?? T);
     return k * area * (0.6 + 2.6 * xEtOH);
+  }
+
+  if (rxn.type === 'alkali_water') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const solidId = rxn.solidId || 'K_s';
+    const nMet = moles[solidId] || 0;
+    if (nMet <= 1e-10) return 0;
+    if (rxn.id === 'k_acid' && (moles.H_aq || 0) / liquidVolL < 0.01) return 0;
+    if (rxn.id === 'k_water' && hasNitrateOxidizingEnv(moles, liquidVolL) && (moles.H_aq || 0) > 1e-3) return 0;
+    const area = computeSolidSurfaceAreaM2(solidId, nMet, vessel.particleCounts?.[solidId] ?? 1);
+    const waterScale = Math.min(1.0, (moles.H2O_l || 0) / 0.08);
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ || 12000, vessel.kTempK ?? T);
+    const acidBoost = rxn.id === 'k_acid' ? Math.min(6.0, 1.0 + (moles.H_aq || 0) / liquidVolL) : 1.0;
+    return k * Math.max(1e-5, area) * waterScale * acidBoost * iceMob * 14.0;
+  }
+
+  if (rxn.type === 'mg_water_rxn') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nMg = moles.Mg_s || 0;
+    if (nMg <= 1e-10 || (moles.H_aq || 0) > 0.01) return 0;
+    const area = computeSolidSurfaceAreaM2('Mg_s', nMg, vessel.particleCounts?.Mg_s ?? 6);
+    const hotBoost = T >= 343.15 ? 4.5 : 0.25;
+    return rxn.k298 * arrheniusFactor(rxn.eaJ || 42000, T) * Math.max(1e-5, area) * hotBoost * stirBoost * iceMob * 8.0;
+  }
+
+  if (rxn.type === 'al_alkali') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const nAl = moles.Al_s || 0;
+    const cOH = (moles.OH_aq || 0) / liquidVolL;
+    if (nAl <= 1e-10 || cOH < 0.02) return 0;
+    const area = computeSolidSurfaceAreaM2('Al_s', nAl, vessel.particleCounts?.Al_s ?? 6);
+    return rxn.k298 * arrheniusFactor(rxn.eaJ || 24000, T) * Math.max(1e-5, area) * Math.min(8.0, cOH * 3.5) * stirBoost * iceMob * 10.0;
+  }
+
+  if (rxn.type === 'alkali_dissolve_amphoteric') {
+    if (!hasWater || iceMob <= 0) return 0;
+    const cOH = (moles.OH_aq || 0) / liquidVolL;
+    if (cOH < 0.02) return 0;
+    let minExt = Infinity;
+    for (const [spId, st] of Object.entries(rxn.reactants)) {
+      minExt = Math.min(minExt, (moles[spId] || 0) / st);
+    }
+    if (minExt <= 1e-11) return 0;
+    return minExt * rxn.k298 * arrheniusFactor(rxn.eaJ || 18000, T) * Math.min(5.0, cOH * 2.0) * stirBoost * iceMob;
+  }
+
+  if (rxn.type === 'thermite_solid_state') {
+    if (T < (rxn.minTempK || 823.15)) return 0;
+    const nAl = moles.Al_s || 0;
+    const nFeOx = moles.Fe2O3_s || 0;
+    if (nAl <= 1e-10 || nFeOx <= 1e-10) return 0;
+    const ext = Math.min(nAl / 2, nFeOx);
+    return ext * rxn.k298 * arrheniusFactor(rxn.eaJ || 45000, T - 823.15 + CONSTANTS.T_STD_K);
+  }
+
+  if (rxn.type === 'metal_co2_burn' || rxn.type === 'metal_n2_burn') {
+    if (T < (rxn.minTempK || 873.15)) return 0;
+    const nMg = moles.Mg_s || 0;
+    const nGas = getReactantAvailableMol(vessel, rxn.gasId, env);
+    if (nMg <= 1e-10 || nGas <= 1e-10) return 0;
+    const area = computeSolidSurfaceAreaM2('Mg_s', nMg, vessel.particleCounts?.Mg_s ?? 6);
+    const k = (rxn.kAtThreshold || 0.6) * arrheniusFactor(rxn.eaJ || 45000, T - (rxn.minTempK || 873.15) + CONSTANTS.T_STD_K);
+    return Math.min(nMg / (rxn.reactants.Mg_s || 2), nGas, k * Math.max(1e-4, area) * 14.0);
+  }
+
+  if (rxn.type === 'potassium_combustion_gas') {
+    const nK = moles.K_s || 0;
+    if (nK <= 1e-10) return 0;
+    const pO2 = getVesselEffectiveO2Bar(vessel, env);
+    if (pO2 <= 0.02) return 0;
+    if ((moles.H2O_l || 0) > 0.01 && (vessel.tempK || 298) < 350) return 0;
+    const tEff = Math.max(vessel.kTempK || 0, T);
+    if (tEff < 336.0 && (vessel.headspaceGasMoles?.O2_g || 0) <= 1e-4) return 0;
+    const area = computeSolidSurfaceAreaM2('K_s', nK, vessel.particleCounts?.K_s ?? 1);
+    const o2Drive = Math.min(4.5, pO2 / CONSTANTS.AIR_O2_FRAC);
+    const k = 1.9 * arrheniusFactor(rxn.eaJ || 18000, tEff);
+    return Math.min(nK * 0.9, k * Math.max(1e-4, area) * o2Drive * 24.0);
   }
 
   if (rxn.type === 'alkoxide_hydrolysis') {
@@ -1118,6 +1203,18 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
     { cat: 'Fe2_aq', cCat: 1, an: 'NO3_aq', cAn: 2, solid: 'FeNO3_2_s', formula: 'Fe(NO₃)₂', sol298: 3.8, coeff: 0.016, etohRel: 0.04, crystHeatJ: 8000 },
     { cat: 'Fe2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'FeCl2_s', formula: 'FeCl₂', sol298: 5.1, coeff: 0.012, etohRel: 0.25, crystHeatJ: 8000 },
     { cat: 'Fe3_aq', cCat: 1, an: 'Cl_aq', cAn: 3, solid: 'FeCl3_s', formula: 'FeCl₃', sol298: 5.6, coeff: 0.014, etohRel: 0.30, crystHeatJ: 8000 },
+    { cat: 'K_aq', cCat: 1, an: 'HCO3_aq', cAn: 1, solid: 'KHCO3_s', formula: 'KHCO₃', sol298: 3.3, coeff: 0.015, etohRel: 0.01, crystHeatJ: -21000 },
+    { cat: 'K_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'K2SO4_s', formula: 'K₂SO₄', sol298: 0.69, coeff: 0.012, etohRel: 0.01, crystHeatJ: -23800 },
+    { cat: 'K_aq', cCat: 1, an: 'NO3_aq', cAn: 1, solid: 'KNO3_s', formula: 'KNO₃', sol298: 3.75, coeff: 0.029, etohRel: 0.02, crystHeatJ: -34900 },
+    { cat: 'K_aq', cCat: 1, an: 'Cl_aq', cAn: 1, solid: 'KCl_s', formula: 'KCl', sol298: 4.8, coeff: 0.008, etohRel: 0.01, crystHeatJ: -17200 },
+    { cat: 'K_aq', cCat: 2, an: 'CO3_2_aq', cAn: 1, solid: 'K2CO3_s', formula: 'K₂CO₃', sol298: 8.1, coeff: 0.006, etohRel: 0.01, crystHeatJ: 30900 },
+    { cat: 'K_aq', cCat: 1, an: 'OH_aq', cAn: 1, solid: 'KOH_s', formula: 'KOH', sol298: 21.5, coeff: 0.020, etohRel: 0.14, crystHeatJ: 57600 },
+    { cat: 'Mg2_aq', cCat: 1, an: 'SO4_2_aq', cAn: 1, solid: 'MgSO4_s', formula: 'MgSO₄', sol298: 2.95, coeff: 0.012, etohRel: 0.02, crystHeatJ: 12000 },
+    { cat: 'Mg2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'MgCl2_s', formula: 'MgCl₂', sol298: 5.7, coeff: 0.009, etohRel: 0.15, crystHeatJ: 15500 },
+    { cat: 'Mg2_aq', cCat: 1, an: 'NO3_aq', cAn: 2, solid: 'MgNO3_2_s', formula: 'Mg(NO₃)₂', sol298: 4.8, coeff: 0.014, etohRel: 0.05, crystHeatJ: 6000 },
+    { cat: 'Al3_aq', cCat: 2, an: 'SO4_2_aq', cAn: 3, solid: 'Al2SO4_3_s', formula: 'Al₂(SO₄)₃', sol298: 1.1, coeff: 0.016, etohRel: 0.01, crystHeatJ: 18000 },
+    { cat: 'Al3_aq', cCat: 1, an: 'Cl_aq', cAn: 3, solid: 'AlCl3_s', formula: 'AlCl₃', sol298: 3.4, coeff: 0.009, etohRel: 0.15, crystHeatJ: 32500 },
+    { cat: 'Al3_aq', cCat: 1, an: 'NO3_aq', cAn: 3, solid: 'AlNO3_3_s', formula: 'Al(NO₃)₃', sol298: 3.1, coeff: 0.015, etohRel: 0.05, crystHeatJ: 10000 },
     { cat: 'Na_aq', cCat: 1, an: 'HCO3_aq', cAn: 1, solid: 'NaHCO3_s', formula: 'NaHCO₃', sol298: 1.15, coeff: 0.016, etohRel: 0.01, crystHeatJ: -17500, useKsp: true },
     { cat: 'Na_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'Na2SO4_s', formula: 'Na₂SO₄', sol298: 1.98, coeff: 0.032, etohRel: 0.02, crystHeatJ: 8000 },
     { cat: 'Na_aq', cCat: 2, an: 'CO3_2_aq', cAn: 1, solid: 'Na2CO3_s', formula: 'Na₂CO₃', sol298: 2.9, coeff: 0.015, etohRel: 0.01, crystHeatJ: 26700 },
@@ -1886,6 +1983,7 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   CuNH3_4_2_aq: { Cu2_aq: 1, NH3_g: 4 },
   AgNH3_2_aq: { Ag_aq: 1, NH3_g: 2 },
   ZnNH3_4_2_aq: { Zn2_aq: 1, NH3_g: 4 },
+  AlOH4_aq: { AlOH3_s: 1, OH_aq: 1 },
   H2O2_aq: { H2O_g: 1, O2_g: 0.5 },
   H2CO3_aq: { H2O_g: 1, CO2_g: 1 },
   NH3_aq: { NH3_g: 1 },
@@ -1940,6 +2038,23 @@ export const DRY_SALT_PAIRINGS = [
   ['NH4_aq', 1, 'NO3_aq', 1, 'NH4NO3_s', 1, false],
   ['NH4_aq', 2, 'SO4_2_aq', 1, 'NH4_2_SO4_s', 1, false],
   ['NH4_aq', 1, 'HSO4_aq', 1, 'NH4HSO4_s', 1, false],
+  ['Mg2_aq', 1, 'CO3_2_aq', 1, 'MgCO3_s', 1, false],
+  ['Mg2_aq', 1, 'OH_aq', 2, 'MgOH2_s', 1, false],
+  ['Mg2_aq', 1, 'SO4_2_aq', 1, 'MgSO4_s', 1, false],
+  ['Mg2_aq', 1, 'Cl_aq', 2, 'MgCl2_s', 1, false],
+  ['Mg2_aq', 1, 'NO3_aq', 2, 'MgNO3_2_s', 1, false],
+  ['Al3_aq', 1, 'OH_aq', 3, 'AlOH3_s', 1, false],
+  ['Al3_aq', 2, 'SO4_2_aq', 3, 'Al2SO4_3_s', 1, false],
+  ['Al3_aq', 1, 'Cl_aq', 3, 'AlCl3_s', 1, false],
+  ['Al3_aq', 1, 'NO3_aq', 3, 'AlNO3_3_s', 1, false],
+  ['K_aq', 2, 'CO3_2_aq', 1, 'K2CO3_s', 1, false],
+  ['K_aq', 1, 'HCO3_aq', 1, 'KHCO3_s', 1, false],
+  ['K_aq', 2, 'SO4_2_aq', 1, 'K2SO4_s', 1, false],
+  ['K_aq', 1, 'HSO4_aq', 1, 'KHSO4_s', 1, false],
+  ['K_aq', 1, 'Cl_aq', 1, 'KCl_s', 1, false],
+  ['K_aq', 1, 'NO3_aq', 1, 'KNO3_s', 1, false],
+  ['K_aq', 1, 'C2H5O_aq', 1, 'C2H5OK_s', 1, false],
+  ['K_aq', 1, 'OH_aq', 1, 'KOH_s', 1, false],
   ['H_aq', 1, 'OH_aq', 1, 'H2O_g', 1, true],
   ['H_aq', 1, 'Cl_aq', 1, 'HCl_g', 1, true],
   ['H_aq', 1, 'NO3_aq', 1, 'HNO3_g', 1, true],
@@ -2147,6 +2262,7 @@ export function validateVesselInvariants(vessel) {
 }
 
 export const METAL_REDOX_SPECS = {
+  K_s: { solidId: 'K_s', formula: 'K', name: 'Potassium', E0: -2.93, maxValence: 1, ionId: 'K_aq', canPassivate: false, noble: false },
   Na_s: { solidId: 'Na_s', formula: 'Na', name: 'Sodium', E0: -2.71, maxValence: 1, ionId: 'Na_aq', canPassivate: false, noble: false },
   Mg_s: { solidId: 'Mg_s', formula: 'Mg', name: 'Magnesium', E0: -2.37, maxValence: 2, ionId: 'Mg2_aq', canPassivate: false, noble: false },
   Al_s: { solidId: 'Al_s', formula: 'Al', name: 'Aluminium', E0: -1.66, maxValence: 3, ionId: 'Al3_aq', canPassivate: true, noble: false },
@@ -2316,9 +2432,11 @@ function stepMetalNitrateSolver(vessel, liquidVolL, dt, activeReactions, gasProd
     if (metalSpec.canPassivate) {
       if ((wHNO3 >= 0.60 || cAcid >= 10.0) && T < 323.15) {
         if (solidId === 'Fe_s') vessel.fePassivated = true;
+        if (solidId === 'Al_s') vessel.alPassivated = true;
         continue;
       }
       if (solidId === 'Fe_s') vessel.fePassivated = false;
+      if (solidId === 'Al_s') vessel.alPassivated = false;
     }
 
     const mix = selectNitrateReductionMix(metalSpec, wHNO3, cAcid);
@@ -2563,6 +2681,83 @@ function stepMetalSulfuricSolver(vessel, liquidVolL, dt, activeReactions, gasPro
         vigorousGas: true,
         dXi: effCu,
       });
+    }
+  }
+
+  // 4. Aluminium (Al_s): passivates in cold conc H2SO4 (>= 65%, T < 50 °C); reacts on heating -> Al3+ + SO2
+  const nAl = moles.Al_s || 0;
+  if (nAl > 1e-10) {
+    if (sulf.w >= 0.65 && T < 323.15) {
+      vessel.alPassivated = true;
+    } else if (sulf.w >= 0.65 && T >= 323.15) {
+      vessel.alPassivated = false;
+      const pCount = vessel.particleCounts?.Al_s ?? 6;
+      const area = computeSolidSurfaceAreaM2('Al_s', nAl, pCount);
+      const k = 0.34 * arrheniusFactor(30000, T) * stirBoost * iceMob;
+      const dAl = Math.min(nAl, getAvailAcidEq() / 3, k * Math.max(1e-5, area) * 4.0 * dt);
+      if (dAl > 1e-12) {
+        const usedAcid = consumeH2SO4Eq(3 * dAl);
+        const effAl = usedAcid / 3;
+        moles.Al_s = Math.max(0, nAl - effAl);
+        if (moles.Al_s < 1e-13) delete moles.Al_s;
+        moles.Al3_aq = (moles.Al3_aq || 0) + effAl;
+        moles.SO4_2_aq = (moles.SO4_2_aq || 0) + 1.5 * effAl;
+        moles.H2O_l = (moles.H2O_l || 0) + 3 * effAl;
+        gasProduced.SO2_g = (gasProduced.SO2_g || 0) + 1.5 * effAl;
+        totalHeatJ += 360000 * effAl;
+        activeReactions.push({
+          id: 'al_h2so4_conc_hot',
+          equation: '2Al(s) + 6H₂SO₄(đặc, nóng) → Al₂(SO₄)₃ + 3SO₂(g)↑ + 6H₂O(l)',
+          nameVi: 'Aluminium tác dụng với H₂SO₄ đặc, nóng tạo Al³⁺ + SO₂↑ (thụ động khi nguội!)',
+          nameEn: 'Aluminium oxidation in hot conc. H₂SO₄ (passivated when cold)',
+          descVi: 'Al thụ động hóa trong H₂SO₄ đặc nguội; khi đun nóng (≥ 50 °C) tan mạnh giải phóng khí SO₂ mùi hắc.',
+          descEn: 'Aluminium passivates in cold conc. H₂SO₄; heating above 50 °C dissolves it releasing pungent SO₂.',
+          rateMolS: effAl / Math.max(1e-4, dt),
+          vigorousGas: true,
+          dXi: effAl,
+        });
+      }
+    }
+  }
+
+  // 5. Magnesium (Mg_s) across mid (20-65% -> SO2 + trace S/H2S) & conc/conc_98 (>=65% -> SO2)
+  const nMg = moles.Mg_s || 0;
+  if (nMg > 1e-10) {
+    const fOxMg = sulf.w >= 0.65 ? 1.0 : (sulf.w - 0.20) / 0.45;
+    const pCount = vessel.particleCounts?.Mg_s ?? 6;
+    const area = computeSolidSurfaceAreaM2('Mg_s', nMg, pCount);
+    const k = (sulf.w >= 0.65 ? 0.46 : 0.30) * arrheniusFactor(26000, T) * stirBoost * iceMob * fOxMg;
+    const dMg = Math.min(nMg, getAvailAcidEq() / 2.2, k * Math.max(1e-5, area) * 4.5 * dt);
+    if (dMg > 1e-12) {
+      const hasMidTrace = sulf.tier === 'mid' && T >= 323.15;
+      const fracH2S = hasMidTrace ? 0.10 : 0;
+      const fracS = hasMidTrace ? 0.08 : 0;
+      const fracSO2 = 1 - fracH2S - fracS;
+      const acidNeeded = dMg * (2 * fracSO2 + (4 / 3) * fracS + 1.25 * fracH2S);
+      const usedAcid = consumeH2SO4Eq(acidNeeded);
+      const effMg = dMg * (acidNeeded > 0 ? usedAcid / acidNeeded : 0);
+      if (effMg > 1e-13) {
+        moles.Mg_s = Math.max(0, nMg - effMg);
+        if (moles.Mg_s < 1e-13) delete moles.Mg_s;
+        moles.Mg2_aq = (moles.Mg2_aq || 0) + effMg;
+        moles.SO4_2_aq = (moles.SO4_2_aq || 0) + effMg;
+        moles.H2O_l = (moles.H2O_l || 0) + effMg * (2 * fracSO2 + (4 / 3) * fracS + fracH2S);
+        if (fracSO2 > 0) gasProduced.SO2_g = (gasProduced.SO2_g || 0) + effMg * fracSO2;
+        if (fracS > 0) moles.S_s = (moles.S_s || 0) + (effMg * fracS) / 3;
+        if (fracH2S > 0) gasProduced.H2S_g = (gasProduced.H2S_g || 0) + effMg * fracH2S * 0.25;
+        totalHeatJ += 380000 * effMg;
+        activeReactions.push({
+          id: 'mg_h2so4_conc',
+          equation: 'Mg(s) + 2H₂SO₄(đặc) → MgSO₄ + SO₂(g)↑ + 2H₂O(l)',
+          nameVi: 'Magnesium khử H₂SO₄ đặc tạo Mg²⁺ + SO₂↑ (kèm S / H₂S ở nồng độ trung bình nóng)',
+          nameEn: 'Magnesium reduction of conc. H₂SO₄ yielding Mg²⁺ + SO₂↑',
+          descVi: 'Mg khử mạnh H₂SO₄ đặc sinh khí SO₂ (và vết S vàng / H₂S mùi trứng thối khi đun nóng ở vùng nồng độ 20–65%).',
+          descEn: 'Magnesium reduces conc. H₂SO₄ to pungent SO₂ (plus trace S/H₂S in warm 20–65% acid).',
+          rateMolS: effMg / Math.max(1e-4, dt),
+          vigorousGas: true,
+          dXi: effMg,
+        });
+      }
     }
   }
 
@@ -3012,8 +3207,8 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   const moles = vessel.moles;
   const liqV = computeLiquidVolumeL(moles, vessel.tempK);
 
-  // Clear Fe passivation flag once outside cold concentrated HNO3 or cold concentrated H2SO4
-  if (vessel.fePassivated) {
+  // Clear Fe & Al passivation flags once outside cold concentrated HNO3 or cold concentrated H2SO4
+  if (vessel.fePassivated || vessel.alPassivated) {
     const nAcidCheck = Math.min(moles.H_aq || 0, moles.NO3_aq || 0);
     const cAcidCheck = liqV > 1e-5 ? nAcidCheck / liqV : 0;
     const mHno3C = nAcidCheck * CONSTANTS.M_HNO3;
@@ -3024,6 +3219,9 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     const inColdConcH2SO4 = sulfC.w >= 0.65 && vessel.tempK < 323.15;
     if ((moles.Fe_s || 0) <= 1e-10 || (!inColdConcHNO3 && !inColdConcH2SO4)) {
       vessel.fePassivated = false;
+    }
+    if ((moles.Al_s || 0) <= 1e-10 || (!inColdConcHNO3 && !inColdConcH2SO4)) {
+      vessel.alPassivated = false;
     }
   }
 
