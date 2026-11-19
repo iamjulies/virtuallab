@@ -2462,7 +2462,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v3+build.16';
+      const expectedBuild = 'virlab_beta_v3+build.17';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -6960,6 +6960,24 @@
         'Starter reagents support generous maxDose, flipItemLR flips asymmetric tools, and build.16 invariants pass',
         okFlip && (phenReg?.maxDose || 0) >= 200 && (hclReg?.maxDose || 0) >= 500 && APPARATUS.iron_spoon.height > APPARATUS.iron_spoon.width,
         `flip=${okFlip}, phenMax=${phenReg?.maxDose}, hclMax=${hclReg?.maxDose}, spoon=${APPARATUS.iron_spoon.width}x${APPARATUS.iron_spoon.height}`
+      );
+    }
+
+    // TEST 152: Prompt 34 — Paused Visual Continuity, Ctrl/SOS Themes & Visible Thermometer Draw
+    {
+      const simP = new LabSimulation();
+      const bStir = simP.createApparatus('beaker_250', 260, 427);
+      const sBar = simP.createApparatus('stir_bar', 260, 427);
+      simP.insertStirBarIntoVessel(sBar.id, bStir.id, 800);
+      simP.environment.paused = true;
+      const phase0 = bStir.stirBarPhase || 0;
+      simP.step(0.05);
+      const phase1 = bStir.stirBarPhase || 0;
+      const thP = simP.createApparatus('thermometer', 420, 400);
+      assert(
+        'Paused simulation continues advancing stirBarPhase visual motion cleanly while freezing chemistry, and Ctrl/SOS theme + thermometer present',
+        phase1 > phase0 && Boolean(I18N.vi.themeCtrl && I18N.vi.themeSos) && thP.kind === 'thermometer',
+        `dPhase=${(phase1 - phase0).toFixed(2)}, thermId=${thP.id}`
       );
     }
 

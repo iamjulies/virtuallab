@@ -2210,6 +2210,41 @@ export class LabWorkbenchCanvas {
       skyGrad.addColorStop(1, '#CBE5FA');
       ctx.fillStyle = skyGrad;
       ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+    } else if (this.themeName === 'ctrl') {
+      // SZA Ctrl (2017): pale atmospheric sky-blue + delicate hand-drawn notebook grid
+      const ctrlGrad = ctx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
+      ctrlGrad.addColorStop(0, '#B9DEF2');
+      ctrlGrad.addColorStop(0.55, '#DCEEFB');
+      ctrlGrad.addColorStop(1, '#EAF5FC');
+      ctx.fillStyle = ctrlGrad;
+      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      ctx.strokeStyle = 'rgba(79, 99, 88, 0.08)';
+      ctx.lineWidth = 1;
+      for (let gx = 40; gx < BENCH_LOGICAL_W; gx += 40) {
+        ctx.beginPath();
+        ctx.moveTo(gx, 0);
+        ctx.lineTo(gx, BENCH_FLOOR_Y);
+        ctx.stroke();
+      }
+      for (let gy = 40; gy < BENCH_FLOOR_Y; gy += 40) {
+        ctx.beginPath();
+        ctx.moveTo(0, gy);
+        ctx.lineTo(BENCH_LOGICAL_W, gy);
+        ctx.stroke();
+      }
+    } else if (this.themeName === 'sos') {
+      // SZA SOS (2022): deep abyssal ocean backdrop with calm horizon luminescence
+      const sosGrad = ctx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
+      sosGrad.addColorStop(0, '#071728');
+      sosGrad.addColorStop(0.55, '#0A2540');
+      sosGrad.addColorStop(1, '#103554');
+      ctx.fillStyle = sosGrad;
+      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      const mistG = ctx.createRadialGradient(BENCH_LOGICAL_W * 0.5, BENCH_FLOOR_Y - 10, 30, BENCH_LOGICAL_W * 0.5, BENCH_FLOOR_Y - 40, 460);
+      mistG.addColorStop(0, 'rgba(91, 181, 201, 0.14)');
+      mistG.addColorStop(1, 'rgba(91, 181, 201, 0)');
+      ctx.fillStyle = mistG;
+      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
     } else if (this.themeName === 'petal') {
       ctx.fillStyle = '#111113';
       ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
@@ -2244,6 +2279,10 @@ export class LabWorkbenchCanvas {
     const bgGrid =
       this.themeName === 'olivia'
         ? 'rgba(250, 243, 227, 0.72)'
+        : this.themeName === 'ctrl'
+        ? 'rgba(79, 99, 88, 0.24)'
+        : this.themeName === 'sos'
+        ? 'rgba(91, 181, 201, 0.14)'
         : this.themeName === 'petal'
         ? 'rgba(242, 242, 245, 0.06)'
         : this.isDark
@@ -2261,6 +2300,12 @@ export class LabWorkbenchCanvas {
     if (this.themeName === 'olivia') {
       benchGrad.addColorStop(0, '#F8F0DF');
       benchGrad.addColorStop(1, '#F4A5B8');
+    } else if (this.themeName === 'ctrl') {
+      benchGrad.addColorStop(0, '#EAF5FC');
+      benchGrad.addColorStop(1, '#B9DEF2');
+    } else if (this.themeName === 'sos') {
+      benchGrad.addColorStop(0, '#13293D');
+      benchGrad.addColorStop(1, '#0B131E');
     } else if (this.themeName === 'petal') {
       benchGrad.addColorStop(0, '#1B1B1F');
       benchGrad.addColorStop(1, '#101012');
@@ -2275,8 +2320,18 @@ export class LabWorkbenchCanvas {
     ctx.fillRect(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, BENCH_LOGICAL_H - BENCH_FLOOR_Y);
 
     ctx.strokeStyle =
-      this.themeName === 'olivia' ? '#221F20' : this.themeName === 'petal' ? '#33333A' : this.isDark ? '#334155' : '#64748b';
-    ctx.lineWidth = this.themeName === 'olivia' ? 1.6 : 2;
+      this.themeName === 'olivia'
+        ? '#221F20'
+        : this.themeName === 'ctrl'
+        ? '#4F6358'
+        : this.themeName === 'sos'
+        ? '#5BB5C9'
+        : this.themeName === 'petal'
+        ? '#33333A'
+        : this.isDark
+        ? '#334155'
+        : '#64748b';
+    ctx.lineWidth = this.themeName === 'olivia' || this.themeName === 'ctrl' ? 1.6 : 2;
     ctx.beginPath();
     ctx.moveTo(0, BENCH_FLOOR_Y);
     ctx.lineTo(BENCH_LOGICAL_W, BENCH_FLOOR_Y);
@@ -2309,7 +2364,7 @@ export class LabWorkbenchCanvas {
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
       ...this.sim.items.filter((i) => i.kind === 'rubber_stopper' || i.kind === 'phen_cotton'),
       ...this.sim.items.filter((i) => i.kind === 'filter_funnel' || i.kind === 'electrode' || i.kind === 'salt_bridge' || i.kind === 'stir_bar'),
-      ...this.sim.items.filter((i) => i.kind === 'pipette' || i.kind === 'wash_bottle' || i.kind === 'splint' || i.kind === 'flame_loop' || i.kind === 'indicator_strip' || i.kind === 'tongs' || i.kind === 'spoon'),
+      ...this.sim.items.filter((i) => i.kind === 'pipette' || i.kind === 'wash_bottle' || i.kind === 'splint' || i.kind === 'flame_loop' || i.kind === 'indicator_strip' || i.kind === 'tongs' || i.kind === 'spoon' || i.kind === 'thermometer'),
     ];
 
     renderDcPowerAndWires(ctx, this.sim.items, this.sim.selectedId, this.isDark);

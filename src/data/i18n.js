@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v3+build.16',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v3+build.17',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -24,6 +24,8 @@ export const I18N = {
     themeDark: 'Tối',
     themeOlivia: 'you seem pretty sad for a girl so in love — Olivia Rodrigo',
     themePetal: 'petal — Ariana Grande',
+    themeCtrl: 'Ctrl — SZA (2017)',
+    themeSos: 'SOS — SZA (2022)',
     opticsLabel: 'Kính đa phổ',
     opticsNormal: 'Chuẩn',
     opticsAero: 'Bá khí (Khí động lực)',
@@ -646,7 +648,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v3+build.16',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v3+build.17',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -665,6 +667,8 @@ export const I18N = {
     themeDark: 'Dark',
     themeOlivia: 'you seem pretty sad for a girl so in love — Olivia Rodrigo',
     themePetal: 'petal — Ariana Grande',
+    themeCtrl: 'Ctrl — SZA (2017)',
+    themeSos: 'SOS — SZA (2022)',
     opticsLabel: 'Multi-Spectral Optics',
     opticsNormal: 'Standard',
     opticsAero: 'Aerodynamics (Gas Plumes)',
@@ -1274,5 +1278,7 @@ export const I18N = {
     ctxCabCloneToLab: '🧬 Clone to Lab...',
     ctxCabDelete: '🗑️ Remove from Locker',
     dcRheostatLabel: 'Series Rheostat (Ω):',
+    themeCtrl: 'Ctrl — SZA (2017)',
+    themeSos: 'SOS — SZA (2022)',
   }
 };

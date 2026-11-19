@@ -28,9 +28,9 @@ export class EnvironmentBar {
           <div class="min-w-0">
             <div class="flex items-center gap-1.5 whitespace-nowrap">
               <h1 class="text-sm font-bold leading-none whitespace-nowrap">${t('appTitle')}</h1>
-              <span id="app-version-badge" class="text-[11px] font-mono px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-muted whitespace-nowrap">virlab_beta_v3+build.16</span>
+              <span id="app-version-badge" class="text-[11px] font-mono px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-muted whitespace-nowrap">virlab_beta_v3+build.17</span>
               <span class="env-compact-hide text-xs px-2 py-0.5 rounded-full border border-theme bg-surface-alt text-muted whitespace-nowrap">
-                ${theme === 'olivia' ? 'u + me = <3 · 🐝' : t('modeFreeSandbox')}
+                ${theme === 'olivia' ? 'u + me = <3 · 🐝' : theme === 'ctrl' ? 'draft · 4:20 pm' : theme === 'sos' ? 'deep sea · sos' : t('modeFreeSandbox')}
               </span>
             </div>
             <p class="env-compact-hide text-[11px] text-muted mt-0.5 hidden xl:block whitespace-nowrap">${t('appSubtitle')}</p>
@@ -176,12 +176,14 @@ export class EnvironmentBar {
             }
           </button>
 
-          <!-- Theme Selector (Dark, Light, Olivia Rodrigo, Ariana Grande petal) -->
+          <!-- Theme Selector (Dark, Light, Olivia, petal, Ctrl, SOS) -->
           <select id="theme-select" style="max-width: 155px;" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-main text-xs font-semibold truncate" title="Theme">
             <option value="dark" ${theme === 'dark' ? 'selected' : ''}>🌙 ${t('themeDark')}</option>
             <option value="light" ${theme === 'light' ? 'selected' : ''}>☀️ ${t('themeLight')}</option>
             <option value="olivia" ${theme === 'olivia' ? 'selected' : ''}>🩷 ${t('themeOlivia')}</option>
             <option value="petal" ${theme === 'petal' ? 'selected' : ''}>🥀 ${t('themePetal')}</option>
+            <option value="ctrl" ${theme === 'ctrl' ? 'selected' : ''}>📓 ${t('themeCtrl')}</option>
+            <option value="sos" ${theme === 'sos' ? 'selected' : ''}>🌊 ${t('themeSos')}</option>
           </select>
 
           <!-- Language Toggle VI / EN -->

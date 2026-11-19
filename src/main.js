@@ -94,7 +94,8 @@ const subscribedSims = new WeakSet();
 const labManager = new LabManager({
   onActiveParticlesNeeded: (vessel, metrics) => {
     const activeLab = labManager.getActiveLab();
-    activeLab.particles.emitForVessel(vessel, metrics, lastFrameDt * activeLab.sim.environment.speed);
+    const spd = activeLab.sim.environment.paused ? 1 : activeLab.sim.environment.speed;
+    activeLab.particles.emitForVessel(vessel, metrics, lastFrameDt * spd);
   },
   onAlert: (_idx, type, vessel, meta) => {
     handleVisualAlert(type, vessel, meta);
@@ -281,23 +282,34 @@ function clearLabDropHighlights() {
     el.classList.remove('lab-tab-drop-target');
   });
   document.getElementById('panel-shelf')?.classList.remove('shelf-discard-target');
+  document.getElementById('panel-inspector')?.classList.remove('shelf-discard-target');
   document.querySelector('.mobile-tab-btn[data-tab="shelf"]')?.classList.remove('shelf-discard-target');
+  document.querySelector('.mobile-tab-btn[data-tab="inspector"]')?.classList.remove('shelf-discard-target');
 }
 
 function isOverShelfDiscardZone(clientX, clientY) {
-  if (!clientX && !clientY) return false;
-  const panelEl = document.getElementById('panel-shelf');
-  if (panelEl) {
-    const r = panelEl.getBoundingClientRect();
+  if (!clientX && !clientY) return null;
+  const shelfElPanel = document.getElementById('panel-shelf');
+  if (shelfElPanel) {
+    const r = shelfElPanel.getBoundingClientRect();
     if (r.width > 10 && r.height > 10 && clientX <= r.right + 12 && clientY >= r.top - 12 && clientY <= r.bottom + 12) {
-      return panelEl;
+      return shelfElPanel;
     }
   }
-  const mobShelfBtn = document.querySelector('.mobile-tab-btn[data-tab="shelf"]');
-  if (mobShelfBtn) {
-    const r = mobShelfBtn.getBoundingClientRect();
-    if (r.width > 10 && r.height > 10 && clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-      return mobShelfBtn;
+  const inspPanel = document.getElementById('panel-inspector');
+  if (inspPanel) {
+    const r = inspPanel.getBoundingClientRect();
+    if (r.width > 10 && r.height > 10 && clientX >= r.left - 12 && clientY >= r.top - 12 && clientY <= r.bottom + 12) {
+      return inspPanel;
+    }
+  }
+  for (const tabSel of ['.mobile-tab-btn[data-tab="shelf"]', '.mobile-tab-btn[data-tab="inspector"]']) {
+    const mobBtn = document.querySelector(tabSel);
+    if (mobBtn) {
+      const r = mobBtn.getBoundingClientRect();
+      if (r.width > 10 && r.height > 10 && clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+        return mobBtn;
+      }
     }
   }
   return null;
@@ -418,7 +430,7 @@ const envBar = new EnvironmentBar(headerEl, sim, appState, {
     refreshChrome(true);
   },
   onThemeChange: (nextTheme = null) => {
-    const order = ['dark', 'light', 'olivia', 'petal'];
+    const order = ['dark', 'light', 'olivia', 'petal', 'ctrl', 'sos'];
     const target = order.includes(nextTheme)
       ? nextTheme
       : order[(order.indexOf(appState.theme) + 1) % order.length];
@@ -585,6 +597,7 @@ const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
     const wrap = document.createElement('div');
     wrap.id = 'chemlab-rxn-info-modal';
     wrap.className = 'storage-modal-backdrop';
+    const rxnWikiQ = encodeURIComponent((rxn.nameStr || rxn.equation || 'chemical reaction').replace(/[→⇌()↑↓·]/g, ' ').trim());
     wrap.innerHTML = `
       <div class="storage-modal-card" style="max-width:460px;">
         <div class="flex items-center justify-between gap-2 pb-2 border-b border-theme">
@@ -596,6 +609,9 @@ const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
           <div class="font-semibold">${rxn.nameStr || ''}</div>
           ${rxn.rateMolS ? `<div class="text-muted font-mono">${getTranslator()('rxnRateLabel')}: ${(rxn.rateMolS * 1000).toFixed(3)} mmol/s</div>` : ''}
           ${rxn.descStr ? `<p class="text-muted leading-relaxed">${rxn.descStr}</p>` : ''}
+          <div class="pt-1 flex items-center gap-2">
+            <a href="https://en.wikipedia.org/w/index.php?search=${rxnWikiQ}" target="_blank" rel="noopener noreferrer" class="storage-btn text-xs" style="text-decoration:none;">🌐 Wikipedia ↗</a>
+          </div>
         </div>
       </div>
     `;
@@ -619,7 +635,7 @@ function syncActiveLabRefs() {
   ensureLabSubscribed(activeLab);
   sim = activeLab.sim;
   particles = activeLab.particles;
-  const isDark = appState.theme === 'dark' || appState.theme === 'petal';
+  const isDark = appState.theme === 'dark' || appState.theme === 'petal' || appState.theme === 'sos';
   particles.setTheme(isDark);
   workbench.setTheme?.(isDark, appState.theme);
   workbench.setSim(sim, particles);
@@ -1277,7 +1293,7 @@ function setMobileTab(tab) {
 }
 
 function applyThemeAndDevice() {
-  const isDark = appState.theme === 'dark' || appState.theme === 'petal';
+  const isDark = appState.theme === 'dark' || appState.theme === 'petal' || appState.theme === 'sos';
   document.documentElement.setAttribute('data-theme', appState.theme);
   rootWrap.setAttribute('data-device', appState.deviceMode);
   workbench.setTheme(isDark, appState.theme);
@@ -1504,6 +1520,7 @@ const cabinetModal = new StorageCabinetModal(labManager, getTranslator, () => ap
     const wrap = document.createElement('div');
     wrap.id = 'chemlab-rxn-info-modal';
     wrap.className = 'storage-modal-backdrop';
+    const rxnWikiQ = encodeURIComponent((rxn.nameStr || rxn.equation || 'chemical reaction').replace(/[→⇌()↑↓·]/g, ' ').trim());
     wrap.innerHTML = `
       <div class="storage-modal-card" style="max-width:460px;">
         <div class="flex items-center justify-between gap-2 pb-2 border-b border-theme">
@@ -1515,6 +1532,9 @@ const cabinetModal = new StorageCabinetModal(labManager, getTranslator, () => ap
           <div class="font-semibold">${rxn.nameStr || ''}</div>
           ${rxn.rateMolS ? `<div class="text-muted font-mono">${getTranslator()('rxnRateLabel')}: ${(rxn.rateMolS * 1000).toFixed(3)} mmol/s</div>` : ''}
           ${rxn.descStr ? `<p class="text-muted leading-relaxed">${rxn.descStr}</p>` : ''}
+          <div class="pt-1 flex items-center gap-2">
+            <a href="https://en.wikipedia.org/w/index.php?search=${rxnWikiQ}" target="_blank" rel="noopener noreferrer" class="storage-btn text-xs" style="text-decoration:none;">🌐 Wikipedia ↗</a>
+          </div>
         </div>
       </div>
     `;
@@ -1593,6 +1613,7 @@ const storageModal = new WorkspaceStorageModal(labManager, getTranslator, {
     const wrap = document.createElement('div');
     wrap.id = 'chemlab-rxn-info-modal';
     wrap.className = 'storage-modal-backdrop';
+    const rxnWikiQ = encodeURIComponent((rxn.nameStr || rxn.equation || 'chemical reaction').replace(/[→⇌()↑↓·]/g, ' ').trim());
     wrap.innerHTML = `
       <div class="storage-modal-card" style="max-width:460px;">
         <div class="flex items-center justify-between gap-2 pb-2 border-b border-theme">
@@ -1604,6 +1625,9 @@ const storageModal = new WorkspaceStorageModal(labManager, getTranslator, {
           <div class="font-semibold">${rxn.nameStr || ''}</div>
           ${rxn.rateMolS ? `<div class="text-muted font-mono">${getTranslator()('rxnRateLabel')}: ${(rxn.rateMolS * 1000).toFixed(3)} mmol/s</div>` : ''}
           ${rxn.descStr ? `<p class="text-muted leading-relaxed">${rxn.descStr}</p>` : ''}
+          <div class="pt-1 flex items-center gap-2">
+            <a href="https://en.wikipedia.org/w/index.php?search=${rxnWikiQ}" target="_blank" rel="noopener noreferrer" class="storage-btn text-xs" style="text-decoration:none;">🌐 Wikipedia ↗</a>
+          </div>
         </div>
       </div>
     `;

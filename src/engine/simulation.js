@@ -5339,7 +5339,26 @@ export class LabSimulation {
       }
     }
 
-    if (this.environment.paused) return;
+    if (this.environment.paused) {
+      // Keep purely visual animations alive when paused (stir bar spin, flames, bubbling/condenser/electrode visuals) without changing stoichiometry
+      for (const it of this.items) {
+        if (it.kind === 'vessel') {
+          if ((it.magStirRpm || 0) > 0 && it.hasStirBar && !it.isFrozenSolid) {
+            it.stirBarPhase = (it.stirBarPhase || 0) + (it.magStirRpm / 60) * Math.PI * 2 * realDeltaSec;
+          }
+          if (this.visualHooks.onParticlesNeeded && it._lastVisualMetrics) {
+            this.visualHooks.onParticlesNeeded(it, it._lastVisualMetrics);
+          }
+        } else if (this.visualHooks.onParticlesNeeded) {
+          if (it.kind === 'condenser' && it.activeDrop) {
+            this.visualHooks.onParticlesNeeded(it, { rateMlS: it.distillRateMlS });
+          } else if (it.kind === 'electrode' && it.gasBubbleType && (it.gasBubbleRate || 0) > 1e-7) {
+            this.visualHooks.onParticlesNeeded(it, { gasId: it.gasBubbleType, rateMolS: it.gasBubbleRate });
+          }
+        }
+      }
+      return;
+    }
 
     this.condenseEscapedVaporInCryo();
 
@@ -6136,43 +6155,45 @@ export class LabSimulation {
       const tubeBubbleRate = (v._tubeBubbleGasMol || 0) * invDt;
       v._tubeBubbleGasMol = 0;
 
-      // Emit visual particle request
+      // Emit visual particle request & snapshot metrics so paused visuals keep animating cleanly
+      const visMetrics = {
+        gasRates: rateMap,
+        gasRateH2: rateMap.H2_g,
+        gasRateO2: rateMap.O2_g,
+        gasRateCO2: (rateMap.CO2_g || 0) + tubeBubbleRate,
+        gasRateHCl: rateMap.HCl_g,
+        gasRateHNO3: rateMap.HNO3_g,
+        gasRateCl2: rateMap.Cl2_g,
+        gasRateC2H5Cl: rateMap.C2H5Cl_g,
+        gasRateNH3: rateMap.NH3_g,
+        gasRateNO2: rateMap.NO2_g,
+        gasRateSO3: rateMap.SO3_g,
+        gasRateNO: rateMap.NO_g,
+        atmosphereMode: this.environment.atmosphereMode || 'air',
+        steamRate: rateSteam,
+        steamOpacity: curSteamOpacity,
+        overflowRateMlS: v.overflowRateMlS || 0,
+        overflowColor: v.overflowColor || null,
+        horizontalSpillRateMlS: v.horizontalSpillRateMlS || 0,
+        horizontalSpillLeft: !!v.horizontalSpillLeft,
+        horizontalSpillRight: !!v.horizontalSpillRight,
+        horizontalSpillColor: v.horizontalSpillColor || null,
+        isBoiling: frameBoiling,
+        isDehydrating,
+        naActive,
+        naIgnited: !!v.naIgnited || (v.naDryBurnTimer || 0) > 0.05,
+        naTempK: v.naTempK,
+        naRate:
+          (frameActiveMap.get('na_water')?.rateMolS || 0) +
+          (frameActiveMap.get('na_acid')?.rateMolS || 0) +
+          (frameActiveMap.get('na_ethanol')?.rateMolS || 0) +
+          (frameActiveMap.get('na_ice')?.rateMolS || 0),
+        znBurning: (v.znCombustionTimer || 0) > 0.05,
+        naDryBurning: (v.naDryBurnTimer || 0) > 0.05,
+      };
+      v._lastVisualMetrics = visMetrics;
       if (this.visualHooks.onParticlesNeeded) {
-        this.visualHooks.onParticlesNeeded(v, {
-          gasRates: rateMap,
-          gasRateH2: rateMap.H2_g,
-          gasRateO2: rateMap.O2_g,
-          gasRateCO2: (rateMap.CO2_g || 0) + tubeBubbleRate,
-          gasRateHCl: rateMap.HCl_g,
-          gasRateHNO3: rateMap.HNO3_g,
-          gasRateCl2: rateMap.Cl2_g,
-          gasRateC2H5Cl: rateMap.C2H5Cl_g,
-          gasRateNH3: rateMap.NH3_g,
-          gasRateNO2: rateMap.NO2_g,
-          gasRateSO3: rateMap.SO3_g,
-          gasRateNO: rateMap.NO_g,
-          atmosphereMode: this.environment.atmosphereMode || 'air',
-          steamRate: rateSteam,
-          steamOpacity: curSteamOpacity,
-          overflowRateMlS: v.overflowRateMlS || 0,
-          overflowColor: v.overflowColor || null,
-          horizontalSpillRateMlS: v.horizontalSpillRateMlS || 0,
-          horizontalSpillLeft: !!v.horizontalSpillLeft,
-          horizontalSpillRight: !!v.horizontalSpillRight,
-          horizontalSpillColor: v.horizontalSpillColor || null,
-          isBoiling: frameBoiling,
-          isDehydrating,
-          naActive,
-          naIgnited: !!v.naIgnited || (v.naDryBurnTimer || 0) > 0.05,
-          naTempK: v.naTempK,
-          naRate:
-            (frameActiveMap.get('na_water')?.rateMolS || 0) +
-            (frameActiveMap.get('na_acid')?.rateMolS || 0) +
-            (frameActiveMap.get('na_ethanol')?.rateMolS || 0) +
-            (frameActiveMap.get('na_ice')?.rateMolS || 0),
-          znBurning: (v.znCombustionTimer || 0) > 0.05,
-          naDryBurning: (v.naDryBurnTimer || 0) > 0.05,
-        });
+        this.visualHooks.onParticlesNeeded(v, visMetrics);
       }
 
       this.recordHistorySnapshot(v, false);

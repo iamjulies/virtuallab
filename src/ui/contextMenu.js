@@ -163,22 +163,51 @@ export class FloatingContextUI {
     let badge = '';
     let rows = [];
 
+    let extLinks = [];
+    const REAGENT_REF_META = {
+      h2o: { spId: 'H2O_l', formula: 'H₂O', iupac: 'Oxidane / Water', cas: '7732-18-5', mm: '18.015 g/mol', density: '0.997 g/cm³ (25 °C)', melt: '0.0 °C (273.15 K)', boil: '100.0 °C (373.15 K)', conc: 'Pure (55.34 M)', wiki: 'Water', pubchem: '962' },
+      na: { spId: 'Na_s', formula: 'Na', iupac: 'Sodium', cas: '7440-23-5', mm: '22.990 g/mol', density: '0.968 g/cm³', melt: '97.8 °C (370.9 K)', boil: '882.9 °C (1156 K)', conc: 'Pure Metal (s)', wiki: 'Sodium', pubchem: '5360545' },
+      zn: { spId: 'Zn_s', formula: 'Zn', iupac: 'Zinc', cas: '7440-66-6', mm: '65.380 g/mol', density: '7.140 g/cm³', melt: '419.5 °C (692.7 K)', boil: '907.0 °C (1180 K)', conc: 'Pure Metal (s)', wiki: 'Zinc', pubchem: '23994' },
+      cuso4_5h2o: { spId: 'CuSO4_5H2O_s', formula: 'CuSO₄·5H₂O', iupac: 'Copper(II) sulfate pentahydrate', cas: '7758-99-8', mm: '249.685 g/mol', density: '2.286 g/cm³', melt: '110 °C (-4 H₂O) / 150 °C (anhyd.)', boil: 'Decomp > 650 °C', conc: 'Pure Hydrate Solid', wiki: 'Copper(II)_sulfate', pubchem: '24463' },
+      agno3: { spId: 'AgNO3_s', formula: 'AgNO₃', iupac: 'Silver nitrate', cas: '7761-88-8', mm: '169.873 g/mol', density: '4.350 g/cm³', melt: '209.7 °C (482.8 K)', boil: 'Decomp ~440 °C', conc: 'Pure Crystalline Solid', wiki: 'Silver_nitrate', pubchem: '24470' },
+      naoh: { spId: 'NaOH_s', formula: 'NaOH', iupac: 'Sodium hydroxide', cas: '1310-73-2', mm: '39.997 g/mol', density: '2.130 g/cm³', melt: '323.0 °C (596.2 K)', boil: '1388.0 °C (1661 K)', conc: 'Pure Pellets (s)', wiki: 'Sodium_hydroxide', pubchem: '14798' },
+      hcl_37: { spId: 'H_aq', formula: 'HCl(aq)', iupac: 'Hydrochloric acid', cas: '7647-01-0', mm: '36.461 g/mol (HCl)', density: '1.188 g/cm³ (37% aq)', melt: '-27.3 °C', boil: '~48 °C (outgasses HCl) / 108.6 °C azeotrope', conc: '37% w/w (~12.06 M)', wiki: 'Hydrochloric_acid', pubchem: '313' },
+      nh3_25: { spId: 'NH3_aq', formula: 'NH₃(aq)', iupac: 'Azane / Ammonia solution', cas: '1336-21-6', mm: '17.031 g/mol (NH₃)', density: '0.907 g/cm³ (25% aq)', melt: '-58.0 °C', boil: '~37.7 °C (evolves NH₃(g))', conc: '25% w/w (~13.31 M)', wiki: 'Ammonia_solution', pubchem: '222' },
+      h2o2_30: { spId: 'H2O2_aq', formula: 'H₂O₂(aq)', iupac: 'Hydrogen peroxide', cas: '7722-84-1', mm: '34.015 g/mol (H₂O₂)', density: '1.110 g/cm³ (30% aq)', melt: '-25.7 °C', boil: '106.2 °C (decomp risk)', conc: '30% w/w (~9.79 M)', wiki: 'Hydrogen_peroxide', pubchem: '784' },
+      phen: { spId: 'Phenolphthalein_aq', formula: 'C₂₀H₁₄O₄', iupac: 'Phenolphthalein (1% in EtOH/H₂O)', cas: '77-09-8', mm: '318.328 g/mol', density: '0.850 g/cm³ (solution)', melt: '~-90 °C (soln) / 262.5 °C (pure)', boil: '~80 °C (EtOH/H₂O)', conc: '1% w/v (~0.027 M)', wiki: 'Phenolphthalein', pubchem: '4764' },
+      caco3: { spId: 'CaCO3_s', formula: 'CaCO₃', iupac: 'Calcium carbonate', cas: '471-34-1', mm: '100.087 g/mol', density: '2.711 g/cm³', melt: '825 °C (dec. / calcines)', boil: '899 °C (CaCO₃ → CaO + CO₂↑)', conc: 'Pure Mineral Solid', wiki: 'Calcium_carbonate', pubchem: '10112' },
+      hno3_68: { spId: 'NO3_aq', formula: 'HNO₃(aq)', iupac: 'Nitric acid', cas: '7697-37-2', mm: '63.013 g/mol (HNO₃)', density: '1.405 g/cm³ (68% aq)', melt: '-38.0 °C', boil: '120.5 °C (68% azeotrope)', conc: '68% w/w (~15.17 M)', wiki: 'Nitric_acid', pubchem: '944' },
+      fe: { spId: 'Fe_s', formula: 'Fe', iupac: 'Iron', cas: '7439-89-6', mm: '55.845 g/mol', density: '7.874 g/cm³', melt: '1538.0 °C (1811 K)', boil: '2862.0 °C (3135 K)', conc: 'Pure Metal (s)', wiki: 'Iron', pubchem: '23925' },
+      bacl2_2h2o: { spId: 'BaCl2_2H2O_s', formula: 'BaCl₂·2H₂O', iupac: 'Barium chloride dihydrate', cas: '10326-27-9', mm: '244.264 g/mol', density: '3.097 g/cm³', melt: '113 °C (-2 H₂O) / 962 °C (anhyd.)', boil: '1560.0 °C (1833 K)', conc: 'Pure Hydrate Solid', wiki: 'Barium_chloride', pubchem: '25204' },
+      nacl: { spId: 'NaCl_s', formula: 'NaCl', iupac: 'Sodium chloride', cas: '7647-14-5', mm: '58.443 g/mol', density: '2.165 g/cm³', melt: '801.0 °C (1074 K)', boil: '1465.0 °C (1738 K)', conc: 'Pure Ionic Solid', wiki: 'Sodium_chloride', pubchem: '5234' },
+    };
+
     if (kind === 'reagent') {
       const reg = STARTER_REAGENTS.find((r) => r.id === reagentId);
-      const sp = reg ? SPECIES[reg.speciesId] : null;
+      const ref = REAGENT_REF_META[reagentId] || {};
+      const sp = reg ? SPECIES[reg.speciesId || ref.spId] : null;
       title = reg ? t(reg.i18nKey) : reagentId;
-      badge = sp?.formula || reg?.formula || '';
+      badge = sp?.formula || ref.formula || reg?.formula || '';
+      const spKey = reg?.speciesId || ref.spId || reagentId;
+      const molarMassStr = ref.mm || (sp?.molarMass ? `${sp.molarMass.toFixed(3)} g/mol` : '—');
+      const densityStr = ref.density || (sp?.density ? `${sp.density} g/cm³` : reg?.densityGPerMl ? `${reg.densityGPerMl} g/cm³` : '—');
+      const meltStr = ref.melt || (sp?.meltTempK ? `${(sp.meltTempK - 273.15).toFixed(1)} °C (${sp.meltTempK.toFixed(1)} K)` : sp?.noMelt ? (isEn ? 'Decomposes before melting' : 'Phân hủy trước khi chảy') : '—');
+      const boilStr = ref.boil || (sp?.boilTempK ? `${(sp.boilTempK - 273.15).toFixed(1)} °C` : sp?.decompTempK ? `Decomp ${(sp.decompTempK - 273.15).toFixed(1)} °C` : '—');
+      const concStr = ref.conc || (reg?.molarity ? `${reg.molarity} M` : reg?.molarityLabel || 'Pure / Solid');
       rows = [
-        [isEn ? 'IUPAC Name' : 'Tên IUPAC', sp?.name || title],
-        [isEn ? 'Formula / Species ID' : 'Công thức / Mã', `${badge} (${reg?.speciesId || ''})`],
+        [isEn ? 'IUPAC Name' : 'Tên IUPAC', ref.iupac || sp?.name || title],
+        [isEn ? 'Formula / Species ID' : 'Công thức / Mã', `${badge} (${spKey})`],
+        ['CAS Registry No.', ref.cas || '—'],
         [isEn ? 'Physical Phase' : 'Trạng thái', reg?.kind === 'liquid' ? (isEn ? 'Liquid / Solution' : 'Lỏng / Dung dịch') : (isEn ? 'Solid' : 'Rắn')],
-        [isEn ? 'Molar Mass' : 'Khối lượng mol', sp?.molarMass ? `${sp.molarMass.toFixed(3)} g/mol` : '—'],
-        [isEn ? 'Density' : 'Khối lượng riêng', sp?.density ? `${sp.density} g/cm³` : '—'],
-        [isEn ? 'Melting Point' : 'Điểm nóng chảy', sp?.meltTempK ? `${(sp.meltTempK - 273.15).toFixed(1)} °C (${sp.meltTempK.toFixed(1)} K)` : sp?.noMelt ? (isEn ? 'Decomposes before melting' : 'Phân hủy trước khi chảy') : '—'],
-        [isEn ? 'Boiling / Decomp Point' : 'Điểm sôi / Nhiệt phân', sp?.boilTempK ? `${(sp.boilTempK - 273.15).toFixed(1)} °C` : sp?.decompTempK ? `Decomp ${(sp.decompTempK - 273.15).toFixed(1)} °C` : '—'],
-        [isEn ? 'Molarity (stock)' : 'Nồng độ chuẩn', reg?.molarity ? `${reg.molarity} M` : 'Pure / Solid'],
+        [isEn ? 'Molar Mass' : 'Khối lượng mol', molarMassStr],
+        [isEn ? 'Density' : 'Khối lượng riêng', densityStr],
+        [isEn ? 'Melting Point' : 'Điểm nóng chảy', meltStr],
+        [isEn ? 'Boiling / Decomp Point' : 'Điểm sôi / Nhiệt phân', boilStr],
+        [isEn ? 'Molarity / Purity' : 'Nồng độ chuẩn', concStr],
         [isEn ? 'Description' : 'Mô tả hóa chất', reg ? t(reg.descKey) : '—'],
       ];
+      if (ref.wiki) extLinks.push({ label: '🌐 Wikipedia ↗', href: `https://en.wikipedia.org/wiki/${ref.wiki}` });
+      if (ref.pubchem) extLinks.push({ label: '🔬 PubChem ↗', href: `https://pubchem.ncbi.nlm.nih.gov/compound/${ref.pubchem}` });
     } else {
       const resolvedId = item?.typeId || typeId;
       const spec = APPARATUS[resolvedId] || {};
@@ -205,6 +234,8 @@ export class FloatingContextUI {
           rows.push([isEn ? 'Sticky Label' : 'Nhãn dán ghi chú', item.stickyLabel.text]);
         }
       }
+      const appWikiQ = encodeURIComponent(String(title).replace(/#\d+/g, '').replace(/\(.*?\)/g, '').trim() + ' laboratory equipment');
+      extLinks.push({ label: '🌐 Wikipedia ↗', href: `https://en.wikipedia.org/w/index.php?search=${appWikiQ}` });
     }
 
     this.dialogEl.innerHTML = `
@@ -229,6 +260,16 @@ export class FloatingContextUI {
               )
               .join('')}
           </div>
+          ${
+            extLinks.length > 0
+              ? `<div class="flex flex-wrap items-center gap-2 pt-2">${extLinks
+                  .map(
+                    (lnk) =>
+                      `<a href="${lnk.href}" target="_blank" rel="noopener noreferrer" class="storage-btn text-xs" style="text-decoration:none;">${lnk.label}</a>`
+                  )
+                  .join('')}</div>`
+              : ''
+          }
         </div>
       </div>
     `;
