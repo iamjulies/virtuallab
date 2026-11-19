@@ -12,10 +12,16 @@ function formatReagentMolPreview(reg, amount) {
     return `${(mol * 1000).toFixed(2)} mmol (${mol.toFixed(5)} mol)`;
   }
   if (reg.previewMode === 'acid_hcl') {
-    return `HCl: ${(reg.perMl.H_aq * amount * 1000).toFixed(2)} mmol (~12.06 M)`;
+    return `HCl: ${((reg.perMl?.H_aq || 0) * amount * 1000).toFixed(2)} mmol (~12.06 M)`;
   }
   if (reg.previewMode === 'acid_hno3') {
-    return `HNO₃: ${(reg.perMl.NO3_aq * amount * 1000).toFixed(2)} mmol (~15.17 M)`;
+    return `HNO₃: ${((reg.perMl?.NO3_aq || 0) * amount * 1000).toFixed(2)} mmol (~15.17 M)`;
+  }
+  if (reg.previewMode === 'acid_h2so4_conc') {
+    return `H₂SO₄: ${((reg.perMl?.H2SO4_l || 0) * amount * 1000).toFixed(2)} mmol (~18.35 M)`;
+  }
+  if (reg.previewMode === 'acid_h2so4_dil') {
+    return `H₂SO₄: ${((reg.perMl?.HSO4_aq || reg.perMl?.SO4_2_aq || 0) * amount * 1000).toFixed(2)} mmol (~2.06 M · 2 nấc H⁺)`;
   }
   if (reg.previewMode === 'solvent_water') {
     return `H₂O: ${(reg.perMl.H2O_l * amount).toFixed(3)} mol (${(amount * reg.densityGPerMl).toFixed(2)} g)`;
@@ -294,13 +300,13 @@ export class DosingModal {
         } else {
           cardLeft = spot.centerX < vw * 0.5 ? Math.max(12, vw - cardW - 16) : 12;
         }
-        cardTop = Math.max(14, Math.min(vh - 540, Math.round(spot.centerY - 240)));
+        cardTop = Math.max(12, Math.min(Math.max(12, vh - 600), Math.round(spot.centerY - 260)));
       }
       return `
         <div class="fixed inset-0 z-50" style="background:${backdropBg}" id="dosing-backdrop">
           ${spotHtml}
           <div id="dosing-card" style="position:fixed;z-index:51;left:${cardLeft}px;top:${cardTop}px;width:${cardW}px;max-height:calc(100vh - 24px);overflow-y:auto;"
-            class="rounded-2xl border border-theme bg-surface p-5 shadow-2xl flex flex-col gap-3 text-main">
+            class="rounded-2xl border border-theme bg-surface p-4 shadow-2xl flex flex-col gap-2.5 text-main">
             ${innerCardHtml}
           </div>
         </div>
@@ -516,7 +522,7 @@ export class DosingModal {
       const validVessels = this.sim.items.filter((i) => i.id !== st.sourceVesselId && i.kind === 'vessel' && !i.isShattered);
       this.container.innerHTML = `
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="dosing-backdrop">
-          <div class="w-full max-w-md rounded-2xl border border-theme bg-surface p-5 shadow-2xl flex flex-col gap-3.5 text-main">
+          <div style="max-height:calc(100vh - 24px);overflow-y:auto;" class="w-full max-w-md rounded-2xl border border-theme bg-surface p-4 shadow-2xl flex flex-col gap-3 text-main">
             <div class="flex items-start justify-between gap-2">
               <h3 class="text-sm font-bold">${t('actionTransferSolid')}</h3>
               <button type="button" id="dosing-close-x" class="px-2 py-1 rounded text-xs text-muted hover:text-main border border-theme">✕</button>
@@ -538,7 +544,7 @@ export class DosingModal {
       const targets = this.sim.getTubeTargetsForVessel(st.sourceVesselId);
       this.container.innerHTML = `
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="dosing-backdrop">
-          <div class="w-full max-w-md rounded-2xl border border-theme bg-surface p-5 shadow-2xl flex flex-col gap-3.5 text-main">
+          <div style="max-height:calc(100vh - 24px);overflow-y:auto;" class="w-full max-w-md rounded-2xl border border-theme bg-surface p-4 shadow-2xl flex flex-col gap-3 text-main">
             <div class="flex items-start justify-between gap-2">
               <div>
                 <h3 class="text-sm font-bold">${t('tubeTargetTitle')}</h3>
@@ -572,7 +578,7 @@ export class DosingModal {
       const totMl = syr ? computeSyringeTotalVolumeMl(syr, this.sim.environment) : 0;
       this.container.innerHTML = `
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" id="dosing-backdrop">
-          <div class="w-full max-w-md rounded-2xl border border-theme bg-surface p-5 shadow-2xl flex flex-col gap-3.5 text-main">
+          <div style="max-height:calc(100vh - 24px);overflow-y:auto;" class="w-full max-w-md rounded-2xl border border-theme bg-surface p-4 shadow-2xl flex flex-col gap-3 text-main">
             <div class="flex items-start justify-between gap-2">
               <div>
                 <h3 class="text-sm font-bold">💉 ${t('dosingTitleSyringeTransfer')}</h3>
@@ -603,6 +609,20 @@ export class DosingModal {
           </div>
         </div>
       `;
+    }
+
+    // Ensure floating dosing card fits cleanly inside viewport without bottom button clipping
+    const mountedCard = this.container.querySelector('#dosing-card');
+    if (mountedCard && typeof window !== 'undefined') {
+      const vhNow = window.innerHeight || 800;
+      const vwNow = window.innerWidth || 1280;
+      const pad = 12;
+      const rect = mountedCard.getBoundingClientRect();
+      const clampedLeft = Math.max(pad, Math.min(vwNow - rect.width - pad, rect.left));
+      const clampedTop = Math.max(pad, Math.min(vhNow - rect.height - pad, rect.top));
+      mountedCard.style.left = `${Math.round(clampedLeft)}px`;
+      mountedCard.style.top = `${Math.round(clampedTop)}px`;
+      mountedCard.style.maxHeight = `${Math.max(220, vhNow - Math.round(clampedTop) - pad)}px`;
     }
 
     this.bindModalEvents();

@@ -8,7 +8,7 @@ import {
   getVesselTubingPort,
 } from '../data/apparatus.js';
 import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
-import { findClipYForVolume, getInnerPolygonPx } from '../data/vesselGeometry.js';
+import { findClipYForVolume, findTiltClipY3D, getInnerPolygonPx } from '../data/vesselGeometry.js';
 import { SPECIES } from '../data/species.js';
 import {
   computeLiquidVolumeL,
@@ -1908,30 +1908,66 @@ export function renderVessel(ctx, vessel, opts) {
         ctx.fillRect(x - w / 2, divY, w, interiorBottom - divY + 4);
       }
     } else if (Math.abs(effTilt) > 0.015) {
-      // Horizontally clipped liquid surface computed from rotated 2D vessel cross-section polygon
-      const { vertices, totalAreaPx } = getInnerPolygonPx(spec);
-      const radT = effTilt;
-      const cosT = Math.cos(radT);
-      const sinT = Math.sin(radT);
-      const rotatedPoly = vertices.map((p) => ({
-        x: p.x * cosT - p.y * sinT,
-        y: p.x * sinT + p.y * cosT,
-      }));
-      const clipLocalY = findClipYForVolume(rotatedPoly, totalAreaPx, liqMl + solMl, spec.maxVolumeMl || 250);
-      if (Number.isFinite(clipLocalY)) {
-        const bigSpan = Math.max(w, h) * 2.2;
+      // Horizontally clipped liquid surface matching exact 3D rotational VesselGeometry volume at effTilt
+      const totalFillMl = liqMl + solMl;
+      const bigSpan = Math.max(w, h) * 2.2;
+      if (strat.isMultiPhase && strat.layers.length >= 2) {
         ctx.save();
         ctx.translate(x, y);
         ctx.rotate(-effTilt);
-        ctx.fillStyle = vis.css;
-        ctx.fillRect(-bigSpan, clipLocalY, bigSpan * 2, bigSpan);
-        ctx.beginPath();
-        ctx.moveTo(-bigSpan, clipLocalY);
-        ctx.lineTo(bigSpan, clipLocalY);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
-        ctx.lineWidth = 1.6;
-        ctx.stroke();
+        for (let li = 0; li < strat.layers.length; li++) {
+          const layer = strat.layers[li];
+          const topTargetMl = li === strat.layers.length - 1 ? totalFillMl : layer.topMl;
+          const layClipTopY = findTiltClipY3D(spec, topTargetMl, effTilt);
+          const layClipBotY = li === 0 ? bigSpan : findTiltClipY3D(spec, layer.botMl, effTilt);
+          if (!Number.isFinite(layClipTopY) && layClipTopY !== -Infinity) continue;
+          const yTop = layClipTopY === -Infinity ? -bigSpan : layClipTopY;
+          const yBot = !Number.isFinite(layClipBotY) ? bigSpan : layClipBotY;
+          const layVis = computeSolutionVisuals(
+            vessel.moles,
+            Math.max(1e-6, layer.volMl / 1000),
+            ph,
+            spec.opticalPathCm,
+            vessel.phenBleachFrac,
+            vessel.phenIrrevFrac || 0,
+            {
+              phaseFilter: layer.phaseKey,
+              suspensionLevel: layer.phaseKey === 'aqueous' ? (vessel.suspensionLevel || 0) : 0,
+            }
+          );
+          ctx.fillStyle = layVis.css;
+          ctx.fillRect(-bigSpan, yTop, bigSpan * 2, Math.max(1, yBot - yTop));
+          if (li < strat.layers.length - 1 || li === strat.layers.length - 1) {
+            ctx.beginPath();
+            ctx.moveTo(-bigSpan, yTop);
+            ctx.lineTo(bigSpan, yTop);
+            ctx.strokeStyle = li === strat.layers.length - 1
+              ? 'rgba(255, 255, 255, 0.72)'
+              : isDark ? 'rgba(226, 232, 240, 0.74)' : 'rgba(148, 163, 184, 0.85)';
+            ctx.lineWidth = 1.6;
+            ctx.stroke();
+          }
+        }
         ctx.restore();
+      } else {
+        const clipLocalY = findTiltClipY3D(spec, totalFillMl, effTilt);
+        if (clipLocalY === -Infinity || Number.isFinite(clipLocalY)) {
+          const drawTopY = clipLocalY === -Infinity ? -bigSpan : clipLocalY;
+          ctx.save();
+          ctx.translate(x, y);
+          ctx.rotate(-effTilt);
+          ctx.fillStyle = vis.css;
+          ctx.fillRect(-bigSpan, drawTopY, bigSpan * 2, bigSpan - drawTopY);
+          if (Number.isFinite(clipLocalY)) {
+            ctx.beginPath();
+            ctx.moveTo(-bigSpan, clipLocalY);
+            ctx.lineTo(bigSpan, clipLocalY);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+            ctx.lineWidth = 1.6;
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
       }
     } else {
       if (strat.isMultiPhase && strat.layers.length >= 2) {

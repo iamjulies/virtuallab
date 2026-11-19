@@ -114,7 +114,7 @@
     import { InspectorPanel } from '../src/ui/inspectorPanel.js';
     import { LabWorkbenchCanvas } from '../src/canvas/workbench.js';
     import { I18N } from '../src/data/i18n.js';
-    import { findClipYForVolume, getInnerPolygonPx, getVesselHoldVolumeMl } from '../src/data/vesselGeometry.js';
+    import { findClipYForVolume, findTiltClipY3D, getInnerPolygonPx, getVesselHoldVolumeMl } from '../src/data/vesselGeometry.js';
     import { downloadCompositionXlsx, sanitizeLabFilenameSlug } from '../src/storage/xlsxExport.js';
     import { ensureConcField, injectLocalPlume, stepLiquidConcField } from '../src/engine/liquidField.js';
     import {
@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.4';
+      const expectedBuild = 'virlab_beta_v4+build.5';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -7177,6 +7177,36 @@
         'Prompt 38 H2SO4 dil/conc parity: non-fuming H2SO4 2M (20 reagents), BaSO4 ppt, CaSO4 crust slows coarse CaCO3 vs HCl, >78% reconverts H2SO4_l unlocking NaCl->HCl, NaHSO4 1:1 cryst & >=300C SO3 (0 NO2)',
         nonVolOk && baPptOk && caCrustOk && concReunlockOk && bisulfateCrystOk && hotSO3Ok,
         `nonVol=${nonVolOk}, baSO4=${baPptOk}(${(bBa.moles.BaSO4_s||0).toFixed(4)}), caCrust=${caCrustOk}(CaSO4=${(bCaH2SO4.moles.CaSO4_s||0).toFixed(4)},remH2SO4=${(bCaH2SO4.moles.CaCO3_s||0).toFixed(4)},remHCl=${(bCaHCl.moles.CaCO3_s||0).toFixed(4)}), reconv=${concReunlockOk}(molL=${reconvertedMol.toFixed(4)},HCl=${(bConc.escapedGasMoles?.HCl_g||0).toFixed(4)}), naHSO4=${bisulfateCrystOk}(${(bAcidSalt.moles.NaHSO4_s||0).toFixed(4)}), hotSO3=${hotSO3Ok}(${(bFumeHot.escapedGasMoles?.SO3_g||0).toFixed(4)})`
+      );
+    }
+
+    // TEST 157: Prompt 39 (beta_v4+build.5) — 3D tilted meniscus parity (NO abnormal rise on tilt across round_flask_1000, beaker_1000, erlenmeyer_1000) & H2SO4 dosing preview
+    {
+      const checkTiltedParity = (typeId, volMl) => {
+        const spec = APPARATUS[typeId];
+        const upY = computeVesselFluidGeometry(spec, 0, volMl).surfaceY;
+        const smallTiltY = findTiltClipY3D(spec, volMl, 0.02);
+        const modTiltY = findTiltClipY3D(spec, volMl, 0.21); // ~12 deg tilt
+        const rimTopLocalY = -spec.height / 2 + 4;
+        return {
+          upY,
+          smallTiltY,
+          modTiltY,
+          contOk: Math.abs(smallTiltY - upY) <= 4.0,
+          noSpikeOk: modTiltY > rimTopLocalY + 12 && Math.abs(modTiltY - upY) <= 14.0,
+        };
+      };
+      const rbf = checkTiltedParity('round_flask_1000', 994.0);
+      const bk1 = checkTiltedParity('beaker_1000', 871.0);
+      const erl1 = checkTiltedParity('erlenmeyer_1000', 851.0);
+      const h2so4ConcReg = STARTER_REAGENTS.find((r) => r.id === 'h2so4_98');
+      const h2so4DilReg = STARTER_REAGENTS.find((r) => r.id === 'h2so4_dil');
+      const prevModeOk = h2so4ConcReg?.previewMode === 'acid_h2so4_conc' && h2so4DilReg?.previewMode === 'acid_h2so4_dil';
+
+      assert(
+        'Prompt 39 tilted meniscus 3D parity & H2SO4 preview: round_flask_1000/beaker_1000/erlenmeyer_1000 show <=4px tilt transition & zero abnormal level rise, distinct H2SO4 preview modes',
+        rbf.contOk && rbf.noSpikeOk && bk1.contOk && bk1.noSpikeOk && erl1.contOk && erl1.noSpikeOk && prevModeOk,
+        `rbf=(up=${rbf.upY.toFixed(1)},t0=${rbf.smallTiltY.toFixed(1)},t12=${rbf.modTiltY.toFixed(1)}), bk=(up=${bk1.upY.toFixed(1)},t12=${bk1.modTiltY.toFixed(1)}), erl=(up=${erl1.upY.toFixed(1)},t12=${erl1.modTiltY.toFixed(1)}), prev=${prevModeOk}`
       );
     }
 

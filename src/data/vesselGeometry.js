@@ -228,3 +228,107 @@ export function findClipYForVolume(rotatedPoly, totalAreaPx, targetMl, maxCapaci
   }
   return (lo + hi) * 0.5;
 }
+
+/**
+ * Compute horizontal meniscus y-coordinate inside a tilted 3D axisymmetric vessel
+ * matching VesselGeometry's exact 3D volume (sum of circular disk chords at tiltRad)
+ * and Canvas fluid mapping (padPx = 2.2, footH = 3.5 / 9). Guarantees ZERO level jump when tilting!
+ */
+export function findTiltClipY3D(spec, targetMl, tiltRad) {
+  const geom = spec?.geometry;
+  if (!geom || !Array.isArray(geom.slices) || geom.slices.length === 0) {
+    const { vertices, totalAreaPx } = getInnerPolygonPx(spec);
+    const cosT = Math.cos(tiltRad);
+    const sinT = Math.sin(tiltRad);
+    const rotPoly = vertices.map((p) => ({
+      x: p.x * cosT - p.y * sinT,
+      y: p.x * sinT + p.y * cosT,
+    }));
+    return findClipYForVolume(rotPoly, totalAreaPx, targetMl, spec?.maxVolumeMl || 250);
+  }
+  const V = Math.max(0, targetMl || 0);
+  if (V <= 1e-6) return Infinity;
+  const maxV = Math.max(1e-6, geom.maxVolumeMl);
+  if (V >= maxV - 1e-5) return -Infinity;
+
+  const w = spec.width || 68;
+  const h = spec.height || 92;
+  const footH = spec.shape === 'cylinder' ? 9 : 3.5;
+  const baseBottomLocal = h / 2 - footH;
+  const topYLocal = -h / 2 + 4;
+  const spanH = Math.max(10, baseBottomLocal - topYLocal);
+  const maxH = Math.max(0.5, geom.maxHeightCm || 1);
+  const scaleX = (w / 2) / Math.max(0.1, geom.bodyMaxRadiusCm || 1);
+  const scaleY = spanH / maxH;
+
+  if (!geom._tiltedSlabs) {
+    const nSlabs = 32;
+    const dyCm = maxH / nSlabs;
+    const slabs = [];
+    for (let i = 0; i < nSlabs; i++) {
+      const y0 = i * dyCm;
+      const y1 = (i + 1) * dyCm;
+      const yMid = (y0 + y1) * 0.5;
+      const slice =
+        geom.slices.find((s) => yMid >= s.y0 - 1e-9 && yMid <= s.y1 + 1e-9) ||
+        geom.slices[geom.slices.length - 1];
+      const interpR = (yc) => {
+        const sl =
+          geom.slices.find((s) => yc >= s.y0 - 1e-9 && yc <= s.y1 + 1e-9) || slice;
+        return Math.max(0.02, sl.r0 + sl.slope * (yc - sl.y0));
+      };
+      const r0 = interpR(y0);
+      const r1 = interpR(y1);
+      const rMid = (r0 + r1) * 0.5;
+      const dV = ((Math.PI * dyCm) / 3) * (r0 * r0 + r0 * r1 + r1 * r1);
+      slabs.push({
+        py: baseBottomLocal - yMid * scaleY,
+        rx: Math.max(1, rMid * scaleX - 2.2),
+        dV,
+      });
+    }
+    geom._tiltedSlabs = slabs;
+  }
+
+  const slabs = geom._tiltedSlabs;
+  const cosT = Math.cos(tiltRad);
+  const absSinT = Math.abs(Math.sin(tiltRad));
+
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < slabs.length; i++) {
+    const sb = slabs[i];
+    const yc = sb.py * cosT;
+    const spanY = sb.rx * absSinT;
+    if (yc - spanY < minY) minY = yc - spanY;
+    if (yc + spanY > maxY) maxY = yc + spanY;
+  }
+
+  let lo = minY - 4;
+  let hi = maxY + 4;
+  for (let it = 0; it < 18; it++) {
+    const mid = 0.5 * (lo + hi);
+    let vol = 0;
+    for (let i = 0; i < slabs.length; i++) {
+      const sb = slabs[i];
+      const rhs = sb.py * cosT - mid;
+      const denom = sb.rx * absSinT;
+      if (denom <= 1e-6) {
+        if (rhs >= 0) vol += sb.dV;
+      } else {
+        const u = rhs / denom;
+        if (u >= 1) {
+          vol += sb.dV;
+        } else if (u > -1) {
+          vol += sb.dV * ((Math.acos(-u) + u * Math.sqrt(Math.max(0, 1 - u * u))) / Math.PI);
+        }
+      }
+    }
+    if (vol > V) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return 0.5 * (lo + hi);
+}

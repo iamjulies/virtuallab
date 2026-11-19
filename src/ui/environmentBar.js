@@ -28,7 +28,7 @@ export class EnvironmentBar {
           <div class="min-w-0">
             <div class="flex items-center gap-1.5 whitespace-nowrap">
               <h1 class="text-sm font-bold leading-none whitespace-nowrap">${t('appTitle')}</h1>
-              <span id="app-version-badge" class="text-[11px] font-mono px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-muted whitespace-nowrap">virlab_beta_v4+build.4</span>
+              <span id="app-version-badge" class="text-[11px] font-mono px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-muted whitespace-nowrap">virlab_beta_v4+build.5</span>
               <span class="env-compact-hide text-xs px-2 py-0.5 rounded-full border border-theme bg-surface-alt text-muted whitespace-nowrap">
                 ${theme === 'olivia' ? 'u + me = <3 · 🐝' : theme === 'ctrl' ? 'draft · 4:20 pm' : theme === 'sos' ? 'deep sea · sos' : t('modeFreeSandbox')}
               </span>
