@@ -161,16 +161,17 @@ export function updateFreezeMeltPhase(vessel, dt, candidateTempK = null, heatCap
   const belowEutecticComplete = T_freeze_bulk > CONSTANTS.EUTECTIC_FLOOR_K + 2.0 && T <= T_eutectic_complete;
   const T_freeze = belowEutecticComplete ? Math.max(T_freeze_inst, T_eutectic_complete) : T_freeze_inst;
   const T_melt =
-    iceMol > 1e-7 && liquidWaterMol <= Math.max(0.05, (vessel.moles.Na_s || 0) * 6.0)
+    iceMol > 1e-7 && liquidWaterMol <= Math.max(0.05, ((vessel.moles.Na_s || 0) + (vessel.moles.K_s || 0)) * 6.0)
       ? T_freeze_bulk
       : T_freeze_inst;
   const heatCapacity = Math.max(heatCapacityJK ?? computeHeatCapacityJK(vessel), 20.0);
 
-  // Protect only the localized thin melt pocket right under an actively hot Sodium droplet on ice
+  // Protect only the localized thin melt pocket right under an actively hot Alkali metal droplet (Na / K) on ice
   const nNa = moles.Na_s || 0;
+  const nK = moles.K_s || 0;
   const protectedMeltMol =
-    nNa > 1e-8 && (vessel.naTempK ?? T) > Tf_pure
-      ? Math.min(liquidWaterMol, Math.max(0.012, nNa * 6.0))
+    (nNa > 1e-8 && (vessel.naTempK ?? T) > Tf_pure) || (nK > 1e-8 && (vessel.kTempK ?? T) > Tf_pure)
+      ? Math.min(liquidWaterMol, Math.max(0.012, (nNa + nK * 1.3) * 6.0))
       : 0;
   const freezableWaterMol = Math.max(0, liquidWaterMol - protectedMeltMol);
 

@@ -673,9 +673,10 @@ export function checkSplintInteractions(sim, splint) {
       return 'co2_extinguish';
     }
 
-    // Ignition source over exposed Sodium
-    if ((v.moles.Na_s || 0) > 1e-7 && dist <= 52) {
-      v.naTempK = Math.max(v.naTempK ?? v.tempK, 720);
+    // Ignition source over exposed Sodium or Potassium
+    if (((v.moles.Na_s || 0) > 1e-7 || (v.moles.K_s || 0) > 1e-7) && dist <= 52) {
+      if ((v.moles.Na_s || 0) > 1e-7) v.naTempK = Math.max(v.naTempK ?? v.tempK, 720);
+      if ((v.moles.K_s || 0) > 1e-7) v.kTempK = Math.max(v.kTempK ?? v.tempK, 620);
       splint.cooldownTimer = 1.2;
       return 'ignite_na';
     }
@@ -1728,6 +1729,12 @@ function stepIronSpoon(sim, spoon, dt) {
       spoon.burnTimer = 1.05;
       spoon.flameColor = 'white_mg';
       spoon.tempK = Math.max(spoon.tempK, 1650);
+      if (sim.visualHooks?.onParticlesNeeded) {
+        sim.visualHooks.onParticlesNeeded(
+          { x: bowlX, y: bowlY + 8, typeId: 'crucible_porcelain', moles: { MgO_s: mOrZero(moles.MgO_s) }, tempK: spoon.tempK },
+          { mgBurning: true }
+        );
+      }
     }
   }
   const nKSpoon = moles.K_s || 0;
@@ -1746,6 +1753,12 @@ function stepIronSpoon(sim, spoon, dt) {
       spoon.burnTimer = 0.95;
       spoon.flameColor = 'violet_k';
       spoon.tempK = Math.max(spoon.tempK, 1020);
+      if (sim.visualHooks?.onParticlesNeeded) {
+        sim.visualHooks.onParticlesNeeded(
+          { x: bowlX, y: bowlY + 8, typeId: 'crucible_porcelain', moles: { KO2_s: mOrZero(moles.KO2_s) }, tempK: spoon.tempK },
+          { kDryBurning: true }
+        );
+      }
     }
   }
 

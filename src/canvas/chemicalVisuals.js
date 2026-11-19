@@ -421,6 +421,31 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
           ctx.arc(0, -r * 0.35, flareR, 0, Math.PI * 2);
           ctx.fill();
         }
+        if (sp.id === 'Mg_s' && (vessel.mgCombustionTimer || 0) > 0.02) {
+          // Blinding brightWhiteFlash UV-white Magnesium combustion bloom
+          const flareR = r * (5.2 + Math.min(3.5, vessel.mgCombustionTimer * 2.4));
+          const mgGrad = ctx.createRadialGradient(0, -r * 0.35, r * 0.35, 0, -r * 0.35, flareR);
+          mgGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+          mgGrad.addColorStop(0.32, 'rgba(248, 250, 252, 0.96)');
+          mgGrad.addColorStop(0.62, 'rgba(186, 230, 253, 0.52)');
+          mgGrad.addColorStop(1, 'rgba(224, 242, 254, 0)');
+          ctx.fillStyle = mgGrad;
+          ctx.beginPath();
+          ctx.arc(0, -r * 0.35, flareR, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (sp.id === 'Al_s' && (vessel.alCombustionTimer || 0) > 0.02) {
+          const flareR = r * (3.6 + Math.min(2.6, vessel.alCombustionTimer * 1.8));
+          const alGrad = ctx.createRadialGradient(0, -r * 0.3, r * 0.25, 0, -r * 0.3, flareR);
+          alGrad.addColorStop(0, 'rgba(255, 255, 255, 0.98)');
+          alGrad.addColorStop(0.45, 'rgba(253, 224, 71, 0.80)');
+          alGrad.addColorStop(0.75, 'rgba(251, 146, 60, 0.35)');
+          alGrad.addColorStop(1, 'rgba(251, 146, 60, 0)');
+          ctx.fillStyle = alGrad;
+          ctx.beginPath();
+          ctx.arc(0, -r * 0.3, flareR, 0, Math.PI * 2);
+          ctx.fill();
+        }
       } else {
         // Fallback polygon crystal/grain for any future solid visualType
         ctx.beginPath();
@@ -476,155 +501,167 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     ctx.restore();
   }
 
-  // 3. Sodium (Na) — Marangoni skittering droplet + Phenolphthalein wake trail on meniscus or oil-water interface
-  const wakeTrail = vessel.naWakeTrail;
-  const naAnchorY =
-    bounds.naInterfaceY ??
-    (vessel.naLayerHeightFrac != null && vessel.naLayerHeightFrac < 0.99
-      ? surfaceY + Math.max(0, bottom - surfaceY - 8) * (1 - vessel.naLayerHeightFrac)
-      : surfaceY);
-  if (hasWater && Array.isArray(wakeTrail) && wakeTrail.length > 1 && surfaceY < bottom - 4) {
-    const hasPhenTrail = (moles.Phenolphthalein_aq || 0) > 1e-9;
-    ctx.save();
-    for (let i = 1; i < wakeTrail.length; i++) {
-      const pA = wakeTrail[i - 1];
-      const pB = wakeTrail[i];
-      const lifeFrac = Math.max(0, 1 - pB.age / Math.max(0.1, pB.maxLife));
-      if (lifeFrac <= 0.02) continue;
-      const wxA = left + 8 + pA.pos * Math.max(10, width - 16);
-      const wxB = left + 8 + pB.pos * Math.max(10, width - 16);
-      const wy = naAnchorY + 2 + (1 - lifeFrac) * 6 + Math.sin(i * 1.4) * 1.5;
-      ctx.strokeStyle = hasPhenTrail
-        ? `rgba(236, 72, 153, ${(0.72 * lifeFrac).toFixed(2)})`
-        : `rgba(226, 232, 240, ${(0.45 * lifeFrac).toFixed(2)})`;
-      ctx.lineWidth = hasPhenTrail ? 2.6 * lifeFrac + 1.0 : 1.8 * lifeFrac + 0.6;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(wxA, wy);
-      ctx.lineTo(wxB, wy);
-      ctx.stroke();
+  // 3. Sodium (Na) & Potassium (K) — Marangoni skittering droplets, wake trails & characteristic 589nm yellow / 766nm lilac flames
+  const drawAlkaliMetalVisual = (cfg) => {
+    const wakeTrail = vessel[cfg.wakeKey];
+    const interfaceAnchorY =
+      bounds.naInterfaceY ??
+      (vessel.naLayerHeightFrac != null && vessel.naLayerHeightFrac < 0.99
+        ? surfaceY + Math.max(0, bottom - surfaceY - 8) * (1 - vessel.naLayerHeightFrac)
+        : surfaceY);
+    if (hasWater && Array.isArray(wakeTrail) && wakeTrail.length > 1 && surfaceY < bottom - 4) {
+      const hasPhenTrail = (moles.Phenolphthalein_aq || 0) > 1e-9;
+      ctx.save();
+      for (let i = 1; i < wakeTrail.length; i++) {
+        const pA = wakeTrail[i - 1];
+        const pB = wakeTrail[i];
+        const lifeFrac = Math.max(0, 1 - pB.age / Math.max(0.1, pB.maxLife));
+        if (lifeFrac <= 0.02) continue;
+        const wxA = left + 8 + pA.pos * Math.max(10, width - 16);
+        const wxB = left + 8 + pB.pos * Math.max(10, width - 16);
+        const wy = interfaceAnchorY + 2 + (1 - lifeFrac) * 6 + Math.sin(i * 1.4) * 1.5;
+        ctx.strokeStyle = hasPhenTrail
+          ? `rgba(236, 72, 153, ${(0.72 * lifeFrac).toFixed(2)})`
+          : `rgba(226, 232, 240, ${(0.45 * lifeFrac).toFixed(2)})`;
+        ctx.lineWidth = hasPhenTrail ? 2.6 * lifeFrac + 1.0 : 1.8 * lifeFrac + 0.6;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(wxA, wy);
+        ctx.lineTo(wxB, wy);
+        ctx.stroke();
+      }
+      ctx.restore();
     }
-    ctx.restore();
-  }
 
-  const nNa = moles.Na_s || 0;
-  if (nNa > 1e-7) {
-    const massNa = nNa * SPECIES.Na_s.molarMass;
-    const radius = Math.min(12, Math.max(3.8, 3.2 + Math.cbrt(massNa) * 5.2));
+    const nMet = moles[cfg.speciesId] || 0;
+    if (nMet <= 1e-7) return;
+    const massMet = nMet * SPECIES[cfg.speciesId].molarMass;
+    const radius = Math.min(12, Math.max(3.8, 3.2 + Math.cbrt(massMet) * 5.2));
     const hasIceSurface = (moles.H2O_s || 0) > 1e-6;
     ctx.save();
 
     if ((hasWater || hasIceSurface) && surfaceY < bottom - 4) {
-      const nx = left + 8 + vessel.naPosRatio * Math.max(10, width - 16);
-      const naDropY =
+      const mx = left + 8 + (vessel[cfg.posKey] ?? 0.5) * Math.max(10, width - 16);
+      const dropY =
         bounds.naInterfaceY ??
         (vessel.naLayerHeightFrac != null && vessel.naLayerHeightFrac < 0.99
           ? surfaceY + Math.max(0, bottom - surfaceY - radius - 2) * (1 - vessel.naLayerHeightFrac)
           : surfaceY);
-      const ny = naDropY + (hasWater ? 1 : -radius * 0.35);
+      const my = dropY + (hasWater ? cfg.floatOffsetY : -radius * 0.35);
+      const tMet = vessel[cfg.tempKey] ?? vessel.tempK;
 
-      const tNa = vessel.naTempK ?? vessel.tempK;
-      if (hasWater || tNa > 273.15) {
-        // Turbulent white / local melt-film reaction collar around Na
+      if (hasWater || tMet > 273.15) {
         ctx.beginPath();
-        ctx.ellipse(nx, ny + 1, radius * 1.85, radius * 0.55, 0, 0, Math.PI * 2);
+        ctx.ellipse(mx, my + 1, radius * 1.85, radius * 0.55, 0, 0, Math.PI * 2);
         ctx.fillStyle = hasWater ? 'rgba(255, 255, 255, 0.48)' : 'rgba(186, 230, 253, 0.62)';
         ctx.fill();
       }
 
-      // Thermal sodium halo when molten -> incandescent -> ignited (>= 680 K)
-      if (tNa >= 520 || vessel.naIgnited) {
-        const heatFrac = Math.min(1, (tNa - 500) / 220);
-        const haloGrad = ctx.createRadialGradient(nx, ny, radius * 0.4, nx, ny, radius * (2.2 + heatFrac * 1.5));
-        haloGrad.addColorStop(0, vessel.naIgnited ? 'rgba(253, 224, 71, 0.92)' : `rgba(251, 146, 60, ${0.45 * heatFrac})`);
-        haloGrad.addColorStop(1, 'rgba(249, 115, 22, 0)');
+      const isIgnited = Boolean(vessel[cfg.ignitedKey]);
+      if (tMet >= cfg.haloMinK || isIgnited) {
+        const heatFrac = Math.min(1, Math.max(0.25, (tMet - cfg.haloBaseK) / 220));
+        const haloR = radius * (isIgnited ? 3.4 : 2.2 + heatFrac * 1.5);
+        const haloGrad = ctx.createRadialGradient(mx, my, radius * 0.35, mx, my, haloR);
+        haloGrad.addColorStop(0, isIgnited ? cfg.haloCore : cfg.haloWarm(heatFrac));
+        haloGrad.addColorStop(0.5, isIgnited ? cfg.haloMid : cfg.haloWarmMid(heatFrac));
+        haloGrad.addColorStop(1, cfg.haloEdge);
         ctx.fillStyle = haloGrad;
         ctx.beginPath();
-        ctx.arc(nx, ny, radius * (2.2 + heatFrac * 1.5), 0, Math.PI * 2);
+        ctx.arc(mx, my, haloR, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // Molten silvery sphere (shifts slightly warm amber-white at high T_Na)
-      const grad = ctx.createRadialGradient(nx - radius * 0.3, ny - radius * 0.35, 1, nx, ny, radius);
+      const grad = ctx.createRadialGradient(mx - radius * 0.3, my - radius * 0.35, 1, mx, my, radius);
       grad.addColorStop(0, '#ffffff');
-      grad.addColorStop(0.55, vessel.naIgnited ? '#fde68a' : '#cbd5e1');
-      grad.addColorStop(1, vessel.naIgnited ? '#ea580c' : '#64748b');
+      grad.addColorStop(0.55, isIgnited ? cfg.sphereHotMid : '#cbd5e1');
+      grad.addColorStop(1, isIgnited ? cfg.sphereHotEdge : '#64748b');
       ctx.beginPath();
-      ctx.arc(nx, ny, radius, 0, Math.PI * 2);
+      ctx.arc(mx, my, radius, 0, Math.PI * 2);
       ctx.fillStyle = grad;
       ctx.fill();
-      ctx.strokeStyle = '#f8fafc';
-      ctx.lineWidth = 0.8;
+      ctx.strokeStyle = isIgnited ? cfg.strokeHot : '#f8fafc';
+      ctx.lineWidth = 0.85;
       ctx.stroke();
     } else {
-      // Dry cut Sodium block sitting on vessel bottom (burns vivid 589nm yellow on dry ignition!)
-      const nx = left + width * 0.5;
-      const flatNa = Boolean(vessel.flattenedMetalMap?.Na_s);
-      const tarnish = vessel.naTarnishFrac || 0;
-      const isDryBurn = (vessel.naDryBurnTimer || 0) > 0.02;
-      const rectW = flatNa ? radius * 2.75 : radius * 2;
-      const rectH = flatNa ? radius * 0.72 : radius * 1.5;
-      const ny = bottom - rectH * 0.5 - 1;
+      const mx = left + width * cfg.dryAnchorX;
+      const flatMet = Boolean(vessel.flattenedMetalMap?.[cfg.speciesId]);
+      const tarnish = vessel[cfg.tarnishKey] || 0;
+      const isDryBurn = (vessel[cfg.dryBurnKey] || 0) > 0.02;
+      const rectW = flatMet ? radius * 2.75 : radius * 2;
+      const rectH = flatMet ? radius * 0.72 : radius * 1.5;
+      const my = bottom - rectH * 0.5 - 1;
       if (isDryBurn) {
-        const yGlow = ctx.createRadialGradient(nx, ny, radius * 0.4, nx, ny, radius * 3.6);
-        yGlow.addColorStop(0, 'rgba(254, 249, 195, 0.98)');
-        yGlow.addColorStop(0.45, 'rgba(250, 204, 21, 0.85)');
-        yGlow.addColorStop(1, 'rgba(249, 115, 22, 0)');
-        ctx.fillStyle = yGlow;
+        const dryGlow = ctx.createRadialGradient(mx, my, radius * 0.4, mx, my, radius * 3.6);
+        dryGlow.addColorStop(0, cfg.dryCore);
+        dryGlow.addColorStop(0.45, cfg.dryMid);
+        dryGlow.addColorStop(1, cfg.haloEdge);
+        ctx.fillStyle = dryGlow;
         ctx.beginPath();
-        ctx.arc(nx, ny, radius * 3.6, 0, Math.PI * 2);
+        ctx.arc(mx, my, radius * 3.6, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.fillStyle = isDryBurn ? '#fde047' : tarnish > 0.55 ? '#94a3b8' : tarnish > 0.2 ? '#b6c2cf' : '#e2e8f0';
-      ctx.strokeStyle = isDryBurn ? '#ea580c' : tarnish > 0.3 ? '#475569' : '#94a3b8';
+      ctx.fillStyle = isDryBurn ? cfg.dryFill : tarnish > 0.55 ? '#94a3b8' : tarnish > 0.2 ? '#b6c2cf' : '#e2e8f0';
+      ctx.strokeStyle = isDryBurn ? cfg.sphereHotEdge : tarnish > 0.3 ? '#475569' : '#94a3b8';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.roundRect(nx - rectW * 0.5, ny - rectH * 0.5, rectW, rectH, flatNa ? 3 : 1);
+      ctx.roundRect(mx - rectW * 0.5, my - rectH * 0.5, rectW, rectH, flatMet ? 3 : 1);
       ctx.fill();
       ctx.stroke();
       if (tarnish > 0.25) {
         ctx.fillStyle = `rgba(71, 85, 105, ${(0.35 * tarnish).toFixed(2)})`;
-        ctx.fillRect(nx - rectW * 0.44, ny - rectH * 0.44, rectW * 0.88, rectH * 0.32);
+        ctx.fillRect(mx - rectW * 0.44, my - rectH * 0.44, rectW * 0.88, rectH * 0.32);
       }
     }
     ctx.restore();
-  }
+  };
 
-  // 4. Potassium (K) floating reactive silver-lilac droplet + characteristic 766 nm violet flame halo on water
-  const nK = moles.K_s || 0;
-  if (nK > 1e-7) {
-    const massK = nK * SPECIES.K_s.molarMass;
-    const radius = Math.min(12, Math.max(3.8, 3.2 + Math.cbrt(massK) * 5.2));
-    ctx.save();
-    if (hasWater && surfaceY < bottom - 4) {
-      const kx = left + width * 0.5 + Math.sin((vessel.tempK || 298) * 1.7) * Math.max(6, width * 0.22);
-      const ky = surfaceY + 1;
-      const haloGrad = ctx.createRadialGradient(kx, ky, radius * 0.3, kx, ky, radius * 3.4);
-      haloGrad.addColorStop(0, 'rgba(255, 255, 255, 0.94)');
-      haloGrad.addColorStop(0.45, 'rgba(192, 132, 252, 0.85)');
-      haloGrad.addColorStop(1, 'rgba(168, 85, 247, 0)');
-      ctx.fillStyle = haloGrad;
-      ctx.beginPath();
-      ctx.arc(kx, ky, radius * 3.4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#f1f5f9';
-      ctx.strokeStyle = '#9333ea';
-      ctx.lineWidth = 1.1;
-      ctx.beginPath();
-      ctx.arc(kx, ky, radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    } else {
-      const kx = left + width * 0.55;
-      const ky = bottom - radius * 0.65;
-      ctx.fillStyle = '#e2e8f0';
-      ctx.strokeStyle = '#64748b';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.roundRect(kx - radius * 0.8, ky - radius * 0.65, radius * 1.6, radius * 1.3, 2);
-      ctx.fill();
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
+  drawAlkaliMetalVisual({
+    speciesId: 'Na_s',
+    wakeKey: 'naWakeTrail',
+    posKey: 'naPosRatio',
+    tempKey: 'naTempK',
+    ignitedKey: 'naIgnited',
+    tarnishKey: 'naTarnishFrac',
+    dryBurnKey: 'naDryBurnTimer',
+    floatOffsetY: 1,
+    dryAnchorX: 0.5,
+    haloMinK: 520,
+    haloBaseK: 500,
+    haloCore: 'rgba(253, 224, 71, 0.92)',
+    haloMid: 'rgba(249, 115, 22, 0.55)',
+    haloWarm: (f) => `rgba(251, 146, 60, ${(0.45 * f).toFixed(2)})`,
+    haloWarmMid: (f) => `rgba(249, 115, 22, ${(0.22 * f).toFixed(2)})`,
+    haloEdge: 'rgba(249, 115, 22, 0)',
+    sphereHotMid: '#fde68a',
+    sphereHotEdge: '#ea580c',
+    strokeHot: '#fef08a',
+    dryCore: 'rgba(254, 249, 195, 0.98)',
+    dryMid: 'rgba(250, 204, 21, 0.85)',
+    dryFill: '#fde047',
+  });
+
+  drawAlkaliMetalVisual({
+    speciesId: 'K_s',
+    wakeKey: 'kWakeTrail',
+    posKey: 'kPosRatio',
+    tempKey: 'kTempK',
+    ignitedKey: 'kIgnited',
+    tarnishKey: 'kTarnishFrac',
+    dryBurnKey: 'kDryBurnTimer',
+    floatOffsetY: 0, // Lower density (0.862 g/cm3) rides distinctly higher on the water meniscus than Na (0.968)
+    dryAnchorX: 0.56,
+    haloMinK: 390,
+    haloBaseK: 370,
+    haloCore: 'rgba(255, 255, 255, 0.96)',
+    haloMid: 'rgba(192, 132, 252, 0.82)',
+    haloWarm: (f) => `rgba(192, 132, 252, ${(0.55 * f).toFixed(2)})`,
+    haloWarmMid: (f) => `rgba(155, 89, 182, ${(0.35 * f).toFixed(2)})`,
+    haloEdge: 'rgba(155, 89, 182, 0)',
+    sphereHotMid: '#e9d5ff',
+    sphereHotEdge: '#9b59b6',
+    strokeHot: '#c084fc',
+    dryCore: 'rgba(250, 245, 255, 0.98)',
+    dryMid: 'rgba(192, 132, 252, 0.88)',
+    dryFill: '#d8b4fe',
+  });
 }

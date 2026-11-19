@@ -36,6 +36,19 @@ export function getNaIgnitionTempK(vessel, env = null) {
 }
 
 /**
+ * Physical Potassium auto-ignition threshold (K): lower melting point (63.5 C) and faster oxidation than Na.
+ */
+export function getKIgnitionTempK(vessel, env = null) {
+  const pCnt = vessel?.particleCounts?.K_s ?? 1;
+  if (vessel?.groundPowderMap?.K_s || pCnt >= 120) return 290.15;
+  const massG = (vessel?.moles?.K_s || 0) * SPECIES.K_s.molarMass;
+  if (pCnt <= 1 && massG >= 2.0 && (vessel?.kTarnishFrac || 0) > 0.25) {
+    return 433.15; // 160 C crusted bulk Potassium
+  }
+  return env?.atmosphereMode === 'inert' ? 520.0 : 345.0; // ~72 C in humid bench air
+}
+
+/**
  * Physical Zinc auto-ignition threshold (K) depending on particle dispersion & O2 environment:
  * - Pure / enriched O2 gas chamber: ~342 C (615 K)
  * - Fine Zinc powder in standard Air (1 atm): ~460-500 C (753 K)
@@ -308,13 +321,14 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
   }
 
   if (rxn.type === 'heterogeneous_ice') {
-    const nNa = moles.Na_s || 0;
+    const solidId = rxn.solidId || 'Na_s';
+    const nMet = moles[solidId] || 0;
     const nIce = moles.H2O_s || 0;
-    if (nNa <= 1e-12 || nIce <= 1e-6) return 0;
-    const tNa = vessel.naTempK ?? T;
-    const pCount = vessel.particleCounts?.Na_s ?? 1;
-    const area = computeSolidSurfaceAreaM2('Na_s', nNa, pCount);
-    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, tNa);
+    if (nMet <= 1e-12 || nIce <= 1e-6) return 0;
+    const tMet = solidId === 'K_s' ? (vessel.kTempK ?? T) : (vessel.naTempK ?? T);
+    const pCount = vessel.particleCounts?.[solidId] ?? 1;
+    const area = computeSolidSurfaceAreaM2(solidId, nMet, pCount);
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, tMet);
     return k * area;
   }
 
@@ -439,12 +453,18 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     const nW = moles.H2O_l || 0;
     const nE = moles.C2H5OH_l || 0;
     const xEtOH = nE / Math.max(1e-9, nW + nE);
-    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, vessel.naTempK ?? T);
+    const tAlc = solidId === 'K_s' ? (vessel.kTempK ?? T) : (vessel.naTempK ?? T);
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ, tAlc);
     return k * area * (0.6 + 2.6 * xEtOH);
   }
 
   if (rxn.type === 'alkali_water') {
     if (!hasWater || iceMob <= 0) return 0;
+    const strat = options.strat;
+    if (strat && strat.lightOrganicMl > 0.2 && strat.aqueousMl <= 0.05) {
+      // Mineral oil / nonpolar solvent shields alkali metal from ambient trace moisture
+      return 0;
+    }
     const solidId = rxn.solidId || 'K_s';
     const nMet = moles[solidId] || 0;
     if (nMet <= 1e-10) return 0;
@@ -452,7 +472,14 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     if (rxn.id === 'k_water' && hasNitrateOxidizingEnv(moles, liquidVolL) && (moles.H_aq || 0) > 1e-3) return 0;
     const area = computeSolidSurfaceAreaM2(solidId, nMet, vessel.particleCounts?.[solidId] ?? 1);
     const waterScale = Math.min(1.0, (moles.H2O_l || 0) / 0.08);
-    const k = rxn.k298 * arrheniusFactor(rxn.eaJ || 12000, vessel.kTempK ?? T);
+    const tK = vessel.kTempK ?? T;
+    const spec = APPARATUS[vessel.typeId];
+    const totMl = liquidVolL * 1000 + computeSolidVolumeMl(moles);
+    const areaSurfCm2 = spec?.geometry ? Math.max(0.5, spec.geometry.getLiquidState(totMl).surfaceAreaCm2) : spec?.surfaceAreaCm2 || 25.0;
+    const isMoltenK = tK >= (SPECIES.K_s.meltTempK || 336.65);
+    const gammaCoulombK = isMoltenK ? (areaSurfCm2 < 15.0 ? 3.4 : 1.45) : 1.0;
+    const oilCoverDamp = strat?.hasLightCover ? 0.24 : 1.0;
+    const k = rxn.k298 * arrheniusFactor(rxn.eaJ || 9500, tK) * gammaCoulombK * oilCoverDamp;
     const acidBoost = rxn.id === 'k_acid' ? Math.min(6.0, 1.0 + (moles.H_aq || 0) / liquidVolL) : 1.0;
     return k * Math.max(1e-5, area) * waterScale * acidBoost * iceMob * 14.0;
   }
@@ -462,7 +489,7 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     const nMg = moles.Mg_s || 0;
     if (nMg <= 1e-10 || (moles.H_aq || 0) > 0.01) return 0;
     const area = computeSolidSurfaceAreaM2('Mg_s', nMg, vessel.particleCounts?.Mg_s ?? 6);
-    const hotBoost = T >= 343.15 ? 4.5 : 0.25;
+    const hotBoost = T >= 333.15 ? 5.2 : 0.08;
     return rxn.k298 * arrheniusFactor(rxn.eaJ || 42000, T) * Math.max(1e-5, area) * hotBoost * stirBoost * iceMob * 8.0;
   }
 
@@ -509,11 +536,12 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
   if (rxn.type === 'potassium_combustion_gas') {
     const nK = moles.K_s || 0;
     if (nK <= 1e-10) return 0;
-    const pO2 = getVesselEffectiveO2Bar(vessel, env);
+    const pO2 = getVesselEffectiveO2Bar(vessel, options.environment);
     if (pO2 <= 0.02) return 0;
     if ((moles.H2O_l || 0) > 0.01 && (vessel.tempK || 298) < 350) return 0;
     const tEff = Math.max(vessel.kTempK || 0, T);
-    if (tEff < 336.0 && (vessel.headspaceGasMoles?.O2_g || 0) <= 1e-4) return 0;
+    const ignK = getKIgnitionTempK(vessel, options.environment);
+    if (tEff < ignK && (vessel.headspaceGasMoles?.O2_g || 0) <= 1e-4) return 0;
     const area = computeSolidSurfaceAreaM2('K_s', nK, vessel.particleCounts?.K_s ?? 1);
     const o2Drive = Math.min(4.5, pO2 / CONSTANTS.AIR_O2_FRAC);
     const k = 1.9 * arrheniusFactor(rxn.eaJ || 18000, tEff);
@@ -2765,9 +2793,139 @@ function stepMetalSulfuricSolver(vessel, liquidVolL, dt, activeReactions, gasPro
 }
 
 /**
+ * Shared two-temperature coupled alkali metal (Na / K) droplet thermal balance, local ice melting,
+ * Marangoni H2-jetting wake trail & H2 auto-ignition / hazard check.
+ */
+function updateAlkaliDropletBalance(vessel, spec, solidVolMl, strat, liquidVolL, dt, cfg, heatGenJ, h2ProducedMol) {
+  const nLeft = vessel.moles[cfg.speciesId] || 0;
+  const hasIce = (vessel.moles.H2O_s || 0) > 1e-6;
+  if (nLeft <= 1e-10 || (liquidVolL <= 1e-6 && !hasIce)) {
+    vessel[cfg.tempKey] = null;
+    vessel[cfg.pinnedKey] = false;
+    vessel[cfg.ignitedKey] = false;
+    vessel[cfg.localH2Key] = 0;
+    if (Array.isArray(vessel[cfg.wakeKey]) && vessel[cfg.wakeKey].length > 0) {
+      for (const wp of vessel[cfg.wakeKey]) wp.age += dt;
+      vessel[cfg.wakeKey] = vessel[cfg.wakeKey].filter((wp) => wp.age < wp.maxLife);
+    }
+    return { event: null, reactionHeatDeltaJ: heatGenJ };
+  }
+
+  const tPrev = vessel[cfg.tempKey] ?? vessel.tempK;
+  const pCount = vessel.particleCounts?.[cfg.speciesId] ?? 1;
+  const areaCm2 = Math.max(0.04, computeSolidSurfaceAreaM2(cfg.speciesId, nLeft, pCount) * 1e4);
+  const totMl = strat.totalLiqMl + solidVolMl;
+  const areaSurfCm2 = spec?.geometry
+    ? Math.max(0.5, spec.geometry.getLiquidState(totMl).surfaceAreaCm2)
+    : spec?.surfaceAreaCm2 || 25.0;
+
+  const effLiqL = Math.max(1e-5, liquidVolL);
+  const cAlkOH = (vessel.moles.OH_aq || 0) / effLiqL;
+  const cH = (vessel.moles.H_aq || 0) / effLiqL;
+  const cAg = (vessel.moles.Ag_aq || 0) / effLiqL;
+  const nW = vessel.moles.H2O_l || 0;
+  const nE = vessel.moles.C2H5OH_l || 0;
+  const xEtOH = nE / Math.max(1e-9, nW + nE);
+  const massG = nLeft * SPECIES[cfg.speciesId].molarMass;
+  const isDirectHazard = liquidVolL > 1e-5 && (cH >= 6.0 || cAg >= 1.5 || (vessel.moles.H2SO4_l || 0) > 1e-4) && massG >= cfg.minHazardG;
+
+  const effFootprint = Math.min(Math.max(areaCm2, 0.08), 6.0);
+  const mobilityFactor = 0.28 + 0.72 * (1 - Math.exp(-0.14 * (areaSurfCm2 / effFootprint)));
+  const pinHeatLoss = areaSurfCm2 < 15.0 ? 0.42 : 1.0;
+  const viscosityDamping = 1 / (1 + 0.55 * cAlkOH + 0.35 * cAlkOH * cAlkOH);
+  const hLiquid = 11.5 * mobilityFactor * pinHeatLoss * viscosityDamping;
+  const iceWetBlend = hasIce ? Math.min(1, nW / 0.04) : 1.0;
+  const hEff = 0.08 * (1 - iceWetBlend) + hLiquid * iceWetBlend;
+  const condWK = Math.max(1e-4, hEff * areaCm2);
+
+  const mSafeG = Math.max(1e-4, massG);
+  const cMet = Math.max(1e-4, mSafeG * (tPrev >= cfg.meltTempK ? cfg.cpMolten : cfg.cpSolid));
+  const qGenW = heatGenJ / Math.max(1e-6, dt);
+  const tEq = Math.min(cfg.tEqCap, vessel.tempK + qGenW / condWK);
+  const alpha = condWK / cMet;
+  let newT = Math.max(200, Math.min(cfg.tEqCap, tEq + (tPrev - tEq) * Math.exp(-alpha * dt)));
+  if (xEtOH > 0.35) {
+    newT = Math.min(newT, 360.0);
+  }
+
+  let localMeltHeatUsedJ = 0;
+  if (hasIce && newT > CONSTANTS.T_FREEZE_WATER_K && heatGenJ > 0) {
+    const maxMeltFilm = Math.min(vessel.moles.H2O_s || 0, Math.max(0.015, nLeft * 6.0));
+    if (nW < maxMeltFilm) {
+      const availMeltJ = heatGenJ * 0.55;
+      const dMelt = Math.min(vessel.moles.H2O_s || 0, maxMeltFilm - nW, availMeltJ / CONSTANTS.DELTA_H_FUS_WATER_J);
+      if (dMelt > 1e-10) {
+        vessel.moles.H2O_s -= dMelt;
+        if (vessel.moles.H2O_s < 1e-12) delete vessel.moles.H2O_s;
+        vessel.moles.H2O_l = nW + dMelt;
+        localMeltHeatUsedJ = dMelt * CONSTANTS.DELTA_H_FUS_WATER_J;
+      }
+    }
+  }
+
+  const reactionHeatDeltaJ = Math.max(0, heatGenJ - localMeltHeatUsedJ - cMet * (newT - tPrev));
+
+  const kEsc = 0.08;
+  const escRate = kEsc * areaSurfCm2;
+  const dec = Math.exp(-escRate * dt);
+  const localIn = escRate * dt > 1e-6 ? h2ProducedMol * ((1 - dec) / (escRate * dt)) : h2ProducedMol;
+  const newLocalH2 = Math.max(0, (vessel[cfg.localH2Key] || 0) * dec + localIn);
+
+  vessel[cfg.tempKey] = newT;
+  vessel[cfg.pinnedKey] = areaSurfCm2 < 15.0 && xEtOH <= 0.35;
+  vessel[cfg.ignitedKey] = (newT >= cfg.igniteTempK || (cfg.instantIgniteOnH2 && h2ProducedMol > 1e-9 && nW > 1e-4)) && xEtOH <= 0.35;
+  vessel[cfg.localH2Key] = newLocalH2;
+
+  vessel[cfg.wakeKey] = vessel[cfg.wakeKey] || [];
+  for (const wp of vessel[cfg.wakeKey]) wp.age += dt;
+  vessel[cfg.wakeKey] = vessel[cfg.wakeKey].filter((wp) => wp.age < wp.maxLife);
+  if (liquidVolL > 1e-6 && newT >= cfg.skateMinK) {
+    const spanScale = (vessel[cfg.pinnedKey] ? 0.38 : Math.min(2.8, Math.max(0.85, Math.sqrt(areaSurfCm2 / 25.0)))) * cfg.motionMult;
+    if (typeof vessel[cfg.velKey] !== 'number' || Math.abs(vessel[cfg.velKey]) < 0.25) {
+      vessel[cfg.velKey] = (Math.random() < 0.5 ? -1 : 1) * (1.2 + Math.random() * 0.9);
+    }
+    if (Math.random() < 4.5 * dt) {
+      vessel[cfg.velKey] = (Math.random() < 0.5 ? -1 : 1) * (1.1 + Math.random() * 1.9);
+    }
+    let nextPos = (vessel[cfg.posKey] ?? 0.5) + vessel[cfg.velKey] * spanScale * dt;
+    if (nextPos < 0.09) {
+      nextPos = 0.09 + (0.09 - nextPos) * 0.5;
+      vessel[cfg.velKey] = Math.abs(vessel[cfg.velKey]);
+    } else if (nextPos > 0.91) {
+      nextPos = 0.91 - (nextPos - 0.91) * 0.5;
+      vessel[cfg.velKey] = -Math.abs(vessel[cfg.velKey]);
+    }
+    vessel[cfg.posKey] = nextPos;
+    vessel[cfg.accumKey] = (vessel[cfg.accumKey] || 0) + dt;
+    const prevWake = vessel[cfg.wakeKey][vessel[cfg.wakeKey].length - 1];
+    if (vessel[cfg.accumKey] >= 0.035 || !prevWake || Math.abs(nextPos - prevWake.pos) >= 0.015) {
+      vessel[cfg.accumKey] = 0;
+      vessel[cfg.wakeKey].push({ pos: nextPos, age: 0, maxLife: 1.8 });
+      if (vessel[cfg.wakeKey].length > 26) vessel[cfg.wakeKey].shift();
+    }
+  }
+
+  let event = null;
+  if (vessel[cfg.ignitedKey] || isDirectHazard) {
+    const confinement = Math.max(1.0, 22.0 / Math.max(areaSurfCm2, 1.0));
+    const blastEnergyJ = newLocalH2 * 241800 * Math.min(confinement, 5.0);
+    const blastLimitJ = isDirectHazard ? cfg.blastHazardJ : cfg.blastBaseJ;
+    if (blastEnergyJ > blastLimitJ || (isDirectHazard && newT >= 450.0)) {
+      event = 'explosion';
+      if (isDirectHazard) vessel[cfg.hazardKey] = true;
+    } else {
+      event = 'ignition_flame';
+    }
+  } else if (h2ProducedMol > 0) {
+    event = 'fizzing';
+  }
+  return { event, reactionHeatDeltaJ };
+}
+
+/**
  * Advance all chemical reactions inside one vessel by dt seconds.
  * Guarantees non-negative moles and exact stoichiometry.
- * Returns { reactionHeatJ, gasProduced, activeReactions, naEvent }
+ * Returns { reactionHeatJ, gasProduced, activeReactions, naEvent, kEvent }
  */
 export function stepVesselChemistry(vessel, dt, options = {}) {
   const spec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
@@ -2850,6 +3008,8 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   let reactionHeatJ = 0;
   let naHeatGenJ = 0;
   let naH2ProducedMol = 0;
+  let kHeatGenJ = 0;
+  let kH2ProducedMol = 0;
   const gasProduced = createZeroGasMap();
   const activeReactions = [];
 
@@ -2908,10 +3068,16 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     } else if (item.rxn.id === 'zn_o2_burn' && dXi > 1e-10) {
       vessel.znCombustionTimer = 1.0;
       vessel.znFlameColor = 'cyan_blue';
+    } else if ((item.rxn.id === 'mg_o2_burn' || item.rxn.id === 'mg_co2_burn' || item.rxn.id === 'mg_n2_burn' || item.rxn.id === 'mg_cl2_burn') && dXi > 1e-10) {
+      vessel.mgCombustionTimer = 1.25;
+    } else if ((item.rxn.id === 'al_o2_burn' || item.rxn.id === 'al_cl2_burn' || item.rxn.id === 'al_fe2o3_thermite') && dXi > 1e-10) {
+      vessel.alCombustionTimer = 1.2;
     } else if ((item.rxn.id === 'fe_o2_burn' || item.rxn.id === 'fe_powder_air_ignite') && dXi > 1e-10) {
       vessel.feSparkBurning = 1.0;
     } else if (item.rxn.id === 'na_o2_burn' && dXi > 1e-10) {
       vessel.naDryBurnTimer = 1.0;
+    } else if ((item.rxn.id === 'k_o2_burn' || item.rxn.id === 'k_cl2_burn') && dXi > 1e-10) {
+      vessel.kDryBurnTimer = 1.0;
     } else if (item.rxn.id === 'calcine_caco3' && dXi > 1e-10) {
       if (!vessel.particleCounts) vessel.particleCounts = {};
       vessel.particleCounts.CaO_s = Math.max(vessel.particleCounts.CaO_s || 0, 180);
@@ -2948,6 +3114,13 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
       naHeatGenJ += rxnHeat * 0.45;
       reactionHeatJ += rxnHeat * 0.55;
       naH2ProducedMol += (item.rxn.products.H2_g || 0) * dXi * 0.25;
+    } else if (item.rxn.id === 'k_water' || item.rxn.id === 'k_acid' || item.rxn.id === 'k_ice') {
+      kHeatGenJ += rxnHeat;
+      kH2ProducedMol += (item.rxn.products.H2_g || 0) * dXi;
+    } else if (item.rxn.id === 'k_ethanol') {
+      kHeatGenJ += rxnHeat * 0.52;
+      reactionHeatJ += rxnHeat * 0.48;
+      kH2ProducedMol += (item.rxn.products.H2_g || 0) * dXi * 0.35;
     } else {
       reactionHeatJ += rxnHeat;
     }
@@ -2965,137 +3138,78 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     });
   }
 
-  // 3b. Two-temperature coupled Sodium droplet thermal balance, local ice melting & Coulomb/H2 blast trigger
-  let naEvent = null;
-  const nNaLeft = vessel.moles.Na_s || 0;
-  const hasIceForNa = (vessel.moles.H2O_s || 0) > 1e-6;
-  if (nNaLeft > 1e-10 && (liquidVolL > 1e-6 || hasIceForNa)) {
-    const tNaPrev = vessel.naTempK ?? vessel.tempK;
-    const pCount = vessel.particleCounts?.Na_s ?? 1;
-    const aNaCm2 = Math.max(0.04, computeSolidSurfaceAreaM2('Na_s', nNaLeft, pCount) * 1e4);
-    const totMl = strat.totalLiqMl + solidVolMl;
-    const areaSurfCm2 = spec?.geometry
-      ? Math.max(0.5, spec.geometry.getLiquidState(totMl).surfaceAreaCm2)
-      : spec?.surfaceAreaCm2 || 25.0;
+  // 3b. Two-temperature coupled Sodium & Potassium droplet thermal balances, local ice melting & H2 ignition triggers
+  const naBal = updateAlkaliDropletBalance(
+    vessel,
+    spec,
+    solidVolMl,
+    strat,
+    liquidVolL,
+    dt,
+    {
+      speciesId: 'Na_s',
+      tempKey: 'naTempK',
+      pinnedKey: 'naPinned',
+      ignitedKey: 'naIgnited',
+      localH2Key: 'localH2Mol',
+      wakeKey: 'naWakeTrail',
+      velKey: 'naVelX',
+      posKey: 'naPosRatio',
+      accumKey: '_naWakeAccum',
+      hazardKey: 'naHazardFlag',
+      meltTempK: 370.95,
+      igniteTempK: 680.0,
+      instantIgniteOnH2: false,
+      cpSolid: 1.23,
+      cpMolten: 1.38,
+      tEqCap: 1350,
+      skateMinK: 340.0,
+      motionMult: 1.0,
+      minHazardG: 0.08,
+      blastBaseJ: 1150.0,
+      blastHazardJ: 220.0,
+    },
+    naHeatGenJ,
+    naH2ProducedMol
+  );
+  reactionHeatJ += naBal.reactionHeatDeltaJ;
+  const naEvent = naBal.event;
 
-    const effLiqL = Math.max(1e-5, liquidVolL);
-    const cNaOH = (vessel.moles.OH_aq || 0) / effLiqL;
-    const cH = (vessel.moles.H_aq || 0) / effLiqL;
-    const cAg = (vessel.moles.Ag_aq || 0) / effLiqL;
-    const nW = vessel.moles.H2O_l || 0;
-    const nE = vessel.moles.C2H5OH_l || 0;
-    const xEtOH = nE / Math.max(1e-9, nW + nE);
-    const isDirectHazard = liquidVolL > 1e-5 && (cH >= 6.0 || cAg >= 1.5 || (vessel.moles.H2SO4_l || 0) > 1e-4) && nNaLeft * SPECIES.Na_s.molarMass >= 0.08;
-
-    const effNaFootprint = Math.min(Math.max(aNaCm2, 0.08), 6.0);
-    const mobilityFactor = 0.28 + 0.72 * (1 - Math.exp(-0.14 * (areaSurfCm2 / effNaFootprint)));
-    const pinHeatLoss = areaSurfCm2 < 15.0 ? 0.42 : 1.0;
-    const viscosityDamping = 1 / (1 + 0.55 * cNaOH + 0.35 * cNaOH * cNaOH);
-    const hLiquid = 11.5 * mobilityFactor * pinHeatLoss * viscosityDamping;
-    // Blend from slow solid-ice contact conductance (~0.08) to full liquid convective coupling as local film melts
-    const iceWetBlend = hasIceForNa ? Math.min(1, nW / 0.04) : 1.0;
-    const hEff = 0.08 * (1 - iceWetBlend) + hLiquid * iceWetBlend; // W / (cm^2 * K)
-    const condWK = Math.max(1e-4, hEff * aNaCm2);
-
-    const mNaG = Math.max(1e-4, nNaLeft * SPECIES.Na_s.molarMass);
-    const cNa = Math.max(1e-4, mNaG * (tNaPrev >= 370.95 ? 1.38 : 1.23));
-    const qGenW = naHeatGenJ / Math.max(1e-6, dt);
-    const tEq = Math.min(1350, vessel.tempK + qGenW / condWK);
-    const alpha = condWK / cNa;
-    let newTNa = Math.max(200, Math.min(1250, tEq + (tNaPrev - tEq) * Math.exp(-alpha * dt)));
-    if (xEtOH > 0.35) {
-      newTNa = Math.min(newTNa, 360.0);
-    }
-
-    // Local melting beneath hot Na droplet on ice: converts part of reaction heat into thin liquid water film
-    let localMeltHeatUsedJ = 0;
-    if (hasIceForNa && newTNa > CONSTANTS.T_FREEZE_WATER_K && naHeatGenJ > 0) {
-      const maxMeltFilm = Math.min(vessel.moles.H2O_s || 0, Math.max(0.015, nNaLeft * 6.0));
-      if (nW < maxMeltFilm) {
-        const availMeltJ = naHeatGenJ * 0.55;
-        const dMelt = Math.min(
-          vessel.moles.H2O_s || 0,
-          maxMeltFilm - nW,
-          availMeltJ / CONSTANTS.DELTA_H_FUS_WATER_J
-        );
-        if (dMelt > 1e-10) {
-          vessel.moles.H2O_s -= dMelt;
-          if (vessel.moles.H2O_s < 1e-12) delete vessel.moles.H2O_s;
-          vessel.moles.H2O_l = nW + dMelt;
-          localMeltHeatUsedJ = dMelt * CONSTANTS.DELTA_H_FUS_WATER_J;
-        }
-      }
-    }
-
-    const transferJ = Math.max(0, naHeatGenJ - localMeltHeatUsedJ - cNa * (newTNa - tNaPrev));
-    reactionHeatJ += transferJ;
-
-    const kEsc = 0.08;
-    const escRate = kEsc * areaSurfCm2;
-    const dec = Math.exp(-escRate * dt);
-    const localIn = escRate * dt > 1e-6 ? naH2ProducedMol * ((1 - dec) / (escRate * dt)) : naH2ProducedMol;
-    const newLocalH2 = Math.max(0, (vessel.localH2Mol || 0) * dec + localIn);
-
-    vessel.naTempK = newTNa;
-    vessel.naPinned = areaSurfCm2 < 15.0 && xEtOH <= 0.35;
-    vessel.naIgnited = newTNa >= 680.0 && xEtOH <= 0.35;
-    vessel.localH2Mol = newLocalH2;
-
-    // Exp 18: Asymmetric H2 jetting + surface-tension Marangoni propulsion & Phenolphthalein wake trail
-    vessel.naWakeTrail = vessel.naWakeTrail || [];
-    for (const wp of vessel.naWakeTrail) wp.age += dt;
-    vessel.naWakeTrail = vessel.naWakeTrail.filter((wp) => wp.age < wp.maxLife);
-    if (liquidVolL > 1e-6 && newTNa >= 340.0) {
-      const spanScale = vessel.naPinned ? 0.38 : Math.min(2.8, Math.max(0.85, Math.sqrt(areaSurfCm2 / 25.0)));
-      if (typeof vessel.naVelX !== 'number' || Math.abs(vessel.naVelX) < 0.25) {
-        vessel.naVelX = (Math.random() < 0.5 ? -1 : 1) * (1.2 + Math.random() * 0.9);
-      }
-      if (Math.random() < 4.5 * dt) {
-        vessel.naVelX = (Math.random() < 0.5 ? -1 : 1) * (1.1 + Math.random() * 1.9);
-      }
-      let nextPos = (vessel.naPosRatio ?? 0.5) + vessel.naVelX * spanScale * dt;
-      if (nextPos < 0.09) {
-        nextPos = 0.09 + (0.09 - nextPos) * 0.5;
-        vessel.naVelX = Math.abs(vessel.naVelX);
-      } else if (nextPos > 0.91) {
-        nextPos = 0.91 - (nextPos - 0.91) * 0.5;
-        vessel.naVelX = -Math.abs(vessel.naVelX);
-      }
-      vessel.naPosRatio = nextPos;
-      vessel._naWakeAccum = (vessel._naWakeAccum || 0) + dt;
-      const prevWake = vessel.naWakeTrail[vessel.naWakeTrail.length - 1];
-      if (vessel._naWakeAccum >= 0.035 || !prevWake || Math.abs(nextPos - prevWake.pos) >= 0.015) {
-        vessel._naWakeAccum = 0;
-        vessel.naWakeTrail.push({ pos: nextPos, age: 0, maxLife: 1.8 });
-        if (vessel.naWakeTrail.length > 26) vessel.naWakeTrail.shift();
-      }
-    }
-
-    if (vessel.naIgnited || isDirectHazard) {
-      const confinement = Math.max(1.0, 22.0 / Math.max(areaSurfCm2, 1.0));
-      const blastEnergyJ = newLocalH2 * 241800 * Math.min(confinement, 5.0);
-      // Tiny Na droplets (e.g. 0.05 g) produce < ~765 J total combustion -> flame/sparks ONLY, never shatter Borosilicate!
-      const blastLimitJ = isDirectHazard ? 220.0 : 1150.0;
-      if (blastEnergyJ > blastLimitJ || (isDirectHazard && newTNa >= 450.0)) {
-        naEvent = 'explosion';
-        if (isDirectHazard) vessel.naHazardFlag = true;
-      } else {
-        naEvent = 'ignition_flame';
-      }
-    } else if (naH2ProducedMol > 0) {
-      naEvent = 'fizzing';
-    }
-  } else {
-    reactionHeatJ += naHeatGenJ;
-    vessel.naTempK = null;
-    vessel.naPinned = false;
-    vessel.naIgnited = false;
-    vessel.localH2Mol = 0;
-    if (Array.isArray(vessel.naWakeTrail) && vessel.naWakeTrail.length > 0) {
-      for (const wp of vessel.naWakeTrail) wp.age += dt;
-      vessel.naWakeTrail = vessel.naWakeTrail.filter((wp) => wp.age < wp.maxLife);
-    }
-  }
+  const kBal = updateAlkaliDropletBalance(
+    vessel,
+    spec,
+    solidVolMl,
+    strat,
+    liquidVolL,
+    dt,
+    {
+      speciesId: 'K_s',
+      tempKey: 'kTempK',
+      pinnedKey: 'kPinned',
+      ignitedKey: 'kIgnited',
+      localH2Key: 'localKH2Mol',
+      wakeKey: 'kWakeTrail',
+      velKey: 'kVelX',
+      posKey: 'kPosRatio',
+      accumKey: '_kWakeAccum',
+      hazardKey: 'kHazardFlag',
+      meltTempK: 336.65,
+      igniteTempK: 430.0,
+      instantIgniteOnH2: true,
+      cpSolid: 0.76,
+      cpMolten: 0.82,
+      tEqCap: 1420,
+      skateMinK: 290.0,
+      motionMult: 1.35,
+      minHazardG: 0.06,
+      blastBaseJ: 1550.0,
+      blastHazardJ: 180.0,
+    },
+    kHeatGenJ,
+    kH2ProducedMol
+  );
+  reactionHeatJ += kBal.reactionHeatDeltaJ;
+  const kEvent = kBal.event;
 
   // 4. Reversible [CuCl4]2-, amphoteric Cu(OH)2/Ag2O, chloro-silver/cuprous, ammine complexes, carbonate CO2 equilibria, Nernst extraction & chemisorption/garden equilibria
   if (computeIceMobilityFactor(vessel) > 0) {
@@ -3140,16 +3254,12 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   }
   vessel.pickeringFoamMl = foamMl < 0.05 ? 0 : foamMl;
 
-  // 7. Ambient atmosphere surface reactions: Na surface oxide tarnishing, Na dry burn glow, humid-air NaOH deliquescence & open CaO cooling carbonation
+  // 7. Ambient atmosphere surface reactions: Na & K surface oxide tarnishing, combustion flash timers, humid-air NaOH deliquescence & open CaO cooling carbonation
   const atmMode = options.environment?.atmosphereMode || 'air';
-  if ((vessel.znCombustionTimer || 0) > 0) {
-    vessel.znCombustionTimer = Math.max(0, vessel.znCombustionTimer - dt);
-  }
-  if ((vessel.feSparkBurning || 0) > 0) {
-    vessel.feSparkBurning = Math.max(0, vessel.feSparkBurning - dt);
-  }
-  if ((vessel.naDryBurnTimer || 0) > 0) {
-    vessel.naDryBurnTimer = Math.max(0, vessel.naDryBurnTimer - dt);
+  for (const timerKey of ['znCombustionTimer', 'mgCombustionTimer', 'alCombustionTimer', 'feSparkBurning', 'naDryBurnTimer', 'kDryBurnTimer']) {
+    if ((vessel[timerKey] || 0) > 0) {
+      vessel[timerKey] = Math.max(0, vessel[timerKey] - dt);
+    }
   }
   const hasCoolingCaO =
     (vessel.moles.CaO_s || 0) > 1e-6 &&
@@ -3171,6 +3281,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     vessel.calcinationStats.cooledProtected = true;
   }
   const hasDryNa = (vessel.moles.Na_s || 0) > 1e-7 && (vessel.moles.H2O_l || 0) < 1e-4;
+  const hasDryK = (vessel.moles.K_s || 0) > 1e-7 && (vessel.moles.H2O_l || 0) < 1e-4;
   const isOiled = strat.hasLightCover || (strat.lightOrganicMl || 0) > 0.05;
   if (atmMode === 'air' && !vessel.isStoppered && hasDryNa && !isOiled) {
     vessel.naTarnishFrac = Math.min(1.0, (vessel.naTarnishFrac || 0) + 0.14 * dt);
@@ -3181,6 +3292,16 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     }
   } else if (!hasDryNa || isOiled) {
     vessel.naTarnishFrac = 0;
+  }
+  if (atmMode === 'air' && !vessel.isStoppered && hasDryK && !isOiled) {
+    vessel.kTarnishFrac = Math.min(1.0, (vessel.kTarnishFrac || 0) + 0.22 * dt);
+    const dTarnK = Math.min((vessel.moles.K_s || 0) * 0.0014, 5.0e-7 * dt);
+    if (dTarnK > 1e-12) {
+      vessel.moles.K_s = Math.max(0, vessel.moles.K_s - 2 * dTarnK);
+      vessel.moles.K2O_s = (vessel.moles.K2O_s || 0) + dTarnK;
+    }
+  } else if (!hasDryK || isOiled) {
+    vessel.kTarnishFrac = 0;
   }
 
   const canDeliquesceNaOH =
@@ -3287,5 +3408,6 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     gasProduced,
     activeReactions,
     naEvent,
+    kEvent,
   };
 }

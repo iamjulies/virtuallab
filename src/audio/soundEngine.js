@@ -736,7 +736,7 @@ export class LabSoundEngine {
         if (liqL > 0.001 && (it.tempK || 298.15) >= tBoil - 0.5 && (it.moles?.H2O_l || 0) > 0.01) {
           anyBoiling = true;
         }
-        if ((it.moles?.Na_s || 0) > 1e-6 && (it.moles?.H2O_l || 0) > 1e-4 && !it.isFrozenSolid) {
+        if (((it.moles?.Na_s || 0) > 1e-6 || (it.moles?.K_s || 0) > 1e-6) && (it.moles?.H2O_l || 0) > 1e-4 && !it.isFrozenSolid) {
           anyNaFizz = true;
         }
         if ((it.magStirRpm || 0) > 0 && it.hasStirBar) {

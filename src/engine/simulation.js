@@ -351,11 +351,15 @@ export class LabSimulation {
         sealedAirO2Moles: null,
         airO2PurgeFrac: this.environment.atmosphereMode === 'air' ? 1.0 : 0.0,
         naTarnishFrac: 0,
+        kTarnishFrac: 0,
         naohAirExposeSec: 0,
         naohDeliquesceFrac: 0,
         znCombustionTimer: 0,
+        mgCombustionTimer: 0,
+        alCombustionTimer: 0,
         znFlameColor: null,
         naDryBurnTimer: 0,
+        kDryBurnTimer: 0,
         lidState: spec.hasLid ? 'open' : null,
         softenGlowFrac: 0,
         softenSagFrac: 0,
@@ -399,6 +403,7 @@ export class LabSimulation {
         horizontalSpillColor: null,
         recentHalogenGasTimer: 0,
         naHazardFlag: false,
+        kHazardFlag: false,
         overflowRateMlS: 0,
         overflowColor: null,
         wasOverflowing: false,
@@ -410,6 +415,13 @@ export class LabSimulation {
         naPinned: false,
         naIgnited: false,
         localH2Mol: 0,
+        kVisualPhase: Math.random() * 6.28,
+        kPosRatio: 0.5,
+        kVel: 1.18,
+        kTempK: null,
+        kPinned: false,
+        kIgnited: false,
+        localKH2Mol: 0,
         wasBoiling: false,
         lastGasOutTempK: null,
         lastGasOutFormula: '',
@@ -1467,7 +1479,7 @@ export class LabSimulation {
     for (const spId of ['Zn_s', 'Mg_s', 'Al_s', 'Na_s', 'K_s', 'Fe_s', 'Cu_s']) {
       const avail = v.moles?.[spId] || 0;
       if (avail > 1e-6) {
-        const take = Math.min(avail, spId === 'Na_s' ? 0.015 : 0.02);
+        const take = Math.min(avail, spId === 'Na_s' || spId === 'K_s' ? 0.015 : 0.02);
         v.moles[spId] = avail - take;
         if (v.moles[spId] < 1e-12) delete v.moles[spId];
         tongs.heldSample = { speciesId: spId, moles: take, tempK: v.tempK || this.environment.tempK };
@@ -1565,6 +1577,9 @@ export class LabSimulation {
       if (spId === 'Na_s' && (spoon.tempK || 298) > 370) {
         v.naTempK = Math.max(v.naTempK || v.tempK, spoon.tempK);
       }
+      if (spId === 'K_s' && (spoon.tempK || 298) > 335) {
+        v.kTempK = Math.max(v.kTempK || v.tempK, spoon.tempK);
+      }
     }
     if (cSpoon > 0) {
       const tMix = (cVessel * v.tempK + cSpoon * (spoon.tempK || this.environment.tempK)) / (cVessel + cSpoon);
@@ -1608,6 +1623,12 @@ export class LabSimulation {
     v.moles[spId] = (v.moles[spId] || 0) + sample.moles;
     v.particleCounts = v.particleCounts || {};
     v.particleCounts[spId] = Math.max(v.particleCounts[spId] || 0, 1);
+    if (spId === 'Na_s' && (sample.tempK || 298) > 370) {
+      v.naTempK = Math.max(v.naTempK || v.tempK, sample.tempK);
+    }
+    if (spId === 'K_s' && (sample.tempK || 298) > 335) {
+      v.kTempK = Math.max(v.kTempK || v.tempK, sample.tempK);
+    }
     tongs.heldSample = null;
     tongs.heldBurnTimer = 0;
     tongs.heldFlameColor = null;
@@ -2619,6 +2640,7 @@ export class LabSimulation {
     v.pickeringFoamMl = 0;
     v.pickeringOverflowActive = false;
     v.naWakeTrail = [];
+    v.kWakeTrail = [];
     v.phenBleachFrac = 0;
     v.phenIrrevFrac = 0;
     v.gardenActive = false;
@@ -2627,6 +2649,7 @@ export class LabSimulation {
     v.phenCottonLevel = 0;
     v.recentHalogenGasTimer = 0;
     v.naHazardFlag = false;
+    v.kHazardFlag = false;
     v.overflowRateMlS = 0;
     v.overflowColor = null;
     v.wasOverflowing = false;
@@ -2635,6 +2658,13 @@ export class LabSimulation {
     v.naPinned = false;
     v.naIgnited = false;
     v.localH2Mol = 0;
+    v.kTempK = null;
+    v.kPinned = false;
+    v.kIgnited = false;
+    v.localKH2Mol = 0;
+    v.mgCombustionTimer = 0;
+    v.alCombustionTimer = 0;
+    v.kDryBurnTimer = 0;
     v.wasBoiling = false;
     v.lastGasOutTempK = null;
     v.lastGasOutFormula = '';
@@ -3055,6 +3085,7 @@ export class LabSimulation {
     let movedPhen = 0;
     let cMoved = 0;
     let movedNaMol = 0;
+    let movedKMol = 0;
 
     for (const [spId, n] of Object.entries(src.moles)) {
       if (n <= 0) continue;
@@ -3082,6 +3113,7 @@ export class LabSimulation {
       const moveMol = n * moveRatio;
       if (spId === 'Phenolphthalein_aq') movedPhen = moveMol;
       if (spId === 'Na_s') movedNaMol = moveMol;
+      if (spId === 'K_s') movedKMol = moveMol;
       src.moles[spId] = n - moveMol;
       if (src.moles[spId] < 1e-13) delete src.moles[spId];
       dst.moles[spId] = (dst.moles[spId] || 0) + moveMol;
@@ -3100,6 +3132,9 @@ export class LabSimulation {
 
     if (movedNaMol > 0 && src.naTempK != null) {
       dst.naTempK = dst.naTempK != null ? (dst.naTempK + src.naTempK) * 0.5 : src.naTempK;
+    }
+    if (movedKMol > 0 && src.kTempK != null) {
+      dst.kTempK = dst.kTempK != null ? (dst.kTempK + src.kTempK) * 0.5 : src.kTempK;
     }
 
     if (movedPhen > 0) {
@@ -5471,6 +5506,7 @@ export class LabSimulation {
       let frameBoiling = false;
       let frameSteamOpacity = 0;
       let frameNaEvent = null;
+      let frameKEvent = null;
       const frameActiveMap = new Map();
 
       // Safety Check: Heating unpurged H2 + O2 mixture inside vessel over open flame triggers oxyhydrogen pop
@@ -5574,6 +5610,9 @@ export class LabSimulation {
         }
         if (chemRes.naEvent === 'explosion' || (chemRes.naEvent === 'ignition_flame' && frameNaEvent !== 'explosion') || (!frameNaEvent && chemRes.naEvent)) {
           frameNaEvent = chemRes.naEvent;
+        }
+        if (chemRes.kEvent === 'explosion' || (chemRes.kEvent === 'ignition_flame' && frameKEvent !== 'explosion') || (!frameKEvent && chemRes.kEvent)) {
+          frameKEvent = chemRes.kEvent;
         }
 
         for (const rxn of chemRes.activeReactions) {
@@ -5966,16 +6005,19 @@ export class LabSimulation {
         }
       }
 
-      // Two-temperature coupled Sodium Coulomb explosion / ignition shatter
-      if (!v.isShattered && frameNaEvent === 'explosion') {
+      // Two-temperature coupled Sodium / Potassium explosion / ignition shatter
+      if (!v.isShattered && (frameNaEvent === 'explosion' || frameKEvent === 'explosion')) {
+        const isKBlast = frameKEvent === 'explosion';
+        const hazardHit = isKBlast ? v.kHazardFlag : v.naHazardFlag;
         const maxStress = APPARATUS[v.typeId]?.maxThermalStressK || 550;
-        if (maxStress >= 1000 && !v.naHazardFlag) {
-          v.naTempK = Math.min(v.naTempK || 720, 740);
+        if (maxStress >= 1000 && !hazardHit) {
+          if (isKBlast) v.kTempK = Math.min(v.kTempK || 620, 650);
+          else v.naTempK = Math.min(v.naTempK || 720, 740);
           if (this.visualHooks.onAlert) {
             this.visualHooks.onAlert('o2_relight', { x: v.x, y: v.y - 12 }, { vesselId: v.id });
           }
         } else {
-          const alertKey = v.naHazardFlag ? 'alertNaHazardExplosion' : 'alertNaExplosion';
+          const alertKey = hazardHit ? 'alertNaHazardExplosion' : 'alertNaExplosion';
           this.shatterVessel(v, alertKey, 'explosion');
           continue;
         }
@@ -6012,31 +6054,38 @@ export class LabSimulation {
         }
       }
 
-      // Sodium motion on meniscus (wide surface skitters freely; narrow surface pins against glass wall; muted on bare ice)
+      // Alkali metal (Na / K) motion on meniscus (K skitters ~1.35x faster than Na!)
       const naActive =
         frameActiveMap.has('na_water') ||
         frameActiveMap.has('na_acid') ||
         frameActiveMap.has('na_ethanol') ||
         frameActiveMap.has('na_ice');
+      const kActive =
+        frameActiveMap.has('k_water') ||
+        frameActiveMap.has('k_acid') ||
+        frameActiveMap.has('k_ethanol') ||
+        frameActiveMap.has('k_ice');
       const isDehydrating = frameActiveMap.has('dehydrate_cuso4_5h2o') || frameActiveMap.has('dehydrate_bacl2_2h2o');
-      if (naActive && (v.moles.Na_s || 0) > 1e-7) {
-        const naMotionScale = (v.moles.H2O_l || 0) > 5e-4 ? 1.0 : 0.2;
-        if (v.naPinned) {
-          // Wall-pinned Sodium clings violently near glass wall edge
-          const pinTarget = v.naPosRatio >= 0.5 ? 0.88 : 0.12;
-          v.naPosRatio += (pinTarget - v.naPosRatio) * Math.min(1, realDeltaSec * 8 * naMotionScale);
+      const stepAlkaliSkitter = (active, spId, posKey, velKey, phaseKey, pinKey, mult) => {
+        if (!active || (v.moles[spId] || 0) <= 1e-7) return;
+        const motionScale = ((v.moles.H2O_l || 0) > 5e-4 ? 1.0 : 0.25) * mult;
+        if (v[pinKey]) {
+          const pinTarget = (v[posKey] ?? 0.5) >= 0.5 ? 0.88 : 0.12;
+          v[posKey] += (pinTarget - (v[posKey] ?? 0.5)) * Math.min(1, realDeltaSec * 8 * motionScale);
         } else {
-          v.naVisualPhase += realDeltaSec * 8.5 * naMotionScale;
-          v.naPosRatio += v.naVel * realDeltaSec * (0.8 + Math.sin(v.naVisualPhase) * 0.6) * naMotionScale;
-          if (v.naPosRatio > 0.84) {
-            v.naPosRatio = 0.84;
-            v.naVel = -Math.abs(v.naVel);
-          } else if (v.naPosRatio < 0.16) {
-            v.naPosRatio = 0.16;
-            v.naVel = Math.abs(v.naVel);
+          v[phaseKey] = (v[phaseKey] || 0) + realDeltaSec * 8.5 * motionScale;
+          v[posKey] = (v[posKey] ?? 0.5) + (v[velKey] || 0.9) * realDeltaSec * (0.8 + Math.sin(v[phaseKey]) * 0.6) * motionScale;
+          if (v[posKey] > 0.84) {
+            v[posKey] = 0.84;
+            v[velKey] = -Math.abs(v[velKey] || 0.9);
+          } else if (v[posKey] < 0.16) {
+            v[posKey] = 0.16;
+            v[velKey] = Math.abs(v[velKey] || 0.9);
           }
         }
-      }
+      };
+      stepAlkaliSkitter(naActive, 'Na_s', 'naPosRatio', 'naVel', 'naVisualPhase', 'naPinned', 1.0);
+      stepAlkaliSkitter(kActive, 'K_s', 'kPosRatio', 'kVel', 'kVisualPhase', 'kPinned', 1.35);
 
       // Compute evolving gas/steam telemetry & optically-accurate fog/condensation state
       const invDt = 1 / Math.max(1e-4, scaledDt);
@@ -6182,8 +6231,19 @@ export class LabSimulation {
           (frameActiveMap.get('na_acid')?.rateMolS || 0) +
           (frameActiveMap.get('na_ethanol')?.rateMolS || 0) +
           (frameActiveMap.get('na_ice')?.rateMolS || 0),
+        kActive,
+        kIgnited: !!v.kIgnited || (v.kDryBurnTimer || 0) > 0.05,
+        kTempK: v.kTempK,
+        kRate:
+          (frameActiveMap.get('k_water')?.rateMolS || 0) +
+          (frameActiveMap.get('k_acid')?.rateMolS || 0) +
+          (frameActiveMap.get('k_ethanol')?.rateMolS || 0) +
+          (frameActiveMap.get('k_ice')?.rateMolS || 0),
         znBurning: (v.znCombustionTimer || 0) > 0.05,
+        mgBurning: (v.mgCombustionTimer || 0) > 0.05,
+        alBurning: (v.alCombustionTimer || 0) > 0.05,
         naDryBurning: (v.naDryBurnTimer || 0) > 0.05,
+        kDryBurning: (v.kDryBurnTimer || 0) > 0.05,
       };
       v._lastVisualMetrics = visMetrics;
       if (this.visualHooks.onParticlesNeeded) {

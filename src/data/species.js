@@ -1918,7 +1918,7 @@ export const SPECIES = {
     decompTempK: 473.15,
     color: '#f1f5f9',
     highlightColor: '#ffffff',
-    visualType: 'white_powder',
+    visualType: 'gel_precipitate',
     renderLayer: 'precipitate',
     renderOrder: 144,
   },

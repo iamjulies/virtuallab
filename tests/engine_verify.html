@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.2';
+      const expectedBuild = 'virlab_beta_v4+build.3';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -7075,6 +7075,57 @@
         'Mg, Al & K metals: Mg reduces CO2->MgO+C, Al dissolves in NaOH & passivates in cold HNO3, K+H2O->KOH+H2 & lilac 766nm Flame Test',
         mgCo2Ok && alAlkaliOk && alPassOk && kWaterOk && kFlameOk,
         `mgCO2=${mgCo2Ok}(MgO=${(bMgCO2.moles.MgO_s||0).toFixed(4)},C=${(bMgCO2.moles.C_s||0).toFixed(4)},T=${bMgCO2.tempK.toFixed(1)},stop=${bMgCO2.isStoppered},shat=${bMgCO2.isShattered},co2=${(bMgCO2.headspaceGasMoles?.CO2_g||0).toFixed(4)},mg=${(bMgCO2.moles.Mg_s||0).toFixed(4)}), alOH=${alAlkaliOk}, alPass=${alPassOk}, kWater=${kWaterOk}, kFlame=${kFlameOk}`
+      );
+    }
+
+    // TEST 155: Prompt 37 (beta_v4+build.3) — K vs Na (auto-ignition & air tarnish), Mg vs Zn (faster acid, non-amphoteric, brightWhiteFlash), Al vs Fe (cold conc H2SO4/HNO3 passivation + Al(OH)3 white gel)
+    {
+      const simK = new LabSimulation();
+      // 1. K+H2O self-ignites H2 immediately & beats Na rate + dry air K tarnish
+      const bNaW = simK.createApparatus('beaker_250', 150, 427);
+      simK.addReagentToVessel(bNaW.id, 'h2o', 80.0, { silentAnim: true, silentEmit: true });
+      simK.addReagentToVessel(bNaW.id, 'na', 0.23, { silentAnim: true, silentEmit: true }); // 0.01 mol
+      const bKW2 = simK.createApparatus('beaker_250', 320, 427);
+      simK.addReagentToVessel(bKW2.id, 'h2o', 80.0, { silentAnim: true, silentEmit: true });
+      simK.addReagentToVessel(bKW2.id, 'k', 0.39, { silentAnim: true, silentEmit: true }); // 0.01 mol
+      const bKDry = simK.createApparatus('beaker_250', 490, 427);
+      simK.addReagentToVessel(bKDry.id, 'k', 0.39, { silentAnim: true, silentEmit: true });
+      stepSeconds(simK, 0.25, 0.05);
+      const kInstantIgniteOk = bKW2.kIgnited === true && (bKW2.kTempK || 0) > bKW2.tempK;
+      const kIgnInfo = `kLeft=${(bKW2.moles.K_s||0).toFixed(4)},kT=${(bKW2.kTempK||0).toFixed(1)},T=${bKW2.tempK.toFixed(1)},ign=${bKW2.kIgnited}`;
+      stepSeconds(simK, 1.5, 0.05);
+      const kFasterNaOk = (bKW2.moles.OH_aq || 0) > (bNaW.moles.OH_aq || 0) && (bKDry.kTarnishFrac || 0) > 0.25 && SPECIES.K_s.meltTempK < SPECIES.Na_s.meltTempK && SPECIES.K_s.density < 0.9;
+
+      // 2. Mg dissolves faster than Zn in dilute HCl, burns with mgCombustionTimer, and Mg(OH)2 does NOT dissolve in excess NaOH
+      const simMA = new LabSimulation();
+      const bZnA = simMA.createApparatus('beaker_250', 150, 427);
+      simMA.addReagentToVessel(bZnA.id, 'h2o', 20.0, { silentAnim: true, silentEmit: true });
+      simMA.addReagentToVessel(bZnA.id, 'hcl_37', 10.0, { silentAnim: true, silentEmit: true });
+      simMA.addReagentToVessel(bZnA.id, 'zn', 0.65, { silentAnim: true, silentEmit: true });
+      const bMgA = simMA.createApparatus('beaker_250', 320, 427);
+      simMA.addReagentToVessel(bMgA.id, 'h2o', 20.0, { silentAnim: true, silentEmit: true });
+      simMA.addReagentToVessel(bMgA.id, 'hcl_37', 10.0, { silentAnim: true, silentEmit: true });
+      simMA.addReagentToVessel(bMgA.id, 'mg', 0.243, { silentAnim: true, silentEmit: true });
+      const bMgBase = simMA.createApparatus('beaker_250', 490, 427);
+      bMgBase.moles = { H2O_l: 2.0, MgOH2_s: 0.02, Na_aq: 0.4, OH_aq: 0.4 };
+      const bMgBurn = simMA.createApparatus('crucible_porcelain', 650, 427);
+      bMgBurn.moles = { Mg_s: 0.02 };
+      bMgBurn.tempK = 950.0;
+      const bAlH2SO4 = simMA.createApparatus('beaker_250', 810, 427);
+      simMA.addReagentToVessel(bAlH2SO4.id, 'h2so4_98', 25.0, { silentAnim: true, silentEmit: true });
+      simMA.addReagentToVessel(bAlH2SO4.id, 'al', 0.54, { silentAnim: true, silentEmit: true });
+      const alStart = bAlH2SO4.moles.Al_s || 0;
+      stepSeconds(simMA, 1.5, 0.05);
+      const mgFasterZnOk = (bMgA.moles.Mg2_aq || 0) > (bZnA.moles.Zn2_aq || 0);
+      const mgNonAmphOk = Math.abs((bMgBase.moles.MgOH2_s || 0) - 0.02) < 1e-6;
+      const mgFlashOk = (bMgBurn.mgCombustionTimer || 0) > 0.1 && (bMgBurn.moles.MgO_s || 0) > 1e-3;
+      const alConcH2SO4PassOk = bAlH2SO4.alPassivated === true && Math.abs((bAlH2SO4.moles.Al_s || 0) - alStart) < 1e-5;
+      const alGelVisualOk = SPECIES.AlOH3_s.visualType === 'gel_precipitate' && SPECIES.Al_s.density === 2.70;
+
+      assert(
+        'Prompt 37 metal parity (K vs Na, Mg vs Zn, Al vs Fe): K instant H2 lilac ignite & air tarnish, Mg>Zn rate & non-amphoteric Mg(OH)2 & flash, Al cold H2SO4 98% passivation & gel Al(OH)3',
+        kInstantIgniteOk && kFasterNaOk && mgFasterZnOk && mgNonAmphOk && mgFlashOk && alConcH2SO4PassOk && alGelVisualOk,
+        `kIgn=${kInstantIgniteOk}(${kIgnInfo}), kFast=${kFasterNaOk}(K_OH=${(bKW2.moles.OH_aq||0).toFixed(4)},Na_OH=${(bNaW.moles.OH_aq||0).toFixed(4)},kTarn=${(bKDry.kTarnishFrac||0).toFixed(2)}), mgFast=${mgFasterZnOk}(Mg2=${(bMgA.moles.Mg2_aq||0).toFixed(4)},Zn2=${(bZnA.moles.Zn2_aq||0).toFixed(4)}), mgNoAmph=${mgNonAmphOk}, mgFlash=${mgFlashOk}(timer=${(bMgBurn.mgCombustionTimer||0).toFixed(2)}), alSulfatePass=${alConcH2SO4PassOk}, alGel=${alGelVisualOk}`
       );
     }
 

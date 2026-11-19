@@ -51,10 +51,10 @@ function classifyEntryFilter(entry) {
   if (spList.includes('H_aq') || spList.includes('H2CO3_aq') || spList.some((id) => /^HCl|^HNO3|^H2SO4/.test(id))) {
     return 'acid';
   }
-  if (spList.includes('OH_aq') || spList.includes('NH3_aq') || spList.includes('NaOH_s') || spList.includes('BaOH2_s') || spList.includes('CaOH2_s')) {
+  if (spList.includes('OH_aq') || spList.includes('NH3_aq') || spList.includes('NaOH_s') || spList.includes('KOH_s') || spList.includes('BaOH2_s') || spList.includes('CaOH2_s') || spList.includes('MgOH2_s') || spList.includes('AlOH3_s')) {
     return 'base';
   }
-  if (spList.some((id) => ['Na_s', 'Zn_s', 'Fe_s', 'Cu_s', 'Ag_s'].includes(id))) {
+  if (spList.some((id) => ['Na_s', 'K_s', 'Zn_s', 'Mg_s', 'Fe_s', 'Al_s', 'Cu_s', 'Ag_s'].includes(id))) {
     return 'metal';
   }
   if (hasGasMoles || spList.some((id) => id.endsWith('_g'))) {

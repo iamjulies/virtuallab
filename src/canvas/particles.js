@@ -258,10 +258,13 @@ export class ParticleSystem {
       const count = Math.floor(spawnRate * dt) + (Math.random() < (spawnRate * dt) % 1 ? 1 : 0);
       for (let i = 0; i < count; i++) {
         const fromNa = metrics.naActive && Math.random() < 0.7;
+        const fromK = !fromNa && metrics.kActive && Math.random() < 0.75;
         const px = fromNa
-          ? vessel.x + (vessel.naPosRatio - 0.5) * halfW * 1.7 + (Math.random() - 0.5) * 12
+          ? vessel.x + ((vessel.naPosRatio ?? 0.5) - 0.5) * halfW * 1.7 + (Math.random() - 0.5) * 12
+          : fromK
+          ? vessel.x + ((vessel.kPosRatio ?? 0.5) - 0.5) * halfW * 1.7 + (Math.random() - 0.5) * 12
           : vessel.x + (Math.random() - 0.5) * halfW * 1.4;
-        const py = fromNa
+        const py = fromNa || fromK
           ? surfaceY + 4 + Math.random() * 8
           : bottomY - 4 - Math.random() * Math.max(4, (bottomY - surfaceY) * 0.25);
 
@@ -556,6 +559,41 @@ export class ParticleSystem {
       }
     }
 
+    // 4a. Potassium (K) instantaneous lilac-purple 766 nm H2 ignition flame & purple sparks on water/acid/ice
+    if (metrics.kActive && (vessel.moles.K_s || 0) > 1e-7) {
+      const kX = vessel.x + ((vessel.kPosRatio ?? 0.5) - 0.5) * halfW * 1.55;
+      const isKIgnited = !!metrics.kIgnited || (metrics.kTempK ?? vessel.tempK) >= 400;
+      if (Math.random() < (isKIgnited ? 0.96 : 0.55)) {
+        const flameScale = isKIgnited ? 1.7 : 1.0;
+        this.particles.push({
+          kind: 'flame',
+          x: kX + (Math.random() - 0.5) * 7,
+          y: surfaceY - 3,
+          vx: (Math.random() - 0.5) * 24,
+          vy: -(28 + Math.random() * 36) * flameScale,
+          r: (4.5 + Math.random() * 5.2) * flameScale,
+          life: 0,
+          maxLife: 0.24 + Math.random() * 0.16,
+          color: Math.random() < 0.55 ? '#c084fc' : '#9b59b6',
+        });
+      }
+      if (Math.random() < (isKIgnited ? 0.85 : 0.45)) {
+        const angle = -Math.PI / 2 + (Math.random() - 0.5) * 2.0;
+        const spd = 68 + Math.random() * 98;
+        this.particles.push({
+          kind: 'spark',
+          x: kX,
+          y: surfaceY - 3,
+          vx: Math.cos(angle) * spd,
+          vy: Math.sin(angle) * spd,
+          r: 1.7 + Math.random() * 1.8,
+          life: 0,
+          maxLife: 0.34 + Math.random() * 0.24,
+          color: Math.random() < 0.5 ? '#e9d5ff' : '#c084fc',
+        });
+      }
+    }
+
     // 4c. Iron sparkling combustion: in pure O2 headspace (any Fe >= 610/760 K) OR fine Fe powder burning in open air (>= 760 °C / 1033 K)
     // Solid bulk Iron nail NEVER sparks in ordinary air!
     const feFineParticle = (vessel.moles.Fe_s || 0) > 1e-8 && (Boolean(vessel.groundPowderMap?.Fe_s) || (vessel.particleCounts?.Fe_s || 0) >= 18);
@@ -611,6 +649,78 @@ export class ParticleSystem {
           maxLife: 1.2 + Math.random() * 0.5,
           color: this.isDark ? 'rgba(254, 240, 138, 0.32)' : 'rgba(202, 138, 4, 0.25)',
         });
+      }
+    }
+
+    // 4b-K. Dry Potassium lilac 766 nm ignition flame & purple sparks
+    if (metrics.kDryBurning && !vessel.isStoppered) {
+      if (Math.random() < 0.9) {
+        this.particles.push({
+          kind: 'flame',
+          x: vessel.x + (Math.random() - 0.5) * 12,
+          y: bottomY - 5,
+          vx: (Math.random() - 0.5) * 20,
+          vy: -(30 + Math.random() * 34),
+          r: 5.2 + Math.random() * 5.0,
+          life: 0,
+          maxLife: 0.24 + Math.random() * 0.14,
+          color: Math.random() < 0.6 ? '#c084fc' : '#9b59b6',
+        });
+      }
+      if (Math.random() < 0.65) {
+        const ang = -Math.PI / 2 + (Math.random() - 0.5) * 1.8;
+        const spd = 60 + Math.random() * 80;
+        this.particles.push({
+          kind: 'spark',
+          x: vessel.x + (Math.random() - 0.5) * 8,
+          y: bottomY - 5,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          r: 1.6 + Math.random() * 1.5,
+          life: 0,
+          maxLife: 0.32 + Math.random() * 0.2,
+          color: '#e9d5ff',
+        });
+      }
+    }
+
+    // 4b-Mg/Al. Magnesium blinding white flash (brightWhiteFlash) & Aluminium/thermite intense sparks
+    if (metrics.mgBurning && !vessel.isStoppered) {
+      for (let i = 0; i < 4; i++) {
+        if (Math.random() < 0.85) {
+          const ang = Math.random() * Math.PI * 2;
+          const spd = 65 + Math.random() * 115;
+          this.particles.push({
+            kind: 'spark',
+            x: vessel.x + (Math.random() - 0.5) * 10,
+            y: bottomY - 7,
+            vx: Math.cos(ang) * spd,
+            vy: Math.sin(ang) * spd - 22,
+            r: 2.0 + Math.random() * 2.2,
+            life: 0,
+            maxLife: 0.34 + Math.random() * 0.22,
+            color: i % 2 === 0 ? '#ffffff' : '#bae6fd',
+          });
+        }
+      }
+    }
+    if (metrics.alBurning && !vessel.isStoppered) {
+      for (let i = 0; i < 3; i++) {
+        if (Math.random() < 0.78) {
+          const ang = Math.random() * Math.PI * 2;
+          const spd = 55 + Math.random() * 95;
+          this.particles.push({
+            kind: 'spark',
+            x: vessel.x + (Math.random() - 0.5) * 12,
+            y: bottomY - 7,
+            vx: Math.cos(ang) * spd,
+            vy: Math.sin(ang) * spd - 20,
+            r: 1.8 + Math.random() * 1.8,
+            life: 0,
+            maxLife: 0.34 + Math.random() * 0.22,
+            color: i % 2 === 0 ? '#ffffff' : '#fde047',
+          });
+        }
       }
     }
 

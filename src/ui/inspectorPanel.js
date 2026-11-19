@@ -219,7 +219,7 @@ export class InspectorPanel {
       const purgedFlag = (item.headspaceGasMoles?.H2_g || 0) > 1e-5 || (item.moles.CuO_s || 0) > 1e-7
         ? ((item.airO2PurgeFrac ?? 1) <= 0.14 ? 'P' : 'U')
         : 'N';
-      const airFlags = `${(item.naTarnishFrac || 0) > 0.25 ? 1 : 0}${(item.naohDeliquesceFrac || 0) > 0.15 ? 1 : 0}${(item.caCo3FilmFrac || 0) > 0.25 ? 1 : 0}${item.fePassivated ? 1 : 0}${(item.znCombustionTimer || 0) > 0.05 ? 1 : 0}${purgedFlag}`;
+      const airFlags = `${(item.naTarnishFrac || 0) > 0.25 ? 1 : 0}${(item.kTarnishFrac || 0) > 0.25 ? 1 : 0}${(item.naohDeliquesceFrac || 0) > 0.15 ? 1 : 0}${(item.caCo3FilmFrac || 0) > 0.25 ? 1 : 0}${item.fePassivated ? 1 : 0}${item.alPassivated ? 1 : 0}${(item.znCombustionTimer || 0) > 0.05 ? 1 : 0}${(item.mgCombustionTimer || 0) > 0.05 ? 1 : 0}${(item.alCombustionTimer || 0) > 0.05 ? 1 : 0}${purgedFlag}`;
       const phenFlags = `${item.isSupersaturated ? 1 : 0}${(item.znPassivationFrac || 0) > 0.35 ? 1 : 0}${(item.pickeringFoamMl || 0) > 0.5 ? 1 : 0}${(item.langmuirCoverage || 0) > 0.55 ? 1 : 0}`;
       const cmpFlag = Array.isArray(this.sim.compareVesselIds) && this.sim.compareVesselIds.includes(item.id) ? 1 : 0;
       const softenFlag = (item.softenGlowFrac || 0) > 0.1 || (item.softenSagFrac || 0) > 0.05 ? 1 : 0;
@@ -1363,10 +1363,13 @@ export class InspectorPanel {
           ${(item.pickeringFoamMl || 0) > 0.5 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-pink-500/40 bg-pink-500/10 text-pink-400 text-xs font-medium">${t('badgePickeringFoam')}: +${(item.pickeringFoamMl || 0).toFixed(1)} mL</div>` : ''}
           ${(item.langmuirCoverage || 0) > 0.55 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs font-medium">${t('badgeLangmuirSat')} (θ=${Math.round((item.langmuirCoverage || 0) * 100)}%, n≈${(item.langmuirOrder ?? 0).toFixed(2)})</div>` : ''}
           ${(item.naTarnishFrac || 0) > 0.25 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-slate-500/40 bg-slate-500/10 text-muted text-xs font-medium">${t('badgeAirTarnished')}</div>` : ''}
+          ${(item.kTarnishFrac || 0) > 0.25 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-purple-500/40 bg-purple-500/10 text-purple-300 text-xs font-medium">${t('badgeAirTarnishedK')}</div>` : ''}
           ${(item.naohDeliquesceFrac || 0) > 0.15 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs font-medium">${t('badgeNaohDeliquesced')}</div>` : ''}
           ${(item.caCo3FilmFrac || 0) > 0.25 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-slate-400/40 bg-slate-500/10 text-main text-xs font-medium">${t('badgeCaCo3Film')}</div>` : ''}
           ${item.fePassivated && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-medium">${t('badgeFePassivated')}</div>` : ''}
+          ${item.alPassivated && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-sky-400/40 bg-sky-400/10 text-sky-300 text-xs font-medium">${t('badgeAlPassivated')}</div>` : ''}
           ${(item.znCombustionTimer || 0) > 0.05 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-amber-400/60 bg-amber-400/15 text-amber-300 text-xs font-semibold">${t('badgeZnBurnO2')}</div>` : ''}
+          ${(item.mgCombustionTimer || 0) > 0.05 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-sky-300/70 bg-slate-100/20 text-main text-xs font-semibold">${t('badgeMgBurnFlash')}</div>` : ''}
           ${(item.softenGlowFrac || 0) > 0.1 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-red-500/50 bg-red-500/15 text-red-300 text-xs font-semibold">${t('borosilicateSoftenWarn')}</div>` : ''}
           ${(item.silverMirrorLevel || 0) > 0.04 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-slate-300/60 bg-slate-200/15 text-main text-xs font-semibold">${t('wallMemorySilverTag')} (${Math.round((item.silverMirrorLevel || 0) * 100)}%)</div>` : ''}
           ${((item.wallResidueMap?.CuO_s || 0) > 0.05 || (item.wallResidueMap?.BaSO4_s || 0) > 0.05) && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-slate-500/50 bg-slate-500/15 text-muted text-xs font-medium">${t('wallMemoryResidueTag')}</div>` : ''}
@@ -2203,7 +2206,7 @@ export class InspectorPanel {
             v.kind === 'vessel' &&
             !v.isShattered &&
             !v.isStoppered &&
-            ((v.moles?.Zn_s || 0) > 1e-6 || (v.moles?.Na_s || 0) > 1e-6 || (v.moles?.Cu_s || 0) > 1e-6)
+            ((v.moles?.Zn_s || 0) > 1e-6 || (v.moles?.Mg_s || 0) > 1e-6 || (v.moles?.Al_s || 0) > 1e-6 || (v.moles?.Na_s || 0) > 1e-6 || (v.moles?.K_s || 0) > 1e-6 || (v.moles?.Fe_s || 0) > 1e-6 || (v.moles?.Cu_s || 0) > 1e-6)
         );
         if (candidates.length === 0) return;
         this.callbacks.onStartBenchPick?.({
