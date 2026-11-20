@@ -28,7 +28,7 @@ export class EnvironmentBar {
           <div class="min-w-0">
             <div class="flex items-center gap-1.5 whitespace-nowrap">
               <h1 class="text-sm font-bold leading-none whitespace-nowrap">${t('appTitle')}</h1>
-              <span id="app-version-badge" class="text-[11px] font-mono px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-muted whitespace-nowrap">virlab_beta_v4+build.16</span>
+              <span id="app-version-badge" class="text-[11px] font-mono px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-muted whitespace-nowrap">virlab_beta_v4+build.17</span>
               <span class="env-compact-hide text-xs px-2 py-0.5 rounded-full border border-theme bg-surface-alt text-muted whitespace-nowrap">
                 ${theme === 'olivia' ? 'u + me = <3 · 🐝' : theme === 'ctrl' ? 'draft · 4:20 pm' : theme === 'sos' ? 'deep sea · sos' : t('modeFreeSandbox')}
               </span>
@@ -64,7 +64,7 @@ export class EnvironmentBar {
           <!-- Ambient Pressure -->
           <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt">
             <span class="text-xs text-muted hidden sm:inline">⏱️ ${t('envPress')}:</span>
-            <input id="env-press-input" type="number" min="0.2" max="4.0" step="0.05" value="${env.pressureBar.toFixed(2)}"
+            <input id="env-press-input" type="number" min="0.05" max="4.0" step="0.05" value="${env.pressureBar.toFixed(2)}"
               class="w-[58px] px-1.5 py-0.5 rounded border border-theme bg-surface text-xs font-mono font-bold text-right" />
             <span class="text-xs font-mono">bar <span class="text-muted hidden xl:inline">(bp ${boilC.toFixed(1)}°C)</span></span>
           </div>
@@ -205,7 +205,7 @@ export class EnvironmentBar {
     });
 
     this.container.querySelector('#env-press-input')?.addEventListener('change', (e) => {
-      const val = Math.max(0.1, Math.min(5.0, Number(e.target.value) || CONSTANTS.P_STD_BAR));
+      const val = Math.max(0.01, Math.min(5.0, Number(e.target.value) || CONSTANTS.P_STD_BAR));
       this.sim.environment.pressureBar = val;
       this.sim.emitChange();
     });

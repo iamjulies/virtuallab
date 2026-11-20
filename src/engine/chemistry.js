@@ -238,10 +238,12 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     } else if (rxn.solidId === 'NaOH_s' && vessel.gardenActive && !vessel.stirTimer) {
       gardenSlow = 0.15;
     }
+    const sol298 = rxn.solubilityMolPerKg298 ?? rxn.solubilityLimitMolKg ?? 3.0;
+    const solCoeff = rxn.solubilityTempCoeff ?? 0.01;
     const sTemp =
-      rxn.solubilityMolPerKg298 *
+      sol298 *
       saltingMult *
-      Math.exp(rxn.solubilityTempCoeff * (T - CONSTANTS.T_STD_K));
+      Math.exp(solCoeff * (T - CONSTANTS.T_STD_K));
     const maxSoluble = sTemp * effectiveSolventKg;
     const currentIon = moles[rxn.ionCheckId] || 0;
     if (rxn.solidId === 'NaHCO3_s') {
@@ -407,15 +409,21 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
 
   if (rxn.type === 'thermal_decomposition') {
     if (rxn.requiresDry && ((hasWater && (moles.H2O_l || 0) > 1e-4) || (moles.H2O_s || 0) > 1e-4)) return 0;
-    if (T < rxn.minTempK) return 0;
+    const pEffBar = Math.min(vessel.internalPressureBar ?? CONSTANTS.P_STD_BAR, env?.pressureBar ?? CONSTANTS.P_STD_BAR);
+    const isVacuum = pEffBar <= 0.25;
+    if (rxn.requiresVacuum && !isVacuum) return 0;
+    const baseMinK = rxn.id === 'na2o_inert_disprop' && isVacuum ? 973.15 : rxn.minTempK;
+    const effMinTempK = Math.max(250, baseMinK - (isVacuum ? (rxn.vacuumTempShiftK || 0) : 0));
+    if (T < effMinTempK) return 0;
     if (rxn.maxTempK && T >= rxn.maxTempK) return 0;
-    if (rxn.requiresInertOrVacuum && env?.atmosphereMode !== 'inert' && getVesselEffectiveO2Bar(vessel, env) > 0.03) return 0;
-    if (rxn.id === 'na2o_inert_disprop' && env?.atmosphereMode !== 'inert') return 0;
+    if (rxn.requiresInertOrVacuum && env?.atmosphereMode !== 'inert' && !isVacuum && getVesselEffectiveO2Bar(vessel, env) > 0.03) return 0;
+    if (rxn.id === 'na2o_inert_disprop' && env?.atmosphereMode !== 'inert' && !isVacuum) return 0;
     let minExtent = Infinity;
     for (const [spId, stoich] of Object.entries(rxn.reactants)) {
       minExtent = Math.min(minExtent, (moles[spId] || 0) / stoich);
     }
-    const k = rxn.kAtThreshold * arrheniusFactor(rxn.eaJ, T - rxn.minTempK + CONSTANTS.T_STD_K);
+    const vacMult = isVacuum && rxn.vacuumRateMult ? rxn.vacuumRateMult : 1.0;
+    const k = rxn.kAtThreshold * vacMult * arrheniusFactor(rxn.eaJ, T - effMinTempK + CONSTANTS.T_STD_K);
     return minExtent * k;
   }
 
@@ -1395,7 +1403,7 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
     { cat: 'K_aq', cCat: 1, an: 'ClO3_aq', cAn: 1, solid: 'KClO3_s', formula: 'KClO₃', sol298: 0.60, coeff: 0.045, etohRel: 0.01, crystHeatJ: -41400 },
     { cat: 'Na_aq', cCat: 1, an: 'BrO3_aq', cAn: 1, solid: 'NaBrO3_s', formula: 'NaBrO₃', sol298: 2.4, coeff: 0.028, etohRel: 0.01, crystHeatJ: -26900 },
     { cat: 'K_aq', cCat: 1, an: 'Br_aq', cAn: 1, solid: 'KBr_s', formula: 'KBr', sol298: 5.65, coeff: 0.018, etohRel: 0.02, crystHeatJ: -19900 },
-    { cat: 'K_aq', cCat: 1, an: 'I_aq', cAn: 1, solid: 'KI_s', formula: 'KI', sol298: 8.6, coeff: 0.020, etohRel: 0.04, crystHeatJ: -20300 },
+    { cat: 'K_aq', cCat: 1, an: 'I_aq', cAn: 1, solid: 'KI_s', formula: 'KI', sol298: 8.95, coeff: 0.0059, etohRel: 0.015, crystHeatJ: -20300 },
     { cat: 'Na_aq', cCat: 1, an: 'Br_aq', cAn: 1, solid: 'NaBr_s', formula: 'NaBr', sol298: 8.8, coeff: 0.015, etohRel: 0.02, crystHeatJ: 600 },
     { cat: 'Na_aq', cCat: 1, an: 'I_aq', cAn: 1, solid: 'NaI_s', formula: 'NaI', sol298: 11.9, coeff: 0.022, etohRel: 0.05, crystHeatJ: 7500 },
     { cat: 'Mn2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'MnCl2_s', formula: 'MnCl₂', sol298: 6.1, coeff: 0.012, etohRel: 0.15, crystHeatJ: 67000 },
@@ -2389,6 +2397,41 @@ function stepHalogenRedoxAndAlkali(vessel, liquidVolL, dt, activeReactions, gasP
     }
   }
 
+  // 9. Hot conc. HNO3 (>=60% @ 70-100 C) oxidizes I2 -> 2HIO3 + 10NO2↑ + 4H2O (Br2 does NOT react; HCl/H2SO4 do NOT oxidize Br2/I2)
+  const nI2ForHNO3 = (moles.I2_s || 0) + (moles.I2_aq || 0);
+  if (nI2ForHNO3 > 1e-9 && T >= 343.15) {
+    const nNO3 = (moles.NO3_aq || 0) + (moles.HNO3_l || 0);
+    const nHT = (moles.H_aq || 0) + (moles.HNO3_l || 0);
+    const mHNO3 = Math.min(nNO3, nHT) * 63.013;
+    const wHNO3 = mHNO3 / Math.max(1e-9, mHNO3 + (moles.H2O_l || 0) * 18.015);
+    if (wHNO3 >= 0.60 && (moles.H_aq || 0) > 1e-4 && (moles.NO3_aq || 0) > 1e-4) {
+      const iSrcKey = (moles.I2_s || 0) >= (moles.I2_aq || 0) ? 'I2_s' : 'I2_aq';
+      const tRamp = Math.min(1.0, 0.4 + ((T - 343.15) / 30.0) * 0.6);
+      const dOxI2 = Math.min(moles[iSrcKey] || 0, (moles.H_aq || 0) / 10, (moles.NO3_aq || 0) / 10) * (1 - Math.exp(-1.85 * tRamp * dt));
+      if (dOxI2 > 1e-11) {
+        moles[iSrcKey] = Math.max(0, (moles[iSrcKey] || 0) - dOxI2);
+        if (moles[iSrcKey] < 1e-13) delete moles[iSrcKey];
+        moles.H_aq = Math.max(0, moles.H_aq - 8 * dOxI2);
+        moles.NO3_aq = Math.max(0, moles.NO3_aq - 10 * dOxI2);
+        moles.IO3_aq = (moles.IO3_aq || 0) + 2 * dOxI2;
+        moles.H2O_l = (moles.H2O_l || 0) + 4 * dOxI2;
+        emitGas('NO2_g', 10 * dOxI2);
+        heatJ += dOxI2 * 220000;
+        activeReactions.push({
+          id: 'i2_hno3_conc_hot',
+          equation: 'I₂(s/aq) + 10HNO₃(đặc) —(70–100 °C)→ 2HIO₃(aq) + 10NO₂(g)↑ + 4H₂O',
+          nameVi: 'Iodine bị HNO₃ đặc nóng oxi hóa thành Iodic acid (HIO₃) và khí NO₂ nâu đỏ',
+          nameEn: 'Hot conc. Nitric acid oxidizes Iodine to Iodic acid (HIO₃) + NO₂↑',
+          descVi: 'Khác với Cl₂ và Br₂, Iodine phản ứng với HNO₃ đặc nóng (70–100 °C) tạo dung dịch không màu HIO₃ và khí NO₂↑ (không phản ứng với HCl hay H₂SO₄ đặc).',
+          descEn: 'Unlike Cl₂/Br₂, Iodine is oxidized by hot conc. HNO₃ (70–100 °C) to colorless HIO₃ and brown NO₂↑ (inert to HCl & H₂SO₄).',
+          rateMolS: dOxI2 / dt,
+          vigorousGas: true,
+          dXi: dOxI2,
+        });
+      }
+    }
+  }
+
   return heatJ;
 }
 
@@ -2407,6 +2450,9 @@ function stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gasProduce
   }
   if ((vessel._al2s3PropagateTimer || 0) > 0) {
     vessel._al2s3PropagateTimer = Math.max(0, vessel._al2s3PropagateTimer - dt);
+  }
+  if ((vessel._mgsPropagateTimer || 0) > 0) {
+    vessel._mgsPropagateTimer = Math.max(0, vessel._mgsPropagateTimer - dt);
   }
 
   // 0. Plastic sulfur (S_plastic_s) gradually reverts to brittle yellow crystalline S_s
@@ -2460,6 +2506,7 @@ function stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gasProduce
       { id: 'Na', sId: 'Na_s', cM: 2, cS: 1, minK: 325, rate: 4.5, prodS: 'Na2S_s', heatJ: 365000, eq: '2Na(s) + S(s) → Na₂S(s)', nameVi: 'Sodium hóa hợp tỏa nhiệt mạnh với Sulfur tạo Na₂S', nameEn: 'Sodium combines vigorously with Sulfur forming Na₂S' },
       { id: 'Zn', sId: 'Zn_s', cM: 1, cS: 1, minK: 423.15, rate: 3.2, prodS: 'ZnS_s', heatJ: 206000, timer: 'znCombustionTimer', eq: 'Zn(s) + S(s) —(t° ≥ 150 °C)→ ZnS(s)', nameVi: 'Zinc hóa hợp mạnh với Sulfur tạo bột trắng ZnS', nameEn: 'Zinc reacts exothermically with Sulfur forming white ZnS' },
       { id: 'Al', sId: 'Al_s', cM: 2, cS: 3, minK: 473.15, rate: 2.8, prodS: 'Al2S3_s', propKey: '_al2s3PropagateTimer', heatJ: 724000, timer: 'alCombustionTimer', eq: '2Al(s) + 3S(s) —(t° ≥ 200 °C)→ Al₂S₃(s)', nameVi: 'Aluminium phản ứng tỏa nhiệt rất mạnh với Sulfur tạo Al₂S₃', nameEn: 'Aluminium reacts strongly with Sulfur yielding Al₂S₃' },
+      { id: 'Mg', sId: 'Mg_s', cM: 1, cS: 1, minK: 723.15, rate: 45.0, prodS: 'MgS_s', propKey: '_mgsPropagateTimer', heatJ: 345700, timer: 'mgCombustionTimer', eq: 'Mg(s) + S(l/g) —(450–500 °C)→ MgS(s)', nameVi: 'Magnesium cháy lóe sáng chói với Sulfur tạo MgS trắng ngà', nameEn: 'Magnesium ignites brilliantly with Sulfur forming off-white MgS' },
       { id: 'Fe', sId: 'Fe_s', cM: 1, cS: 1, minK: 673.15, rate: 9.5, prodS: 'FeS_s', propKey: '_fesPropagateTimer', heatJ: 95000, eq: 'Fe(s) + S(l/g) —(t° ≥ 450–500 °C)→ FeS(s)', nameVi: 'Iron hóa hợp với Sulfur nóng đỏ tạo Iron(II) sulfide (FeS đen xám)', nameEn: 'Iron combines with Sulfur at red heat forming black non-magnetic FeS' },
     ];
     for (const ms of metalSulfurSpecs) {
@@ -2568,12 +2615,79 @@ function stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gasProduce
     }
   }
 
+  // 3b. Thermal equilibrium 2SO3(g) <-> 2SO2(g) + O2(g) above 700 °C (973.15 K)
+  const headSO3 = vessel.headspaceGasMoles?.SO3_g || 0;
+  const prodSO3 = gasProduced?.SO3_g || 0;
+  if (T >= 973.15 && (headSO3 > 1e-9 || prodSO3 > 1e-9)) {
+    const dissocFrac = Math.min(0.88, 0.35 + ((T - 973.15) / 250.0) * 0.50);
+    if (headSO3 > 1e-9 && vessel.headspaceGasMoles) {
+      const dSO3 = headSO3 * dissocFrac * (1 - Math.exp(-3.2 * dt));
+      if (dSO3 > 1e-11) {
+        vessel.headspaceGasMoles.SO3_g = Math.max(0, headSO3 - dSO3);
+        if (vessel.headspaceGasMoles.SO3_g < 1e-13) vessel.headspaceGasMoles.SO3_g = 0;
+        gasProduced.SO2_g = (gasProduced.SO2_g || 0) + dSO3;
+        gasProduced.O2_g = (gasProduced.O2_g || 0) + 0.5 * dSO3;
+        heatJ -= dSO3 * 98900;
+      }
+    }
+    if (prodSO3 > 1e-9 && gasProduced) {
+      const dProd = prodSO3 * dissocFrac;
+      if (dProd > 1e-11) {
+        gasProduced.SO3_g = Math.max(0, prodSO3 - dProd);
+        gasProduced.SO2_g = (gasProduced.SO2_g || 0) + dProd;
+        gasProduced.O2_g = (gasProduced.O2_g || 0) + 0.5 * dProd;
+        heatJ -= dProd * 98900;
+      }
+    }
+  }
+
+  // Slow ambient moist-air hydrolysis of MgS even without bulk water
+  if ((moles.MgS_s || 0) > 1e-8 && nH2O <= 1e-5 && (options.environment?.atmosphereMode || 'air') === 'air' && !vessel.isStoppered && T < 393.15) {
+    const dAirMgS = Math.min(moles.MgS_s, 0.0008 * dt);
+    if (dAirMgS > 1e-11) {
+      moles.MgS_s -= dAirMgS;
+      if (moles.MgS_s < 1e-13) delete moles.MgS_s;
+      moles.MgOH2_s = (moles.MgOH2_s || 0) + dAirMgS;
+      gasProduced.H2S_g = (gasProduced.H2S_g || 0) + dAirMgS;
+    }
+  }
+
   // Stop aqueous/hydrolysis sulfur reactions if solvent frozen or absent
   if (iceMob <= 0 || liquidVolL <= 1e-6 || nH2O <= 1e-5) {
     return heatJ;
   }
 
-  // 4. Vigorous Al2S3(s) hydrolysis: Al2S3 + 6 H2O -> 2 Al(OH)3(s) + 3 H2S(g)
+  // 4. Vigorous Al2S3(s) & MgS(s) hydrolysis (even in cold water!)
+  const nMgS = moles.MgS_s || 0;
+  if (nMgS > 1e-9 && ((moles.H_aq || 0) > 1e-5 || nH2O >= 1e-4)) {
+    const useAcid = (moles.H_aq || 0) >= 2e-5;
+    const dMgS = Math.min(nMgS, useAcid ? moles.H_aq / 2 : nH2O / 2) * (1 - Math.exp(-(useAcid ? 6.5 : 3.8) * dt));
+    if (dMgS > 1e-11) {
+      moles.MgS_s = nMgS - dMgS;
+      if (moles.MgS_s < 1e-13) delete moles.MgS_s;
+      if (useAcid) {
+        moles.H_aq = Math.max(0, moles.H_aq - 2 * dMgS);
+        moles.Mg2_aq = (moles.Mg2_aq || 0) + dMgS;
+      } else {
+        moles.H2O_l = Math.max(0, nH2O - 2 * dMgS);
+        if (moles.H2O_l < 1e-13) delete moles.H2O_l;
+        moles.MgOH2_s = (moles.MgOH2_s || 0) + dMgS;
+      }
+      gasProduced.H2S_g = (gasProduced.H2S_g || 0) + dMgS;
+      heatJ += dMgS * 108000;
+      activeReactions.push({
+        id: 'mgs_hydrolysis',
+        equation: useAcid ? 'MgS(s) + 2H⁺(aq) → Mg²⁺(aq) + H₂S(g)↑' : 'MgS(s) + 2H₂O(l) → Mg(OH)₂(s)↓ + H₂S(g)↑',
+        nameVi: 'Thủy phân mạnh Magnesium sulfide (MgS) ngay trong nước lạnh tạo H₂S↑',
+        nameEn: 'Rapid cold hydrolysis of Magnesium sulfide (MgS) evolving H₂S↑',
+        descVi: 'MgS rất kém bền nước, thủy phân nhanh ngay ở nhiệt độ thường hoặc ẩm không khí tạo Mg(OH)₂↓ và khí mùi trứng thối H₂S↑.',
+        descEn: 'MgS hydrolyzes rapidly even in cold water or humid air yielding Mg(OH)₂↓ and H₂S gas.',
+        rateMolS: dMgS / dt,
+        vigorousGas: true,
+        dXi: dMgS,
+      });
+    }
+  }
   const nAl2S3 = moles.Al2S3_s || 0;
   if (nAl2S3 > 1e-9 && nH2O >= 1e-4) {
     const dHyd = Math.min(nAl2S3, nH2O / 6) * (1 - Math.exp(-4.5 * dt));
@@ -2867,12 +2981,13 @@ function stepCarbideAndCarbonChemistry(vessel, liquidVolL, dt, activeReactions, 
         });
       }
     }
-    // 6. High-temperature CaC2 Metal Oxide Reduction (CuO, FeO, Fe2O3, ZnO -> M + CaO + CO2/CO)
+    // 6. High-temperature CaC2 Metal Oxide Reduction (CuO, Cu2O, FeO, ZnO -> M + CaO + CO2/CO)
     if ((moles.CaC2_s || 0) > 1e-9 && T >= 973.15 && (moles.H2O_l || 0) < 0.02) {
       const cac2OxSpecs = [
-        { oxId: 'CuO_s', metId: 'Cu_s', minK: 973.15, stoichCo2: 5, stoichCo: 3 },
-        { oxId: 'FeO_s', metId: 'Fe_s', minK: 1123.15, stoichCo2: 5, stoichCo: 3 },
-        { oxId: 'ZnO_s', metId: 'Zn_s', minK: 1223.15, stoichCo2: 5, stoichCo: 3 },
+        { oxId: 'CuO_s', metId: 'Cu_s', metMult: 1, minK: 973.15, stoichCo2: 5, stoichCo: 3 },
+        { oxId: 'Cu2O_s', metId: 'Cu_s', metMult: 2, minK: 923.15, stoichCo2: 5, stoichCo: 3 },
+        { oxId: 'FeO_s', metId: 'Fe_s', metMult: 1, minK: 1123.15, stoichCo2: 5, stoichCo: 3 },
+        { oxId: 'ZnO_s', metId: 'Zn_s', metMult: 1, minK: 1223.15, stoichCo2: 5, stoichCo: 3 },
       ];
       for (const sp of cac2OxSpecs) {
         const nOx = moles[sp.oxId] || 0;
@@ -2885,7 +3000,7 @@ function stepCarbideAndCarbonChemistry(vessel, liquidVolL, dt, activeReactions, 
           if (moles.CaC2_s < 1e-13) delete moles.CaC2_s;
           moles[sp.oxId] -= stM * dRed;
           if (moles[sp.oxId] < 1e-13) delete moles[sp.oxId];
-          moles[sp.metId] = (moles[sp.metId] || 0) + stM * dRed;
+          moles[sp.metId] = (moles[sp.metId] || 0) + (sp.metMult || 1) * stM * dRed;
           moles.CaO_s = (moles.CaO_s || 0) + dRed;
           if (highT) gasProduced.CO_g = (gasProduced.CO_g || 0) + 2 * dRed;
           else gasProduced.CO2_g = (gasProduced.CO2_g || 0) + 2 * dRed;
@@ -2930,6 +3045,131 @@ function stepCarbideAndCarbonChemistry(vessel, liquidVolL, dt, activeReactions, 
       moles.Ca2_aq = (moles.Ca2_aq || 0) + dSImp;
       moles.OH_aq = (moles.OH_aq || 0) + 2 * dSImp;
       gasProduced.H2S_g = (gasProduced.H2S_g || 0) + dSImp;
+    }
+  }
+
+  // Impurity & Sulfate air-roasting / thermal decomposition for Đất đèn (300-600 C air roast; >1200 C CaSO4 decomp)
+  const pO2CarbAir = getVesselEffectiveO2Bar(vessel, options.environment);
+  const nO2ImpAir = (head.O2_g || 0) + (pO2CarbAir > 0.03 ? 0.08 * (pO2CarbAir / 0.21) : 0);
+  if ((moles.H2O_l || 0) < 0.02 && T >= 573.15 && nO2ImpAir > 1e-7) {
+    if ((moles.Ca3P2_s || 0) > 1e-9) {
+      const dCaP = Math.min(moles.Ca3P2_s, nO2ImpAir / 4) * (1 - Math.exp(-0.65 * dt));
+      if (dCaP > 1e-11) {
+        moles.Ca3P2_s -= dCaP;
+        if (moles.Ca3P2_s < 1e-13) delete moles.Ca3P2_s;
+        if ((head.O2_g || 0) > 0) head.O2_g = Math.max(0, head.O2_g - Math.min(head.O2_g, 4 * dCaP));
+        moles.Ca3PO4_2_s = (moles.Ca3PO4_2_s || 0) + dCaP;
+        heatJ += dCaP * 1150000;
+      }
+    }
+    if ((moles.CaS_s || 0) > 1e-9 && T >= 623.15) {
+      const dCaS = Math.min(moles.CaS_s, nO2ImpAir / 2) * (1 - Math.exp(-0.55 * dt));
+      if (dCaS > 1e-11) {
+        moles.CaS_s -= dCaS;
+        if (moles.CaS_s < 1e-13) delete moles.CaS_s;
+        if ((head.O2_g || 0) > 0) head.O2_g = Math.max(0, head.O2_g - Math.min(head.O2_g, 2 * dCaS));
+        moles.CaSO4_s = (moles.CaSO4_s || 0) + dCaS;
+        heatJ += dCaS * 950000;
+      }
+    }
+  }
+  if ((moles.CaSO4_s || 0) > 1e-9 && T >= 1473.15 && (moles.H2O_l || 0) < 0.01) {
+    const cBoost = (moles.C_s || 0) > 1e-8 ? 2.2 : 1.0;
+    const dCaSO4 = moles.CaSO4_s * (1 - Math.exp(-0.08 * cBoost * dt));
+    if (dCaSO4 > 1e-11) {
+      moles.CaSO4_s -= dCaSO4;
+      if (moles.CaSO4_s < 1e-13) delete moles.CaSO4_s;
+      moles.CaO_s = (moles.CaO_s || 0) + dCaSO4;
+      gasProduced.SO2_g = (gasProduced.SO2_g || 0) + dCaSO4;
+      gasProduced.O2_g = (gasProduced.O2_g || 0) + 0.5 * dCaSO4;
+      heatJ -= dCaSO4 * 498000;
+      activeReactions.push({
+        id: 'caso4_thermal_decomp',
+        equation: '2CaSO₄(s) —(> 1,200 °C)→ 2CaO(s) + 2SO₂(g)↑ + O₂(g)↑',
+        nameVi: 'Nhiệt phân một phần CaSO₄ ở > 1,200 °C tạo CaO và SO₂ + O₂',
+        nameEn: 'High-temperature thermal decomposition of CaSO₄ (> 1,200 °C) yielding CaO + SO₂↑ + O₂↑',
+        descVi: 'Trên 1,200–1,400 °C, CaSO₄ bắt đầu phân hủy giải phóng SO₂ và O₂ để lại CaO thiêu kết.',
+        descEn: 'Above 1,200–1,400 °C, CaSO₄ partially decomposes releasing SO₂ and O₂.',
+        rateMolS: dCaSO4 / dt,
+        dXi: dCaSO4,
+      });
+    }
+  }
+
+  // Hydrolysis of newly synthesized metal carbides & KC8 (KC8->H2+KOH+C; Na2C2->C2H2; MgC2->C2H2; Mg2C3->C3H4 propyne; Fe3C+H+->CH4/H2)
+  if ((moles.KC8_s || 0) > 1e-9 && ((moles.H2O_l || 0) > 1e-5 || (moles.H_aq || 0) > 1e-5) && liqMob > 0) {
+    const dKC8 = Math.min(moles.KC8_s, (moles.H2O_l || 0) + (moles.H_aq || 0)) * (1 - Math.exp(-5.5 * liqMob * dt));
+    if (dKC8 > 1e-11) {
+      moles.KC8_s -= dKC8;
+      if (moles.KC8_s < 1e-13) delete moles.KC8_s;
+      moles.K_aq = (moles.K_aq || 0) + dKC8;
+      if ((moles.H_aq || 0) >= dKC8) {
+        moles.H_aq -= dKC8;
+      } else {
+        moles.H2O_l = Math.max(0, (moles.H2O_l || 0) - dKC8);
+        moles.OH_aq = (moles.OH_aq || 0) + dKC8;
+      }
+      moles.C_s = (moles.C_s || 0) + 8 * dKC8;
+      gasProduced.H2_g = (gasProduced.H2_g || 0) + 0.5 * dKC8;
+      heatJ += dKC8 * 145000;
+    }
+  }
+  if ((moles.Na2C2_s || 0) > 1e-9 && ((moles.H2O_l || 0) > 1e-5 || (moles.H_aq || 0) > 1e-5) && liqMob > 0) {
+    const dNa2C2 = Math.min(moles.Na2C2_s, ((moles.H2O_l || 0) + (moles.H_aq || 0)) / 2) * (1 - Math.exp(-5.8 * liqMob * dt));
+    if (dNa2C2 > 1e-11) {
+      moles.Na2C2_s -= dNa2C2;
+      if (moles.Na2C2_s < 1e-13) delete moles.Na2C2_s;
+      moles.Na_aq = (moles.Na_aq || 0) + 2 * dNa2C2;
+      if ((moles.H_aq || 0) >= 2 * dNa2C2) {
+        moles.H_aq -= 2 * dNa2C2;
+      } else {
+        moles.H2O_l = Math.max(0, (moles.H2O_l || 0) - 2 * dNa2C2);
+        moles.OH_aq = (moles.OH_aq || 0) + 2 * dNa2C2;
+      }
+      gasProduced.C2H2_g = (gasProduced.C2H2_g || 0) + dNa2C2;
+      heatJ += dNa2C2 * 175000;
+    }
+  }
+  if ((moles.MgC2_s || 0) > 1e-9 && ((moles.H2O_l || 0) > 1e-5 || (moles.H_aq || 0) > 1e-5) && liqMob > 0) {
+    const dMgC2 = Math.min(moles.MgC2_s, ((moles.H2O_l || 0) + (moles.H_aq || 0)) / 2) * (1 - Math.exp(-2.8 * liqMob * dt));
+    if (dMgC2 > 1e-11) {
+      moles.MgC2_s -= dMgC2;
+      if (moles.MgC2_s < 1e-13) delete moles.MgC2_s;
+      if ((moles.H_aq || 0) >= 2 * dMgC2) {
+        moles.H_aq -= 2 * dMgC2;
+        moles.Mg2_aq = (moles.Mg2_aq || 0) + dMgC2;
+      } else {
+        moles.H2O_l = Math.max(0, (moles.H2O_l || 0) - 2 * dMgC2);
+        moles.MgOH2_s = (moles.MgOH2_s || 0) + dMgC2;
+      }
+      gasProduced.C2H2_g = (gasProduced.C2H2_g || 0) + dMgC2;
+      heatJ += dMgC2 * 135000;
+    }
+  }
+  if ((moles.Mg2C3_s || 0) > 1e-9 && ((moles.H2O_l || 0) > 1e-5 || (moles.H_aq || 0) > 1e-5) && liqMob > 0) {
+    const dMg2C3 = Math.min(moles.Mg2C3_s, ((moles.H2O_l || 0) + (moles.H_aq || 0)) / 4) * (1 - Math.exp(-2.5 * liqMob * dt));
+    if (dMg2C3 > 1e-11) {
+      moles.Mg2C3_s -= dMg2C3;
+      if (moles.Mg2C3_s < 1e-13) delete moles.Mg2C3_s;
+      if ((moles.H_aq || 0) >= 4 * dMg2C3) {
+        moles.H_aq -= 4 * dMg2C3;
+        moles.Mg2_aq = (moles.Mg2_aq || 0) + 2 * dMg2C3;
+      } else {
+        moles.H2O_l = Math.max(0, (moles.H2O_l || 0) - 4 * dMg2C3);
+        moles.MgOH2_s = (moles.MgOH2_s || 0) + 2 * dMg2C3;
+      }
+      gasProduced.C3H4_g = (gasProduced.C3H4_g || 0) + dMg2C3;
+      heatJ += dMg2C3 * 165000;
+      activeReactions.push({
+        id: 'mg2c3_hydrolysis',
+        equation: 'Mg₂C₃(s) + 4H₂O(l) → 2Mg(OH)₂(s)↓ + C₃H₄(g)↑ (Propyne)',
+        nameVi: 'Thủy phân Magnesium sesquicarbide sinh khí Propyne (C₃H₄)',
+        nameEn: 'Hydrolysis of Mg₂C₃ yielding Mg(OH)₂↓ and Propyne (C₃H₄↑)',
+        descVi: 'Mg₂C₃ thủy phân giải phóng khí Propyne (CH₃–C≡CH) thay vì Acetylene.',
+        descEn: 'Mg₂C₃ hydrolyzes liberating Propyne (C₃H₄) gas instead of Acetylene.',
+        rateMolS: dMg2C3 / dt,
+        dXi: dMg2C3,
+      });
     }
   }
 
@@ -3179,7 +3419,179 @@ function stepCarbideAndCarbonChemistry(vessel, liquidVolL, dt, activeReactions, 
       }
     }
 
-    // 7. Oxidizing Character of Carbon: C + 2H2 -> CH4 (500-1000 C) & 4Al + 3C -> Al4C3 (800-1200 C) & CaO + 3C -> CaC2 + CO
+    // 7. Direct Metal + Carbon synthesis (REQUIRES inert Ar/N2/vacuum without O2 or CO2 — Zn forms NO carbide!)
+    const isLowO2CarbideEnv = (isInertAtm || getVesselEffectiveO2Bar(vessel, options.environment) <= 0.03) && (head.CO2_g || 0) <= 1e-5;
+    const isSealedVessel = Boolean(vessel.isStoppered || vessel.lidState === 'closed' || (vessel.leftStoppered && vessel.rightStoppered));
+
+    if ((moles.C_s || 0) > 1e-9 && (moles.H2O_l || 0) < 0.02 && isLowO2CarbideEnv) {
+      // K + 8C -> KC8 (200-400 C; red-copper intercalation compound)
+      if ((moles.K_s || 0) > 1e-9 && T >= 473.15 && T <= 753.15) {
+        const dKC8 = Math.min(moles.K_s, moles.C_s / 8) * (1 - Math.exp(-0.85 * dt));
+        if (dKC8 > 1e-11) {
+          moles.K_s -= dKC8;
+          if (moles.K_s < 1e-13) delete moles.K_s;
+          moles.C_s -= 8 * dKC8;
+          if (moles.C_s < 1e-13) delete moles.C_s;
+          moles.KC8_s = (moles.KC8_s || 0) + dKC8;
+          heatJ += dKC8 * 85000;
+          activeReactions.push({
+            id: 'k_c_kc8',
+            equation: 'K(l) + 8C(s) —(200–400 °C, khí trơ)→ KC₈(s)',
+            nameVi: 'Potassium xen kẽ Carbon ở 200–400 °C tạo KC₈ đỏ đồng (không tạo K₂C₂)',
+            nameEn: 'Potassium intercalates into Carbon at 200–400 °C forming red-copper KC₈',
+            descVi: 'Trong chân không/Argon ở 200–400 °C, K tạo hợp chất xen lớp KC₈ màu đỏ đồng chứ không tạo acetylide K₂C₂.',
+            descEn: 'In Ar/vacuum at 200–400 °C, K forms copper-red intercalation compound KC₈ directly.',
+            rateMolS: dKC8 / dt,
+            dXi: dKC8,
+          });
+        }
+      }
+
+      // 2Na + 2C -> Na2C2 (700-900 C, sealed vessel prevents Na boiling off at 883 C!)
+      if ((moles.Na_s || 0) > 1e-9 && T >= 973.15 && (isSealedVessel || T <= 1156.15)) {
+        const dNaC = Math.min(moles.Na_s / 2, moles.C_s / 2) * (1 - Math.exp(-(isSealedVessel ? 0.65 : 0.35) * dt));
+        if (dNaC > 1e-11) {
+          moles.Na_s -= 2 * dNaC;
+          if (moles.Na_s < 1e-13) delete moles.Na_s;
+          moles.C_s -= 2 * dNaC;
+          if (moles.C_s < 1e-13) delete moles.C_s;
+          moles.Na2C2_s = (moles.Na2C2_s || 0) + dNaC;
+          heatJ += dNaC * 18000;
+          activeReactions.push({
+            id: 'na_c_na2c2',
+            equation: '2Na(l/g) + 2C(s) —(700–900 °C, bình kín trơ)→ Na₂C₂(s)',
+            nameVi: 'Sodium hóa hợp Carbon ở 700–900 °C (bình kín trơ) tạo Na₂C₂',
+            nameEn: 'Sodium + Carbon in sealed inert vessel (700–900 °C) yields Na₂C₂',
+            descVi: 'Cần bình kín chịu áp (giữ hơi Na sôi ở 883 °C) và khí trơ ở 700–900 °C để tạo Na₂C₂.',
+            descEn: 'Sealed inert containment above 700 °C reacts molten/vapor Na with C forming Na₂C₂.',
+            rateMolS: dNaC / dt,
+            dXi: dNaC,
+          });
+        }
+      }
+
+      // Mg + C: ~500-600 C -> MgC2; >600 C -> Mg2C3 (+ 2MgC2 -> Mg2C3 + C)
+      if ((moles.Mg_s || 0) > 1e-9 && T >= 773.15 && T < 873.15) {
+        const dMgC2 = Math.min(moles.Mg_s, moles.C_s / 2) * (1 - Math.exp(-0.48 * dt));
+        if (dMgC2 > 1e-11) {
+          moles.Mg_s -= dMgC2;
+          if (moles.Mg_s < 1e-13) delete moles.Mg_s;
+          moles.C_s -= 2 * dMgC2;
+          if (moles.C_s < 1e-13) delete moles.C_s;
+          moles.MgC2_s = (moles.MgC2_s || 0) + dMgC2;
+          activeReactions.push({
+            id: 'mg_c_mgc2',
+            equation: 'Mg(s) + 2C(s) —(~500 °C, khí trơ)→ MgC₂(s)',
+            nameVi: 'Magnesium tác dụng Carbon ở ~500 °C (khí trơ) tạo MgC₂',
+            nameEn: 'Magnesium + Carbon at ~500 °C (inert) forms MgC₂',
+            descVi: 'Ở ~500 °C trong khí trơ tạo MgC₂ (thủy phân sinh C₂H₂); trên 600 °C chuyển thành Mg₂C₃.',
+            descEn: 'At ~500 °C in inert gas forms MgC₂; above 600 °C converts to Mg₂C₃.',
+            rateMolS: dMgC2 / dt,
+            dXi: dMgC2,
+          });
+        }
+      } else if ((moles.Mg_s || 0) > 1e-9 && T >= 873.15) {
+        const dMg2C3 = Math.min(moles.Mg_s / 2, moles.C_s / 3) * (1 - Math.exp(-0.55 * dt));
+        if (dMg2C3 > 1e-11) {
+          moles.Mg_s -= 2 * dMg2C3;
+          if (moles.Mg_s < 1e-13) delete moles.Mg_s;
+          moles.C_s -= 3 * dMg2C3;
+          if (moles.C_s < 1e-13) delete moles.C_s;
+          moles.Mg2C3_s = (moles.Mg2C3_s || 0) + dMg2C3;
+          activeReactions.push({
+            id: 'mg_c_mg2c3',
+            equation: '2Mg(s/l) + 3C(s) —(> 600 °C, khí trơ)→ Mg₂C₃(s)',
+            nameVi: 'Magnesium tác dụng Carbon ở > 600 °C tạo Mg₂C₃',
+            nameEn: 'Magnesium + Carbon above 600 °C (inert) forms Mg₂C₃',
+            descVi: 'Trên 600 °C trong khí trơ, Mg và C tạo pha bền Mg₂C₃ (thủy phân sinh khí C₃H₄).',
+            descEn: 'Above 600 °C in inert atmosphere, Mg and C yield Mg₂C₃ (hydrolyzing to C₃H₄).',
+            rateMolS: dMg2C3 / dt,
+            dXi: dMg2C3,
+          });
+        }
+      }
+      if ((moles.MgC2_s || 0) > 1e-9 && T >= 873.15) {
+        const dConv = (moles.MgC2_s / 2) * (1 - Math.exp(-0.42 * dt));
+        if (dConv > 1e-11) {
+          moles.MgC2_s -= 2 * dConv;
+          if (moles.MgC2_s < 1e-13) delete moles.MgC2_s;
+          moles.Mg2C3_s = (moles.Mg2C3_s || 0) + dConv;
+          moles.C_s = (moles.C_s || 0) + dConv;
+        }
+      }
+
+      // 4Al + 3C -> Al4C3 (800-1200 C, inert/vacuum)
+      if ((moles.Al_s || 0) > 1e-9 && T >= 1073.15) {
+        const dAlCarb = Math.min((moles.Al_s || 0) / 4, moles.C_s / 3) * (1 - Math.exp(-0.42 * dt));
+        if (dAlCarb > 1e-11) {
+          moles.Al_s -= 4 * dAlCarb;
+          if (moles.Al_s < 1e-13) delete moles.Al_s;
+          moles.C_s -= 3 * dAlCarb;
+          if (moles.C_s < 1e-13) delete moles.C_s;
+          moles.Al4C3_s = (moles.Al4C3_s || 0) + dAlCarb;
+          heatJ += dAlCarb * 209000;
+          activeReactions.push({
+            id: 'al_c_al4c3',
+            equation: '4Al(s/l) + 3C(s) —(800–1,200 °C, khí trơ)→ Al₄C₃(s)',
+            nameVi: 'Aluminium kết hợp với Carbon ở 800–1,200 °C tạo Al₄C₃',
+            nameEn: 'Aluminium reacts with Carbon at 800–1,200 °C forming Al₄C₃',
+            descVi: 'Ở 800–1,200 °C trong khí trơ Argon/chân không, Al nóng chảy kết hợp Carbon tạo tinh thể vàng Al₄C₃.',
+            descEn: 'At 800–1,200 °C in inert Ar/vacuum, molten Al reacts with Carbon forming yellow Al₄C₃.',
+            rateMolS: dAlCarb / dt,
+            dXi: dAlCarb,
+          });
+        }
+      }
+
+      // 3Fe + C -> Fe3C (> 1,150 C, inert/vacuum cementite; Zn forms NO carbide!)
+      if ((moles.Fe_s || 0) > 1e-9 && T >= 1423.15) {
+        const dFeC = Math.min((moles.Fe_s || 0) / 3, moles.C_s) * (1 - Math.exp(-0.35 * dt));
+        if (dFeC > 1e-11) {
+          moles.Fe_s -= 3 * dFeC;
+          if (moles.Fe_s < 1e-13) delete moles.Fe_s;
+          moles.C_s -= dFeC;
+          if (moles.C_s < 1e-13) delete moles.C_s;
+          moles.Fe3C_s = (moles.Fe3C_s || 0) + dFeC;
+          activeReactions.push({
+            id: 'fe_c_fe3c',
+            equation: '3Fe(s) + C(s) —(> 1,150 °C, khí trơ)→ Fe₃C(s) (Cementite)',
+            nameVi: 'Iron hòa tan Carbon ở > 1,150 °C tạo Xementit (Fe₃C)',
+            nameEn: 'Iron reacts with Carbon above 1,150 °C forming Cementite (Fe₃C)',
+            descVi: 'Trên 1,150 °C trong khí trơ/chân không, Iron và Carbon tạo Fe₃C (Zn hoàn toàn không phản ứng với C).',
+            descEn: 'Above 1,150 °C in inert/vacuum atmosphere, Fe and C form Fe₃C (Zn forms no carbide).',
+            rateMolS: dFeC / dt,
+            dXi: dFeC,
+          });
+        }
+      }
+
+      // Carbothermal CaO + 3C -> CaC2 + CO in inert/closed crucible (begins 1,400-1,500 C!)
+      if ((moles.CaO_s || 0) > 1e-9 && T >= 1673.15) {
+        const arcRate = T >= 1773.15 ? 0.35 : 0.14;
+        const dArc = Math.min(moles.CaO_s, moles.C_s / 3) * (1 - Math.exp(-arcRate * dt));
+        if (dArc > 1e-11) {
+          moles.CaO_s -= dArc;
+          if (moles.CaO_s < 1e-13) delete moles.CaO_s;
+          moles.C_s -= 3 * dArc;
+          if (moles.C_s < 1e-13) delete moles.C_s;
+          moles.CaC2_s = (moles.CaC2_s || 0) + dArc;
+          gasProduced.CO_g = (gasProduced.CO_g || 0) + dArc;
+          heatJ -= dArc * 464000;
+          activeReactions.push({
+            id: 'cao_3c_cac2',
+            equation: 'CaO(s) + 3C(s) —(1,450–2,000 °C, kín/trơ)→ CaC₂(s) + CO(g)↑',
+            nameVi: 'Cacbon khử CaO ở 1,400–1,500+ °C (khí trơ) tạo CaC₂ và CO↑',
+            nameEn: 'Carbothermal reduction of CaO (1,450–2,000 °C, inert) → CaC₂ + CO↑',
+            descVi: 'Từ 1,450–1,500 °C trong môi trường trơ không có không khí, Carbon bắt đầu khử CaO rắn tạo thêm CaC₂ và khí CO.',
+            descEn: 'Above 1,450–1,500 °C in O₂-free furnace/inert gas, C reduces CaO forming CaC₂ and CO.',
+            rateMolS: dArc / dt,
+            dXi: dArc,
+          });
+        }
+      }
+    }
+
+    // C + 2H2 -> CH4 (500-1000 C) kept outside low-O2 lock if H2 gas is present in sealed vessel
     if ((moles.C_s || 0) > 1e-9 && T >= 773.15 && (head.H2_g || 0) > 1e-7) {
       const dCH4 = Math.min(moles.C_s, head.H2_g / 2) * (1 - Math.exp(-0.28 * dt));
       if (dCH4 > 1e-11) {
@@ -3197,46 +3609,6 @@ function stepCarbideAndCarbonChemistry(vessel, liquidVolL, dt, activeReactions, 
           descEn: 'At 500–1,000 °C Carbon oxidizes H₂ forming Methane (CH₄).',
           rateMolS: dCH4 / dt,
           dXi: dCH4,
-        });
-      }
-    }
-    if ((moles.C_s || 0) > 1e-9 && (moles.Al_s || 0) > 1e-9 && T >= 1073.15 && (moles.H2O_l || 0) < 0.02) {
-      const dAlCarb = Math.min((moles.Al_s || 0) / 4, moles.C_s / 3) * (1 - Math.exp(-0.42 * dt));
-      if (dAlCarb > 1e-11) {
-        moles.Al_s -= 4 * dAlCarb;
-        if (moles.Al_s < 1e-13) delete moles.Al_s;
-        moles.C_s -= 3 * dAlCarb;
-        if (moles.C_s < 1e-13) delete moles.C_s;
-        moles.Al4C3_s = (moles.Al4C3_s || 0) + dAlCarb;
-        heatJ += dAlCarb * 209000;
-        activeReactions.push({
-          id: 'al_c_al4c3',
-          equation: '4Al(s/l) + 3C(s) —(800–1,200 °C)→ Al₄C₃(s)',
-          nameVi: 'Aluminium kết hợp với Carbon ở 800–1,200 °C tạo Al₄C₃',
-          nameEn: 'Aluminium reacts with Carbon at 800–1,200 °C forming Al₄C₃',
-          descVi: 'Ở 800–1,200 °C (nhất là trong khí trơ Argon), Al nóng chảy kết hợp Carbon tạo tinh thể vàng Al₄C₃.',
-          descEn: 'At 800–1,200 °C (especially in inert Ar), molten Al reacts with Carbon forming yellow Al₄C₃.',
-          rateMolS: dAlCarb / dt,
-          dXi: dAlCarb,
-        });
-      }
-    }
-    if ((moles.C_s || 0) > 1e-9 && (moles.CaO_s || 0) > 1e-9 && T >= 2273.15) {
-      const dArc = Math.min(moles.CaO_s, moles.C_s / 3) * (1 - Math.exp(-0.4 * dt));
-      if (dArc > 1e-11) {
-        moles.CaO_s -= dArc;
-        moles.C_s -= 3 * dArc;
-        moles.CaC2_s = (moles.CaC2_s || 0) + dArc;
-        gasProduced.CO_g = (gasProduced.CO_g || 0) + dArc;
-        activeReactions.push({
-          id: 'cao_3c_cac2',
-          equation: 'CaO(s) + 3C(s) —(2,000 °C)→ CaC₂(s) + CO(g)↑',
-          nameVi: 'Điều chế Calcium carbide từ CaO và Carbon ở 2,000 °C',
-          nameEn: 'Carbothermal synthesis of CaC₂ at 2,000 °C',
-          descVi: 'Trong lò hồ quang ~2,000 °C, CaO tác dụng Carbon tạo CaC₂ và khí CO.',
-          descEn: 'At ~2,000 °C, CaO and Carbon form CaC₂ and CO gas.',
-          rateMolS: dArc / dt,
-          dXi: dArc,
         });
       }
     }
@@ -3757,6 +4129,7 @@ export const DRY_SALT_PAIRINGS = [
   ['K_aq', 1, 'BrO3_aq', 1, 'KBrO3_s', 1, false],
   ['K_aq', 1, 'IO_aq', 1, 'KIO_s', 1, false],
   ['K_aq', 1, 'IO3_aq', 1, 'KIO3_s', 1, false],
+  ['H_aq', 1, 'IO3_aq', 1, 'HIO3_s', 1, false],
   ['K_aq', 1, 'NO3_aq', 1, 'KNO3_s', 1, false],
   ['K_aq', 1, 'C2H5O_aq', 1, 'C2H5OK_s', 1, false],
   ['K_aq', 1, 'OH_aq', 1, 'KOH_s', 1, false],
@@ -4252,6 +4625,8 @@ function stepMetalSulfuricSolver(vessel, liquidVolL, dt, activeReactions, gasPro
 
   const T = vessel.tempK;
   const stirBoost = vessel.stirTimer > 0 ? 2.6 : 1.0;
+  // Cold 100% anhydrous H2SO4 (~>=98.5% w/w, <50 C) lacks mobile H3O+ and coats Zn/Mg/Fe/Al/Cu with insoluble sulfates
+  const isColdAnhydrous = sulf.w >= 0.985 && T < 323.15;
   let totalHeatJ = 0;
 
   // Consume nEq mol of H2SO4 equivalents from molecular H2SO4_l first, then aqueous H+ + sulfate
@@ -4335,9 +4710,9 @@ function stepMetalSulfuricSolver(vessel, liquidVolL, dt, activeReactions, gasPro
     }
   }
 
-  // 2. Zinc (Zn_s) across mid (20-65% -> SO2 + trace S/H2S) & conc/conc_98 (>=65% -> SO2)
+  // 2. Zinc (Zn_s) across mid (20-65% -> SO2 + trace S/H2S) & conc/conc_98 (>=65% -> SO2); passivated in cold 100% anhydrous H2SO4
   const nZn = moles.Zn_s || 0;
-  if (nZn > 1e-10) {
+  if (nZn > 1e-10 && !isColdAnhydrous) {
     const fOx = sulf.w >= 0.65 ? 1.0 : (sulf.w - 0.20) / 0.45;
     const pCount = vessel.particleCounts?.Zn_s ?? 8;
     const area = computeSolidSurfaceAreaM2('Zn_s', nZn, pCount);
@@ -4447,9 +4822,9 @@ function stepMetalSulfuricSolver(vessel, liquidVolL, dt, activeReactions, gasPro
     }
   }
 
-  // 5. Magnesium (Mg_s) across mid (20-65% -> SO2 + trace S/H2S) & conc/conc_98 (>=65% -> SO2)
+  // 5. Magnesium (Mg_s) across mid (20-65% -> SO2 + trace S/H2S) & conc/conc_98 (>=65% -> SO2); passivated in cold 100% anhydrous H2SO4
   const nMg = moles.Mg_s || 0;
-  if (nMg > 1e-10) {
+  if (nMg > 1e-10 && !isColdAnhydrous) {
     const fOxMg = sulf.w >= 0.65 ? 1.0 : (sulf.w - 0.20) / 0.45;
     const pCount = vessel.particleCounts?.Mg_s ?? 6;
     const area = computeSolidSurfaceAreaM2('Mg_s', nMg, pCount);
@@ -4483,6 +4858,37 @@ function stepMetalSulfuricSolver(vessel, liquidVolL, dt, activeReactions, gasPro
           rateMolS: effMg / Math.max(1e-4, dt),
           vigorousGas: true,
           dXi: effMg,
+        });
+      }
+    }
+  }
+
+  // 6. Silver (Ag_s) in hot conc. / anhydrous H2SO4 (>= 80%, T >= 90 C -> Ag2SO4↓ + SO2↑ + 2H2O)
+  const nAg = moles.Ag_s || 0;
+  if (nAg > 1e-10 && sulf.w >= 0.80 && T >= 363.15) {
+    const pCount = vessel.particleCounts?.Ag_s ?? 6;
+    const area = computeSolidSurfaceAreaM2('Ag_s', nAg, pCount);
+    const k = 0.55 * arrheniusFactor(34000, T - 363.15 + CONSTANTS.T_STD_K) * stirBoost * iceMob;
+    const dAg = Math.min(nAg, getAvailAcidEq(), k * Math.max(1e-5, area) * 3.2 * dt);
+    if (dAg > 1e-12) {
+      const usedAcid = consumeH2SO4Eq(dAg);
+      if (usedAcid > 1e-12) {
+        moles.Ag_s = Math.max(0, nAg - usedAcid);
+        if (moles.Ag_s < 1e-13) delete moles.Ag_s;
+        moles.Ag2SO4_s = (moles.Ag2SO4_s || 0) + 0.5 * usedAcid;
+        moles.H2O_l = (moles.H2O_l || 0) + usedAcid;
+        gasProduced.SO2_g = (gasProduced.SO2_g || 0) + 0.5 * usedAcid;
+        totalHeatJ += 45000 * usedAcid;
+        activeReactions.push({
+          id: 'ag_h2so4_conc_hot',
+          equation: '2Ag(s) + 2H₂SO₄(đặc, nóng ≥ 90 °C) → Ag₂SO₄(s)↓ + SO₂(g)↑ + 2H₂O(l)',
+          nameVi: 'Silver tác dụng với H₂SO₄ đặc nóng (≥ 90 °C) tạo Ag₂SO₄↓ và SO₂↑',
+          nameEn: 'Silver oxidized by hot conc. H₂SO₄ (≥ 90 °C) yielding Ag₂SO₄↓ + SO₂↑',
+          descVi: 'Khi đun nóng mạnh (≥ 90 °C), H₂SO₄ đặc/khan oxi hóa được cả Silver giải phóng SO₂.',
+          descEn: 'Strongly heated conc./anhydrous H₂SO₄ oxidizes Silver releasing pungent SO₂.',
+          rateMolS: (usedAcid * 0.5) / Math.max(1e-4, dt),
+          vigorousGas: true,
+          dXi: usedAcid * 0.5,
         });
       }
     }

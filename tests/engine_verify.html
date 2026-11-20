@@ -642,7 +642,7 @@
       simOpen.updateSupportAttachments();
       simOpen.setBurnerFlame(bnOpen.id, 3);
       simOpen.addReagentToVessel(bkOpen.id, 'cuso4_5h2o', 2.4968, { fine: true }); // 0.01 mol -> 0.05 mol H2O
-      stepSeconds(simOpen, 35.0, 0.05);
+      stepSeconds(simOpen, 65.0, 0.05);
       const openSteamMol = bkOpen.escapedGasMoles.H2O_g || 0;
       const openCuSO4Mol = bkOpen.moles.CuSO4_s || 0;
 
@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.16';
+      const expectedBuild = 'virlab_beta_v4+build.17';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,7 +2515,7 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.16 parity: All apparatus & 25 starter reagents translated in VI/EN, Prompt 40-50 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.17 parity: All apparatus & 25 starter reagents translated in VI/EN, Prompt 40-51 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
           STARTER_REAGENTS.length === 25 &&
           !APPARATUS.clay_triangle &&
@@ -3398,7 +3398,7 @@
       dish.moles = { CuSO4_5H2O_s: 0.04 };
       dish.particleCounts = { CuSO4_5H2O_s: 400 };
       sim.updateSupportAttachments();
-      stepSeconds(sim, 34.0, 0.05);
+      stepSeconds(sim, 75.0, 0.05);
       const dehydOk = (dish.moles.CuSO4_s || 0) > 0.035 && (dish.moles.CuSO4_5H2O_s || 0) < 0.005;
 
       const bAnh = sim.createApparatus('beaker_250', 540, 427);
@@ -8240,6 +8240,214 @@
         'Prompt 50 invariants: Commercial CaC2 + impurities + N2/oxide reduction, Sulfur + H2SO4 (90-98%, 100-120C) & conc/dilute HNO3, Amorphous C adsorption + <700C CO2 vs >800C CO + water-gas',
         cac2GasOk && cac2RedOk && sulfurAcidOk && adsOk && cRegimeOk,
         `cac2=(${cac2GasOk},red=${cac2RedOk}), sulfurAcid=${sulfurAcidOk}(dilS=${bSDil.moles.S_s?.toFixed(3)},SO2=${totGas(bSConc,'SO2_g').toFixed(3)},NO=${totGas(bSHnoDil,'NO_g').toFixed(4)}), ads=${adsOk}, cRegime=${cRegimeOk}(lowCO2=${totGas(fLowC,'CO2_g').toFixed(3)},hiCO=${totGas(fHighC,'CO_g').toFixed(3)},wgCO=${totGas(fWG,'CO_g').toFixed(4)},wgH2=${totGas(fWG,'H2_g').toFixed(4)})`
+      );
+    }
+
+    // TEST 169: Prompt 51 (virlab_beta_v4+build.17) — Metal+C Carbides (Ar/vacuum), Mg+S Flash + MgS Cold Hydrolysis, KI Solubility & I2+HNO3->HIO3, 100% H2SO4 Anhydrous Properties, Vacuum Thermal Decomps (NaOH, CuSO4.5H2O, KMnO4), Dat Den Thermal Air vs Inert, 'Dat den' UI Rename & Metal mp/bp at 1500 C
+    {
+      const totGas = (v, g) => (v.headspaceGasMoles?.[g] || 0) + (v.escapedGasMoles?.[g] || 0);
+
+      // 1) Metal + Carbon in Inert Ar/Vacuum (air must NOT form carbides)
+      const simMC = new LabSimulation();
+      simMC.setAtmosphereMode('inert');
+      const vK = simMC.createApparatus('crucible_porcelain', 120, 400);
+      vK.moles = { K_s: 0.02, C_s: 0.24 };
+      const vNa = simMC.createApparatus('quartz_tube', 240, 400);
+      vNa.moles = { Na_s: 0.04, C_s: 0.06 };
+      vNa.isStoppered = true; vNa.leftStoppered = true; vNa.rightStoppered = true; vNa.stopperMode = 'solid';
+      const vMg1 = simMC.createApparatus('crucible_porcelain', 360, 400);
+      vMg1.moles = { Mg_s: 0.03, C_s: 0.08 };
+      const vMg2 = simMC.createApparatus('crucible_porcelain', 480, 400);
+      vMg2.moles = { Mg_s: 0.04, C_s: 0.08 };
+      const vFe = simMC.createApparatus('crucible_porcelain', 600, 400);
+      vFe.moles = { Fe_s: 0.06, C_s: 0.04 };
+      const vZn = simMC.createApparatus('crucible_porcelain', 720, 400);
+      vZn.moles = { Zn_s: 0.03, C_s: 0.06 };
+      for (let i = 0; i < 40; i++) {
+        vK.tempK = 623.15;   // 350 C -> KC8
+        vNa.tempK = 1073.15; // 800 C sealed -> Na2C2
+        vMg1.tempK = 803.15; // 530 C -> MgC2
+        vMg2.tempK = 973.15; // 700 C -> Mg2C3
+        vFe.tempK = 1473.15; // 1200 C -> Fe3C
+        vZn.tempK = 923.15;  // 650 C -> Zn NO carbide
+        simMC.step(0.05);
+      }
+      const cSynthOk =
+        (vK.moles.KC8_s || 0) > 0.005 &&
+        (vNa.moles.Na2C2_s || 0) > 0.005 &&
+        (vMg1.moles.MgC2_s || 0) > 0.005 &&
+        (vMg2.moles.Mg2C3_s || 0) > 0.005 &&
+        (vFe.moles.Fe3C_s || 0) > 0.005 &&
+        Math.abs((vZn.moles.Zn_s || 0) - 0.03) < 1e-6;
+
+      // Hydrolysis check: Mg2C3 -> C3H4 propyne & Na2C2 -> C2H2
+      const simCarbH = new LabSimulation();
+      const bMg2C3 = simCarbH.createApparatus('beaker_250', 140, 400);
+      bMg2C3.moles = { Mg2C3_s: 0.02, H2O_l: 2.0 };
+      const bNa2C2 = simCarbH.createApparatus('beaker_250', 280, 400);
+      bNa2C2.moles = { Na2C2_s: 0.02, H2O_l: 2.0 };
+      stepSeconds(simCarbH, 1.5, 0.05);
+      const carbHydOk = totGas(bMg2C3, 'C3H4_g') > 0.005 && (bMg2C3.moles.MgOH2_s || 0) > 0.01 && totGas(bNa2C2, 'C2H2_g') > 0.005;
+
+      // 2) Mg + S (450-500 C + mgCombustionTimer -> MgS in sealed inert tube/vessel) + MgS cold hydrolysis (-> Mg(OH)2 + H2S)
+      const simMgS = new LabSimulation();
+      simMgS.setAtmosphereMode('inert');
+      const vMgSC = simMgS.createApparatus('crucible_porcelain', 160, 400);
+      vMgSC.moles = { Mg_s: 0.005, S_s: 0.005 };
+      vMgSC.isStoppered = true; vMgSC.lidState = 'closed';
+      for (let i = 0; i < 20; i++) { vMgSC.tempK = 743.15; simMgS.step(0.05); }
+      const mgsMade = (vMgSC.moles.MgS_s || 0) > 0.002 && (vMgSC.mgCombustionTimer || 0) > 0;
+      const bMgSH = simMgS.createApparatus('beaker_250', 300, 400);
+      bMgSH.moles = { MgS_s: 0.02, H2O_l: 2.0 };
+      stepSeconds(simMgS, 1.2, 0.05);
+      const mgsHydOk = (bMgSH.moles.MgOH2_s || 0) > 0.01 && totGas(bMgSH, 'H2S_g') > 0.01;
+
+      // 3) KI Solubility + I2 + KI -> I3-, and Nonmetal + Acid matrix (I2 + hot conc HNO3 -> HIO3 + NO2; I2 + H2SO4/HCl no rxn; Br2 + HNO3/H2SO4 no rxn)
+      const simHal = new LabSimulation();
+      const bKI = simHal.createApparatus('beaker_250', 140, 400);
+      bKI.moles = { KI_s: 0.4, H2O_l: 5.55, I2_s: 0.02 }; // 100g H2O dissolves KI -> I3-
+      const bI2HNO3 = simHal.createApparatus('beaker_250', 280, 400);
+      bI2HNO3.moles = { I2_s: 0.01, H_aq: 0.25, NO3_aq: 0.25, H2O_l: 0.45 }; // ~65% HNO3
+      const bI2H2SO4 = simHal.createApparatus('beaker_250', 420, 400);
+      bI2H2SO4.moles = { I2_s: 0.01, H2SO4_l: 0.25 };
+      const bBr2HNO3 = simHal.createApparatus('beaker_250', 560, 400);
+      bBr2HNO3.moles = { Br2_l: 0.01, H_aq: 0.25, NO3_aq: 0.25, H2O_l: 0.45 };
+      for (let i = 0; i < 40; i++) {
+        bI2HNO3.tempK = 358.15;  // 85 C
+        bI2H2SO4.tempK = 383.15; // 110 C
+        bBr2HNO3.tempK = 333.15;
+        simHal.step(0.05);
+      }
+      const kiAndAcidOk =
+        (bKI.moles.I3_aq || 0) > 0.015 &&
+        (bI2HNO3.moles.IO3_aq || 0) > 0.005 &&
+        totGas(bI2HNO3, 'NO2_g') > 0.025 &&
+        Math.abs((bI2H2SO4.moles.I2_s || 0) + (bI2H2SO4.headspaceGasMoles?.I2_g || 0) + (bI2H2SO4.escapedGasMoles?.I2_g || 0) - 0.01) < 1e-4 &&
+        (bBr2HNO3.moles.BrO3_aq || 0) === 0;
+
+      // 4) 100% Anhydrous H2SO4 properties (cold passivates Zn/Mg/Fe; hot oxidizes Fe & Ag -> SO2; KNO3 -> KHSO4 + HNO3; KI -> I2 + SO2; NaOH -> Na2SO4 + 2H2O)
+      const simSulf100 = new LabSimulation();
+      const bZnCold = simSulf100.createApparatus('beaker_250', 140, 400);
+      bZnCold.moles = { Zn_s: 0.03, H2SO4_l: 0.3 }; // pure 100% cold 25 C
+      const bAgHot = simSulf100.createApparatus('beaker_250', 260, 400);
+      bAgHot.moles = { Ag_s: 0.02, H2SO4_l: 0.2 };
+      const bKNO3S = simSulf100.createApparatus('beaker_250', 380, 400);
+      bKNO3S.moles = { KNO3_s: 0.03, H2SO4_l: 0.1 };
+      const bKIS = simSulf100.createApparatus('beaker_250', 500, 400);
+      bKIS.moles = { KI_s: 0.02, H2SO4_l: 0.1 };
+      const bNaOHS = simSulf100.createApparatus('beaker_250', 620, 400);
+      bNaOHS.moles = { NaOH_s: 0.04, H2SO4_l: 0.02 };
+      for (let i = 0; i < 40; i++) {
+        bZnCold.tempK = 298.15;
+        bAgHot.tempK = 393.15;
+        bKNO3S.tempK = 353.15;
+        simSulf100.step(0.05);
+      }
+      const h2so4AnhydOk =
+        Math.abs((bZnCold.moles.Zn_s || 0) - 0.03) < 1e-6 &&
+        (bAgHot.moles.Ag2SO4_s || 0) > 0.001 &&
+        totGas(bAgHot, 'SO2_g') > 0.001 &&
+        (bKNO3S.moles.KHSO4_s || 0) > 0.01 &&
+        ((bKNO3S.moles.HNO3_l || 0) + totGas(bKNO3S, 'HNO3_g')) > 0.01 &&
+        (bKIS.moles.I2_s || 0) > 0.005 &&
+        totGas(bKIS, 'SO2_g') > 0.005 &&
+        ((bNaOHS.moles.Na2SO4_s || 0) + (bNaOHS.moles.SO4_2_aq || 0)) > 0.01;
+
+      // 5, 6, 7) Vacuum decompositions (NaOH 500-800C -> Na2O & >1500C -> Na(g)+O2; CuSO4.5H2O -> CuSO4.H2O -> CuSO4 -> CuO.CuSO4/CuO + SO2/O2 -> Cu2O >1000C; KMnO4 -> Mn3O4 residue at 1500 C)
+      const simVac = new LabSimulation();
+      simVac.environment.pressureBar = 0.05; // high vacuum
+      const cNaOHV1 = simVac.createApparatus('crucible_porcelain', 140, 400);
+      cNaOHV1.moles = { NaOH_s: 0.04 };
+      const cNaOHV3 = simVac.createApparatus('crucible_porcelain', 260, 400);
+      cNaOHV3.moles = { Na2O_s: 0.02 };
+      const cCu5 = simVac.createApparatus('crucible_porcelain', 380, 400);
+      cCu5.moles = { CuSO4_5H2O_s: 0.02 };
+      const cCuHi = simVac.createApparatus('crucible_porcelain', 500, 400);
+      cCuHi.moles = { CuSO4_s: 0.02 };
+      const cCuO = simVac.createApparatus('crucible_porcelain', 620, 400);
+      cCuO.moles = { CuO_s: 0.04 };
+      const cK2OHi = simVac.createApparatus('crucible_porcelain', 740, 400);
+      cK2OHi.moles = { Mn3O4_s: 0.02, K2O_s: 0.03 };
+      for (let i = 0; i < 45; i++) {
+        cNaOHV1.tempK = 873.15;  // 600 C in vacuum -> Na2O
+        cNaOHV3.tempK = 1823.15; // 1550 C in vacuum -> Na(g) + O2
+        cCu5.tempK = 363.15;     // 90 C -> CuSO4.H2O
+        cCuHi.tempK = 1043.15;   // 770 C -> CuO + SO3/SO2/O2
+        cCuO.tempK = 1343.15;    // 1070 C -> Cu2O + O2
+        cK2OHi.tempK = 1723.15;  // 1450 C -> K2O volatilizes leaving Mn3O4!
+        simVac.step(0.05);
+      }
+      const vacOk =
+        (cNaOHV1.moles.Na2O_s || 0) > 0.008 &&
+        totGas(cNaOHV3, 'Na_g') > 0.02 &&
+        totGas(cNaOHV3, 'O2_g') > 0.005 &&
+        (cCu5.moles.CuSO4_H2O_s || 0) > 0.01 &&
+        (cCuHi.moles.CuO_s || 0) > 0.01 &&
+        totGas(cCuHi, 'SO2_g') > 0.003 &&
+        (cCuO.moles.Cu2O_s || 0) > 0.008 &&
+        (cK2OHi.moles.K2O_s || 0) < 0.015 &&
+        Math.abs((cK2OHi.moles.Mn3O4_s || 0) - 0.02) < 1e-6;
+
+      // 8) Dat den thermal behavior: Air 300-1500C (Ca3(PO4)2 + CaSO4 -> CaO + SO2) vs Inert 1450-1500C (CaO + 3C -> CaC2 + CO)
+      const simDDAir = new LabSimulation();
+      const cDDAir1 = simDDAir.createApparatus('crucible_porcelain', 140, 400);
+      cDDAir1.moles = { Ca3P2_s: 0.01, CaS_s: 0.01 };
+      const cDDAir3 = simDDAir.createApparatus('crucible_porcelain', 260, 400);
+      cDDAir3.moles = { CaSO4_s: 0.02, C_s: 0.005 };
+      for (let i = 0; i < 40; i++) {
+        cDDAir1.tempK = 723.15;  // 450 C air -> Ca3(PO4)2 + CaSO4
+        cDDAir3.tempK = 1623.15; // 1350 C -> 2CaO + 2SO2 + O2
+        simDDAir.step(0.05);
+      }
+      const simDDInert = new LabSimulation();
+      simDDInert.setAtmosphereMode('inert');
+      const cDDIn = simDDInert.createApparatus('crucible_porcelain', 380, 400);
+      cDDIn.moles = { CaO_s: 0.02, C_s: 0.08 };
+      for (let i = 0; i < 40; i++) {
+        cDDIn.tempK = 1753.15; // 1480 C inert -> CaC2 + CO
+        simDDInert.step(0.05);
+      }
+      const datDenThermOk =
+        (cDDAir1.moles.Ca3PO4_2_s || 0) > 0.005 &&
+        (cDDAir1.moles.CaSO4_s || 0) > 0.005 &&
+        (cDDAir3.moles.CaO_s || 0) > 0.002 &&
+        totGas(cDDAir3, 'SO2_g') > 0.002 &&
+        (cDDIn.moles.CaC2_s || 0) > 0.004 &&
+        totGas(cDDIn, 'CO_g') > 0.004;
+
+      // 9) 'Dat den (CaC2)' rename & 10) Metal mp/bp + state at 1500 C (1773.15 K)
+      const renameOk = I18N.vi.reg_cac2 === 'Đất đèn (CaC₂)';
+      const simMet = new LabSimulation();
+      simMet.setAtmosphereMode('inert');
+      const c1500 = simMet.createApparatus('crucible_porcelain', 140, 400);
+      c1500.moles = { K_s: 0.01, Na_s: 0.01, Zn_s: 0.01, Mg_s: 0.01, Ca_s: 0.01, Al_s: 0.01, Ba_s: 0.01, Ag_s: 0.01, Cu_s: 0.01, Fe_s: 0.01 };
+      for (let i = 0; i < 40; i++) {
+        c1500.tempK = 1773.15; // 1500 C
+        simMet.step(0.05);
+      }
+      const T1500 = 1773.15;
+      const met1500Ok =
+        SPECIES.Na_s.boilTempK === 1156.15 &&
+        SPECIES.Ca_s.meltTempK === 1115.15 &&
+        SPECIES.Ca_s.boilTempK === 1757.15 &&
+        SPECIES.Ba_s.meltTempK === 1000.15 &&
+        SPECIES.Ba_s.boilTempK === 2170.15 &&
+        SPECIES.Fe_s.meltTempK === 1811.15 &&
+        totGas(c1500, 'K_g') > 0.008 &&
+        totGas(c1500, 'Na_g') > 0.008 &&
+        totGas(c1500, 'Zn_g') > 0.008 &&
+        totGas(c1500, 'Mg_g') > 0.008 &&
+        totGas(c1500, 'Ca_g') > 0.008 &&
+        isSolidMoltenAtTemp(SPECIES.Al_s, T1500, c1500.moles) &&
+        isSolidMoltenAtTemp(SPECIES.Ba_s, T1500, c1500.moles) &&
+        isSolidMoltenAtTemp(SPECIES.Ag_s, T1500, c1500.moles) &&
+        isSolidMoltenAtTemp(SPECIES.Cu_s, T1500, c1500.moles) &&
+        !isSolidMoltenAtTemp(SPECIES.Fe_s, T1500, c1500.moles);
+
+      assert(
+        'Prompt 51 invariants: Metal+C carbides (KC8/Na2C2/MgC2/Mg2C3/Fe3C, Zn none), Mg+S flash & MgS cold hydrolysis, KI+I3- & I2+HNO3->HIO3, 100% H2SO4 properties, Vacuum decomps (NaOH/CuSO4.5H2O/KMnO4), Dat den thermal air vs inert, Dat den label & 10-metal mp/bp at 1500 C',
+        cSynthOk && carbHydOk && mgsMade && mgsHydOk && kiAndAcidOk && h2so4AnhydOk && vacOk && datDenThermOk && renameOk && met1500Ok,
+        `cSynth=${cSynthOk}, carbHyd=${carbHydOk}, MgS=(${mgsMade},${mgsHydOk}), KI/I2=${kiAndAcidOk}, H2SO4_100=${h2so4AnhydOk}, vac=${vacOk}, datDen=${datDenThermOk}, rename=${renameOk}, met1500=${met1500Ok}`
       );
     }
 

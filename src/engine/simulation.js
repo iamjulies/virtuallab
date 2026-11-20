@@ -5855,6 +5855,11 @@ export class LabSimulation {
         combinedGas.Br2_g += thermRes.br2ProducedMol || 0;
         combinedGas.I2_g += thermRes.i2ProducedMol || 0;
         combinedGas.S_g += thermRes.sProducedMol || 0;
+        if (thermRes.metalVaporsProduced) {
+          for (const [mG, mVal] of Object.entries(thermRes.metalVaporsProduced)) {
+            if (mVal > 0) combinedGas[mG] = (combinedGas[mG] || 0) + mVal;
+          }
+        }
 
         const gasEvents = stepVesselGasAndPressure(
           v,

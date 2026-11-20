@@ -585,6 +585,40 @@ export function stepVesselThermodynamics(
   const remBr2After = vessel.moles.Br2_l || 0;
   const remainingSulfur = vessel.moles.S_s || 0;
   const remainingIodine = vessel.moles.I2_s || 0;
+  const metalVaporsProduced = { K_g: 0, Na_g: 0, Zn_g: 0, Mg_g: 0, Ca_g: 0 };
+
+  // Metal vaporization / boiling loop (K 759 C, Na 883 C, Zn 907 C, Mg 1090 C, Ca 1484 C; lowered in vacuum!)
+  const pBoilSafe = Math.max(0.005, effectivePressureBar || CONSTANTS.P_STD_BAR);
+  const volatileMetals = [
+    { id: 'K_s', gId: 'K_g', bpK: 1032.15, dHVap: 79100, vacFloorK: 540 },
+    { id: 'Na_s', gId: 'Na_g', bpK: 1156.15, dHVap: 97400, vacFloorK: 593.15 },
+    { id: 'Zn_s', gId: 'Zn_g', bpK: 1180.15, dHVap: 115300, vacFloorK: 680 },
+    { id: 'Mg_s', gId: 'Mg_g', bpK: 1363.15, dHVap: 127400, vacFloorK: 760 },
+    { id: 'Ca_s', gId: 'Ca_g', bpK: 1757.15, dHVap: 154700, vacFloorK: 950 },
+  ];
+  if (remainingWater <= 1e-6 && remainingEtOH <= 1e-6 && remainingPureHNO3 <= 1e-6 && remBr2After <= 1e-6) {
+    for (const vm of volatileMetals) {
+      const nMet = vessel.moles[vm.id] || 0;
+      if (nMet <= 1e-9) continue;
+      // Clausius-Clapeyron bp under vessel effective pressure; clamped cleanly for low vacuum
+      const effBpK = Math.max(
+        vm.vacFloorK,
+        1 / (1 / vm.bpK - (CONSTANTS.R_J_MOL_K / vm.dHVap) * Math.log(pBoilSafe / CONSTANTS.P_STD_BAR))
+      );
+      if (newTempK >= effBpK) {
+        isBoiling = true;
+        const excessJ = (newTempK - effBpK) * cTotal;
+        const boilMet = Math.min(nMet, excessJ / vm.dHVap);
+        if (boilMet > 1e-12) {
+          vessel.moles[vm.id] = Math.max(0, nMet - boilMet);
+          if (vessel.moles[vm.id] < 1e-13) delete vessel.moles[vm.id];
+          metalVaporsProduced[vm.gId] += boilMet;
+          const remJ = Math.max(0, excessJ - boilMet * vm.dHVap);
+          newTempK = effBpK + remJ / cTotal;
+        }
+      }
+    }
+  }
   if (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 <= 1e-7 && remBr2After <= 1e-7 && remainingSulfur <= 1e-7 && remainingIodine > 1e-7 && newTempK >= 457.45) {
     isBoiling = true;
     const excessI2J = (newTempK - 457.45) * cTotal;
@@ -796,6 +830,7 @@ export function stepVesselThermodynamics(
     br2ProducedMol,
     i2ProducedMol,
     sProducedMol,
+    metalVaporsProduced,
     isBoiling,
     boilingPointK,
     steamOpacity,
