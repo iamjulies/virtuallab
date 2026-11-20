@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.15',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.16',
     toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
     quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
     quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -209,6 +209,10 @@ export const I18N = {
     reg_i2_desc: 'Tinh thể vảy tím đen ánh kim (4,93 g/cm³ · thăng hoa mạnh ra hơi tím ở 50–114 °C) · Rất ít tan trong H₂O (~0,032 g/100 mL), tan mạnh trong KI tạo I₃⁻ nâu đỏ & Al + H₂O bốc cháy',
     reg_s: 'Sulfur (S)',
     reg_s_desc: 'Bột màu vàng tươi (2,07 g/cm³ · nóng chảy 115,2 °C → quánh sẫm ở 187–200 °C · sôi 444,6 °C) · Cháy ngọn lửa xanh sinh SO₂↑, hóa hợp kim loại nóng thành sulfide (FeS, ZnS, Al₂S₃)',
+    reg_cac2: 'Calcium carbide thương phẩm (CaC₂)',
+    reg_cac2_desc: 'Cục xám đen ánh tím (2.22 g/cm³ · ~80% CaC₂ lẫn CaO, Carbon, tạp chất Ca₃P₂/CaS) · Gặp H₂O/acid sinh mạnh C₂H₂↑ kèm vết PH₃/H₂S; nung nóng khử oxide kim loại & phản ứng với N₂/O₂/Cl₂',
+    reg_c: 'Carbon vô định hình (C)',
+    reg_c_desc: 'Bột đen xốp hấp phụ mạnh khí & chất màu (1.95 g/cm³ · thăng hoa >3,600 °C) · Cháy (>300–500 °C), khử oxide kim loại (>500 °C -> CO₂ ở <700 °C, >800 °C -> CO), tạo CH₄/Al₄C₃ & tác dụng HNO₃/H₂SO₄ đặc nóng',
 
     // Workbench & Actions
     noSelection: 'Chưa chọn dụng cụ',
@@ -729,7 +733,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.15',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.16',
     toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
     quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
     quickPresetsHoldTitle: 'Quick Setup Presets (Hold F · Release to close)',
@@ -927,6 +931,10 @@ export const I18N = {
     reg_i2_desc: 'Lustrous dark purple-black flakes (4.93 g/cm³ · sublimes briskly as violet vapor at 50–114 °C) · Trace H₂O solubility (~0.032 g/100 mL), dissolves in KI as red-brown I₃⁻ & ignites with Al + H₂O',
     reg_s: 'Sulfur (S)',
     reg_s_desc: 'Bright lemon-yellow powder (2.07 g/cm³ · mp 115.2 °C → dark viscous melt 187–200 °C · bp 444.6 °C) · Burns with blue flame to SO₂↑ & combines hot with metals into sulfides (FeS, ZnS, Al₂S₃)',
+    reg_cac2: 'Calcium carbide, commercial (CaC₂)',
+    reg_cac2_desc: 'Gray-black violet-tinted pebbles (2.22 g/cm³ · ~80% CaC₂ with CaO, Carbon & trace Ca₃P₂/CaS) · Reacts violently with H₂O/acids evolving C₂H₂↑ + trace PH₃/H₂S; reduces hot metal oxides & reacts with N₂/O₂/Cl₂',
+    reg_c: 'Carbon, amorphous (C)',
+    reg_c_desc: 'Porous dark black powder with strong adsorption (1.95 g/cm³ · sublimes >3,600 °C) · Burns (300–500 °C), reduces oxides (<700 °C -> CO₂, >800 °C -> CO), forms CH₄/Al₄C₃ & reacts with hot conc. HNO₃/H₂SO₄',
 
     noSelection: 'No apparatus selected',
     selectVesselTip: 'Click any vessel on the bench, or drag apparatus & reagents directly onto the workbench.',

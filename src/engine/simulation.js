@@ -2950,10 +2950,21 @@ export class LabSimulation {
         v.phenIrrevFrac = newPhen > 1e-14 ? (oldPhen * (v.phenIrrevFrac || 0)) / newPhen : 0;
       }
     } else if (reg.kind === 'solid') {
-      const sp = SPECIES[reg.speciesId];
-      const addMol = amt / sp.molarMass;
-      v.moles[reg.speciesId] = (v.moles[reg.speciesId] || 0) + addMol;
-      addedHeatCap += addMol * (sp.cp || 30);
+      if (reg.impurityMassFractions) {
+        for (const [spId, frac] of Object.entries(reg.impurityMassFractions)) {
+          const spSub = SPECIES[spId];
+          if (!spSub || frac <= 0) continue;
+          const mSub = amt * frac;
+          const nSub = mSub / spSub.molarMass;
+          v.moles[spId] = (v.moles[spId] || 0) + nSub;
+          addedHeatCap += nSub * (spSub.cp || 30);
+        }
+      } else {
+        const sp = SPECIES[reg.speciesId];
+        const addMol = amt / sp.molarMass;
+        v.moles[reg.speciesId] = (v.moles[reg.speciesId] || 0) + addMol;
+        addedHeatCap += addMol * (sp.cp || 30);
+      }
 
       const particleCount = options.fine
         ? (reg.id === 'caco3' ? 400 : (reg.id === 'na' || reg.id === 'k') ? 48 : 180)

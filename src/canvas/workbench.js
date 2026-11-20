@@ -2806,6 +2806,10 @@ export class LabWorkbenchCanvas {
         H2S_g: { rgba: 'rgba(234, 179, 8, 0.30)', core: 'rgba(250, 204, 21, 0.68)', stroke: '#eab308', formula: 'H₂S (M=34 ↓)' },
         C2H5OH_g: { rgba: 'rgba(56, 189, 248, 0.26)', core: 'rgba(125, 211, 252, 0.60)', stroke: '#7dd3fc', formula: 'C₂H₅OH (M=46 ↓)' },
         C2H5Cl_g: { rgba: 'rgba(168, 85, 247, 0.28)', core: 'rgba(192, 132, 252, 0.62)', stroke: '#c084fc', formula: 'C₂H₅Cl (M=64.5 ↓)' },
+        CO_g: { rgba: 'rgba(148, 163, 184, 0.28)', core: 'rgba(226, 232, 240, 0.66)', stroke: '#cbd5e1', formula: 'CO (M=28 ↑)' },
+        C2H2_g: { rgba: 'rgba(56, 189, 248, 0.30)', core: 'rgba(186, 230, 253, 0.68)', stroke: '#38bdf8', formula: 'C₂H₂ (M=26 ↑)' },
+        CH4_g: { rgba: 'rgba(16, 185, 129, 0.28)', core: 'rgba(110, 231, 183, 0.68)', stroke: '#34d399', formula: 'CH₄ (M=16 ↑)' },
+        PH3_g: { rgba: 'rgba(234, 179, 8, 0.30)', core: 'rgba(254, 240, 138, 0.68)', stroke: '#eab308', formula: 'PH₃ (M=34 ↓)' },
       };
       const getGasPal = (spId) => {
         if (GAS_PAL[spId]) return GAS_PAL[spId];

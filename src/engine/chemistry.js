@@ -2599,19 +2599,20 @@ function stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gasProduce
     }
   }
 
-  // 5. Hot strong oxidizers attacking Sulfur: hot conc. HNO3 (>= 60 C), hot conc. H2SO4 (>= 150 C), aq Cl2
+  // 5. Sulfur + Acids (HNO3 conc >= 60% @ 70-100C -> NO2; HNO3 dilute boiling >= 90C -> slow NO; H2SO4 conc 90-98% @ 100-120C -> SO2; H2SO4 dilute -> no reaction)
   const nSnow = moles.S_s || 0;
   if (nSnow > 1e-9) {
     const nNO3Tot = (moles.NO3_aq || 0) + (moles.HNO3_l || 0);
     const nHTot = (moles.H_aq || 0) + (moles.HNO3_l || 0);
     const mHNO3 = Math.min(nNO3Tot, nHTot) * 63.013;
     const wHNO3 = mHNO3 / Math.max(1e-9, mHNO3 + (moles.H2O_l || 0) * 18.015);
-    if (wHNO3 >= 0.45 && T >= 333.15 && (moles.H_aq || 0) > 1e-4 && (moles.NO3_aq || 0) > 1e-4) {
-      const dOxN = Math.min(nSnow, (moles.H_aq || 0) / 6, (moles.NO3_aq || 0) / 6) * (1 - Math.exp(-0.55 * dt));
+    if (wHNO3 >= 0.60 && T >= 343.15 && (moles.H_aq || 0) > 1e-4 && (moles.NO3_aq || 0) > 1e-4) {
+      const tRamp = Math.min(1.0, 0.35 + ((T - 343.15) / 30.0) * 0.65);
+      const dOxN = Math.min(nSnow, (moles.H_aq || 0) / 6, (moles.NO3_aq || 0) / 6) * (1 - Math.exp(-0.55 * tRamp * dt));
       if (dOxN > 1e-11) {
         moles.S_s = nSnow - dOxN;
         if (moles.S_s < 1e-13) delete moles.S_s;
-        moles.H_aq = Math.max(0, moles.H_aq - 4 * dOxN); // 6 HNO3 consumed, 2 H+ produced -> net -4 H+
+        moles.H_aq = Math.max(0, moles.H_aq - 4 * dOxN);
         moles.NO3_aq = Math.max(0, moles.NO3_aq - 6 * dOxN);
         moles.SO4_2_aq = (moles.SO4_2_aq || 0) + dOxN;
         moles.H2O_l = (moles.H2O_l || 0) + 2 * dOxN;
@@ -2619,21 +2620,44 @@ function stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gasProduce
         heatJ += dOxN * 410000;
         activeReactions.push({
           id: 's_hno3_conc_hot',
-          equation: 'S(s) + 6HNO₃(đặc) —(t° ≥ 60 °C)→ H₂SO₄ + 6NO₂(g)↑ + 2H₂O',
-          nameVi: 'Sulfur bị HNO₃ đặc nóng oxi hóa lên SO₄²⁻ và giải phóng khí NO₂ nâu đỏ',
-          nameEn: 'Hot concentrated Nitric acid oxidizes Sulfur to Sulfate + NO₂↑',
-          descVi: 'HNO₃ đặc nóng oxi hóa Sulfur thành Sulfuric acid đồng thời giải phóng khí nâu đỏ NO₂.',
-          descEn: 'Hot concentrated HNO₃ oxidizes S to Sulfate liberating brown NO₂ gas.',
+          equation: 'S(s) + 6HNO₃(đặc) —(70–100 °C)→ H₂SO₄ + 6NO₂(g)↑ + 2H₂O',
+          nameVi: 'Sulfur bị HNO₃ đặc (63–68%+) oxi hóa nóng lên H₂SO₄ và NO₂ nâu đỏ',
+          nameEn: 'Hot concentrated Nitric acid oxidizes Sulfur to H₂SO₄ + NO₂↑',
+          descVi: 'Đun nóng nhẹ (70–100 °C) HNO₃ đặc 63–68%+ oxi hóa Sulfur thành SO₄²⁻ và giải phóng NO₂ nâu đỏ.',
+          descEn: 'Gently heated (70–100 °C) conc. HNO₃ oxidizes S to Sulfate liberating brown NO₂ gas.',
           rateMolS: dOxN / dt,
           vigorousGas: true,
           dXi: dOxN,
         });
       }
+    } else if (wHNO3 >= 0.05 && wHNO3 < 0.60 && T >= 363.15 && (moles.H_aq || 0) > 1e-4 && (moles.NO3_aq || 0) > 1e-4) {
+      // Prolonged boiling with dilute HNO3 very slowly oxidizes S forming NO(g)
+      const dOxNDil = Math.min(nSnow, (moles.H_aq || 0) / 2, (moles.NO3_aq || 0) / 2) * (1 - Math.exp(-0.045 * dt));
+      if (dOxNDil > 1e-11) {
+        moles.S_s = nSnow - dOxNDil;
+        if (moles.S_s < 1e-13) delete moles.S_s;
+        moles.NO3_aq = Math.max(0, moles.NO3_aq - 2 * dOxNDil);
+        moles.SO4_2_aq = (moles.SO4_2_aq || 0) + dOxNDil;
+        gasProduced.NO_g = (gasProduced.NO_g || 0) + 2 * dOxNDil;
+        heatJ += dOxNDil * 180000;
+        activeReactions.push({
+          id: 's_hno3_dil_boil',
+          equation: 'S(s) + 2HNO₃(loãng) —(đun sôi kéo dài)→ H₂SO₄ + 2NO(g)↑',
+          nameVi: 'Sulfur phản ứng rất chậm với HNO₃ loãng đun sôi tạo SO₄²⁻ và khí NO',
+          nameEn: 'Boiling dilute Nitric acid very slowly oxidizes Sulfur to H₂SO₄ + NO↑',
+          descVi: 'Khi đun sôi kéo dài HNO₃ loãng, Sulfur bị oxi hóa rất chậm sinh khí không màu NO.',
+          descEn: 'Prolonged boiling of dilute HNO₃ very slowly oxidizes S evolving NO gas.',
+          rateMolS: dOxNDil / dt,
+          dXi: dOxNDil,
+        });
+      }
     }
 
     const sulf = computeSulfuricAcidState(moles);
-    if ((moles.S_s || 0) > 1e-9 && sulf.w >= 0.72 && T >= 423.15 && (moles.H2SO4_l || 0) > 1e-5) {
-      const dOxS = Math.min(moles.S_s, (moles.H2SO4_l || 0) / 2) * (1 - Math.exp(-0.45 * dt));
+    if ((moles.S_s || 0) > 1e-9 && sulf.w >= 0.90 && T >= 373.15 && (moles.H2SO4_l || 0) > 1e-5) {
+      // 90-98% H2SO4 oxidizes Sulfur when heated to 100-120 °C (near Sulfur 115 °C melting point); dilute does NOT react
+      const meltRamp = T >= 388.15 ? 1.0 : 0.35 + ((T - 373.15) / 15.0) * 0.65;
+      const dOxS = Math.min(moles.S_s, (moles.H2SO4_l || 0) / 2) * (1 - Math.exp(-0.48 * meltRamp * dt));
       if (dOxS > 1e-11) {
         moles.S_s -= dOxS;
         if (moles.S_s < 1e-13) delete moles.S_s;
@@ -2644,11 +2668,11 @@ function stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gasProduce
         heatJ += dOxS * 120000;
         activeReactions.push({
           id: 's_h2so4_conc_hot',
-          equation: 'S(s) + 2H₂SO₄(đặc) —(t° ≥ 150 °C)→ 3SO₂(g)↑ + 2H₂O',
-          nameVi: 'Sulfur khử H₂SO₄ đặc nóng sinh khí SO₂',
-          nameEn: 'Sulfur reduces hot concentrated Sulfuric acid evolving SO₂↑',
-          descVi: 'Ở nhiệt độ cao (≥ 150 °C), H₂SO₄ đặc oxi hóa S thành khí hắc SO₂.',
-          descEn: 'Hot concentrated H₂SO₄ oxidizes S to SO₂ gas.',
+          equation: 'S(s) + 2H₂SO₄(đặc 90–98%) —(100–120 °C)→ 3SO₂(g)↑ + 2H₂O',
+          nameVi: 'Sulfur tác dụng với H₂SO₄ đặc (90–98%) nóng chảy ở 100–120 °C sinh khí SO₂',
+          nameEn: 'Sulfur reduces hot concentrated H₂SO₄ (90–98%, 100–120 °C) evolving SO₂↑',
+          descVi: 'Chỉ H₂SO₄ đặc 90–98% đun nóng 100–120 °C (gần điểm nóng chảy 115 °C của Sulfur) mới oxi hóa mạnh S thành SO₂↑; H₂SO₄ loãng không phản ứng.',
+          descEn: 'Concentrated 90–98% H₂SO₄ at 100–120 °C oxidizes melting Sulfur to pungent SO₂↑; dilute acid does not react.',
           rateMolS: dOxS / dt,
           vigorousGas: true,
           dXi: dOxS,
@@ -2691,6 +2715,530 @@ function stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gasProduce
       moles.H_aq = Math.max(0, (moles.H_aq || 0) - d2);
       if (moles.H_aq < 1e-13) delete moles.H_aq;
       gasProduced.H2S_g = (gasProduced.H2S_g || 0) + d2;
+    }
+  }
+
+  return heatJ;
+}
+
+/**
+ * Calcium carbide (CaC2) + commercial impurities (Ca3P2, CaS) AND Amorphous Carbon (C):
+ * - CaC2 hydrolysis (H2O -> C2H2 + Ca(OH)2, HCl/H+ -> C2H2 + Ca2+, Ca3P2 -> PH3, CaS -> H2S)
+ * - CaC2 + N2 (1000-1100 C -> CaCN2 + C), O2 (>600-700 C -> CaO + CO2/CO), Cl2/Br2, & oxide reduction (CuO, FeO, Fe2O3, ZnO)
+ * - Amorphous C adsorption of gases/solutes, Boudouard CO2 -> 2CO (>= 800 C), combustion (<700 C -> CO2 vs >=800 C -> CO)
+ * - Carbon pyrometallurgy of CuO (500-700 C), Fe2O3/Fe3O4/FeO (700-1000 C), ZnO (1000-1200 C)
+ * - Water-gas (C + H2O(g) @ 1000 C -> CO + H2), conc HNO3 (80-100 C), conc H2SO4 (95-98% @ 120-180 C), H2 -> CH4, Al -> Al4C3, CaO -> CaC2
+ */
+function stepCarbideAndCarbonChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, iceMob = 1, options = {}) {
+  const moles = vessel.moles;
+  const T = vessel.tempK || CONSTANTS.T_STD_K;
+  const head = (vessel.headspaceGasMoles = vessel.headspaceGasMoles || {});
+  const atmMode = options.environment?.atmosphereMode || 'air';
+  const isInertAtm = atmMode === 'inert';
+  const airFraction = isInertAtm || vessel.isStoppered ? 0 : Math.max(0, vessel.airO2PurgeFrac ?? 1);
+  const liqMob = (moles.H2O_l || 0) > 1e-8 ? iceMob : 0;
+  let heatJ = 0;
+
+  // --- PART A: Commercial Calcium carbide (CaC2) & Impurities (Ca3P2, CaS, Al4C3 hydrolysis) ---
+  if ((moles.CaC2_s || 0) > 1e-9) {
+    // 1. Reaction with Acid (H+) first if acidic aqueous medium
+    if (liquidVolL > 1e-6 && (moles.H_aq || 0) > 1e-5 && liqMob > 0) {
+      const kAcid = Math.min(18, 8.5 * liqMob);
+      const dCa = Math.min(moles.CaC2_s, (moles.H_aq || 0) / 2) * (1 - Math.exp(-kAcid * dt));
+      if (dCa > 1e-11) {
+        moles.CaC2_s -= dCa;
+        if (moles.CaC2_s < 1e-13) delete moles.CaC2_s;
+        moles.H_aq = Math.max(0, moles.H_aq - 2 * dCa);
+        if (moles.H_aq < 1e-13) delete moles.H_aq;
+        moles.Ca2_aq = (moles.Ca2_aq || 0) + dCa;
+        gasProduced.C2H2_g = (gasProduced.C2H2_g || 0) + dCa;
+        heatJ += dCa * 195000;
+        activeReactions.push({
+          id: 'cac2_acid',
+          equation: 'CaC₂(s) + 2H⁺(aq) → Ca²⁺(aq) + C₂H₂(g)↑',
+          nameVi: 'Calcium carbide tác dụng mãnh liệt với acid sinh khí C₂H₂',
+          nameEn: 'Calcium carbide reacts violently with acid evolving C₂H₂↑',
+          descVi: 'CaC₂ phản ứng cực kỳ mãnh liệt với acid giải phóng khí Ethyne (C₂H₂).',
+          descEn: 'CaC₂ reacts violently with acid liberating Ethyne (C₂H₂) gas.',
+          rateMolS: dCa / dt,
+          vigorousGas: true,
+          dXi: dCa,
+        });
+      }
+    }
+    // 2. Vigorous hydrolysis with water (CaC2 + 2H2O -> C2H2 + Ca(OH)2)
+    if ((moles.CaC2_s || 0) > 1e-9 && (moles.H2O_l || 0) > 1e-6 && liqMob > 0) {
+      const kHyd = 3.2 * liqMob * (0.85 + Math.min(1.5, (T - 273.15) / 80));
+      const dHyd = Math.min(moles.CaC2_s, (moles.H2O_l || 0) / 2) * (1 - Math.exp(-kHyd * dt));
+      if (dHyd > 1e-11) {
+        moles.CaC2_s -= dHyd;
+        if (moles.CaC2_s < 1e-13) delete moles.CaC2_s;
+        moles.H2O_l = Math.max(0, moles.H2O_l - 2 * dHyd);
+        if (moles.H2O_l < 1e-13) delete moles.H2O_l;
+        if ((moles.H2O_l || 0) > 0.06) {
+          moles.Ca2_aq = (moles.Ca2_aq || 0) + dHyd;
+          moles.OH_aq = (moles.OH_aq || 0) + 2 * dHyd;
+        } else {
+          moles.CaOH2_s = (moles.CaOH2_s || 0) + dHyd;
+        }
+        gasProduced.C2H2_g = (gasProduced.C2H2_g || 0) + dHyd;
+        heatJ += dHyd * 127200;
+        activeReactions.push({
+          id: 'cac2_hydrolysis',
+          equation: 'CaC₂(s) + 2H₂O(l) → C₂H₂(g)↑ + Ca(OH)₂',
+          nameVi: 'Thủy phân Calcium carbide điều chế khí Ethyne (C₂H₂)',
+          nameEn: 'Calcium carbide hydrolyzes violently yielding C₂H₂↑ + Ca(OH)₂',
+          descVi: 'CaC₂ thủy phân mãnh liệt ngay ở nhiệt độ thường, tỏa nhiệt và giải phóng khí C₂H₂.',
+          descEn: 'CaC₂ hydrolyzes rapidly in water releasing exothermic heat and C₂H₂ gas.',
+          rateMolS: dHyd / dt,
+          vigorousGas: true,
+          dXi: dHyd,
+        });
+      }
+    }
+    // 3. Dry Nitrogen at 1000-1100 °C -> CaCN2 + C (Cyanamide process)
+    if ((moles.CaC2_s || 0) > 1e-9 && T >= 1273.15 && (head.N2_g || 0) > 1e-7) {
+      const dN2 = Math.min(moles.CaC2_s, head.N2_g) * (1 - Math.exp(-0.55 * dt));
+      if (dN2 > 1e-11) {
+        moles.CaC2_s -= dN2;
+        if (moles.CaC2_s < 1e-13) delete moles.CaC2_s;
+        head.N2_g = Math.max(0, head.N2_g - dN2);
+        moles.CaCN2_s = (moles.CaCN2_s || 0) + dN2;
+        moles.C_s = (moles.C_s || 0) + dN2;
+        heatJ += dN2 * 288000;
+        activeReactions.push({
+          id: 'cac2_n2',
+          equation: 'CaC₂(s) + N₂(g) —(1,000–1,100 °C)→ CaCN₂(s) + C(s)',
+          nameVi: 'Calcium carbide kết hợp N₂ ở 1,000–1,100 °C tạo Calcium cyanamide',
+          nameEn: 'Calcium carbide fixes N₂ at 1,000–1,100 °C forming CaCN₂ + Carbon',
+          descVi: 'Nung nóng CaC₂ trong luồng N₂ (1,000–1,100 °C) tạo hỗn hợp rắn đen CaCN₂ và Carbon.',
+          descEn: 'Heating CaC₂ in Nitrogen at 1,000–1,100 °C produces CaCN₂ and black Carbon.',
+          rateMolS: dN2 / dt,
+          dXi: dN2,
+        });
+      }
+    }
+    // 4. Dry O2 combustion (> 600-700 °C)
+    const nO2Av = (head.O2_g || 0) + (airFraction > 0 && !vessel.isStoppered && (moles.H2O_l || 0) < 0.02 ? 0.05 * airFraction : 0);
+    if ((moles.CaC2_s || 0) > 1e-9 && T >= 873.15 && nO2Av > 1e-7 && (moles.H2O_l || 0) < 0.02) {
+      const dOx = Math.min(moles.CaC2_s / 2, nO2Av / 5) * (1 - Math.exp(-0.75 * dt));
+      if (dOx > 1e-11) {
+        moles.CaC2_s -= 2 * dOx;
+        if (moles.CaC2_s < 1e-13) delete moles.CaC2_s;
+        if ((head.O2_g || 0) > 0) head.O2_g = Math.max(0, head.O2_g - Math.min(head.O2_g, 5 * dOx));
+        moles.CaO_s = (moles.CaO_s || 0) + 2 * dOx;
+        if (T >= 1073.15) {
+          gasProduced.CO_g = (gasProduced.CO_g || 0) + 4 * dOx;
+        } else {
+          gasProduced.CO2_g = (gasProduced.CO2_g || 0) + 4 * dOx;
+        }
+        heatJ += dOx * 1450000;
+        activeReactions.push({
+          id: 'cac2_o2_burn',
+          equation: T >= 1073.15 ? 'CaC₂(s) + 1.5O₂(g) —(>800 °C)→ CaO(s) + 2CO(g)↑' : '2CaC₂(s) + 5O₂(g) —(>600 °C)→ 2CaO(s) + 4CO₂(g)↑',
+          nameVi: 'Calcium carbide cháy trong O₂ ở nhiệt độ cao',
+          nameEn: 'Calcium carbide burns in Oxygen at high temperature',
+          descVi: 'Trên 600–700 °C, CaC₂ cháy trong O₂ tạo CaO và khí oxide Carbon.',
+          descEn: 'Above 600–700 °C, CaC₂ burns in O₂ forming CaO and Carbon oxides.',
+          rateMolS: dOx / dt,
+          dXi: dOx,
+        });
+      }
+    }
+    // 5. Dry Halogens (Cl2 / Br2)
+    if ((moles.CaC2_s || 0) > 1e-9 && T >= 453.15 && (head.Cl2_g || 0) > 1e-7) {
+      const dCl = Math.min(moles.CaC2_s, head.Cl2_g) * (1 - Math.exp(-1.1 * dt));
+      if (dCl > 1e-11) {
+        moles.CaC2_s -= dCl;
+        if (moles.CaC2_s < 1e-13) delete moles.CaC2_s;
+        head.Cl2_g = Math.max(0, head.Cl2_g - dCl);
+        moles.CaCl2_s = (moles.CaCl2_s || 0) + dCl;
+        moles.C_s = (moles.C_s || 0) + 2 * dCl;
+        heatJ += dCl * 420000;
+        activeReactions.push({
+          id: 'cac2_cl2',
+          equation: 'CaC₂(s) + Cl₂(g) —(t°)→ CaCl₂(s) + 2C(s)',
+          nameVi: 'Calcium carbide cháy trong khí Cl₂ tạo CaCl₂ và muội than',
+          nameEn: 'Calcium carbide reacts with hot Cl₂ forming CaCl₂ + Carbon soot',
+          descVi: 'CaC₂ nóng phản ứng với Cl₂ giải phóng muội than đen Carbon và muối CaCl₂.',
+          descEn: 'Hot CaC₂ reacts with Cl₂ yielding CaCl₂ and amorphous Carbon.',
+          rateMolS: dCl / dt,
+          dXi: dCl,
+        });
+      }
+    }
+    // 6. High-temperature CaC2 Metal Oxide Reduction (CuO, FeO, Fe2O3, ZnO -> M + CaO + CO2/CO)
+    if ((moles.CaC2_s || 0) > 1e-9 && T >= 973.15 && (moles.H2O_l || 0) < 0.02) {
+      const cac2OxSpecs = [
+        { oxId: 'CuO_s', metId: 'Cu_s', minK: 973.15, stoichCo2: 5, stoichCo: 3 },
+        { oxId: 'FeO_s', metId: 'Fe_s', minK: 1123.15, stoichCo2: 5, stoichCo: 3 },
+        { oxId: 'ZnO_s', metId: 'Zn_s', minK: 1223.15, stoichCo2: 5, stoichCo: 3 },
+      ];
+      for (const sp of cac2OxSpecs) {
+        const nOx = moles[sp.oxId] || 0;
+        if (nOx <= 1e-9 || (moles.CaC2_s || 0) <= 1e-9 || T < sp.minK) continue;
+        const highT = T >= 1073.15;
+        const stM = highT ? sp.stoichCo : sp.stoichCo2;
+        const dRed = Math.min(moles.CaC2_s, nOx / stM) * (1 - Math.exp(-0.65 * dt));
+        if (dRed > 1e-11) {
+          moles.CaC2_s -= dRed;
+          if (moles.CaC2_s < 1e-13) delete moles.CaC2_s;
+          moles[sp.oxId] -= stM * dRed;
+          if (moles[sp.oxId] < 1e-13) delete moles[sp.oxId];
+          moles[sp.metId] = (moles[sp.metId] || 0) + stM * dRed;
+          moles.CaO_s = (moles.CaO_s || 0) + dRed;
+          if (highT) gasProduced.CO_g = (gasProduced.CO_g || 0) + 2 * dRed;
+          else gasProduced.CO2_g = (gasProduced.CO2_g || 0) + 2 * dRed;
+          heatJ += dRed * 320000;
+          activeReactions.push({
+            id: `cac2_red_${sp.oxId}`,
+            equation: `CaC₂ + ${stM}${SPECIES[sp.oxId].formula} —(t°)→ ${stM}${SPECIES[sp.metId].formula} + CaO + 2${highT ? 'CO' : 'CO₂'}↑`,
+            nameVi: `CaC₂ khử ${SPECIES[sp.oxId].formula} ở nhiệt độ cao tạo kim loại ${SPECIES[sp.metId].formula}`,
+            nameEn: `Calcium carbide reduces ${SPECIES[sp.oxId].formula} at high T to metallic ${SPECIES[sp.metId].formula}`,
+            descVi: 'Ở nhiệt độ cao trong luyện kim, CaC₂ khử mạnh oxit kim loại thành kim loại tự do.',
+            descEn: 'At elevated metallurgical temperatures, CaC₂ reduces metal oxides to free metals.',
+            rateMolS: dRed / dt,
+            dXi: dRed,
+          });
+        }
+      }
+    }
+  }
+
+  // Impurity hydrolysis (Ca3P2 -> PH3↑, CaS -> H2S↑) giving commercial carbide its signature odor!
+  if ((moles.Ca3P2_s || 0) > 1e-10 && ((moles.H2O_l || 0) > 1e-6 || (moles.H_aq || 0) > 1e-5) && liqMob > 0) {
+    const dP = Math.min(moles.Ca3P2_s, (moles.H2O_l || 0) / 6 + (moles.H_aq || 0) / 6) * (1 - Math.exp(-3.6 * liqMob * dt));
+    if (dP > 1e-12) {
+      moles.Ca3P2_s -= dP;
+      if (moles.Ca3P2_s < 1e-14) delete moles.Ca3P2_s;
+      if ((moles.H2O_l || 0) >= 6 * dP) moles.H2O_l -= 6 * dP;
+      moles.Ca2_aq = (moles.Ca2_aq || 0) + 3 * dP;
+      if ((moles.H_aq || 0) >= 6 * dP) {
+        moles.H_aq -= 6 * dP;
+      } else {
+        moles.OH_aq = (moles.OH_aq || 0) + 6 * dP;
+      }
+      gasProduced.PH3_g = (gasProduced.PH3_g || 0) + 2 * dP;
+    }
+  }
+  if ((moles.CaS_s || 0) > 1e-10 && (moles.H2O_l || 0) > 1e-6 && liqMob > 0) {
+    const dSImp = Math.min(moles.CaS_s, (moles.H2O_l || 0) / 2) * (1 - Math.exp(-2.8 * liqMob * dt));
+    if (dSImp > 1e-12) {
+      moles.CaS_s -= dSImp;
+      if (moles.CaS_s < 1e-14) delete moles.CaS_s;
+      moles.H2O_l = Math.max(0, moles.H2O_l - 2 * dSImp);
+      moles.Ca2_aq = (moles.Ca2_aq || 0) + dSImp;
+      moles.OH_aq = (moles.OH_aq || 0) + 2 * dSImp;
+      gasProduced.H2S_g = (gasProduced.H2S_g || 0) + dSImp;
+    }
+  }
+
+  // Al4C3 hydrolysis with water / acid -> Al(OH)3 / Al3+ + CH4(g)↑
+  if ((moles.Al4C3_s || 0) > 1e-9 && ((moles.H2O_l || 0) > 1e-5 || (moles.H_aq || 0) > 1e-5) && liqMob > 0) {
+    const kAl = 1.6 * liqMob;
+    const dAlC = Math.min(moles.Al4C3_s, (moles.H2O_l || 0) / 12 + (moles.H_aq || 0) / 12) * (1 - Math.exp(-kAl * dt));
+    if (dAlC > 1e-11) {
+      moles.Al4C3_s -= dAlC;
+      if (moles.Al4C3_s < 1e-13) delete moles.Al4C3_s;
+      if ((moles.H_aq || 0) >= 12 * dAlC) {
+        moles.H_aq -= 12 * dAlC;
+        moles.Al3_aq = (moles.Al3_aq || 0) + 4 * dAlC;
+      } else {
+        moles.H2O_l = Math.max(0, (moles.H2O_l || 0) - 12 * dAlC);
+        moles.AlOH3_s = (moles.AlOH3_s || 0) + 4 * dAlC;
+      }
+      gasProduced.CH4_g = (gasProduced.CH4_g || 0) + 3 * dAlC;
+      activeReactions.push({
+        id: 'al4c3_hydrolysis',
+        equation: 'Al₄C₃(s) + 12H₂O(l) → 4Al(OH)₃(s)↓ + 3CH₄(g)↑',
+        nameVi: 'Thủy phân Aluminium carbide sinh khí Methane (CH₄)',
+        nameEn: 'Aluminium carbide hydrolyzes yielding Al(OH)₃↓ + Methane (CH₄↑)',
+        descVi: 'Al₄C₃ thủy phân giải phóng khí không màu Methane (CH₄).',
+        descEn: 'Al₄C₃ hydrolyzes evolving colorless Methane (CH₄) gas.',
+        rateMolS: dAlC / dt,
+        dXi: dAlC,
+      });
+    }
+  }
+
+  // --- PART B: Amorphous Carbon (C_s) ---
+  if ((moles.C_s || 0) > 1e-9) {
+    // 1. Physical Adsorption of gases & dissolved colored solutes (at cool/moderate T < 420 K)
+    if (T < 423.15) {
+      const capMol = Math.max(0, moles.C_s * 0.22 - (vessel.carbonAdsorbedMol || 0));
+      if (capMol > 1e-7) {
+        let adsTotal = 0;
+        for (const gId of ['NO2_g', 'H2S_g', 'Cl2_g', 'Br2_g', 'PH3_g']) {
+          const hg = head[gId] || 0;
+          if (hg > 1e-7 && adsTotal < capMol) {
+            const take = Math.min(hg, (capMol - adsTotal) * 0.5) * (1 - Math.exp(-0.9 * dt));
+            if (take > 1e-10) {
+              head[gId] = hg - take;
+              adsTotal += take;
+            }
+          }
+        }
+        if (liquidVolL > 1e-6) {
+          for (const solId of ['I2_aq', 'Br2_aq', 'Phenolphthalein_aq']) {
+            const ns = moles[solId] || 0;
+            if (ns > 1e-8 && adsTotal < capMol) {
+              const takeS = Math.min(ns, (capMol - adsTotal) * 0.5) * (1 - Math.exp(-0.75 * dt));
+              if (takeS > 1e-10) {
+                moles[solId] = ns - takeS;
+                if (moles[solId] < 1e-13) delete moles[solId];
+                adsTotal += takeS;
+              }
+            }
+          }
+        }
+        if (adsTotal > 1e-9) {
+          vessel.carbonAdsorbedMol = (vessel.carbonAdsorbedMol || 0) + adsTotal;
+          activeReactions.push({
+            id: 'c_adsorption',
+            equation: 'C(xốp) + Chất tan/Khí → [Hấp phụ bề mặt]',
+            nameVi: 'Carbon vô định hình hấp phụ khí màu & chất tan',
+            nameEn: 'Amorphous Carbon adsorbs colored solutes & gases',
+            descVi: 'Nhờ hệ thống lỗ xốp diện tích bề mặt lớn, Carbon hấp phụ mạnh chất màu và khí mùi.',
+            descEn: 'Porous amorphous Carbon strongly adsorbs colored solutes and odorous gases.',
+            rateMolS: adsTotal / dt,
+            dXi: adsTotal,
+          });
+        }
+      }
+    }
+
+    // 2. Boudouard Reduction above 800 °C: C(s) + CO2(g) -> 2CO(g)
+    if (T >= 1073.15 && (head.CO2_g || 0) > 1e-7) {
+      const dBoud = Math.min(moles.C_s, head.CO2_g) * (1 - Math.exp(-1.35 * dt));
+      if (dBoud > 1e-11) {
+        moles.C_s -= dBoud;
+        if (moles.C_s < 1e-13) delete moles.C_s;
+        head.CO2_g = Math.max(0, head.CO2_g - dBoud);
+        gasProduced.CO_g = (gasProduced.CO_g || 0) + 2 * dBoud;
+        heatJ -= dBoud * 172000;
+        activeReactions.push({
+          id: 'c_boudouard_co',
+          equation: 'C(s) + CO₂(g) —(≥ 800 °C)→ 2CO(g)↑',
+          nameVi: 'Carbon nóng đỏ khử ngược CO₂ thành CO ở trên 800 °C',
+          nameEn: 'Incandescent Carbon reduces CO₂ back to CO above 800 °C',
+          descVi: 'Trên 800–1,000 °C, CO₂ bị Carbon nóng đỏ khử thành khí độc CO là chủ yếu.',
+          descEn: 'Above 800–1,000 °C, hot Carbon reduces CO₂ to CO gas.',
+          rateMolS: dBoud / dt,
+          dXi: dBoud,
+        });
+      }
+    }
+
+    // 3. Combustion in O2 / Air (300-500 °C -> CO2; >= 800 °C or O2-lean -> CO)
+    const nO2C = (head.O2_g || 0) + (airFraction > 0 && !vessel.isStoppered && (moles.H2O_l || 0) < 0.02 ? 0.05 * airFraction : 0);
+    if ((moles.C_s || 0) > 1e-9 && T >= 573.15 && nO2C > 1e-7 && (moles.H2O_l || 0) < 0.02) {
+      const toCO = T >= 1073.15;
+      const dComb = toCO
+        ? Math.min(moles.C_s, 2 * nO2C) * (1 - Math.exp(-0.55 * dt))
+        : Math.min(moles.C_s, nO2C) * (1 - Math.exp(-0.35 * dt));
+      if (dComb > 1e-11) {
+        moles.C_s -= dComb;
+        if (moles.C_s < 1e-13) delete moles.C_s;
+        const o2Use = toCO ? 0.5 * dComb : dComb;
+        if ((head.O2_g || 0) > 0) head.O2_g = Math.max(0, head.O2_g - Math.min(head.O2_g, o2Use));
+        if (toCO) gasProduced.CO_g = (gasProduced.CO_g || 0) + dComb;
+        else gasProduced.CO2_g = (gasProduced.CO2_g || 0) + dComb;
+        heatJ += dComb * (toCO ? 110500 : 393500);
+        activeReactions.push({
+          id: toCO ? 'c_burn_co' : 'c_burn_co2',
+          equation: toCO ? '2C(s) + O₂(g) —(≥ 800 °C)→ 2CO(g)↑' : 'C(s) + O₂(g) —(300–700 °C)→ CO₂(g)↑',
+          nameVi: toCO ? 'Carbon cháy ở trên 800 °C tạo khí chủ yếu là CO' : 'Carbon cháy tỏa nhiệt mạnh tạo khí CO₂',
+          nameEn: toCO ? 'Carbon burns above 800 °C producing predominantly CO↑' : 'Amorphous Carbon burns in O₂ forming CO₂↑',
+          descVi: toCO ? 'Ở >800 °C sản phẩm khí chủ yếu là CO.' : 'Bột Carbon vô định hình dễ cháy ở 300–500 °C tạo CO₂.',
+          descEn: toCO ? 'Above 800 °C, CO is the dominant gaseous product.' : 'Amorphous Carbon ignites around 300–500 °C forming CO₂.',
+          rateMolS: dComb / dt,
+          dXi: dComb,
+        });
+      }
+    }
+
+    // 4. Pyrometallurgical Oxide Reductions (only metals below Al; < 700-800C -> CO2, >= 800C -> CO!)
+    if ((moles.C_s || 0) > 1e-9 && T >= 773.15 && (moles.H2O_l || 0) < 0.02) {
+      const cRedSpecs = [
+        { oxId: 'CuO_s', metId: 'Cu_s', oxSt: 1, metSt: 1, oAtoms: 1, minK: 773.15, name: 'CuO' },
+        { oxId: 'Fe2O3_s', metId: 'Fe_s', oxSt: 1, metSt: 2, oAtoms: 3, minK: 973.15, name: 'Fe₂O₃' },
+        { oxId: 'Fe3O4_s', metId: 'Fe_s', oxSt: 1, metSt: 3, oAtoms: 4, minK: 973.15, name: 'Fe₃O₄' },
+        { oxId: 'FeO_s', metId: 'Fe_s', oxSt: 1, metSt: 1, oAtoms: 1, minK: 973.15, name: 'FeO' },
+        { oxId: 'ZnO_s', metId: 'Zn_s', oxSt: 1, metSt: 1, oAtoms: 1, minK: 1273.15, name: 'ZnO' },
+      ];
+      for (const rs of cRedSpecs) {
+        const nOx = moles[rs.oxId] || 0;
+        if (nOx <= 1e-9 || (moles.C_s || 0) <= 1e-9 || T < rs.minK) continue;
+        const makeCO = T >= 1073.15; // > 800 °C predominantly CO; < 700-800 °C primarily CO2
+        const cPerOx = makeCO ? rs.oAtoms : rs.oAtoms * 0.5;
+        const dM = Math.min(nOx, (moles.C_s || 0) / cPerOx) * (1 - Math.exp(-0.52 * dt));
+        if (dM > 1e-11) {
+          moles[rs.oxId] -= dM;
+          if (moles[rs.oxId] < 1e-13) delete moles[rs.oxId];
+          moles.C_s = Math.max(0, moles.C_s - cPerOx * dM);
+          if (moles.C_s < 1e-13) delete moles.C_s;
+          moles[rs.metId] = (moles[rs.metId] || 0) + rs.metSt * dM;
+          if (makeCO) {
+            gasProduced.CO_g = (gasProduced.CO_g || 0) + cPerOx * dM;
+          } else {
+            gasProduced.CO2_g = (gasProduced.CO2_g || 0) + cPerOx * dM;
+          }
+          heatJ -= dM * 85000;
+          activeReactions.push({
+            id: `c_red_${rs.oxId}`,
+            equation: `${rs.name}(s) + ${cPerOx}C(s) —(t°)→ ${rs.metSt > 1 ? rs.metSt : ''}${SPECIES[rs.metId].formula} + ${cPerOx}${makeCO ? 'CO' : 'CO₂'}↑`,
+            nameVi: `Carbon khử ${rs.name} thành ${SPECIES[rs.metId].formula} (khí ${makeCO ? 'CO' : 'CO₂'})`,
+            nameEn: `Carbon reduces ${rs.name} to metallic ${SPECIES[rs.metId].formula} (evolving ${makeCO ? 'CO' : 'CO₂'})`,
+            descVi: makeCO ? 'Trên 800–1,000 °C, sản phẩm khí chủ yếu là CO.' : 'Dưới 700 °C, sản phẩm khí chủ yếu là CO₂.',
+            descEn: makeCO ? 'Above 800 °C, CO dominates gaseous product.' : 'Below 700 °C, CO₂ dominates gaseous product.',
+            rateMolS: dM / dt,
+            dXi: dM,
+          });
+        }
+      }
+    }
+
+    // 5. Water-Gas Reaction with Steam (>= 1,000 °C): C + H2O(g) -> CO + H2
+    if ((moles.C_s || 0) > 1e-9 && T >= 1273.15 && (head.H2O_g || 0) > 1e-7) {
+      const dWG = Math.min(moles.C_s, head.H2O_g) * (1 - Math.exp(-0.85 * dt));
+      if (dWG > 1e-11) {
+        moles.C_s -= dWG;
+        if (moles.C_s < 1e-13) delete moles.C_s;
+        head.H2O_g = Math.max(0, head.H2O_g - dWG);
+        gasProduced.CO_g = (gasProduced.CO_g || 0) + dWG;
+        gasProduced.H2_g = (gasProduced.H2_g || 0) + dWG;
+        heatJ -= dWG * 131300;
+        activeReactions.push({
+          id: 'c_water_gas',
+          equation: 'C(s) + H₂O(g) —(≥ 1,000 °C)→ CO(g)↑ + H₂(g)↑',
+          nameVi: 'Carbon nung đỏ phản ứng hơi nước tạo khí than ướt (CO + H₂)',
+          nameEn: 'Steam over incandescent Carbon yields water gas (CO↑ + H₂↑)',
+          descVi: 'Ở ~1,000 °C, hơi nước đi qua than đỏ tạo hỗn hợp khí CO và H₂.',
+          descEn: 'At ~1,000 °C, steam reacts with hot Carbon producing CO and H₂.',
+          rateMolS: dWG / dt,
+          dXi: dWG,
+        });
+      }
+    }
+
+    // 6. Strong Oxidizing Acids: conc. HNO3 (>=60% @ 80-100 C) & conc. H2SO4 (>=90% @ 120-180 C); dilute -> NO reaction
+    if ((moles.C_s || 0) > 1e-9 && liquidVolL > 1e-6) {
+      const nNO3C = (moles.NO3_aq || 0) + (moles.HNO3_l || 0);
+      const nHTC = (moles.H_aq || 0) + (moles.HNO3_l || 0);
+      const mHNO3C = Math.min(nNO3C, nHTC) * 63.013;
+      const wHNO3C = mHNO3C / Math.max(1e-9, mHNO3C + (moles.H2O_l || 0) * 18.015);
+      if (wHNO3C >= 0.60 && T >= 343.15 && (moles.H_aq || 0) > 1e-4 && (moles.NO3_aq || 0) > 1e-4) {
+        const dCN = Math.min(moles.C_s, (moles.H_aq || 0) / 4, (moles.NO3_aq || 0) / 4) * (1 - Math.exp(-0.48 * dt));
+        if (dCN > 1e-11) {
+          moles.C_s -= dCN;
+          if (moles.C_s < 1e-13) delete moles.C_s;
+          moles.H_aq = Math.max(0, moles.H_aq - 4 * dCN);
+          moles.NO3_aq = Math.max(0, moles.NO3_aq - 4 * dCN);
+          moles.H2O_l = (moles.H2O_l || 0) + 2 * dCN;
+          gasProduced.CO2_g = (gasProduced.CO2_g || 0) + dCN;
+          gasProduced.NO2_g = (gasProduced.NO2_g || 0) + 4 * dCN;
+          heatJ += dCN * 185000;
+          activeReactions.push({
+            id: 'c_hno3_conc',
+            equation: 'C(s) + 4HNO₃(đặc) —(80–100 °C)→ CO₂(g)↑ + 4NO₂(g)↑ + 2H₂O',
+            nameVi: 'Carbon khử HNO₃ đặc nóng tạo khí CO₂ và NO₂ nâu đỏ',
+            nameEn: 'Amorphous Carbon oxidized by hot conc. HNO₃ → CO₂↑ + 4NO₂↑',
+            descVi: 'Carbon vô định hình bị HNO₃ đặc (63–68%+) đun nóng 80–100 °C oxi hóa mạnh; acid loãng không phản ứng.',
+            descEn: 'Hot conc. HNO₃ oxidizes amorphous Carbon to CO₂ + NO₂; dilute HNO₃ does not react.',
+            rateMolS: dCN / dt,
+            vigorousGas: true,
+            dXi: dCN,
+          });
+        }
+      }
+
+      const sulfC = computeSulfuricAcidState(moles);
+      if ((moles.C_s || 0) > 1e-9 && sulfC.w >= 0.90 && T >= 393.15 && (moles.H2SO4_l || 0) > 1e-5) {
+        const dCS = Math.min(moles.C_s, (moles.H2SO4_l || 0) / 2) * (1 - Math.exp(-0.42 * dt));
+        if (dCS > 1e-11) {
+          moles.C_s -= dCS;
+          if (moles.C_s < 1e-13) delete moles.C_s;
+          moles.H2SO4_l = Math.max(0, moles.H2SO4_l - 2 * dCS);
+          if (moles.H2SO4_l < 1e-13) delete moles.H2SO4_l;
+          moles.H2O_l = (moles.H2O_l || 0) + 2 * dCS;
+          gasProduced.CO2_g = (gasProduced.CO2_g || 0) + dCS;
+          gasProduced.SO2_g = (gasProduced.SO2_g || 0) + 2 * dCS;
+          heatJ += dCS * 95000;
+          activeReactions.push({
+            id: 'c_h2so4_conc',
+            equation: 'C(s) + 2H₂SO₄(đặc 95–98%) —(120–180 °C)→ CO₂(g)↑ + 2SO₂(g)↑ + 2H₂O',
+            nameVi: 'Carbon khử H₂SO₄ đặc nóng sinh hỗn hợp khí CO₂ và SO₂',
+            nameEn: 'Amorphous Carbon oxidized by hot conc. H₂SO₄ → CO₂↑ + 2SO₂↑',
+            descVi: 'Chỉ H₂SO₄ đặc 95–98% đun mạnh 120–180 °C mới oxi hóa Carbon; H₂SO₄ <70% không phản ứng.',
+            descEn: 'Only hot conc. H₂SO₄ (95–98%, 120–180 °C) oxidizes Carbon; dilute / <70% H₂SO₄ does not react.',
+            rateMolS: dCS / dt,
+            vigorousGas: true,
+            dXi: dCS,
+          });
+        }
+      }
+    }
+
+    // 7. Oxidizing Character of Carbon: C + 2H2 -> CH4 (500-1000 C) & 4Al + 3C -> Al4C3 (800-1200 C) & CaO + 3C -> CaC2 + CO
+    if ((moles.C_s || 0) > 1e-9 && T >= 773.15 && (head.H2_g || 0) > 1e-7) {
+      const dCH4 = Math.min(moles.C_s, head.H2_g / 2) * (1 - Math.exp(-0.28 * dt));
+      if (dCH4 > 1e-11) {
+        moles.C_s -= dCH4;
+        if (moles.C_s < 1e-13) delete moles.C_s;
+        head.H2_g = Math.max(0, head.H2_g - 2 * dCH4);
+        gasProduced.CH4_g = (gasProduced.CH4_g || 0) + dCH4;
+        heatJ += dCH4 * 74800;
+        activeReactions.push({
+          id: 'c_h2_ch4',
+          equation: 'C(s) + 2H₂(g) —(500–1,000 °C)→ CH₄(g)↑',
+          nameVi: 'Carbon tác dụng với H₂ ở nhiệt độ cao tạo khí Methane',
+          nameEn: 'Carbon hydrogenates at 500–1,000 °C forming Methane (CH₄)',
+          descVi: 'Carbon thể hiện tính oxi hóa tác dụng với H₂ tạo khí Methane (CH₄).',
+          descEn: 'At 500–1,000 °C Carbon oxidizes H₂ forming Methane (CH₄).',
+          rateMolS: dCH4 / dt,
+          dXi: dCH4,
+        });
+      }
+    }
+    if ((moles.C_s || 0) > 1e-9 && (moles.Al_s || 0) > 1e-9 && T >= 1073.15 && (moles.H2O_l || 0) < 0.02) {
+      const dAlCarb = Math.min((moles.Al_s || 0) / 4, moles.C_s / 3) * (1 - Math.exp(-0.42 * dt));
+      if (dAlCarb > 1e-11) {
+        moles.Al_s -= 4 * dAlCarb;
+        if (moles.Al_s < 1e-13) delete moles.Al_s;
+        moles.C_s -= 3 * dAlCarb;
+        if (moles.C_s < 1e-13) delete moles.C_s;
+        moles.Al4C3_s = (moles.Al4C3_s || 0) + dAlCarb;
+        heatJ += dAlCarb * 209000;
+        activeReactions.push({
+          id: 'al_c_al4c3',
+          equation: '4Al(s/l) + 3C(s) —(800–1,200 °C)→ Al₄C₃(s)',
+          nameVi: 'Aluminium kết hợp với Carbon ở 800–1,200 °C tạo Al₄C₃',
+          nameEn: 'Aluminium reacts with Carbon at 800–1,200 °C forming Al₄C₃',
+          descVi: 'Ở 800–1,200 °C (nhất là trong khí trơ Argon), Al nóng chảy kết hợp Carbon tạo tinh thể vàng Al₄C₃.',
+          descEn: 'At 800–1,200 °C (especially in inert Ar), molten Al reacts with Carbon forming yellow Al₄C₃.',
+          rateMolS: dAlCarb / dt,
+          dXi: dAlCarb,
+        });
+      }
+    }
+    if ((moles.C_s || 0) > 1e-9 && (moles.CaO_s || 0) > 1e-9 && T >= 2273.15) {
+      const dArc = Math.min(moles.CaO_s, moles.C_s / 3) * (1 - Math.exp(-0.4 * dt));
+      if (dArc > 1e-11) {
+        moles.CaO_s -= dArc;
+        moles.C_s -= 3 * dArc;
+        moles.CaC2_s = (moles.CaC2_s || 0) + dArc;
+        gasProduced.CO_g = (gasProduced.CO_g || 0) + dArc;
+        activeReactions.push({
+          id: 'cao_3c_cac2',
+          equation: 'CaO(s) + 3C(s) —(2,000 °C)→ CaC₂(s) + CO(g)↑',
+          nameVi: 'Điều chế Calcium carbide từ CaO và Carbon ở 2,000 °C',
+          nameEn: 'Carbothermal synthesis of CaC₂ at 2,000 °C',
+          descVi: 'Trong lò hồ quang ~2,000 °C, CaO tác dụng Carbon tạo CaC₂ và khí CO.',
+          descEn: 'At ~2,000 °C, CaO and Carbon form CaC₂ and CO gas.',
+          rateMolS: dArc / dt,
+          dXi: dArc,
+        });
+      }
     }
   }
 
@@ -4412,12 +4960,14 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     reactionHeatJ += stepMetalSulfuricSolver(vessel, liquidVolL, dt, activeReactions, gasProduced);
     reactionHeatJ += stepHalogenRedoxAndAlkali(vessel, liquidVolL, dt, activeReactions, gasProduced, strat, computeIceMobilityFactor(vessel));
     reactionHeatJ += stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
+    reactionHeatJ += stepCarbideAndCarbonChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
     stepLiquidLiquidPartition(vessel, strat, dt);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
   } else {
     // Only allow dry chemisorption & dry halogen/sulfur reactions when no aqueous transport exists
     reactionHeatJ += stepHalogenRedoxAndAlkali(vessel, 0, dt, activeReactions, gasProduced, strat, 0);
     reactionHeatJ += stepSulfurChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
+    reactionHeatJ += stepCarbideAndCarbonChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, 0, dt, activeReactions);
   }
 

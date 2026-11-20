@@ -1896,7 +1896,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 23 &&
+          STARTER_REAGENTS.length === 25 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.15';
+      const expectedBuild = 'virlab_beta_v4+build.16';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,9 +2515,9 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.15 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-46 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.16 parity: All apparatus & 25 starter reagents translated in VI/EN, Prompt 40-50 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
-          STARTER_REAGENTS.length === 23 &&
+          STARTER_REAGENTS.length === 25 &&
           !APPARATUS.clay_triangle &&
           allTranslated &&
           newKeysPresent &&
@@ -7399,7 +7399,7 @@
       const mno2AcidOk = Math.abs((bMnColdAcid.moles.MnO2_s || 0) - 0.01) < 1e-6 && cl2HotTot > 0.002 && (bMnHotHCl.moles.Mn2_aq || 0) > 0.002;
 
       const iupacKmno4Ok =
-        STARTER_REAGENTS.length === 23 &&
+        STARTER_REAGENTS.length === 25 &&
         STARTER_REAGENTS.some((r) => r.id === 'kmno4') &&
         !/\b(kali|mangan|axit|clo|oxi(?! hóa))\b/i.test(`${I18N.vi.reg_kmno4} ${I18N.vi.reg_kmno4_desc} ${I18N.vi.alertMn2O7Hazard}`);
 
@@ -7513,7 +7513,7 @@
         (vIRoom.moles.IO3_aq || 0) > (vIRoom.moles.IO_aq || 0) * 4;
 
       const iupacHalOk =
-        STARTER_REAGENTS.length === 23 &&
+        STARTER_REAGENTS.length === 25 &&
         STARTER_REAGENTS.some((r) => r.id === 'br2') &&
         STARTER_REAGENTS.some((r) => r.id === 'i2') &&
         !/\b(brom|iot|clo|kali|natri|nhôm|sắt|axit)\b/i.test(`${I18N.vi.reg_br2} ${I18N.vi.reg_br2_desc} ${I18N.vi.reg_i2} ${I18N.vi.reg_i2_desc}`);
@@ -7629,7 +7629,7 @@
         (bSHNO3.moles.SO4_2_aq || 0) > 0.001;
 
       const iupacSulfOk =
-        STARTER_REAGENTS.length === 23 &&
+        STARTER_REAGENTS.length === 25 &&
         STARTER_REAGENTS.some((r) => r.id === 's') &&
         !/\b(lưu huỳnh|sunfua|hiđro|axit|oxi(?! hóa)|etanol)\b/i.test(`${I18N.vi.reg_s} ${I18N.vi.reg_s_desc}`);
 
@@ -7644,10 +7644,11 @@
     {
       const nonmetals = STARTER_REAGENTS.filter((r) => r.category === 'nonmetal').map((r) => r.id).sort();
       const filterOk =
-        nonmetals.length === 3 &&
+        nonmetals.length === 4 &&
         nonmetals[0] === 'br2' &&
-        nonmetals[1] === 'i2' &&
-        nonmetals[2] === 's' &&
+        nonmetals[1] === 'c' &&
+        nonmetals[2] === 'i2' &&
+        nonmetals[3] === 's' &&
         I18N.vi.regCatNonmetal === 'Phi kim' &&
         I18N.en.regCatNonmetal === 'Nonmetals';
 
@@ -8118,6 +8119,126 @@
         'Prompt 49 invariants: Gas Composition table (mmol + mL), Shortcuts conflict & Chrome guard, unified ,/. number format, SOS red-dot shatter ocean wave, Ctrl 4 retro-TV pixel flames',
         fmtOk && shortcutsOk && gasTableOk && sosWaveOk,
         `fmt=${fmtOk}, sc=${shortcutsOk}, gas=${gasTableOk}, sosWave=${sosWaveOk}(r0=${sosWaves[0]?.r?.toFixed(1)})`
+      );
+    }
+
+    // TEST 168: Prompt 50 (virlab_beta_v4+build.16) — Commercial CaC2 + Impurities & Reduction, Sulfur + Acid (90-98% H2SO4 @ 100-120C, Dilute vs Conc HNO3), Amorphous Carbon Adsorption + <700C CO2 vs >800C CO Regimes
+    {
+      const totGas = (v, g) => (v.headspaceGasMoles?.[g] || 0) + (v.escapedGasMoles?.[g] || 0);
+      const sim50 = new LabSimulation();
+      // 1) Commercial CaC2 hydrolysis -> C2H2 + trace PH3/H2S + Ca(OH)2 (add reagents BEFORE stoppering)
+      const bCaC = sim50.createApparatus('beaker_250', 180, 427);
+      sim50.addReagentToVessel(bCaC.id, 'cac2', 2.0, { silentAnim: true });
+      const massCacAdded =
+        (bCaC.moles.CaC2_s || 0) * SPECIES.CaC2_s.molarMass +
+        (bCaC.moles.CaO_s || 0) * SPECIES.CaO_s.molarMass +
+        (bCaC.moles.C_s || 0) * SPECIES.C_s.molarMass +
+        (bCaC.moles.Ca3P2_s || 0) * SPECIES.Ca3P2_s.molarMass +
+        (bCaC.moles.CaS_s || 0) * SPECIES.CaS_s.molarMass;
+      const hasCommercialBlend = Math.abs(massCacAdded - 2.0) < 0.02 && (bCaC.moles.Ca3P2_s || 0) > 1e-6 && (bCaC.moles.C_s || 0) > 1e-3;
+      const bCaCAc = sim50.createApparatus('erlenmeyer_250', 300, 400);
+      sim50.addReagentToVessel(bCaCAc.id, 'cac2', 0.3, { silentAnim: true });
+      sim50.addReagentToVessel(bCaCAc.id, 'h2o', 40, { silentAnim: true });
+      stepSeconds(sim50, 2.0, 0.05);
+      const cac2GasOk =
+        hasCommercialBlend &&
+        totGas(bCaCAc, 'C2H2_g') > 0.002 &&
+        totGas(bCaCAc, 'PH3_g') > 1e-5 &&
+        totGas(bCaCAc, 'H2S_g') > 1e-5;
+
+      // 2) CaC2 hot reductions (CuO -> Cu, FeO -> Fe, N2 -> CaCN2 + C) in high-T crucible & quartz_tube
+      const simRed = new LabSimulation();
+      simRed.setAtmosphereMode('inert');
+      const qCaMet = simRed.createApparatus('crucible_porcelain', 420, 380);
+      qCaMet.moles = { CaC2_s: 0.05, CuO_s: 0.03, FeO_s: 0.03 };
+      const qCaN2 = simRed.createApparatus('quartz_tube', 560, 380);
+      qCaN2.moles = { CaC2_s: 0.02 };
+      qCaN2.headspaceGasMoles.N2_g = 0.003;
+      qCaN2.isStoppered = true;
+      qCaN2.leftStoppered = true;
+      qCaN2.rightStoppered = true;
+      qCaN2.stopperMode = 'solid';
+      qCaMet.tempK = 1323.15; // 1050 C
+      qCaN2.tempK = 1323.15;
+      for (let i = 0; i < 40; i++) {
+        qCaMet.tempK = 1323.15;
+        qCaN2.tempK = 1323.15;
+        simRed.step(0.05);
+      }
+      const cac2RedOk = (qCaMet.moles.Cu_s || 0) > 0.01 && (qCaMet.moles.Fe_s || 0) > 0.005 && (qCaN2.moles.CaCN2_s || 0) > 0.001;
+
+      // 3) Sulfur + Acid fixes: Dilute H2SO4 @ 115C does NOT react vs 98% H2SO4 @ 112C evolves SO2; Dilute boiling HNO3 -> slow NO
+      const simSA = new LabSimulation();
+      const bSDil = simSA.createApparatus('beaker_250', 160, 427);
+      bSDil.moles = { S_s: 0.05, H2O_l: 4.0, H_aq: 0.2, SO4_2_aq: 0.1 }; // Dilute H2SO4 (~5%)
+      bSDil.tempK = 388.15; // 115 C
+      const bSConc = simSA.createApparatus('beaker_250', 300, 427);
+      simSA.addReagentToVessel(bSConc.id, 'h2so4_98', 30, { silentAnim: true });
+      simSA.addReagentToVessel(bSConc.id, 's', 1.6, { silentAnim: true });
+      bSConc.tempK = 385.15; // 112 C (within 100-120 C!)
+      const bSHnoDil = simSA.createApparatus('beaker_250', 460, 427);
+      bSHnoDil.moles = { S_s: 0.05, H2O_l: 4.0, H_aq: 0.4, NO3_aq: 0.4 }; // ~10% dilute HNO3
+      bSHnoDil.tempK = 371.15; // 98 C boiling
+      for (let i = 0; i < 40; i++) {
+        bSDil.tempK = 388.15;
+        bSConc.tempK = 385.15;
+        bSHnoDil.tempK = 371.15;
+        simSA.step(0.05);
+      }
+      const sulfurAcidOk =
+        Math.abs((bSDil.moles.S_s || 0) - 0.05) < 1e-6 &&
+        totGas(bSConc, 'SO2_g') > 0.01 &&
+        totGas(bSHnoDil, 'NO_g') > 1e-4;
+
+      // 4) Carbon: Adsorption of Phenolphthalein_aq & NO2_g, <700C CO2 vs >=800C CO metallurgy & Al2O3 untouched, plus water-gas
+      const simC = new LabSimulation();
+      const bAds = simC.createApparatus('erlenmeyer_250', 160, 400);
+      bAds.moles = { H2O_l: 2.0, Phenolphthalein_aq: 0.005 };
+      bAds.headspaceGasMoles.NO2_g = 0.005;
+      simC.addReagentToVessel(bAds.id, 'c', 3.6, { silentAnim: true });
+      bAds.isStoppered = true;
+      bAds.stopperMode = 'solid';
+      stepSeconds(simC, 2.0, 0.05);
+      const adsOk = (bAds.moles.Phenolphthalein_aq || 0) < 0.004 && (bAds.headspaceGasMoles.NO2_g || 0) < 0.004 && (bAds.carbonAdsorbedMol || 0) > 0.002;
+
+      const simCPyro = new LabSimulation();
+      simCPyro.setAtmosphereMode('inert');
+      const fLowC = simCPyro.createApparatus('crucible_porcelain', 300, 427);
+      fLowC.moles = { CuO_s: 0.04, C_s: 0.04, Al2O3_s: 0.02 };
+      fLowC.tempK = 893.15; // 620 C (< 700 C -> primarily CO2!)
+
+      const fHighC = simCPyro.createApparatus('crucible_porcelain', 460, 427);
+      fHighC.moles = { Fe2O3_s: 0.04, C_s: 0.25, Al2O3_s: 0.02 };
+      fHighC.tempK = 1223.15; // 950 C (> 800 C -> predominantly CO!)
+
+      const fWG = simCPyro.createApparatus('quartz_tube', 640, 380);
+      fWG.moles = { C_s: 0.05 };
+      fWG.headspaceGasMoles.H2O_g = 0.003;
+      fWG.isStoppered = true;
+      fWG.leftStoppered = true;
+      fWG.rightStoppered = true;
+      fWG.stopperMode = 'solid';
+      fWG.tempK = 1293.15; // 1020 C -> CO + H2
+
+      for (let i = 0; i < 45; i++) {
+        fLowC.tempK = 893.15;
+        fHighC.tempK = 1223.15;
+        fWG.tempK = 1293.15;
+        simCPyro.step(0.05);
+      }
+      const cRegimeOk =
+        (fLowC.moles.Cu_s || 0) > 0.01 &&
+        totGas(fLowC, 'CO2_g') > totGas(fLowC, 'CO_g') * 3 &&
+        (fHighC.moles.Fe_s || 0) > 0.01 &&
+        totGas(fHighC, 'CO_g') > totGas(fHighC, 'CO2_g') * 3 &&
+        Math.abs((fHighC.moles.Al2O3_s || 0) - 0.02) < 1e-6 &&
+        totGas(fWG, 'CO_g') > 0.002 &&
+        totGas(fWG, 'H2_g') > 0.002;
+
+      assert(
+        'Prompt 50 invariants: Commercial CaC2 + impurities + N2/oxide reduction, Sulfur + H2SO4 (90-98%, 100-120C) & conc/dilute HNO3, Amorphous C adsorption + <700C CO2 vs >800C CO + water-gas',
+        cac2GasOk && cac2RedOk && sulfurAcidOk && adsOk && cRegimeOk,
+        `cac2=(${cac2GasOk},red=${cac2RedOk}), sulfurAcid=${sulfurAcidOk}(dilS=${bSDil.moles.S_s?.toFixed(3)},SO2=${totGas(bSConc,'SO2_g').toFixed(3)},NO=${totGas(bSHnoDil,'NO_g').toFixed(4)}), ads=${adsOk}, cRegime=${cRegimeOk}(lowCO2=${totGas(fLowC,'CO2_g').toFixed(3)},hiCO=${totGas(fHighC,'CO_g').toFixed(3)})`
       );
     }
 

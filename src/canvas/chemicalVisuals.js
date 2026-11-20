@@ -186,6 +186,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       vType === 'white_powder' ||
       vType === 'yellow_powder' ||
       vType === 'brown_powder' ||
+      vType === 'black_powder' ||
       vType === 'gray_white_powder' ||
       vType === 'gray_white_solid' ||
       vType === 'porous_lime' ||
@@ -495,6 +496,25 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         ctx.moveTo(-r * 0.65, -r * 0.18);
         ctx.lineTo(r * 0.35, -r * 0.62);
         ctx.lineTo(r * 0.15, r * 0.62);
+        ctx.stroke();
+      } else if (vType === 'carbide_lump') {
+        // Commercial Calcium carbide (CaC2) pebbles: gray-black-brown with faint metallic-violet sheen
+        const cGrad = ctx.createLinearGradient(-r, -r, r, r);
+        cGrad.addColorStop(0, '#52495a');
+        cGrad.addColorStop(0.55, '#3b353c');
+        cGrad.addColorStop(1, '#1f1c22');
+        ctx.beginPath();
+        ctx.moveTo(-r * 0.85, -r * 0.2);
+        ctx.lineTo(-r * 0.25, -r * 0.82);
+        ctx.lineTo(r * 0.72, -r * 0.55);
+        ctx.lineTo(r * 0.9, r * 0.35);
+        ctx.lineTo(r * 0.05, r * 0.78);
+        ctx.lineTo(-r * 0.78, r * 0.5);
+        ctx.closePath();
+        ctx.fillStyle = cGrad;
+        ctx.fill();
+        ctx.strokeStyle = '#7e738c';
+        ctx.lineWidth = 0.85;
         ctx.stroke();
       } else if (vType === 'limestone_solid') {
         // Faceted angular marble/limestone mineral chips
