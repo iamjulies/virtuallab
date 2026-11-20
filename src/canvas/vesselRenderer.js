@@ -160,6 +160,11 @@ let _allowedLabelIds = null;
 let _currentLabelItemId = null;
 let _deferredPills = [];
 let _textCaseMode = false;
+let _currentCanvasTheme = 'dark';
+
+export function getCurrentCanvasTheme() {
+  return _currentCanvasTheme;
+}
 
 export function formatCanvasText(text) {
   const s = String(text ?? '');
@@ -168,12 +173,13 @@ export function formatCanvasText(text) {
   return s;
 }
 
-export function beginCanvasLabelFrame(allowedIds = null, caseMode = false) {
+export function beginCanvasLabelFrame(allowedIds = null, caseMode = false, themeName = null) {
   _labelFrameActive = Boolean(allowedIds);
   _allowedLabelIds = allowedIds;
   _currentLabelItemId = null;
   _deferredPills = [];
   _textCaseMode = caseMode === true ? 'lower' : caseMode || false;
+  if (themeName) _currentCanvasTheme = themeName;
 }
 
 export function setCurrentLabelItemId(id) {
@@ -418,6 +424,45 @@ export function renderScale(ctx, item, isSelected, isDark, timeNow) {
   ctx.restore();
 }
 
+/**
+ * Low-resolution retro CRT / old-TV pixelated flame block renderer for the Ctrl (2017) theme.
+ */
+function drawRetroTvFlame(ctx, cx, baseY, maxW, maxH, palette, timeNow, pxStep = 4) {
+  const cols = Math.max(3, Math.round((maxW * 2) / pxStep));
+  const rows = Math.max(4, Math.round(maxH / pxStep));
+  const flickSeed = Math.floor(timeNow * 11);
+  ctx.save();
+  for (let r = 0; r < rows; r++) {
+    const ryFrac = r / Math.max(1, rows - 1); // 0 = base, 1 = tip
+    const envelope = Math.sin((1 - ryFrac * 0.88) * Math.PI * 0.5) * (1 - ryFrac * 0.38);
+    const sway = Math.round(Math.sin(flickSeed * 1.7 + r * 0.9 + cx) * (ryFrac > 0.35 ? 1 : 0));
+    const rowSpan = Math.max(1, Math.round(cols * envelope));
+    const halfSpan = Math.floor(rowSpan / 2);
+    for (let c = -halfSpan; c <= halfSpan; c++) {
+      const rxFrac = Math.abs(c) / Math.max(1, halfSpan + 0.35);
+      // Old-TV CRT scanline alpha variation across alternating rows
+      const scanAlpha = r % 2 === 0 ? 0.95 : 0.82;
+      const hash = Math.abs(Math.sin((r * 31 + c * 17 + flickSeed) * 12.9898) * 43758.5453) % 1;
+      if (ryFrac > 0.72 && hash < 0.28) continue;
+      let fill = palette.outer;
+      if (ryFrac < 0.52 && rxFrac < 0.45) {
+        fill = palette.core;
+      } else if (ryFrac < 0.76 && rxFrac < 0.72) {
+        fill = palette.mid;
+      }
+      if (palette.hotDot && r === Math.round(rows * 0.52) && c === 0) {
+        fill = palette.hotDot;
+      }
+      ctx.globalAlpha = scanAlpha;
+      ctx.fillStyle = fill;
+      const px = Math.round((cx + (c + sway) * pxStep) - pxStep * 0.5);
+      const py = Math.round(baseY - (r + 1) * pxStep);
+      ctx.fillRect(px, py, pxStep - 0.5, pxStep - 0.5);
+    }
+  }
+  ctx.restore();
+}
+
 export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
   const spec = APPARATUS[item.typeId] || APPARATUS.burner;
   const isBunsen = item.typeId === 'bunsen_burner';
@@ -500,48 +545,59 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
       const isBeilstein = (item.beilsteinTimer || 0) > 0;
       const isFlameTest = !isBeilstein && (item.flameTestTimer || 0) > 0 && item.flameTestColor;
 
-      const outerGrad = ctx.createLinearGradient(x, fBaseY, x, fBaseY - fH);
-      if (isBeilstein) {
-        outerGrad.addColorStop(0, 'rgba(16, 185, 129, 0.95)');
-        outerGrad.addColorStop(1, 'rgba(110, 231, 183, 0.08)');
-      } else if (isFlameTest) {
-        outerGrad.addColorStop(0, item.flameTestColor);
-        outerGrad.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
-      } else if (airOpen) {
-        outerGrad.addColorStop(0, 'rgba(37, 99, 235, 0.88)');
-        outerGrad.addColorStop(0.55, 'rgba(56, 189, 248, 0.56)');
-        outerGrad.addColorStop(1, 'rgba(139, 92, 246, 0.0)');
+      if (_currentCanvasTheme === 'ctrl') {
+        const palTv = isBeilstein
+          ? { outer: '#059669', mid: '#10b981', core: '#6ee7b7' }
+          : isFlameTest
+          ? { outer: item.flameTestColor, mid: item.flameTestColor, core: '#ffffff' }
+          : airOpen
+          ? { outer: '#2563eb', mid: '#38bdf8', core: '#7dd3fc', hotDot: '#e0f2fe' }
+          : { outer: '#ea580c', mid: '#facc15', core: '#fef08a' };
+        drawRetroTvFlame(ctx, x, fBaseY, fW, fH, palTv, timeNow, 4);
       } else {
-        outerGrad.addColorStop(0, 'rgba(249, 115, 22, 0.88)');
-        outerGrad.addColorStop(0.45, 'rgba(250, 204, 21, 0.94)');
-        outerGrad.addColorStop(1, 'rgba(254, 240, 138, 0.0)');
-      }
+        const outerGrad = ctx.createLinearGradient(x, fBaseY, x, fBaseY - fH);
+        if (isBeilstein) {
+          outerGrad.addColorStop(0, 'rgba(16, 185, 129, 0.95)');
+          outerGrad.addColorStop(1, 'rgba(110, 231, 183, 0.08)');
+        } else if (isFlameTest) {
+          outerGrad.addColorStop(0, item.flameTestColor);
+          outerGrad.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
+        } else if (airOpen) {
+          outerGrad.addColorStop(0, 'rgba(37, 99, 235, 0.88)');
+          outerGrad.addColorStop(0.55, 'rgba(56, 189, 248, 0.56)');
+          outerGrad.addColorStop(1, 'rgba(139, 92, 246, 0.0)');
+        } else {
+          outerGrad.addColorStop(0, 'rgba(249, 115, 22, 0.88)');
+          outerGrad.addColorStop(0.45, 'rgba(250, 204, 21, 0.94)');
+          outerGrad.addColorStop(1, 'rgba(254, 240, 138, 0.0)');
+        }
 
-      // Outer mantle flame
-      ctx.beginPath();
-      ctx.moveTo(x - fW, fBaseY);
-      ctx.quadraticCurveTo(x - fW * 1.05, fBaseY - fH * 0.55, x + wobble, fBaseY - fH);
-      ctx.quadraticCurveTo(x + fW * 1.05, fBaseY - fH * 0.55, x + fW, fBaseY);
-      ctx.closePath();
-      ctx.fillStyle = outerGrad;
-      ctx.fill();
-
-      // Inner crisp reducing cone (sharp electric cyan cone at center of roaring Bunsen!)
-      if (airOpen && !isBeilstein && !isFlameTest) {
-        const coneH = fH * 0.54;
+        // Outer mantle flame
         ctx.beginPath();
-        ctx.moveTo(x - fW * 0.52, fBaseY);
-        ctx.lineTo(x + wobble * 0.3, fBaseY - coneH);
-        ctx.lineTo(x + fW * 0.52, fBaseY);
+        ctx.moveTo(x - fW, fBaseY);
+        ctx.quadraticCurveTo(x - fW * 1.05, fBaseY - fH * 0.55, x + wobble, fBaseY - fH);
+        ctx.quadraticCurveTo(x + fW * 1.05, fBaseY - fH * 0.55, x + fW, fBaseY);
         ctx.closePath();
-        ctx.fillStyle = 'rgba(125, 211, 252, 0.95)';
+        ctx.fillStyle = outerGrad;
         ctx.fill();
 
-        // Highlight hottest oxidizing tip zone (~1500 °C) just above inner blue cone apex
-        ctx.fillStyle = 'rgba(224, 242, 254, 0.9)';
-        ctx.beginPath();
-        ctx.arc(x + wobble * 0.3, fBaseY - coneH - 2, 2.1, 0, Math.PI * 2);
-        ctx.fill();
+        // Inner crisp reducing cone (sharp electric cyan cone at center of roaring Bunsen!)
+        if (airOpen && !isBeilstein && !isFlameTest) {
+          const coneH = fH * 0.54;
+          ctx.beginPath();
+          ctx.moveTo(x - fW * 0.52, fBaseY);
+          ctx.lineTo(x + wobble * 0.3, fBaseY - coneH);
+          ctx.lineTo(x + fW * 0.52, fBaseY);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(125, 211, 252, 0.95)';
+          ctx.fill();
+
+          // Highlight hottest oxidizing tip zone (~1500 °C) just above inner blue cone apex
+          ctx.fillStyle = 'rgba(224, 242, 254, 0.9)';
+          ctx.beginPath();
+          ctx.arc(x + wobble * 0.3, fBaseY - coneH - 2, 2.1, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
 
       const flameBadge = isBeilstein
@@ -628,37 +684,47 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
 
     const isBeilstein = (item.beilsteinTimer || 0) > 0;
     const isFlameTest = !isBeilstein && (item.flameTestTimer || 0) > 0 && item.flameTestColor;
-    const outerGrad = ctx.createRadialGradient(x, fBaseY - fH * 0.35, 2, x, fBaseY - fH * 0.35, fH * (isBeilstein || isFlameTest ? 1.05 : 0.8));
-    if (isBeilstein) {
-      outerGrad.addColorStop(0, 'rgba(110, 231, 183, 0.96)');
-      outerGrad.addColorStop(0.5, 'rgba(16, 185, 129, 0.88)');
-      outerGrad.addColorStop(1, 'rgba(5, 150, 105, 0.0)');
-    } else if (isFlameTest) {
-      const fCol = item.flameTestColor;
-      outerGrad.addColorStop(0, '#ffffff');
-      outerGrad.addColorStop(0.35, fCol);
-      outerGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+    if (_currentCanvasTheme === 'ctrl') {
+      const palTv = isBeilstein
+        ? { outer: '#059669', mid: '#34d399', core: '#a7f3d0' }
+        : isFlameTest
+        ? { outer: item.flameTestColor, mid: item.flameTestColor, core: '#ffffff' }
+        : { outer: '#f97316', mid: '#fde047', core: '#38bdf8' };
+      drawRetroTvFlame(ctx, x, fBaseY, fW, fH, palTv, timeNow, 4);
     } else {
-      outerGrad.addColorStop(0, 'rgba(253, 224, 71, 0.95)');
-      outerGrad.addColorStop(0.55, 'rgba(249, 115, 22, 0.78)');
-      outerGrad.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+      const outerGrad = ctx.createRadialGradient(x, fBaseY - fH * 0.35, 2, x, fBaseY - fH * 0.35, fH * (isBeilstein || isFlameTest ? 1.05 : 0.8));
+      if (isBeilstein) {
+        outerGrad.addColorStop(0, 'rgba(110, 231, 183, 0.96)');
+        outerGrad.addColorStop(0.5, 'rgba(16, 185, 129, 0.88)');
+        outerGrad.addColorStop(1, 'rgba(5, 150, 105, 0.0)');
+      } else if (isFlameTest) {
+        const fCol = item.flameTestColor;
+        outerGrad.addColorStop(0, '#ffffff');
+        outerGrad.addColorStop(0.35, fCol);
+        outerGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      } else {
+        outerGrad.addColorStop(0, 'rgba(253, 224, 71, 0.95)');
+        outerGrad.addColorStop(0.55, 'rgba(249, 115, 22, 0.78)');
+        outerGrad.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+      }
+
+      ctx.beginPath();
+      ctx.moveTo(x - fW * (isBeilstein || isFlameTest ? 1.18 : 1), fBaseY);
+      ctx.quadraticCurveTo(x - fW * 1.15, fBaseY - fH * 0.5, x + wobble, fBaseY - fH * (isBeilstein || isFlameTest ? 1.18 : 1));
+      ctx.quadraticCurveTo(x + fW * 1.15, fBaseY - fH * 0.5, x + fW * (isBeilstein || isFlameTest ? 1.18 : 1), fBaseY);
+      ctx.closePath();
+      ctx.fillStyle = outerGrad;
+      ctx.fill();
+
+      // Inner blue/emerald cone
+      ctx.beginPath();
+      ctx.moveTo(x - fW * 0.5, fBaseY);
+      ctx.quadraticCurveTo(x, fBaseY - fH * 0.55, x + fW * 0.5, fBaseY);
+      ctx.closePath();
+      ctx.fillStyle = isBeilstein ? 'rgba(52, 211, 153, 0.92)' : isFlameTest ? item.flameTestColor : 'rgba(56, 189, 248, 0.88)';
+      ctx.fill();
     }
-
-    ctx.beginPath();
-    ctx.moveTo(x - fW * (isBeilstein || isFlameTest ? 1.18 : 1), fBaseY);
-    ctx.quadraticCurveTo(x - fW * 1.15, fBaseY - fH * 0.5, x + wobble, fBaseY - fH * (isBeilstein || isFlameTest ? 1.18 : 1));
-    ctx.quadraticCurveTo(x + fW * 1.15, fBaseY - fH * 0.5, x + fW * (isBeilstein || isFlameTest ? 1.18 : 1), fBaseY);
-    ctx.closePath();
-    ctx.fillStyle = outerGrad;
-    ctx.fill();
-
-    // Inner blue/emerald cone
-    ctx.beginPath();
-    ctx.moveTo(x - fW * 0.5, fBaseY);
-    ctx.quadraticCurveTo(x, fBaseY - fH * 0.55, x + fW * 0.5, fBaseY);
-    ctx.closePath();
-    ctx.fillStyle = isBeilstein ? 'rgba(52, 211, 153, 0.92)' : isFlameTest ? item.flameTestColor : 'rgba(56, 189, 248, 0.88)';
-    ctx.fill();
 
     // Compact live power badge (+ Beilstein / Flame Test ion)
     const flameBadge = isBeilstein

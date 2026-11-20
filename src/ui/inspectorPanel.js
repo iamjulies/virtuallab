@@ -1,5 +1,5 @@
 import { APPARATUS, getStandGeometry } from '../data/apparatus.js';
-import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
+import { CONSTANTS, formatNumber, kelvinToCelsius } from '../data/constants.js';
 import { GAS_DISPLAY_META, isSolidMoltenAtTemp, SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
 import {
@@ -69,6 +69,46 @@ function computeVesselPressureMetrics(item, spec, env) {
       : spec?.shatterOverpressureBar || 0.9;
   const limitRatio = maxDeltaPBar > 1e-6 ? Math.max(0, deltaPBar / maxDeltaPBar) : 0;
   return { localPBar, deltaPBar, maxDeltaPBar, limitPct: Math.min(100, limitRatio * 100), rawRatio: limitRatio };
+}
+
+function buildVesselGasCompositionHtml(item, spec, env, liqL, t) {
+  const headMap = item.headspaceGasMoles || {};
+  const activeGases = Object.entries(headMap)
+    .filter(([gId, n]) => (n || 0) > 1e-8 && SPECIES[gId]?.phase === 'g')
+    .sort((a, b) => (b[1] || 0) - (a[1] || 0));
+  if (activeGases.length === 0) {
+    return `<p class="text-xs text-muted">${t('emptyGasMsg')}</p>`;
+  }
+  const pm = computeVesselPressureMetrics(item, spec, env);
+  const T_K = Math.max(120, item.tempK || env?.tempK || CONSTANTS.T_STD_K);
+  const pLocal = Math.max(0.1, pm.localPBar || env?.pressureBar || CONSTANTS.P_STD_BAR);
+  const vMolarMl = ((CONSTANTS.R_L_BAR_MOL_K * T_K) / pLocal) * 1000;
+  const rows = activeGases
+    .map(([gId, n]) => {
+      const sp = SPECIES[gId];
+      const mmol = n * 1000;
+      const volMl = n * vMolarMl;
+      return `
+        <tr class="border-b border-theme/50 last:border-0">
+          <td class="py-1 font-semibold">${sp?.formula || gId}</td>
+          <td class="py-1 text-right font-mono">${formatNumber(mmol, 3)}</td>
+          <td class="py-1 text-right font-mono text-sky-400">${formatNumber(volMl, 2)}</td>
+        </tr>`;
+    })
+    .join('');
+  return `
+    <div class="overflow-x-auto max-h-40 overflow-y-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-muted border-b border-theme text-left">
+            <th class="pb-1 font-medium">${t('colSpecies')}</th>
+            <th class="pb-1 font-medium text-right">${t('colGasMmol')}</th>
+            <th class="pb-1 font-medium text-right">${t('colGasVolMl')}</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 function buildEscapedGasVerticalHtml(item, env, t) {
@@ -444,7 +484,7 @@ export class InspectorPanel {
           }
           <div class="flex items-center justify-between text-xs text-muted">
             <span>${t('burnerPower')}</span>
-            <strong class="text-sm font-mono ${isBunsen && airOpen ? 'text-sky-400' : 'text-orange-400'}" id="live-burner-power">${Math.round(powerW)} W</strong>
+            <strong class="text-sm font-mono ${isBunsen && airOpen ? 'text-sky-400' : 'text-orange-400'}" id="live-burner-power">${formatNumber(powerW, 0)} W</strong>
           </div>
           <div class="flex flex-col gap-1">
             <label class="text-[11px] text-muted">${sliderRangeLbl}</label>
@@ -1530,19 +1570,20 @@ export class InspectorPanel {
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
             <div class="text-xs text-muted">${t('metricTemp')}</div>
-            <div class="text-sm font-bold font-mono" id="live-temp">${item.tempK.toFixed(1)} K (${kelvinToCelsius(item.tempK).toFixed(1)}°C)</div>
+            <div class="text-sm font-bold font-mono" id="live-temp">${formatNumber(item.tempK, 1)} K (${formatNumber(kelvinToCelsius(item.tempK), 1)}°C)</div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
             <div class="text-xs text-muted">${t('metricVol')}</div>
             <div class="text-sm font-bold font-mono" id="live-vol">${volDisplayStr}</div>
-            <div class="text-[11px] text-muted font-mono" id="live-brim">${t('brimLabel')}: ~${(
-        spec.geometry ? spec.geometry.maxVolumeMl * 0.96 : spec.maxVolumeMl
-      ).toFixed(0)} mL</div>
+            <div class="text-[11px] text-muted font-mono" id="live-brim">${t('brimLabel')}: ~${formatNumber(
+        spec.geometry ? spec.geometry.maxVolumeMl * 0.96 : spec.maxVolumeMl,
+        0
+      )} mL</div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
             <div class="text-xs text-muted">${t('netMassLabel')}</div>
-            <div class="text-sm font-bold font-mono" id="live-mass">${contentsG.toFixed(2)} g / ${grossG.toFixed(2)} g</div>
-            <div class="text-[11px] text-muted font-mono" id="live-mass-gross">${t('grossMassShort')} (${t('tarePrefix')} ${spec.tareMassG.toFixed(0)}g)</div>
+            <div class="text-sm font-bold font-mono" id="live-mass">${formatNumber(contentsG, 2)} g / ${formatNumber(grossG, 2)} g</div>
+            <div class="text-[11px] text-muted font-mono" id="live-mass-gross">${t('grossMassShort')} (${t('tarePrefix')} ${formatNumber(spec.tareMassG, 0)}g)</div>
           </div>
         </div>
 
@@ -1687,12 +1728,12 @@ export class InspectorPanel {
                                 .filter(Boolean)
                                 .join(' · ')
                             : '';
-                        const molStr = n >= 0.01 ? `${n.toFixed(4)}` : `${(n * 1000).toFixed(3)}m`;
+                        const molStr = n >= 0.01 ? `${formatNumber(n, 4)}` : `${formatNumber(n * 1000, 3)}m`;
                         return `
                           <tr class="border-b border-theme/50 last:border-0" title="${thermalTitle}">
                             <td class="py-1 font-semibold">${sp.formula}${isMolten ? ' 🔥' : ''}</td>
                             <td class="py-1 text-right font-mono" id="sp-mol-${spId}">${molStr}</td>
-                            <td class="py-1 text-right font-mono" id="sp-mass-${spId}">${mass.toFixed(3)}g</td>
+                            <td class="py-1 text-right font-mono" id="sp-mass-${spId}">${formatNumber(mass, 3)}g</td>
                             <td class="py-1 text-right font-mono ${isMolten ? 'text-orange-400 font-semibold' : isFrozenSolidSp ? 'text-sky-400 font-semibold' : 'text-muted'}" id="sp-conc-${spId}">${conc}</td>
                           </tr>
                         `;
@@ -1703,6 +1744,12 @@ export class InspectorPanel {
               </div>
               `
           }
+        </div>
+
+        <!-- Gas Composition in Vessel Table -->
+        <div class="rounded-xl border border-theme bg-surface-alt p-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-muted mb-2">${t('gasTableTitle')}</h3>
+          <div id="gas-comp-box">${buildVesselGasCompositionHtml(item, spec, this.sim.environment, liqL, t)}</div>
         </div>
 
         <!-- Real-Time Moles vs Time Chart -->
@@ -2496,7 +2543,7 @@ export class InspectorPanel {
       const powerW = Math.round(item.powerW ?? (tbl[item.flameLevel || 0] || 0));
       const pEl = this.container.querySelector('#live-burner-power');
       const sEl = this.container.querySelector('#burner-power-slider');
-      if (pEl) pEl.textContent = `${powerW} W`;
+      if (pEl) pEl.textContent = `${formatNumber(powerW, 0)} W`;
       if (sEl && Number(sEl.value) !== powerW) sEl.value = String(powerW);
       this.container.querySelectorAll('.flame-btn').forEach((btn) => {
         const isMatch = powerW === Number(btn.dataset.w);
@@ -2584,16 +2631,16 @@ export class InspectorPanel {
     const massEl = this.container.querySelector('#live-mass');
     const massGrossEl = this.container.querySelector('#live-mass-gross');
     if (phEl) phEl.textContent = item.isFrozenSolid ? '— ❄️' : ph === null ? '—' : ph.toFixed(2);
-    if (tempEl) tempEl.textContent = `${item.tempK.toFixed(1)} K (${kelvinToCelsius(item.tempK).toFixed(1)}°C)`;
+    if (tempEl) tempEl.textContent = `${formatNumber(item.tempK, 1)} K (${formatNumber(kelvinToCelsius(item.tempK), 1)}°C)`;
     if (volEl) {
       volEl.textContent =
         iceMl > 0.05 && liqMl <= 0.05
-          ? `❄️ ${iceMl.toFixed(2)} / ${spec.maxVolumeMl} mL`
+          ? `❄️ ${formatNumber(iceMl, 2)} / ${formatNumber(spec.maxVolumeMl, 0)} mL`
           : iceMl > 0.05
-          ? `${liqMl.toFixed(1)} + ❄️${iceMl.toFixed(1)} / ${spec.maxVolumeMl} mL`
-          : `${liqMl.toFixed(2)} / ${spec.maxVolumeMl} mL`;
+          ? `${formatNumber(liqMl, 1)} + ❄️${formatNumber(iceMl, 1)} / ${formatNumber(spec.maxVolumeMl, 0)} mL`
+          : `${formatNumber(liqMl, 2)} / ${formatNumber(spec.maxVolumeMl, 0)} mL`;
     }
-    if (massEl) massEl.textContent = `${contentsG.toFixed(2)} g / ${grossG.toFixed(2)} g`;
+    if (massEl) massEl.textContent = `${formatNumber(contentsG, 2)} g / ${formatNumber(grossG, 2)} g`;
     if (massGrossEl) massGrossEl.textContent = `${t('grossMassShort')} (${t('tarePrefix')} ${spec.tareMassG.toFixed(0)}g)`;
 
     const pm = computeVesselPressureMetrics(item, spec, this.sim.environment);
@@ -2651,14 +2698,19 @@ export class InspectorPanel {
       }
     }
 
+    const gasCompEl = this.container.querySelector('#gas-comp-box');
+    if (gasCompEl) {
+      gasCompEl.innerHTML = buildVesselGasCompositionHtml(item, spec, this.sim.environment, liqL, t);
+    }
+
     for (const [spId, n] of Object.entries(item.moles)) {
       const sp = SPECIES[spId];
       if (!sp) continue;
       const molEl = this.container.querySelector(`#sp-mol-${spId}`);
       const mEl = this.container.querySelector(`#sp-mass-${spId}`);
       const cEl = this.container.querySelector(`#sp-conc-${spId}`);
-      if (molEl) molEl.textContent = n >= 0.01 ? `${n.toFixed(4)}` : `${(n * 1000).toFixed(3)}m`;
-      if (mEl) mEl.textContent = `${(n * sp.molarMass).toFixed(3)}g`;
+      if (molEl) molEl.textContent = n >= 0.01 ? `${formatNumber(n, 4)}` : `${formatNumber(n * 1000, 3)}m`;
+      if (mEl) mEl.textContent = `${formatNumber(n * sp.molarMass, 3)}g`;
       if (cEl) {
         const isMolten = isSolidMoltenAtTemp(sp, item.tempK, item.moles);
         const isFrozenSolidSp = spId === 'H2O_s' || (Boolean(item.isFrozenSolid) && sp.phase === 's');

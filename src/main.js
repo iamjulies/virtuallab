@@ -28,6 +28,11 @@ import {
 } from './storage/workspaceStorage.js';
 import { WorkspaceStorageModal } from './ui/workspaceStorageModal.js';
 import { StorageCabinetModal } from './ui/storageCabinetModal.js';
+import {
+  ShortcutsModal,
+  loadCustomShortcuts,
+  normalizeKeyCombo,
+} from './ui/shortcutsModal.js';
 import { FloatingContextUI } from './ui/contextMenu.js';
 
 const STORAGE_LANG_KEY = 'virlab_lang';
@@ -154,6 +159,9 @@ function handleVisualAlert(type, vessel, meta) {
       ? 'h2_pop'
       : type;
   particles.emitBurst(burstType, vessel.x, vessel.y, meta);
+  if ((burstType === 'shatter' || burstType === 'explosion') && appState.theme === 'sos') {
+    particles.emitSosShatterWave(vessel.x, Math.min(BENCH_FLOOR_Y, vessel.y));
+  }
   soundEngine.playAlertSound(type);
   if (type === 'explosion') {
     workbench.triggerShake(13, 0.45);
@@ -557,6 +565,11 @@ const envBar = new EnvironmentBar(headerEl, sim, appState, {
     if (cabinetModal.isOpen) cabinetModal.close();
     else cabinetModal.open();
     if (isMobileViewActive()) setMobileTab('bench');
+  },
+  onOpenShortcuts: () => {
+    soundEngine.playUiClick();
+    if (shortcutsModal.isOpen) shortcutsModal.close();
+    else shortcutsModal.open();
   },
   onDeviceChange: (mode) => {
     appState.deviceMode = mode;
@@ -1462,15 +1475,42 @@ resetBtnEl?.addEventListener('click', () => {
   refreshChrome(true);
 });
 
-// Global Keyboard Shortcuts (guarded cleanly against inputs & modifiers)
+// Customizable Keyboard Shortcuts Registry & Modal
+let shortcutBindings = loadCustomShortcuts();
+const shortcutsModal = new ShortcutsModal(getTranslator, () => shortcutBindings, {
+  onUpdateBindings: (next) => {
+    shortcutBindings = next;
+  },
+  onNotify: (msg) => showToast(msg),
+});
+
+function findActionByCombo(combo) {
+  if (!combo) return null;
+  for (const [actionId, bound] of Object.entries(shortcutBindings)) {
+    if (bound === combo) return actionId;
+  }
+  return null;
+}
+
+function getBaseKeyOfAction(actionId) {
+  const combo = shortcutBindings[actionId] || '';
+  const parts = combo.split('+');
+  return parts[parts.length - 1] || '';
+}
+
 window.addEventListener('blur', () => {
   zHeldPopupShown = false;
   hideQuickHoldPopup();
 });
 
 window.addEventListener('keyup', (e) => {
-  const low = (e.key || '').toLowerCase();
-  if (low === 'z' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (shortcutsModal?.isOpen && shortcutsModal?.capturingId) return;
+  const combo = normalizeKeyCombo(e);
+  const baseKey = combo ? combo.split('+').pop() : '';
+  const themeBase = getBaseKeyOfAction('theme_key');
+  const presetBase = getBaseKeyOfAction('hold_presets');
+
+  if (baseKey && baseKey === themeBase && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (zHoldTimer) {
       clearTimeout(zHoldTimer);
       zHoldTimer = null;
@@ -1483,12 +1523,14 @@ window.addEventListener('keyup', (e) => {
       const thObj = THEME_OPTIONS.find((x) => x.id === next);
       showToast(`🎨 ${thObj ? getTranslator()(thObj.key) : next}`);
     }
-  } else if (low === 'f' && quickHoldMode === 'preset') {
+  } else if (baseKey && baseKey === presetBase && quickHoldMode === 'preset') {
     hideQuickHoldPopup();
   }
 });
 
 window.addEventListener('keydown', (e) => {
+  if (shortcutsModal?.isOpen && shortcutsModal?.capturingId) return;
+
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement?.isContentEditable) {
     return;
@@ -1497,6 +1539,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     zHeldPopupShown = false;
     hideQuickHoldPopup();
+    shortcutsModal?.close();
     contextUI.closeMenu();
     contextUI.closeDialog();
     cabinetModal?.close();
@@ -1506,28 +1549,21 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
-  const low = (e.key || '').toLowerCase();
+  const combo = normalizeKeyCombo(e);
+  const action = findActionByCombo(combo);
   const anyModalOpen =
     (modalEl && !modalEl.classList.contains('hidden')) ||
     cabinetModal?.isOpen ||
     storageModal?.isOpen ||
+    shortcutsModal?.isOpen ||
     contextUI.isDialogOpen();
 
-  // Shift+E: import .vlab file directly
-  if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && low === 'e') {
-    if (!e.repeat) {
-      e.preventDefault();
-      soundEngine.playUiClick();
-      labTabsEl?.querySelector('#input-import-vlab-bar')?.click();
-    }
-    return;
-  }
-
-  // B toggles Storage Cabinet even when cabinet modal is currently open
-  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && low === 'b' && !e.repeat) {
+  // Cabinet toggle shortcut works even while Cabinet Modal itself is open
+  if (action === 'toggle_cabinet' && !e.repeat) {
     const otherOpen =
       (modalEl && !modalEl.classList.contains('hidden')) ||
       storageModal?.isOpen ||
+      shortcutsModal?.isOpen ||
       contextUI.isDialogOpen();
     if (!otherOpen) {
       e.preventDefault();
@@ -1539,7 +1575,7 @@ window.addEventListener('keydown', (e) => {
     }
   }
 
-  // Single-key shortcuts (MUST NOT fire with Ctrl/Meta/Alt pressed!)
+  // Built-in fixed keys (F2 rename tab, Del/Backspace delete, 1..9/0 switch bench)
   if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
     if (e.key === 'F2' && shortcutTarget === 'tab' && !anyModalOpen) {
       e.preventDefault();
@@ -1581,209 +1617,156 @@ window.addEventListener('keydown', (e) => {
       }
       return;
     }
-
-    if (e.code === 'Space') {
-      e.preventDefault();
-      sim.environment.paused = !sim.environment.paused;
-      sim.emitChange();
-      soundEngine.playUiClick();
-      const t = getTranslator();
-      showToast(sim.environment.paused ? `⏸ ${t('pause')}` : `▶ ${t('resume')}`);
-      return;
-    }
-
-    if (low === 'q' && !e.repeat) {
-      const heldId = workbench?.dragState?.itemId || null;
-      const targetIds = heldId
-        ? [heldId]
-        : sim.selectedIds && sim.selectedIds.size > 0
-        ? Array.from(sim.selectedIds)
-        : sim.selectedId
-        ? [sim.selectedId]
-        : [];
-      let emptiedLabels = [];
-      for (const id of targetIds) {
-        const it = sim.getItem(id);
-        if (it && sim.emptyApparatus?.(id)) {
-          emptiedLabels.push(it.label || it.typeId);
-        }
-      }
-      if (emptiedLabels.length > 0) {
-        e.preventDefault();
-        soundEngine.playWaterRinse();
-        showToast(`🧼 ${getTranslator()('toastEmptiedApparatus').replace('{label}', emptiedLabels.join(', '))}`);
-        refreshChrome();
-      }
-      return;
-    }
-
-    if (low === 'e' && !e.repeat) {
-      e.preventDefault();
-      const modes = ['normal', 'aerodynamics', 'thermal'];
-      const cur = sim.environment.opticsMode || 'normal';
-      const next = modes[(modes.indexOf(cur) + 1) % modes.length];
-      sim.setOpticsMode?.(next);
-      soundEngine.playUiClick();
-      const t = getTranslator();
-      const labelKey = next === 'aerodynamics' ? 'opticsAero' : next === 'thermal' ? 'opticsThermal' : 'opticsNormal';
-      showToast(`👁️ ${t(labelKey)}`);
-      refreshChrome();
-      return;
-    }
-
-    if (low === 'l' && !e.repeat) {
-      e.preventDefault();
-      sim.setUvLight(!sim.environment.uvLight);
-      soundEngine.playUiClick();
-      const t = getTranslator();
-      showToast(sim.environment.uvLight ? t('envUvBright') : `💡 ${t('envUvRoom')}`);
-      refreshChrome();
-      return;
-    }
-
-    if (low === 'a' && !e.repeat) {
-      e.preventDefault();
-      const next = sim.environment.atmosphereMode === 'inert' ? 'air' : 'inert';
-      sim.setAtmosphereMode(next);
-      soundEngine.playUiClick();
-      const t = getTranslator();
-      showToast(next === 'inert' ? `🛡️ ${t('envAtmInert')}` : `🌬️ ${t('envAtmAir')}`);
-      refreshChrome();
-      return;
-    }
-
-    if (low === 'z' && !e.repeat) {
-      e.preventDefault();
-      zHeldPopupShown = false;
-      if (zHoldTimer) clearTimeout(zHoldTimer);
-      zHoldTimer = setTimeout(() => {
-        zHoldTimer = null;
-        zHeldPopupShown = true;
-        showQuickHoldPopup('theme');
-      }, 220);
-      return;
-    }
-
-    if (low === 'f' && !e.repeat) {
-      e.preventDefault();
-      showQuickHoldPopup('preset');
-      return;
-    }
-
-    if (low === 'n' && !e.repeat) {
-      e.preventDefault();
-      const res = labManager.addLab('starter');
-      soundEngine.playUiClick();
-      if (!res.ok) {
-        showToast(`⚠️ ${getTranslator()('labMaxLimit')}`);
-      } else {
-        ensureLabSubscribed(res.lab);
-        refreshChrome(true);
-      }
-      return;
-    }
-
-    if (low === 'm' && !e.repeat) {
-      e.preventDefault();
-      appState.soundEnabled = soundEngine.toggleEnabled();
-      refreshChrome(true);
-      const t = getTranslator();
-      showToast(appState.soundEnabled ? `🔊 ${t('soundOn')}` : `🔇 ${t('soundMuted')}`);
-      return;
-    }
-
-    if (low === 'k' && !e.repeat) {
-      e.preventDefault();
-      appState.lang = appState.lang === 'vi' ? 'en' : 'vi';
-      localStorage.setItem(STORAGE_LANG_KEY, appState.lang);
-      soundEngine.playUiClick();
-      refreshChrome(true);
-      showToast(appState.lang === 'vi' ? '🇻🇳 Tiếng Việt' : '🇬🇧 English');
-      return;
-    }
-
-    if (low === 't' || low === 'y') {
-      e.preventDefault();
-      const curT = sim.environment.tempK || 298.15;
-      sim.setAmbientTempK(curT + (low === 't' ? 1 : -1));
-      refreshChrome();
-      showToast(`🌡️ ${(sim.environment.tempK || 298.15).toFixed(2)} K (${(sim.environment.tempK - 273.15).toFixed(1)}°C)`);
-      return;
-    }
-
-    if (low === 'g' || low === 'h') {
-      e.preventDefault();
-      const curP = sim.environment.pressureBar || 1.0;
-      const nextP = Math.max(0.2, Math.min(4.0, Math.round((curP + (low === 'g' ? 0.1 : -0.1)) * 100) / 100));
-      sim.environment.pressureBar = nextP;
-      sim.emitChange();
-      refreshChrome();
-      showToast(`⏱️ ${nextP.toFixed(2)} bar`);
-      return;
-    }
-
-    if (low === 'w') {
-      e.preventDefault();
-      const cycleW = [1, 2, 4, 0.5];
-      const idx = cycleW.indexOf(sim.environment.speed);
-      sim.environment.speed = cycleW[(idx + 1) % cycleW.length];
-      sim.emitChange();
-      soundEngine.playUiClick();
-      showToast(`⏩ ${getTranslator()('simSpeed')}: ${sim.environment.speed}x`);
-      return;
-    }
-    if (low === 's') {
-      e.preventDefault();
-      const cycleS = [1, 0.5, 4, 2];
-      const idx = cycleS.indexOf(sim.environment.speed);
-      sim.environment.speed = cycleS[(idx + 1) % cycleS.length];
-      sim.emitChange();
-      soundEngine.playUiClick();
-      showToast(`⏪ ${getTranslator()('simSpeed')}: ${sim.environment.speed}x`);
-      return;
-    }
-    if (low === 'r') {
-      e.preventDefault();
-      const now = performance.now();
-      if (now - lastRPressMs < 350) {
-        lastRPressMs = 0;
-        confirmResetAllBenches();
-      } else {
-        lastRPressMs = now;
-        particles.clear();
-        comparisonPanel?.setOpen(false);
-        labManager.clearBench(sim);
-        soundEngine.playWaterRinse();
-        showToast(getTranslator()('benchCleanedToast'));
-      }
-      return;
-    }
-    return;
   }
 
-  if (!(e.ctrlKey || e.metaKey)) return;
-  const key = low;
-  if (key === 'z' && !e.shiftKey) {
+  if (anyModalOpen || !action) return;
+
+  const t = getTranslator();
+  if (action === 'toggle_pause') {
+    e.preventDefault();
+    sim.environment.paused = !sim.environment.paused;
+    sim.emitChange();
+    soundEngine.playUiClick();
+    showToast(sim.environment.paused ? `⏸ ${t('pause')}` : `▶ ${t('resume')}`);
+  } else if (action === 'empty_item' && !e.repeat) {
+    const heldId = workbench?.dragState?.itemId || null;
+    const targetIds = heldId
+      ? [heldId]
+      : sim.selectedIds && sim.selectedIds.size > 0
+      ? Array.from(sim.selectedIds)
+      : sim.selectedId
+      ? [sim.selectedId]
+      : [];
+    const emptiedLabels = [];
+    for (const id of targetIds) {
+      const it = sim.getItem(id);
+      if (it && sim.emptyApparatus?.(id)) {
+        emptiedLabels.push(it.label || it.typeId);
+      }
+    }
+    if (emptiedLabels.length > 0) {
+      e.preventDefault();
+      soundEngine.playWaterRinse();
+      showToast(`🧼 ${t('toastEmptiedApparatus').replace('{label}', emptiedLabels.join(', '))}`);
+      refreshChrome();
+    }
+  } else if (action === 'cycle_optics' && !e.repeat) {
+    e.preventDefault();
+    const modes = ['normal', 'aerodynamics', 'thermal'];
+    const cur = sim.environment.opticsMode || 'normal';
+    const next = modes[(modes.indexOf(cur) + 1) % modes.length];
+    sim.setOpticsMode?.(next);
+    soundEngine.playUiClick();
+    const labelKey = next === 'aerodynamics' ? 'opticsAero' : next === 'thermal' ? 'opticsThermal' : 'opticsNormal';
+    showToast(`👁️ ${t(labelKey)}`);
+    refreshChrome();
+  } else if (action === 'toggle_uv' && !e.repeat) {
+    e.preventDefault();
+    sim.setUvLight(!sim.environment.uvLight);
+    soundEngine.playUiClick();
+    showToast(sim.environment.uvLight ? t('envUvBright') : `💡 ${t('envUvRoom')}`);
+    refreshChrome();
+  } else if (action === 'toggle_atmosphere' && !e.repeat) {
+    e.preventDefault();
+    const next = sim.environment.atmosphereMode === 'inert' ? 'air' : 'inert';
+    sim.setAtmosphereMode(next);
+    soundEngine.playUiClick();
+    showToast(next === 'inert' ? `🛡️ ${t('envAtmInert')}` : `🌬️ ${t('envAtmAir')}`);
+    refreshChrome();
+  } else if (action === 'theme_key' && !e.repeat) {
+    e.preventDefault();
+    zHeldPopupShown = false;
+    if (zHoldTimer) clearTimeout(zHoldTimer);
+    zHoldTimer = setTimeout(() => {
+      zHoldTimer = null;
+      zHeldPopupShown = true;
+      showQuickHoldPopup('theme');
+    }, 220);
+  } else if (action === 'hold_presets' && !e.repeat) {
+    e.preventDefault();
+    showQuickHoldPopup('preset');
+  } else if (action === 'new_bench' && !e.repeat) {
+    e.preventDefault();
+    const res = labManager.addLab('starter');
+    soundEngine.playUiClick();
+    if (!res.ok) {
+      showToast(`⚠️ ${t('labMaxLimit')}`);
+    } else {
+      ensureLabSubscribed(res.lab);
+      refreshChrome(true);
+    }
+  } else if (action === 'toggle_sound' && !e.repeat) {
+    e.preventDefault();
+    appState.soundEnabled = soundEngine.toggleEnabled();
+    refreshChrome(true);
+    showToast(appState.soundEnabled ? `🔊 ${t('soundOn')}` : `🔇 ${t('soundMuted')}`);
+  } else if (action === 'toggle_lang' && !e.repeat) {
+    e.preventDefault();
+    appState.lang = appState.lang === 'vi' ? 'en' : 'vi';
+    localStorage.setItem(STORAGE_LANG_KEY, appState.lang);
+    soundEngine.playUiClick();
+    refreshChrome(true);
+    showToast(appState.lang === 'vi' ? '🇻🇳 Tiếng Việt' : '🇬🇧 English');
+  } else if (action === 'temp_up' || action === 'temp_down') {
+    e.preventDefault();
+    const curT = sim.environment.tempK || 298.15;
+    sim.setAmbientTempK(curT + (action === 'temp_up' ? 1 : -1));
+    refreshChrome();
+    showToast(`🌡️ ${(sim.environment.tempK || 298.15).toFixed(2)} K (${(sim.environment.tempK - 273.15).toFixed(1)}°C)`);
+  } else if (action === 'press_up' || action === 'press_down') {
+    e.preventDefault();
+    const curP = sim.environment.pressureBar || 1.0;
+    const nextP = Math.max(0.2, Math.min(4.0, Math.round((curP + (action === 'press_up' ? 0.1 : -0.1)) * 100) / 100));
+    sim.environment.pressureBar = nextP;
+    sim.emitChange();
+    refreshChrome();
+    showToast(`⏱️ ${nextP.toFixed(2)} bar`);
+  } else if (action === 'speed_up' || action === 'speed_down') {
+    e.preventDefault();
+    const cycle = action === 'speed_up' ? [1, 2, 4, 0.5] : [1, 0.5, 4, 2];
+    const idx = cycle.indexOf(sim.environment.speed);
+    sim.environment.speed = cycle[(idx + 1) % cycle.length];
+    sim.emitChange();
+    soundEngine.playUiClick();
+    showToast(`${action === 'speed_up' ? '⏩' : '⏪'} ${t('simSpeed')}: ${sim.environment.speed}x`);
+  } else if (action === 'reset_bench' && !e.repeat) {
+    e.preventDefault();
+    const now = performance.now();
+    if (now - lastRPressMs < 350) {
+      lastRPressMs = 0;
+      confirmResetAllBenches();
+    } else {
+      lastRPressMs = now;
+      particles.clear();
+      comparisonPanel?.setOpen(false);
+      labManager.clearBench(sim);
+      soundEngine.playWaterRinse();
+      showToast(t('benchCleanedToast'));
+    }
+  } else if (action === 'export_vlab' && !e.repeat) {
+    e.preventDefault();
+    promptExportSingleBench(labManager.activeIndex);
+  } else if (action === 'import_vlab' && !e.repeat) {
+    e.preventDefault();
+    soundEngine.playUiClick();
+    labTabsEl?.querySelector('#input-import-vlab-bar')?.click();
+  } else if (action === 'undo') {
     e.preventDefault();
     runUndoAction();
-  } else if (key === 'a') {
+  } else if (action === 'select_all') {
     e.preventDefault();
     shortcutTarget = 'canvas';
     runSelectAllAction();
-  } else if (key === 'c') {
+  } else if (action === 'copy') {
     if (runCopyAction()) e.preventDefault();
-  } else if (key === 'x') {
+  } else if (action === 'cut') {
     if (runCutAction()) e.preventDefault();
-  } else if (key === 'v') {
+  } else if (action === 'paste') {
     const includeChemicals = !e.shiftKey;
     if (runPasteAction(includeChemicals)) e.preventDefault();
-  } else if (key === 'e' && !e.shiftKey) {
-    e.preventDefault();
-    promptExportSingleBench(labManager.activeIndex);
-  } else if (key === 's') {
+  } else if (action === 'save') {
     e.preventDefault();
     soundEngine.playUiClick();
-    const t = getTranslator();
     saveToLocalStorage(labManager);
     storageModal.setLastAutoSaveTime(Date.now());
     if (cloudSync.user) {
@@ -1968,6 +1951,7 @@ if (typeof window !== 'undefined') {
     cloudSync,
     storageModal,
     cabinetModal,
+    shortcutsModal,
     contextUI,
   };
 }

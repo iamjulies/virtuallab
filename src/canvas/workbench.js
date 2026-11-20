@@ -2390,7 +2390,7 @@ export class LabWorkbenchCanvas {
         : this.themeName === 'sos'
         ? 'upper'
         : false;
-    beginCanvasLabelFrame(activeTooltipIds, labelCaseMode);
+    beginCanvasLabelFrame(activeTooltipIds, labelCaseMode, this.themeName);
 
     renderTubingConnections(ctx, this.sim.items, this.isDark, timeNow, this.langCode);
     renderElectrodeCollectorTubes(ctx, this.sim.items, this.isDark, timeNow);

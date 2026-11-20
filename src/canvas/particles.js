@@ -809,6 +809,40 @@ export class ParticleSystem {
     }
   }
 
+  /**
+   * SOS Theme shatter ocean wave: red beacon dot at break origin + concentric cyan-white
+   * undulating sea waves sweeping across the entire lab bench.
+   */
+  emitSosShatterWave(x, y) {
+    const cx = Math.max(0, Math.min(1000, x));
+    const cy = Math.max(0, Math.min(BENCH_FLOOR_Y, y));
+    this.particles.push({
+      kind: 'sos_origin_dot',
+      x: cx,
+      y: cy,
+      vx: 0,
+      vy: 0,
+      r: 5.5,
+      life: 0,
+      maxLife: 3.6,
+    });
+    for (let w = 0; w < 4; w++) {
+      this.particles.push({
+        kind: 'sos_wave',
+        x: cx,
+        y: cy,
+        vx: 0,
+        vy: 0,
+        r: 6,
+        maxR: 1220,
+        waveIdx: w,
+        delay: w * 0.24,
+        life: 0,
+        maxLife: 3.4,
+      });
+    }
+  }
+
   emitBurst(type, x, y, meta = null) {
     if (type === 'overflow' || type === 'syringe_overflow') return;
 
@@ -1510,6 +1544,14 @@ export class ParticleSystem {
       } else if (p.kind === 'shockwave') {
         const progress = p.life / p.maxLife;
         p.r = 10 + (p.maxR - 10) * (1 - Math.pow(1 - progress, 2));
+      } else if (p.kind === 'sos_wave') {
+        if (p.delay > 0) {
+          p.delay -= dt;
+          p.life = 0;
+        } else {
+          const progress = Math.min(1, p.life / p.maxLife);
+          p.r = 6 + (p.maxR - 6) * Math.pow(progress, 0.88);
+        }
       } else if (p.kind === 'glass_triangle') {
         p.vy += 380 * dt;
         p.angle += p.spin * dt;
@@ -1759,6 +1801,46 @@ export class ParticleSystem {
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
         ctx.strokeStyle = p.color;
         ctx.lineWidth = Math.max(1, 5 * (1 - t));
+        ctx.stroke();
+      } else if (p.kind === 'sos_origin_dot') {
+        const pulse = 0.72 + Math.sin(p.life * 10) * 0.28;
+        const glow = ctx.createRadialGradient(p.x, p.y, 1, p.x, p.y, 18);
+        glow.addColorStop(0, `rgba(239, 68, 68, ${(0.95 * alpha).toFixed(3)})`);
+        glow.addColorStop(0.55, `rgba(220, 38, 38, ${(0.45 * alpha * pulse).toFixed(3)})`);
+        glow.addColorStop(1, 'rgba(220, 38, 38, 0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 18, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(239, 68, 68, ${Math.min(1, alpha * 1.15).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 5.2 + pulse * 1.1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = `rgba(255, 255, 255, ${(0.85 * alpha).toFixed(3)})`;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      } else if (p.kind === 'sos_wave') {
+        if (p.delay > 0 || p.r < 6) {
+          ctx.restore();
+          continue;
+        }
+        const waveAmp = (2.8 + (1 - t) * 4.5) * Math.min(1, p.r / 90);
+        const segs = 72;
+        ctx.beginPath();
+        for (let k = 0; k <= segs; k++) {
+          const ang = (Math.PI * 2 * k) / segs;
+          const rad = p.r + Math.sin(ang * 14 - p.life * 5.8 + p.waveIdx * 1.4) * waveAmp;
+          const px = p.x + Math.cos(ang) * rad;
+          const py = p.y + Math.sin(ang) * rad;
+          if (k === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = `rgba(91, 181, 201, ${(0.68 * alpha).toFixed(3)})`;
+        ctx.lineWidth = Math.max(1.2, 4.2 * (1 - t * 0.55));
+        ctx.stroke();
+        ctx.strokeStyle = `rgba(240, 249, 255, ${(0.88 * alpha).toFixed(3)})`;
+        ctx.lineWidth = Math.max(0.8, 1.8 * (1 - t * 0.5));
         ctx.stroke();
       } else if (p.kind === 'glass_triangle') {
         ctx.translate(p.x, p.y);

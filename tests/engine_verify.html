@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.14';
+      const expectedBuild = 'virlab_beta_v4+build.15';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,7 +2515,7 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.14 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-46 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.15 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-46 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
           STARTER_REAGENTS.length === 23 &&
           !APPARATUS.clay_triangle &&
@@ -8030,6 +8030,94 @@
         'Prompt 48 invariants: sim.emptyApparatus (Q), inverted stoppered solids neck/mouth settle, SOS uppercase & Olivia lowercase formatters, sealed H2 aero + 51C thermal FLIR renders',
         cleanStateOk && invSolidOk && caseFormatOk,
         `clean=${cleanStateOk}, invSolids=${invSolidOk}(n=${bList.length}), case=${caseFormatOk}(${sosUpper})`
+      );
+    }
+
+    // TEST 167: Prompt 49 (virlab_beta_v4+build.15) — Gas Composition Table, Shortcuts Conflict Validation, Unified Number Formatting (,/.), SOS Shatter Waves & Ctrl Retro-TV Flames
+    {
+      const { formatNumber } = await import('../src/data/constants.js');
+      const {
+        getDefaultShortcutMap,
+        validateShortcutRebind,
+        BROWSER_RESERVED_COMBOS,
+      } = await import('../src/ui/shortcutsModal.js');
+      const { InspectorPanel } = await import('../src/ui/inspectorPanel.js');
+
+      // 1) System-wide comma thousands & dot decimal formatting
+      const fmtOk =
+        formatNumber(12345.678, 2) === '12,345.68' &&
+        formatNumber(1000, 0) === '1,000' &&
+        formatNumber(0.5, 3) === '0.500';
+
+      // 2) Shortcuts duplicate + browser-reserved collision rejection
+      const trVi = (k) => I18N.vi[k] || k;
+      const trEn = (k) => I18N.en[k] || k;
+      const defSc = getDefaultShortcutMap();
+      const dupErr = validateShortcutRebind('empty_item', 'E', defSc, trVi); // 'E' already bound to cycle_optics
+      const chromeErr = validateShortcutRebind('empty_item', 'Ctrl+T', defSc, trEn);
+      const chromeErr2 = validateShortcutRebind('empty_item', 'F5', defSc, trEn);
+      const validOk = validateShortcutRebind('empty_item', 'U', defSc, trEn);
+      const shortcutsOk =
+        BROWSER_RESERVED_COMBOS.has('Ctrl+T') &&
+        BROWSER_RESERVED_COMBOS.has('Ctrl+W') &&
+        !dupErr.ok &&
+        !chromeErr.ok &&
+        !chromeErr2.ok &&
+        validOk.ok;
+
+      // 3) Right-panel Gas Composition in Vessel Table renders mmol & mL
+      const simG = new LabSimulation();
+      const fG = simG.createApparatus('erlenmeyer_250', 240, 380);
+      fG.headspaceGasMoles.CO2_g = 0.002; // 2.000 mmol (~49.58 mL)
+      fG.headspaceGasMoles.H2_g = 0.001;  // 1.000 mmol (~24.79 mL)
+      simG.selectedId = fG.id;
+      const insDiv = document.createElement('div');
+      const insPanel = new InspectorPanel(insDiv, simG, () => trVi, {});
+      insPanel.update('vi', true);
+      const gasBoxText = insDiv.querySelector('#gas-comp-box')?.textContent || '';
+      const gasTableOk =
+        gasBoxText.includes('2.000') &&
+        gasBoxText.includes('1.000') &&
+        insDiv.textContent.includes('Thành phần khí trong bình');
+
+      // 4) SOS red origin + cyan-white ocean shatter wave + Ctrl 4 retro-TV flame designs render without error
+      const ps49 = new ParticleSystem();
+      ps49.emitSosShatterWave(420, 460);
+      const sosOrigin = ps49.particles.find((p) => p.kind === 'sos_origin_dot');
+      const sosWaves = ps49.particles.filter((p) => p.kind === 'sos_wave');
+      ps49.update(0.6);
+      const sosWaveOk = Boolean(sosOrigin && sosWaves.length === 4 && sosWaves.some((w) => w.r > 20));
+
+      const simCtrl = new LabSimulation();
+      const bnAlc = simCtrl.createApparatus('burner', 200, 426);
+      simCtrl.setBurnerFlame(bnAlc.id, 3);
+      const bnBunB = simCtrl.createApparatus('bunsen_burner', 420, 428);
+      bnBunB.airHoleOpen = true;
+      simCtrl.setBurnerFlame(bnBunB.id, 3);
+      const bnBunY = simCtrl.createApparatus('bunsen_burner', 620, 428);
+      bnBunY.airHoleOpen = false;
+      simCtrl.setBurnerFlame(bnBunY.id, 2);
+      const sp49 = simCtrl.createApparatus('splint', 800, 350);
+      sp49.mode = 'burning';
+
+      const host49 = document.createElement('div');
+      host49.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:448px;pointer-events:none;opacity:0.01;';
+      const cvs49 = document.createElement('canvas');
+      cvs49.style.cssText = 'width:800px;height:448px;display:block;';
+      host49.appendChild(cvs49);
+      document.body.appendChild(host49);
+      const wb49 = new LabWorkbenchCanvas(cvs49, simCtrl, ps49);
+      wb49.resize();
+      wb49.setTheme(false, 'ctrl');
+      wb49.render(1.4);
+      wb49.setTheme(true, 'sos');
+      wb49.render(1.6);
+      host49.remove();
+
+      assert(
+        'Prompt 49 invariants: Gas Composition table (mmol + mL), Shortcuts conflict & Chrome guard, unified ,/. number format, SOS red-dot shatter ocean wave, Ctrl 4 retro-TV pixel flames',
+        fmtOk && shortcutsOk && gasTableOk && sosWaveOk,
+        `fmt=${fmtOk}, sc=${shortcutsOk}, gas=${gasTableOk}, sosWave=${sosWaveOk}(r0=${sosWaves[0]?.r?.toFixed(1)})`
       );
     }
 

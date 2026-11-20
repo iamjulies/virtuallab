@@ -325,3 +325,18 @@ export function waterDensityGPerMl(T_K) {
   // Kell's simplified polynomial around 0.99704 at 25C and 0.9584 at 100C
   return 0.99984 + 6.79e-5 * t - 9.09e-6 * t * t + 1.0e-7 * t * t * t - 1.12e-9 * t * t * t * t;
 }
+
+/**
+ * Unified system-wide numeric formatter:
+ * - Thousands separator: comma (`,`)
+ * - Decimal separator: period (`.`)
+ */
+export function formatNumber(value, decimals = 2) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '0';
+  const d = Math.max(0, Math.min(8, Math.trunc(decimals)));
+  const fixed = num.toFixed(d);
+  const [intPart, decPart] = fixed.split('.');
+  const withCommas = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return decPart !== undefined ? `${withCommas}.${decPart}` : withCommas;
+}

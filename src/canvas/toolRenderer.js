@@ -3,7 +3,7 @@ import { buildRigidTubePoints, samplePolylineAt } from '../engine/gasNetwork.js'
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computeSolidVolumeMl, computeSolutionVisuals, computePH } from '../engine/equilibrium.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
-import { drawLabelPill, formatCanvasText, getThemePalette, setCurrentLabelItemId } from './vesselRenderer.js';
+import { drawLabelPill, formatCanvasText, getCurrentCanvasTheme, getThemePalette, setCurrentLabelItemId } from './vesselRenderer.js';
 
 function drawSelectionGlow(ctx, isSelected, isDropTarget) {
   if (isDropTarget) {
@@ -529,18 +529,40 @@ export function renderSplint(ctx, item, isSelected, isDark, timeNow = 0) {
       const outerW = 4.6 * fScale;
       const innerH = 11 * fScale;
       const innerW = 2.4 * fScale;
-      ctx.fillStyle = isO2Flare ? 'rgba(251, 191, 36, 0.96)' : 'rgba(251, 146, 60, 0.90)';
-      ctx.beginPath();
-      ctx.moveTo(tipX - outerW, y);
-      ctx.quadraticCurveTo(tipX + wob, y - outerH, tipX + outerW, y);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = isO2Flare ? '#ffffff' : 'rgba(254, 240, 138, 0.95)';
-      ctx.beginPath();
-      ctx.moveTo(tipX - innerW, y);
-      ctx.quadraticCurveTo(tipX + wob * 0.5, y - innerH, tipX + innerW, y);
-      ctx.closePath();
-      ctx.fill();
+      if (getCurrentCanvasTheme() === 'ctrl') {
+        const pxS = isO2Flare ? 4 : 3;
+        const cols = Math.max(3, Math.round((outerW * 2) / pxS));
+        const rows = Math.max(4, Math.round(outerH / pxS));
+        const tick = Math.floor(timeNow * 12);
+        for (let r = 0; r < rows; r++) {
+          const rf = r / Math.max(1, rows - 1);
+          const span = Math.max(1, Math.round(cols * (1 - rf * 0.65)));
+          const half = Math.floor(span / 2);
+          const sw = Math.round(Math.sin(tick + r * 0.8) * (rf > 0.4 ? 1 : 0));
+          for (let c = -half; c <= half; c++) {
+            const hash = Math.abs(Math.sin((r * 23 + c * 13 + tick) * 12.9898) * 43758.5453) % 1;
+            if (rf > 0.68 && hash < 0.3) continue;
+            ctx.fillStyle =
+              r < rows * 0.55 && Math.abs(c) <= Math.max(0, half - 1)
+                ? isO2Flare ? '#ffffff' : '#fef08a'
+                : isO2Flare ? '#fbbf24' : '#fb923c';
+            ctx.fillRect(Math.round(tipX + (c + sw) * pxS - pxS * 0.5), Math.round(y - (r + 1) * pxS), pxS - 0.5, pxS - 0.5);
+          }
+        }
+      } else {
+        ctx.fillStyle = isO2Flare ? 'rgba(251, 191, 36, 0.96)' : 'rgba(251, 146, 60, 0.90)';
+        ctx.beginPath();
+        ctx.moveTo(tipX - outerW, y);
+        ctx.quadraticCurveTo(tipX + wob, y - outerH, tipX + outerW, y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = isO2Flare ? '#ffffff' : 'rgba(254, 240, 138, 0.95)';
+        ctx.beginPath();
+        ctx.moveTo(tipX - innerW, y);
+        ctx.quadraticCurveTo(tipX + wob * 0.5, y - innerH, tipX + innerW, y);
+        ctx.closePath();
+        ctx.fill();
+      }
     }
   }
 

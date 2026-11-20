@@ -28,7 +28,7 @@ export class EnvironmentBar {
           <div class="min-w-0">
             <div class="flex items-center gap-1.5 whitespace-nowrap">
               <h1 class="text-sm font-bold leading-none whitespace-nowrap">${t('appTitle')}</h1>
-              <span id="app-version-badge" class="text-[11px] font-mono px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-muted whitespace-nowrap">virlab_beta_v4+build.14</span>
+              <span id="app-version-badge" class="text-[11px] font-mono px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-muted whitespace-nowrap">virlab_beta_v4+build.15</span>
               <span class="env-compact-hide text-xs px-2 py-0.5 rounded-full border border-theme bg-surface-alt text-muted whitespace-nowrap">
                 ${theme === 'olivia' ? 'u + me = <3 · 🐝' : theme === 'ctrl' ? 'draft · 4:20 pm' : theme === 'sos' ? 'deep sea · sos' : t('modeFreeSandbox')}
               </span>
@@ -152,6 +152,11 @@ export class EnvironmentBar {
             🗄️ ${t('cabinetBtnLabel')} (${this.appState.cabinetCount || 0})
           </button>
 
+          <!-- Keyboard Shortcuts Guide & Customizer Button -->
+          <button type="button" id="btn-shortcuts-guide" title="${t('shortcutsBtnTip')}" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-semibold hover:border-accent transition">
+            ⌨️ ${t('shortcutsBtnLabel')}
+          </button>
+
           <!-- Workspace Storage & Cloud Sync Button -->
           <button type="button" id="btn-workspace-storage" title="${t('storageBtnTip')}" class="env-storage-btn ${
             this.appState.cloudSignedIn ? 'signed-in' : ''
@@ -244,6 +249,10 @@ export class EnvironmentBar {
 
     this.container.querySelector('#btn-storage-cabinet')?.addEventListener('click', () => {
       this.callbacks.onOpenCabinet?.();
+    });
+
+    this.container.querySelector('#btn-shortcuts-guide')?.addEventListener('click', () => {
+      this.callbacks.onOpenShortcuts?.();
     });
 
     this.container.querySelector('#btn-workspace-storage')?.addEventListener('click', () => {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v4-build-14';
+const CACHE_NAME = 'virlab-beta-v4-build-15';
 const ASSETS = [
   './',
   './index.html',
@@ -39,6 +39,7 @@ const ASSETS = [
   './src/ui/comparisonPanel.js',
   './src/ui/workspaceStorageModal.js',
   './src/ui/storageCabinetModal.js',
+  './src/ui/shortcutsModal.js',
   './src/ui/contextMenu.js',
 ];
 
