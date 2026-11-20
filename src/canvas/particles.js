@@ -476,20 +476,23 @@ export class ParticleSystem {
           const lxFil = (Math.random() - 0.5) * spreadX * 0.6;
           const fx = vessel.x + lxFil * cosT - ly * sinT;
           const fy = vessel.y + lxFil * sinT + ly * cosT;
+          const sinkAcc = dominantPlume.sinkAccel || 0;
           this.particles.push({
             kind: 'gas_filament',
             x: fx,
             y: fy,
-            vx: outSkewVx + (Math.random() - 0.5) * 16,
-            vy: -(38 + Math.random() * 36),
+            vx: outSkewVx + (Math.random() - 0.5) * (sinkAcc > 0 ? 34 : 16),
+            vy: sinkAcc > 0 ? -(10 + Math.random() * 14) : -(38 + Math.random() * 36),
+            sinkAccel: sinkAcc,
             phase: Math.random() * Math.PI * 2,
             trail: [{ x: fx, y: fy }],
             w: dominantPlume.filamentWidth || 2.8,
             life: 0,
-            maxLife: 1.5 + Math.random() * 0.7,
+            maxLife: (sinkAcc > 0 ? 1.85 : 1.5) + Math.random() * 0.7,
             color: this.isDark ? dominantPlume.filDarkColor : dominantPlume.filLightColor,
           });
         } else {
+          const sinkAccC = dominantPlume?.sinkAccel || 0;
           this.particles.push({
             kind:
               dominantPlume && (dominantPlume.kind === 'colored_filament' || dominantPlume.kind === 'colored_cloud')
@@ -497,15 +500,16 @@ export class ParticleSystem {
                 : 'mist',
             x: px,
             y: py,
-            vx: outSkewVx + (Math.random() - 0.5) * (fromCrystal ? 12 : 20),
-            vy: -(28 + Math.random() * 34 + (metrics.isBoiling ? 12 : 0)),
+            vx: outSkewVx + (Math.random() - 0.5) * (sinkAccC > 0 ? 32 : fromCrystal ? 12 : 20),
+            vy: sinkAccC > 0 ? -(8 + Math.random() * 14) : -(28 + Math.random() * 34 + (metrics.isBoiling ? 12 : 0)),
+            sinkAccel: sinkAccC,
             phase: Math.random() * Math.PI * 2,
             r: (fromCrystal ? 3.8 : 4.5 + steamVis * 2.2) + Math.random() * 5.8,
             growR: 13,
             alphaScale: mistAlphaScale,
             oxidizesInAirToNO2: Boolean(dominantPlume?.oxidizesInAirToNO2 && (metrics.atmosphereMode || 'air') === 'air'),
             life: 0,
-            maxLife: (fromCrystal ? 1.35 : 0.95) + Math.random() * 0.65,
+            maxLife: (sinkAccC > 0 ? 1.65 : fromCrystal ? 1.35 : 0.95) + Math.random() * 0.65,
             color: activePlumeColor,
           });
         }
@@ -1488,7 +1492,7 @@ export class ParticleSystem {
         }
       } else if (p.kind === 'gas_filament') {
         p.vx += (Math.sin(p.life * 8.5 + p.phase) * 75 - p.vx * 1.4) * dt;
-        p.vy = Math.max(-115, p.vy - 18 * dt);
+        p.vy = p.sinkAccel > 0 ? Math.min(76, p.vy + p.sinkAccel * dt) : Math.max(-115, p.vy - 18 * dt);
         p.trail.push({ x: p.x, y: p.y });
         if (p.trail.length > 14) p.trail.shift();
       } else if (p.kind === 'smoke_ribbon') {
@@ -1503,7 +1507,7 @@ export class ParticleSystem {
       } else if (p.kind === 'gas_cloud') {
         p.r += (p.growR || 12) * dt;
         p.vx += (Math.sin(p.life * 4.5 + p.phase) * 32 - p.vx * 0.9) * dt;
-        p.vy = Math.max(-92, p.vy - 8 * dt);
+        p.vy = p.sinkAccel > 0 ? Math.min(68, p.vy + p.sinkAccel * dt) : Math.max(-92, p.vy - 8 * dt);
       } else if (p.kind === 'aerosol_cloud') {
         p.r += (p.growR || 10) * dt;
         p.vx += (Math.sin(p.life * 2.8 + p.phase) * 18 - p.vx * 0.85) * dt;

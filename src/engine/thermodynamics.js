@@ -484,9 +484,10 @@ export function stepVesselThermodynamics(
     if (nBr2Liq > 1e-9 && vessel.tempK >= 265.95 && (!vessel.isStoppered || hasOpenTube)) {
       const brSp = SPECIES.Br2_l;
       const evapBr2MolS = calcEvaporationRateMol(brSp, 1.0, vessel.tempK, areaCm2, 0, isStirred, 1.0);
-      const coverScale = nWater > 1e-4 && strat.topLayerKey !== 'organic_heavy' ? 0.16 : 1.0;
-      const roomFumeFloor = 4.2e-5 * Math.exp(0.055 * Math.min(45, vessel.tempK - 293.15));
-      const subBoilBr2 = Math.min(nBr2Liq, Math.max(evapBr2MolS, roomFumeFloor) * coverScale * dt);
+      const coverScale = nWater > 1e-4 && strat.topLayerKey !== 'organic_heavy' ? 0.25 : 1.0;
+      // High vapor pressure (23.3 kPa @ 20 C, bp 58.8 C): fumes copiously immediately on exposure
+      const roomFumeFloor = 2.4e-4 * Math.exp(0.055 * Math.min(45, vessel.tempK - 293.15));
+      const subBoilBr2 = Math.min(nBr2Liq, Math.max(evapBr2MolS * 1.45, roomFumeFloor) * coverScale * dt);
       if (subBoilBr2 > 1e-12) {
         vessel.moles.Br2_l = Math.max(0, nBr2Liq - subBoilBr2);
         if (vessel.moles.Br2_l < 1e-13) delete vessel.moles.Br2_l;
@@ -496,7 +497,7 @@ export function stepVesselThermodynamics(
     }
     const nBr2Aq = vessel.moles.Br2_aq || 0;
     if (!vessel.isFrozenSolid && nBr2Aq > 1e-7 && nWater > 1e-4 && vessel.tempK >= 285.15 && (!vessel.isStoppered || hasOpenTube)) {
-      const rateAqBr2 = nBr2Aq * 0.008 * Math.exp(0.048 * Math.min(55, vessel.tempK - 293.15));
+      const rateAqBr2 = nBr2Aq * 0.012 * Math.exp(0.048 * Math.min(55, vessel.tempK - 293.15));
       const dBr2Aq = Math.min(nBr2Aq, rateAqBr2 * dt);
       if (dBr2Aq > 1e-12) {
         vessel.moles.Br2_aq = Math.max(0, nBr2Aq - dBr2Aq);
@@ -506,11 +507,14 @@ export function stepVesselThermodynamics(
       }
     }
 
-    // 1f) Iodine direct sublimation I2(s) -> I2(g) (trace @ 20 C, brisk 50–114 C below mp 113.7 C)
+    // 1f) Iodine sublimation I2(s) -> I2(g): virtually fume-free below 40 C in open air; vigorous violet plumes >= 40-50 C
     if (nI2Solid > 1e-9 && vessel.tempK >= 290.15 && (!vessel.isStoppered || hasOpenTube) && (nWater < 0.06 || vessel.tempK >= 338.15)) {
-      const pSubBar = 0.00041 * Math.exp((62400 / CONSTANTS.R_J_MOL_K) * (1 / 298.15 - 1 / Math.min(480, vessel.tempK)));
-      const thermalDrive = vessel.tempK >= 323.15 ? 1.0 : 0.14;
-      const evapI2MolS = (effAreaCm2 / 12.0) * 0.028 * pSubBar * thermalDrive * (isStirred ? 1.35 : 1.0);
+      let evapI2MolS = 8.0e-8; // Room-temp solid vapor emission stays silent (< plume rateMin 2.5e-6)
+      if (vessel.tempK >= 313.15) {
+        const pSubBar = 0.00041 * Math.exp((62400 / CONSTANTS.R_J_MOL_K) * (1 / 298.15 - 1 / Math.min(480, vessel.tempK)));
+        const boost = vessel.tempK >= 323.15 ? 1.8 : 0.75;
+        evapI2MolS = (effAreaCm2 / 10.0) * 0.055 * pSubBar * boost * (isStirred ? 1.35 : 1.0);
+      }
       const sublI2 = Math.min(nI2Solid, evapI2MolS * dt);
       if (sublI2 > 1e-12) {
         vessel.moles.I2_s = Math.max(0, nI2Solid - sublI2);
@@ -556,7 +560,19 @@ export function stepVesselThermodynamics(
   }
   const remBr2After = vessel.moles.Br2_l || 0;
   const remainingSulfur = vessel.moles.S_s || 0;
-  if (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 <= 1e-7 && remBr2After <= 1e-7 && remainingSulfur > 1e-7 && newTempK >= 717.75) {
+  const remainingIodine = vessel.moles.I2_s || 0;
+  if (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 <= 1e-7 && remBr2After <= 1e-7 && remainingSulfur <= 1e-7 && remainingIodine > 1e-7 && newTempK >= 457.45) {
+    isBoiling = true;
+    const excessI2J = (newTempK - 457.45) * cTotal;
+    const boilI2 = Math.min(remainingIodine, excessI2J / 41800);
+    if (boilI2 > 1e-12) {
+      vessel.moles.I2_s = Math.max(0, remainingIodine - boilI2);
+      if (vessel.moles.I2_s < 1e-13) delete vessel.moles.I2_s;
+      i2ProducedMol += boilI2;
+    }
+    const leftoverI2J = Math.max(0, excessI2J - boilI2 * 41800);
+    newTempK = 457.45 + leftoverI2J / cTotal;
+  } else if (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 <= 1e-7 && remBr2After <= 1e-7 && remainingSulfur > 1e-7 && newTempK >= 717.75) {
     isBoiling = true;
     const excessSJ = (newTempK - 717.75) * cTotal;
     const boilS = Math.min(remainingSulfur, excessSJ / 9600);
@@ -692,14 +708,14 @@ export function stepVesselThermodynamics(
     }
   }
 
-  // Sealed / dry high-temp I2(s) sublimation even when flask is warm/stoppered without bulk water
+  // Sealed I2(s) headspace vapor equilibrium (faint pale-violet @ 25 C; rich violet vapor + melt @ 113.7 C)
   const remI2Now = vessel.moles.I2_s || 0;
-  if (remI2Now > 1e-9 && newTempK >= 323.15 && (vessel.moles.H2O_l || 0) < 0.06 && vessel.isStoppered && !hasOpenTube) {
+  if (remI2Now > 1e-9 && newTempK >= 288.15 && (vessel.moles.H2O_l || 0) < 0.06 && vessel.isStoppered && !hasOpenTube) {
     const hVolL = Math.max(0.01, (spec.maxVolumeMl || 250) * 0.0007);
     const pSubBar = 0.00041 * Math.exp((62400 / CONSTANTS.R_J_MOL_K) * (1 / 298.15 - 1 / Math.min(480, newTempK)));
     const nEqHead = (pSubBar * hVolL) / (CONSTANTS.R_L_BAR_MOL_K * newTempK);
     const curHeadI2 = vessel.headspaceGasMoles?.I2_g || 0;
-    if (nEqHead > curHeadI2 + 1e-8) {
+    if (nEqHead > curHeadI2 + 1e-9) {
       const subSealed = Math.min(remI2Now, (nEqHead - curHeadI2) * Math.min(1, 1.5 * dt));
       if (subSealed > 1e-12) {
         vessel.moles.I2_s = Math.max(0, remI2Now - subSealed);
@@ -707,6 +723,27 @@ export function stepVesselThermodynamics(
         i2ProducedMol += subSealed;
         newTempK = Math.max(250, newTempK - (subSealed * 62400) / cTotal);
       }
+    }
+  }
+
+  // Bromine freeze / melt transition at -7.2 C (265.95 K)
+  const brLiqFreeze = vessel.moles.Br2_l || 0;
+  const brSolMelt = vessel.moles.Br2_s || 0;
+  if (newTempK < 265.95 && brLiqFreeze > 1e-9) {
+    const freezeMol = Math.min(brLiqFreeze, ((265.95 - newTempK) * cTotal) / 10570);
+    if (freezeMol > 1e-12) {
+      vessel.moles.Br2_l = Math.max(0, brLiqFreeze - freezeMol);
+      if (vessel.moles.Br2_l < 1e-13) delete vessel.moles.Br2_l;
+      vessel.moles.Br2_s = brSolMelt + freezeMol;
+      newTempK += (freezeMol * 10570) / cTotal;
+    }
+  } else if (newTempK > 265.95 && brSolMelt > 1e-9) {
+    const meltMol = Math.min(brSolMelt, ((newTempK - 265.95) * cTotal) / 10570);
+    if (meltMol > 1e-12) {
+      vessel.moles.Br2_s = Math.max(0, brSolMelt - meltMol);
+      if (vessel.moles.Br2_s < 1e-13) delete vessel.moles.Br2_s;
+      vessel.moles.Br2_l = brLiqFreeze + meltMol;
+      newTempK -= (meltMol * 10570) / cTotal;
     }
   }
 

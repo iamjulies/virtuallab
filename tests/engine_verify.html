@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.9';
+      const expectedBuild = 'virlab_beta_v4+build.10';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,7 +2515,7 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.9 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-43 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.10 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-44 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
           STARTER_REAGENTS.length === 23 &&
           !APPARATUS.clay_triangle &&
@@ -7637,6 +7637,72 @@
         'Prompt 43 Sulfur (S) invariants: room-T inertness, molten plastic quench & 444.6C bp, air/O2 blue-flame SO2, FeS/ZnS/Al2S3 synthesis, FeS+HCl->H2S, Al2S3 hydrolysis, H2+S<->H2S reversible, hot HNO3->SO4+NO2 & IUPAC',
         inertOk && plasticOk && sBoilOk && combOk && metalSOk && followUpOk && h2sRevOk && oxAcidOk && iupacSulfOk,
         `inert=${inertOk}, plastic=${plasticOk}, boil=${sBoilOk}, comb=${combOk}, metalS=(FeS:${(bFeS.moles.FeS_s||0).toFixed(4)},ZnS:${(bZnS.moles.ZnS_s||0).toFixed(4)},Al2S3:${(bAlS.moles.Al2S3_s||0).toFixed(4)}), follow=${followUpOk}, h2sRev=${h2sRevOk}(fwd:${((bH2S_380.headspaceGasMoles?.H2S_g||0)+(bH2S_380.escapedGasMoles?.H2S_g||0)).toFixed(4)},revH2:${((bH2S_hot.headspaceGasMoles?.H2_g||0)+(bH2S_hot.escapedGasMoles?.H2_g||0)).toFixed(4)}), ox=${oxAcidOk}, iupac=${iupacSulfOk}`
+      );
+    }
+
+    // TEST 162: Prompt 44 (virlab_beta_v4+build.10) — Nonmetal Category Filter ('Phi kim'), Br2 Rapid Room-T Sinking Fumes & -7.2C Freezing, I2 Silent Open Room-T vs Sealed Pale-Violet Headspace vs >=45C Sublimation & 113.7C Liquid Melt
+    {
+      const nonmetals = STARTER_REAGENTS.filter((r) => r.category === 'nonmetal').map((r) => r.id).sort();
+      const filterOk =
+        nonmetals.length === 3 &&
+        nonmetals[0] === 'br2' &&
+        nonmetals[1] === 'i2' &&
+        nonmetals[2] === 's' &&
+        I18N.vi.regCatNonmetal === 'Phi kim' &&
+        I18N.en.regCatNonmetal === 'Nonmetals';
+
+      // Br2 open @ 25 C fumes heavily & sinks (sinkAccel > 0); freezes to Br2_s < -7.2 C
+      const sim = new LabSimulation();
+      const vBrOpen = sim.createApparatus('beaker_250', 120, 427);
+      sim.addReagentToVessel(vBrOpen.id, 'br2', 3.0, { silentAnim: true });
+      const vBrCold = sim.createApparatus('beaker_250', 240, 427);
+      vBrCold.moles = { Br2_l: 0.02 };
+      vBrCold.tempK = 260.0; // -13 C (< -7.2 C freeze)
+
+      // I2 open @ 25 C has trace evaporation WELL below plume rateMin (silent, no smoke cloud)
+      const vI2Room = sim.createApparatus('beaker_250', 360, 427);
+      sim.addReagentToVessel(vI2Room.id, 'i2', 2.0, { silentAnim: true });
+      // I2 stoppered @ 25 C develops faint I2_g headspace vapor tint (~1e-6..1e-5 mol)
+      const vI2Sealed = sim.createApparatus('erlenmeyer_250', 480, 427);
+      sim.addReagentToVessel(vI2Sealed.id, 'i2', 2.0, { silentAnim: true });
+      vI2Sealed.isStoppered = true;
+      vI2Sealed.stopperMode = 'solid';
+      // I2 heated >= 50 C sublimes rapidly above plume rateMin; sealed @ 120 C melts cleanly into dark liquid
+      const vI2Warm = sim.createApparatus('beaker_250', 600, 427);
+      sim.addReagentToVessel(vI2Warm.id, 'i2', 2.0, { silentAnim: true });
+      vI2Warm.tempK = 333.15; // 60 C
+      const vI2Melt = sim.createApparatus('round_flask_250', 720, 427);
+      vI2Melt.moles = { I2_s: 0.03 };
+      vI2Melt.isStoppered = true;
+      vI2Melt.stopperMode = 'solid';
+      vI2Melt.tempK = 393.15; // 120 C (> 113.7 C melt)
+
+      sim.environment.tempK = 298.15;
+      stepSeconds(sim, 1.0, 0.05);
+      // Pin non-room test temperatures cleanly over second tick
+      vI2Warm.tempK = 333.15;
+      vI2Melt.tempK = 393.15;
+      vBrCold.tempK = 260.0;
+      stepSeconds(sim, 0.5, 0.05);
+
+      const brRateOpen = (vBrOpen.escapedGasMoles?.Br2_g || 0) / 1.5;
+      const brBehaviorOk =
+        brRateOpen > 1.5e-4 &&
+        (SPECIES.Br2_g.plume?.sinkAccel || 0) > 40 &&
+        (vBrCold.moles.Br2_s || 0) > 0.01;
+      const i2RoomRate = (vI2Room.escapedGasMoles?.I2_g || 0) / 1.5;
+      const i2WarmRate = ((vI2Warm.escapedGasMoles?.I2_g || 0) + (vI2Warm.headspaceGasMoles?.I2_g || 0)) / 1.5;
+      const i2BehaviorOk =
+        i2RoomRate < (SPECIES.I2_g.plume?.rateMin || 2.5e-6) &&
+        (vI2Sealed.headspaceGasMoles?.I2_g || 0) > 1e-6 &&
+        i2WarmRate > (SPECIES.I2_g.plume?.rateMin || 2.5e-6) * 2 &&
+        isSolidMoltenAtTemp(SPECIES.I2_s, vI2Melt.tempK, vI2Melt.moles) &&
+        (vI2Melt.moles.I2_s || 0) > 0.025;
+
+      assert(
+        'Prompt 44 Nonmetal Filter & Br2/I2 Vapor Physics: nonmetal filter (Br2/I2/S), heavy sinking room-T Br2 fumes & -7.2C freezing, silent open room-T I2 vs sealed violet tint, >=45C sublimation fumes & 113.7C sealed I2 melt',
+        filterOk && brBehaviorOk && i2BehaviorOk,
+        `filter=${filterOk}(${nonmetals.join(',')}), br=${brBehaviorOk}(rate=${brRateOpen.toExponential(2)},sink=${SPECIES.Br2_g.plume?.sinkAccel},Br2_s=${(vBrCold.moles.Br2_s||0).toFixed(3)}), i2=${i2BehaviorOk}(room=${i2RoomRate.toExponential(2)},sealedHead=${(vI2Sealed.headspaceGasMoles?.I2_g||0).toExponential(2)},warm=${i2WarmRate.toExponential(2)},meltI2=${(vI2Melt.moles.I2_s||0).toFixed(3)})`
       );
     }
 

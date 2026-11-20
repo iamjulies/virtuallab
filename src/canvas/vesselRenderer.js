@@ -1874,6 +1874,29 @@ export function renderVessel(ctx, vessel, opts) {
     liqMl > 0.15 &&
     ((vessel.moles.H2O_l || 0) > 1e-7 || (vessel.moles.C2H5OH_l || 0) > 1e-7 || strat.totalLiqMl > 0.15);
 
+  // Colored headspace gas tint (Cl2 / NO2 / Br2 / I2) inside any upright vessel even without water
+  if (!vessel.isInverted) {
+    const hGas = vessel.headspaceGasMoles || {};
+    const hBr2 = hGas.Br2_g || 0;
+    const hI2 = hGas.I2_g || 0;
+    const hNO2U = hGas.NO2_g || 0;
+    const hCl2U = hGas.Cl2_g || 0;
+    let tintCol = null;
+    if (hBr2 > 5e-6) {
+      tintCol = `rgba(185, 28, 28, ${Math.min(0.42, 0.14 + hBr2 * 40).toFixed(2)})`;
+    } else if (hI2 > 1e-7) {
+      tintCol = `rgba(168, 85, 247, ${Math.min(0.45, 0.08 + hI2 * 85).toFixed(2)})`;
+    } else if (hNO2U > 5e-6) {
+      tintCol = `rgba(217, 119, 6, ${Math.min(0.36, 0.12 + hNO2U * 35).toFixed(2)})`;
+    } else if (hCl2U > 5e-6) {
+      tintCol = `rgba(190, 242, 100, ${Math.min(0.30, 0.10 + hCl2U * 28).toFixed(2)})`;
+    }
+    if (tintCol) {
+      ctx.fillStyle = tintCol;
+      ctx.fillRect(x - w / 2, top, w, Math.max(4, (hasWater ? surfaceY : interiorBottom) - top));
+    }
+  }
+
   // Draw liquid body using Beer-Lambert + Phenolphthalein color (supports multi-phase liquid-liquid strata)
   if (hasWater) {
     const ph = computePH(vessel.moles, liqL, vessel.tempK);
@@ -1900,11 +1923,13 @@ export function renderVessel(ctx, vessel, opts) {
       ctx.lineWidth = 1.4;
       ctx.stroke();
 
-      // Colored headspace gas tint (Cl2 pale green-yellow / NO2 amber) inside upper dome
+      // Colored headspace gas tint (Cl2 pale green-yellow / NO2 amber) inside inverted upper dome
       const hCl2 = vessel.headspaceGasMoles?.Cl2_g || 0;
       const hNO2 = vessel.headspaceGasMoles?.NO2_g || 0;
-      if (hCl2 > 1e-6 || hNO2 > 1e-6) {
-        ctx.fillStyle = hNO2 >= hCl2 ? 'rgba(217, 119, 6, 0.34)' : 'rgba(190, 242, 100, 0.32)';
+      const hBr2Inv = vessel.headspaceGasMoles?.Br2_g || 0;
+      const hI2Inv = vessel.headspaceGasMoles?.I2_g || 0;
+      if (vessel.isInverted && (hCl2 > 1e-6 || hNO2 > 1e-6 || hBr2Inv > 1e-6 || hI2Inv > 1e-6)) {
+        ctx.fillStyle = hBr2Inv > 1e-6 ? 'rgba(185, 28, 28, 0.36)' : hI2Inv > 1e-6 ? 'rgba(168, 85, 247, 0.36)' : hNO2 >= hCl2 ? 'rgba(217, 119, 6, 0.34)' : 'rgba(190, 242, 100, 0.32)';
         ctx.fillRect(x - w / 2, divY, w, interiorBottom - divY + 4);
       }
     } else if (Math.abs(effTilt) > 0.015) {

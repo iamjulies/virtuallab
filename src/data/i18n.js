@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.9',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.10',
     modeFreeSandbox: 'Sandbox Tự do',
     envTemp: 'Nhiệt độ phòng',
     envBadgeSatp: 'SATP',
@@ -61,6 +61,7 @@ export const I18N = {
     regCatBase: 'Base',
     regCatSalt: 'Muối',
     regCatMetal: 'Kim loại',
+    regCatNonmetal: 'Phi kim',
     regCatOther: 'Nước & Khác',
 
     // Equipment labels
@@ -673,7 +674,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.9',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.10',
     modeFreeSandbox: 'Freeform Sandbox',
     envTemp: 'Ambient Temp',
     envBadgeSatp: 'SATP',
@@ -725,6 +726,7 @@ export const I18N = {
     regCatBase: 'Base',
     regCatSalt: 'Salt',
     regCatMetal: 'Metal',
+    regCatNonmetal: 'Nonmetals',
     regCatOther: 'Water & Others',
 
     eq_beaker_250: 'Beaker 250 mL (Low)',
