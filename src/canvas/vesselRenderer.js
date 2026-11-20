@@ -1978,18 +1978,44 @@ export function renderVessel(ctx, vessel, opts) {
         const clipLocalY = findTiltClipY3D(spec, totalFillMl, effTilt);
         if (clipLocalY === -Infinity || Number.isFinite(clipLocalY)) {
           const drawTopY = clipLocalY === -Infinity ? -bigSpan : clipLocalY;
+          const sw = vessel._surfaceWave;
           ctx.save();
           ctx.translate(x, y);
           ctx.rotate(-effTilt);
           ctx.fillStyle = vis.css;
-          ctx.fillRect(-bigSpan, drawTopY, bigSpan * 2, bigSpan - drawTopY);
-          if (Number.isFinite(clipLocalY)) {
+          if (sw?.active && !hasIce && Number.isFinite(clipLocalY)) {
+            const waveHalfSpan = Math.max(w, h) * 0.65;
             ctx.beginPath();
-            ctx.moveTo(-bigSpan, clipLocalY);
-            ctx.lineTo(bigSpan, clipLocalY);
+            ctx.moveTo(-bigSpan, bigSpan);
+            ctx.lineTo(-bigSpan, drawTopY + sw.h[0]);
+            for (let wi = 0; wi < sw.n; wi++) {
+              const wx = -waveHalfSpan + (wi / (sw.n - 1)) * waveHalfSpan * 2;
+              ctx.lineTo(wx, drawTopY + sw.h[wi]);
+            }
+            ctx.lineTo(bigSpan, drawTopY + sw.h[sw.n - 1]);
+            ctx.lineTo(bigSpan, bigSpan);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(-bigSpan, drawTopY + sw.h[0]);
+            for (let wi = 0; wi < sw.n; wi++) {
+              const wx = -waveHalfSpan + (wi / (sw.n - 1)) * waveHalfSpan * 2;
+              ctx.lineTo(wx, drawTopY + sw.h[wi]);
+            }
+            ctx.lineTo(bigSpan, drawTopY + sw.h[sw.n - 1]);
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
             ctx.lineWidth = 1.6;
             ctx.stroke();
+          } else {
+            ctx.fillRect(-bigSpan, drawTopY, bigSpan * 2, bigSpan - drawTopY);
+            if (Number.isFinite(clipLocalY)) {
+              ctx.beginPath();
+              ctx.moveTo(-bigSpan, clipLocalY);
+              ctx.lineTo(bigSpan, clipLocalY);
+              ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+              ctx.lineWidth = 1.6;
+              ctx.stroke();
+            }
           }
           ctx.restore();
         }
@@ -2024,8 +2050,22 @@ export function renderVessel(ctx, vessel, opts) {
           }
         }
       } else {
+        const sw = vessel._surfaceWave;
         ctx.fillStyle = vis.css;
-        ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
+        if (sw?.active && !hasIce && !spec.isUTube) {
+          ctx.beginPath();
+          ctx.moveTo(x - w / 2, interiorBottom + 4);
+          const spanHalf = Math.max(surfaceHalfWPx + 6, w * 0.48);
+          for (let wi = 0; wi < sw.n; wi++) {
+            const wx = x - spanHalf + (wi / (sw.n - 1)) * spanHalf * 2;
+            ctx.lineTo(wx, surfaceY + sw.h[wi]);
+          }
+          ctx.lineTo(x + w / 2, interiorBottom + 4);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
+        }
       }
 
       // 2D local concentration diffusion plume (e.g. NaOH drop in Phenolphthalein or CuSO4 crystal) + Stir-bar swirl vortex
@@ -2096,13 +2136,24 @@ export function renderVessel(ctx, vessel, opts) {
             ctx.stroke();
           }
         } else {
-          // Concave meniscus (or deeper vortex funnel when magnetic stir bar spins rapidly)
+          // Concave meniscus (or 1D slosh wave curve / deeper vortex funnel when magnetic stir bar spins rapidly)
+          const sw = vessel._surfaceWave;
           const vortexDip = (vessel.magStirRpm || 0) > 0 && vessel.hasStirBar && !vessel.isFrozenSolid
             ? 3.5 + Math.min(10, (vessel.magStirRpm / 1200) * 9) + Math.sin(timeNow * 24) * 1.2
             : 3.2;
           ctx.beginPath();
-          ctx.moveTo(x - surfaceHalfWPx, surfaceY);
-          ctx.quadraticCurveTo(x, surfaceY + vortexDip, x + surfaceHalfWPx, surfaceY);
+          if (sw?.active && !vessel.hasStirBar) {
+            for (let wi = 0; wi < sw.n; wi++) {
+              const fracW = wi / (sw.n - 1);
+              const wx = x - surfaceHalfWPx + fracW * surfaceHalfWPx * 2;
+              const sag = 2.0 * Math.sin(Math.PI * fracW);
+              if (wi === 0) ctx.moveTo(wx, surfaceY + sw.h[wi]);
+              else ctx.lineTo(wx, surfaceY + sw.h[wi] + sag);
+            }
+          } else {
+            ctx.moveTo(x - surfaceHalfWPx, surfaceY);
+            ctx.quadraticCurveTo(x, surfaceY + vortexDip, x + surfaceHalfWPx, surfaceY);
+          }
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
           ctx.lineWidth = 1.6;
           ctx.stroke();
@@ -2186,6 +2237,30 @@ export function renderVessel(ctx, vessel, opts) {
       ctx.beginPath();
       ctx.arc(sx, sy, 2.2, 0, Math.PI * 2);
       ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // Dynamic Solid Behavior Overlay (free rolling grains, sticky hygroscopic clumps, buoyant/sinking, shrinking dissolution)
+  if (Array.isArray(vessel._solidBodies) && vessel._solidBodies.length > 0 && !vessel.isShattered) {
+    ctx.save();
+    for (const b of vessel._solidBodies) {
+      if (b.r < 0.75) continue;
+      ctx.save();
+      ctx.translate(x + b.x, y + b.y);
+      ctx.rotate(b.angle || 0);
+      ctx.fillStyle = b.color || '#cbd5e1';
+      ctx.beginPath();
+      if (b.behavior?.group === 1) {
+        ctx.roundRect(-b.r, -b.r * 0.75, b.r * 2, b.r * 1.5, Math.min(2, b.r * 0.45));
+      } else {
+        ctx.arc(0, 0, b.r, 0, Math.PI * 2);
+      }
+      ctx.fill();
+      ctx.strokeStyle = b.highlight || 'rgba(255,255,255,0.65)';
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+      ctx.restore();
     }
     ctx.restore();
   }

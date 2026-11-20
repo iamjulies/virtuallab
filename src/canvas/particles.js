@@ -932,16 +932,45 @@ export class ParticleSystem {
       const fx = meta?.fromX ?? x;
       const fy = meta?.fromY ?? y;
       const col = isSolid ? (meta?.color || '#e2e8f0') : (meta?.liquidColor || 'rgba(186, 230, 253, 0.88)');
-      const count = isSolid ? 5 : Math.min(6, Math.max(2, Math.round((meta?.rateMlS || 4) * 0.4)));
-      for (let i = 0; i < count; i++) {
+      if (!isSolid) {
+        const visc = Math.max(1.0, meta?.viscosity || 1.0);
+        const lipDir = meta?.lipDir || 1;
+        const excessMl = meta?.excessMl || 2;
+        const tiltDeg = meta?.tiltDeg || 45;
+        const isCoanda = excessMl < 3.5 && tiltDeg < 74;
+        const count = Math.min(7, Math.max(2, Math.round((meta?.rateMlS || 4) * 0.45)));
+        for (let i = 0; i < count; i++) {
+          const vxInit = isCoanda
+            ? -lipDir * (10 + Math.random() * 6)
+            : lipDir * (28 + Math.min(62, excessMl * 3.8)) / Math.pow(visc, 0.48) + (Math.random() - 0.5) * 8;
+          this.particles.push({
+            kind: 'metaball_drop',
+            x: fx + (Math.random() - 0.5) * 4,
+            y: fy + (Math.random() - 0.5) * 3,
+            vx: vxInit,
+            vy: (18 + Math.random() * 18) / Math.sqrt(visc),
+            g: 1080 / Math.pow(visc, 0.25),
+            r: 4.4 + (visc > 1.8 ? 1.0 : 0) + Math.random() * 1.4,
+            coandaTimer: isCoanda ? 0.16 : 0,
+            lipDir,
+            stopY: meta?.toY ?? BENCH_FLOOR_Y,
+            catchX: meta?.catchX ?? null,
+            life: 0,
+            maxLife: 0.85,
+            color: col,
+          });
+        }
+        return;
+      }
+      for (let i = 0; i < 5; i++) {
         this.particles.push({
           kind: 'drip',
           x: fx + (Math.random() - 0.5) * 6,
           y: fy + (Math.random() - 0.5) * 4,
-          vx: (Math.random() - 0.5) * (isSolid ? 22 : 16),
-          vy: isSolid ? 35 + Math.random() * 35 : 42 + Math.random() * 28,
-          g: isSolid ? 960 : 1200,
-          r: isSolid ? 1.8 + Math.random() * 1.1 : 2.1 + Math.random() * 1.1,
+          vx: (Math.random() - 0.5) * 22,
+          vy: 35 + Math.random() * 35,
+          g: 960,
+          r: 1.9 + Math.random() * 1.1,
           stopY: meta?.toY ?? BENCH_FLOOR_Y,
           catchX: meta?.catchX ?? null,
           life: 0,
@@ -1518,6 +1547,31 @@ export class ParticleSystem {
         p.angle = (p.angle || 0) + (p.spin || 1.2) * dt;
       } else if (p.kind === 'pipette_suck') {
         p.vx *= 0.98;
+      } else if (p.kind === 'metaball_drop') {
+        if (p.coandaTimer > 0) {
+          p.coandaTimer -= dt;
+          p.vx *= 0.92;
+        }
+        p.vy += (p.g || 1080) * dt;
+        const limitY = p.stopY || BENCH_FLOOR_Y;
+        if (p.y >= limitY) {
+          p.y = limitY;
+          p.life = p.maxLife;
+          if (p.catchX != null) {
+            this.particles.push({
+              kind: 'shockwave',
+              x: p.catchX + (Math.random() - 0.5) * 8,
+              y: limitY + 3,
+              vx: 0,
+              vy: 0,
+              r: 2,
+              maxR: 12,
+              life: 0,
+              maxLife: 0.22,
+              color: p.color,
+            });
+          }
+        }
       } else if (p.kind === 'drip') {
         p.vy += (p.g || 390) * dt;
         const limitY = p.stopY || BENCH_FLOOR_Y;
@@ -1741,6 +1795,63 @@ export class ParticleSystem {
       }
 
       ctx.restore();
+    }
+
+    // 2D Metaball Threshold-Alpha Liquid Ribbon pass (zero cost when not actively pouring)
+    const mbDrops = this.particles.filter((p) => p.kind === 'metaball_drop');
+    if (mbDrops.length > 0 && typeof document !== 'undefined') {
+      if (!this._mbCanvas) {
+        this._mbCanvas = document.createElement('canvas');
+        this._mbCanvas.width = 500;
+        this._mbCanvas.height = 280;
+        this._mbCtx = this._mbCanvas.getContext('2d', { willReadFrequently: true });
+      }
+      const mctx = this._mbCtx;
+      let minX = 500;
+      let minY = 280;
+      let maxX = 0;
+      let maxY = 0;
+      for (const d of mbDrops) {
+        const sx = d.x * 0.5;
+        const sy = d.y * 0.5;
+        const sr = d.r * 0.85;
+        minX = Math.min(minX, Math.floor(sx - sr - 2));
+        minY = Math.min(minY, Math.floor(sy - sr - 2));
+        maxX = Math.max(maxX, Math.ceil(sx + sr + 2));
+        maxY = Math.max(maxY, Math.ceil(sy + sr + 2));
+      }
+      minX = Math.max(0, minX);
+      minY = Math.max(0, minY);
+      maxX = Math.min(500, maxX);
+      maxY = Math.min(280, maxY);
+      const bw = maxX - minX;
+      const bh = maxY - minY;
+      if (bw > 0 && bh > 0) {
+        mctx.clearRect(minX, minY, bw, bh);
+        for (const d of mbDrops) {
+          const sx = d.x * 0.5;
+          const sy = d.y * 0.5;
+          const sr = d.r * 0.85;
+          const g = mctx.createRadialGradient(sx, sy, 0.2, sx, sy, sr);
+          g.addColorStop(0, d.color);
+          g.addColorStop(0.55, d.color);
+          g.addColorStop(1, 'rgba(255,255,255,0)');
+          mctx.fillStyle = g;
+          mctx.beginPath();
+          mctx.arc(sx, sy, sr, 0, Math.PI * 2);
+          mctx.fill();
+        }
+        const img = mctx.getImageData(minX, minY, bw, bh);
+        const data = img.data;
+        for (let idx = 3; idx < data.length; idx += 4) {
+          const a = data[idx];
+          data[idx] = a > 105 ? 232 : 0;
+        }
+        mctx.putImageData(img, minX, minY);
+        ctx.save();
+        ctx.drawImage(this._mbCanvas, minX, minY, bw, bh, minX * 2, minY * 2, bw * 2, bh * 2);
+        ctx.restore();
+      }
     }
   }
 

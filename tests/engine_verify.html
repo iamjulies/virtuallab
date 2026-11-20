@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.12';
+      const expectedBuild = 'virlab_beta_v4+build.13';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,7 +2515,7 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.12 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-46 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.13 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-46 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
           STARTER_REAGENTS.length === 23 &&
           !APPARATUS.clay_triangle &&
@@ -7890,6 +7890,75 @@
         'Prompt 46 invariants: K2O/KO2/K2O2 stages, 3-vessel series salt-bridge electrolysis, unified stopper & syringe Cl2 pumping without disconnect + upright Cl2/H2 diffusion, stoppered invert, closed crucible no-spill',
         koxOk && seriesOk && hasUnifiedStopper && tubeKeptOnPush && cl2PumpedIn > 0.003 && cl2OpenLeft > h2OpenLeft * 4 && invStopOk && crucNoSpillOk,
         `kox=${koxOk}, series=${seriesOk}(I=${(dc.measuredCurrentA||0).toFixed(2)}A), gas=(st:${hasUnifiedStopper},kept:${tubeKeptOnPush},in:${(cl2PumpedIn*1000).toFixed(2)}mmol,openCl2:${(cl2OpenLeft*1000).toFixed(2)} vs H2:${(h2OpenLeft*1000).toFixed(2)}), invStop=${invStopOk}, crucNoSpill=${crucNoSpillOk}`
+      );
+    }
+
+    // TEST 165: Prompt 47 (virlab_beta_v4+build.13) — 1D Surface Spring Sloshing & Viscosity Damping, Viscous Pouring & Impact Ripples, 4 Solid Behavior Groups & Tilted Particle Flow
+    {
+      const { computeLiquidViscosityFactor, stepVesselSurfaceWaves, classifySolidBehavior, stepVesselSolidBodies } = await import('../src/engine/liquidSurfacePhysics.js');
+      // 1) 1D surface wave oscillates lightly in water vs rapidly damped in conc. H2SO4 with zero volume/mean drift
+      const simW = new LabSimulation();
+      const bW = simW.createApparatus('beaker_250', 180, 427);
+      simW.addReagentToVessel(bW.id, 'h2o', 80, { silentAnim: true });
+      const bVisc = simW.createApparatus('beaker_250', 360, 427);
+      simW.addReagentToVessel(bVisc.id, 'h2so4_98', 80, { silentAnim: true });
+
+      for (let i = 0; i < 10; i++) {
+        stepVesselSurfaceWaves(bW, 0.02, 120, 0);
+        stepVesselSurfaceWaves(bVisc, 0.02, 120, 0);
+      }
+      const peakWater = Math.max(...bW._surfaceWave.h.map(Math.abs));
+      for (let i = 0; i < 45; i++) {
+        stepVesselSurfaceWaves(bW, 0.02, 0, 0);
+        stepVesselSurfaceWaves(bVisc, 0.02, 0, 0);
+      }
+      const postWater = Math.max(...bW._surfaceWave.h.map(Math.abs));
+      const postAcid = Math.max(...bVisc._surfaceWave.h.map(Math.abs));
+      const meanDriftW = Math.abs(bW._surfaceWave.h.reduce((s, x) => s + x, 0) / bW._surfaceWave.n);
+      const waveOk =
+        computeLiquidViscosityFactor(bVisc) > computeLiquidViscosityFactor(bW) * 2.2 &&
+        peakWater > 0.4 &&
+        postWater > postAcid * 2.0 &&
+        meanDriftW < 1e-5;
+
+      // 2) Tilted pouring into receiver transfers volume cleanly (slower when viscous) & excites surface ripple on receiver
+      const bSrcW = simW.createApparatus('beaker_250', 540, 320);
+      simW.addReagentToVessel(bSrcW.id, 'h2o', 120, { silentAnim: true });
+      const bDstR = simW.createApparatus('beaker_250', 605, 427);
+      simW.addReagentToVessel(bDstR.id, 'h2o', 40, { silentAnim: true });
+      simW.setVesselTiltDeg(bSrcW.id, 65, 1);
+      stepSeconds(simW, 1.0, 0.05);
+      const dstWaveAfterPour = Math.max(...(bDstR._surfaceWave?.h || [0]).map(Math.abs));
+      const pourOk = (bDstR.moles.H2O_l || 0) > 3.0 && dstWaveAfterPour > 0.02;
+
+      // 3) 4 Solid Behavior Groups (1 free_granule, 2 hygroscopic_clump, 3 buoyant_float, 4 shrinking dissolution)
+      const g1 = classifySolidBehavior('Zn_s', bW);
+      const g2 = classifySolidBehavior('NaOH_s', bW);
+      const g3 = classifySolidBehavior('Na_s', bW);
+      const simSol = new LabSimulation();
+      const bSol = simSol.createApparatus('beaker_250', 220, 427);
+      bSol.moles = { H2O_l: 4.0, Na_s: 0.05, Zn_s: 0.05 };
+      for (let i = 0; i < 40; i++) {
+        stepVesselSolidBodies(bSol, true, 0.45, 1.0, 0.025);
+      }
+      const naBody = (bSol._solidBodies || []).find((b) => b.spId === 'Na_s');
+      const znBody = (bSol._solidBodies || []).find((b) => b.spId === 'Zn_s');
+      const rZnBefore = znBody ? znBody.r : 0;
+      bSol.moles.Zn_s = 0.00625; // 1/8 moles -> radius halves (~0.5x)!
+      stepVesselSolidBodies(bSol, true, 0.45, 1.0, 0.025);
+      const rZnAfter = znBody ? znBody.r : 0;
+      const solidsOk =
+        g1.group === 1 &&
+        g2.group === 2 &&
+        g3.group === 3 &&
+        Boolean(naBody && znBody && naBody.y < znBody.y) &&
+        rZnAfter < rZnBefore * 0.65 &&
+        rZnAfter > rZnBefore * 0.35;
+
+      assert(
+        'Prompt 47 invariants: 1D surface spring sloshing & H2SO4 viscosity damping (0 mean drift), pour impact wave ripple, 4 solid physics groups (buoyant Na vs sinking Zn, sticky NaOH, cbrt shrinking)',
+        waveOk && pourOk && solidsOk,
+        `wave=${waveOk}(viscRatio=${(computeLiquidViscosityFactor(bVisc)/computeLiquidViscosityFactor(bW)).toFixed(2)},w=${postWater.toFixed(3)},acid=${postAcid.toFixed(4)}), pour=${pourOk}(dstWave=${dstWaveAfterPour.toFixed(3)}), solids=${solidsOk}(g=${g1.group}/${g2.group}/${g3.group},NaY=${naBody?.y?.toFixed(1)}<ZnY=${znBody?.y?.toFixed(1)},shrink=${rZnBefore.toFixed(2)}->${rZnAfter.toFixed(2)})`
       );
     }
 

@@ -44,6 +44,12 @@ import {
 import { computeHeatCapacityJK, computeSteamOpacity, stepVesselThermodynamics } from './thermodynamics.js';
 import { injectLocalPlume, stepLiquidConcField } from './liquidField.js';
 import {
+  applySurfaceImpulse,
+  computeLiquidViscosityFactor,
+  stepVesselSolidBodies,
+  stepVesselSurfaceWaves,
+} from './liquidSurfacePhysics.js';
+import {
   ALL_GASES,
   NON_STEAM_GASES,
   buildCombinedSyringeLiquidMoles,
@@ -5392,8 +5398,9 @@ export class LabSimulation {
       const curLiqL = computeLiquidVolumeL(v.moles, v.tempK);
       const curLiqMl = curLiqL * 1000;
       if (curLiqMl > vHoldMl + 0.02) {
+        const visc = computeLiquidViscosityFactor(v);
         const excessMl = curLiqMl - vHoldMl;
-        const dMl = Math.min(excessMl, Math.max(1.2, excessMl * 3.2) * dt);
+        const dMl = Math.min(excessMl, (Math.max(1.2, excessMl * 3.2) / Math.pow(visc, 0.42)) * dt);
         const frac = Math.min(1, dMl / curLiqMl);
         const visColor = computeSolutionVisuals(
           v.moles,
@@ -5407,6 +5414,9 @@ export class LabSimulation {
           if (v.kind === 'vessel' && (dst.kind === 'vessel' || dst.kind === 'filter_funnel')) {
             const carrySuspended = dst.kind === 'filter_funnel' && ((v.stirTimer || 0) > 0 || (v.tiltDeg || 0) >= 35);
             this.pourBetweenVessels(v.id, dst.id, dMl, carrySuspended, { silentUndo: true, silentEmit: true });
+            if (dst.kind === 'vessel') {
+              applySurfaceImpulse(dst, 0.5 + (Math.random() - 0.5) * 0.14, -Math.min(0.85, 0.15 + (dMl / Math.max(1e-3, dt)) * 0.01));
+            }
           } else {
             for (const [spId, n] of Object.entries({ ...v.moles })) {
               const sp = SPECIES[spId];
@@ -5441,11 +5451,15 @@ export class LabSimulation {
         }
         v.tiltPourRateMlS = dMl / Math.max(1e-4, dt);
         const nowMs = Date.now();
-        if (nowMs - (v._lastTiltDropMs || 0) >= 65) {
+        if (nowMs - (v._lastTiltDropMs || 0) >= 48) {
           v._lastTiltDropMs = nowMs;
           this.visualHooks.onAlert?.('tilt_spill', v, {
             fromX: spoutX,
             fromY: spoutY,
+            lipDir: dir,
+            tiltDeg: v.tiltDeg || 0,
+            excessMl,
+            viscosity: visc,
             toY: dst ? dst.y - (dstSpec?.height || 90) * 0.25 : SIM_BENCH_FLOOR_Y,
             catchX: dst ? dst.x : null,
             liquidColor: visColor || 'rgba(186, 230, 253, 0.88)',
@@ -5905,6 +5919,28 @@ export class LabSimulation {
         injectLocalPlume(v, 'copper', 0.5 + (Math.random() - 0.5) * 0.16, 0.88, 0.38);
       }
       stepLiquidConcField(v, scaledDt);
+      {
+        const dtSafe = Math.max(1e-3, scaledDt);
+        const vxNow = (v.x - (v._lastSimX ?? v.x)) / dtSafe;
+        const hAccel = (vxNow - (v._lastSimVx ?? vxNow)) / dtSafe;
+        const angVel = ((v.tiltAngle || 0) - (v._lastSimTilt ?? (v.tiltAngle || 0))) / dtSafe;
+        v._lastSimX = v.x;
+        v._lastSimVx = vxNow;
+        v._lastSimTilt = v.tiltAngle || 0;
+        const curLiqLPhys = computeLiquidVolumeL(v.moles, v.tempK);
+        if (curLiqLPhys > 2e-4 && !v.isFrozenSolid) {
+          if (v.wasBoiling || (v.gasOutTotalRate || 0) > 5e-4) {
+            applySurfaceImpulse(v, 0.2 + Math.random() * 0.6, (Math.random() - 0.5) * 0.22);
+          }
+          stepVesselSurfaceWaves(v, scaledDt, hAccel, angVel);
+        }
+        const spSpec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+        const maxVolMl = spSpec.maxVolumeMl || 250;
+        const curLiqMl = curLiqLPhys * 1000;
+        const surfFrac = Math.max(0, Math.min(0.96, curLiqMl / maxVolMl));
+        const liqDens = (v.moles.H2SO4_l || 0) > 0.05 ? 1.84 : (v.moles.Br2_l || 0) > 0.01 ? 3.1 : 1.0 + Math.min(0.45, ((v.moles.Na_aq || 0) + (v.moles.Cl_aq || 0)) * 0.04);
+        stepVesselSolidBodies(v, curLiqLPhys > 2e-4, surfFrac, liqDens, scaledDt);
+      }
       for (const r of frameActiveMap.values()) {
         if ((r.dH || 0) < -5000 || (r.nameEn || '').toLowerCase().includes('neutral') || (r.nameEn || '').toLowerCase().includes('sodium')) {
           v._lastExothermicTimer = 1.4;
