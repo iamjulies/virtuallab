@@ -172,12 +172,18 @@ button:disabled {
 [data-theme="ctrl"] .panel-card {
   border-width: 1.5px;
   border-color: #6e7f75;
-  box-shadow: 3px 3px 0 rgba(79, 99, 88, 0.25);
+  box-shadow: 3px 3px 0 rgba(79, 99, 88, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.42) 0%, rgba(185, 222, 242, 0.14) 100%);
 }
+[data-theme="ctrl"] .panel-card h3,
 [data-theme="ctrl"] header h1,
 [data-theme="ctrl"] p.env-compact-hide,
 [data-theme="ctrl"] .sticky-label {
   font-style: italic;
+}
+[data-theme="ctrl"] .lab-tab-btn.active {
+  border-color: #4f6358 !important;
+  box-shadow: 2px 2px 0 rgba(79, 99, 88, 0.35);
 }
 [data-theme="ctrl"] .lab-persist-btn,
 [data-theme="ctrl"] .env-cabinet-btn,
@@ -186,15 +192,74 @@ button:disabled {
   color: #181a1f !important;
   border-color: #6e7f75;
 }
+
+/* SZA — "SOS" (Deep Ocean / Naval Radar / STRICT ALL-CAPS TYPOGRAPHY) */
+[data-theme="sos"] *:not(input):not(textarea) {
+  text-transform: uppercase !important;
+  letter-spacing: 0.025em;
+}
 [data-theme="sos"] .panel-card {
   border-color: #2b5876;
-  box-shadow: 0 10px 28px rgba(4, 12, 24, 0.55), inset 0 1px 0 rgba(91, 181, 201, 0.14);
+  box-shadow: 0 10px 28px rgba(4, 12, 24, 0.58), inset 0 1px 0 rgba(91, 181, 201, 0.22);
+  background-image: linear-gradient(180deg, rgba(16, 53, 84, 0.36) 0%, rgba(9, 23, 38, 0.15) 100%);
 }
+[data-theme="sos"] .lab-tab-btn.active,
 [data-theme="sos"] #btn-pause,
 [data-theme="sos"] .lab-persist-btn.primary,
 [data-theme="sos"] #btn-tab-storage {
-  border-color: #5bb5c9;
-  box-shadow: 0 0 12px rgba(91, 181, 201, 0.22);
+  border-color: #5bb5c9 !important;
+  box-shadow: 0 0 14px rgba(91, 181, 201, 0.32);
+}
+
+/* Floating Hold-Shortcut Picker (Z = Themes, F = Presets) */
+.quick-hold-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 6, 23, 0.42);
+  backdrop-filter: blur(4px);
+  padding: 1rem;
+}
+.quick-hold-card {
+  width: min(620px, 94vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  background: var(--bg-surface);
+  color: var(--text-main);
+  border: 1.5px solid var(--accent);
+  border-radius: 1rem;
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.42);
+  padding: 0.9rem 1.05rem;
+}
+.quick-hold-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+  gap: 0.48rem;
+  margin-top: 0.65rem;
+}
+.quick-hold-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  text-align: left;
+  padding: 0.52rem 0.68rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface-alt);
+  color: var(--text-main);
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s, transform 0.1s;
+}
+.quick-hold-btn:hover,
+.quick-hold-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  transform: translateY(-1px);
 }
 
 [data-theme="olivia"] *,

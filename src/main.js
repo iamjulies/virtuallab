@@ -423,6 +423,113 @@ comparisonPanel = new ComparisonPanel(compareRootEl, sim, getTranslator, {
   },
 });
 
+function applyThemeChoice(nextTheme = null) {
+  const order = ['dark', 'light', 'olivia', 'petal', 'ctrl', 'sos'];
+  const target = order.includes(nextTheme)
+    ? nextTheme
+    : order[(order.indexOf(appState.theme) + 1) % order.length];
+  appState.theme = target;
+  localStorage.setItem(STORAGE_THEME_KEY, appState.theme);
+  soundEngine.playUiClick();
+  applyThemeAndDevice();
+  refreshChrome(true);
+  if (target === 'petal') {
+    particles.spawnCelebrationPetals?.(14);
+  }
+  return target;
+}
+
+const THEME_OPTIONS = [
+  { id: 'dark', icon: '🌙', key: 'themeDark' },
+  { id: 'light', icon: '☀️', key: 'themeLight' },
+  { id: 'olivia', icon: '🩷', key: 'themeOlivia' },
+  { id: 'petal', icon: '🥀', key: 'themePetal' },
+  { id: 'ctrl', icon: '📓', key: 'themeCtrl' },
+  { id: 'sos', icon: '🌊', key: 'themeSos' },
+];
+
+let quickHoldMode = null;
+let zHoldTimer = null;
+let zHeldPopupShown = false;
+
+function hideQuickHoldPopup() {
+  if (zHoldTimer) {
+    clearTimeout(zHoldTimer);
+    zHoldTimer = null;
+  }
+  quickHoldMode = null;
+  document.getElementById('chemlab-quick-hold-overlay')?.remove();
+}
+
+function showQuickHoldPopup(mode) {
+  hideQuickHoldPopup();
+  const t = getTranslator();
+  quickHoldMode = mode;
+  const wrap = document.createElement('div');
+  wrap.id = 'chemlab-quick-hold-overlay';
+  wrap.className = 'quick-hold-overlay';
+  wrap.dataset.mode = mode;
+
+  let title = '';
+  let buttonsHtml = '';
+  if (mode === 'theme') {
+    title = t('quickThemesTitle');
+    buttonsHtml = THEME_OPTIONS.map(
+      (th) => `<button type="button" class="quick-hold-btn ${appState.theme === th.id ? 'active' : ''}" data-pick-theme="${th.id}">
+        <span>${th.icon}</span><span class="truncate">${t(th.key)}</span>
+      </button>`
+    ).join('');
+  } else {
+    title = t('quickPresetsHoldTitle');
+    const selOpts = Array.from(document.querySelectorAll('#preset-select option')).filter((o) => o.value);
+    buttonsHtml = selOpts
+      .map(
+        (opt) => `<button type="button" class="quick-hold-btn" data-pick-preset="${opt.value}">
+          <span class="truncate">${opt.textContent}</span>
+        </button>`
+      )
+      .join('');
+  }
+
+  wrap.innerHTML = `
+    <div class="quick-hold-card">
+      <div class="flex items-center justify-between gap-2 pb-2 border-b border-theme">
+        <div class="text-xs font-bold text-accent">${title}</div>
+        <span class="text-[11px] font-mono text-muted">ESC</span>
+      </div>
+      <div class="quick-hold-grid">${buttonsHtml}</div>
+    </div>
+  `;
+
+  wrap.addEventListener('click', (ev) => {
+    const themeBtn = ev.target.closest?.('[data-pick-theme]');
+    if (themeBtn) {
+      applyThemeChoice(themeBtn.dataset.pickTheme);
+      hideQuickHoldPopup();
+      return;
+    }
+    const presetBtn = ev.target.closest?.('[data-pick-preset]');
+    if (presetBtn) {
+      const pName = presetBtn.dataset.pickPreset;
+      hideQuickHoldPopup();
+      particles.clear();
+      soundEngine.playGlassClink('beaker_250', 0.7);
+      sim.setupPreset(pName);
+      if (pName === 'compare_rate_factors' || pName === 'compare_corrosion') {
+        comparisonPanel?.setOpen(true);
+      } else if (pName === 'clean') {
+        comparisonPanel?.setOpen(false);
+      }
+      refreshChrome(true);
+      setTimeout(() => workbench.resize(), 25);
+      return;
+    }
+    if (ev.target === wrap) hideQuickHoldPopup();
+  });
+
+  document.body.appendChild(wrap);
+}
+
 const envBar = new EnvironmentBar(headerEl, sim, appState, {
   onLangChange: () => {
     appState.lang = appState.lang === 'vi' ? 'en' : 'vi';
@@ -430,18 +537,7 @@ const envBar = new EnvironmentBar(headerEl, sim, appState, {
     refreshChrome(true);
   },
   onThemeChange: (nextTheme = null) => {
-    const order = ['dark', 'light', 'olivia', 'petal', 'ctrl', 'sos'];
-    const target = order.includes(nextTheme)
-      ? nextTheme
-      : order[(order.indexOf(appState.theme) + 1) % order.length];
-    appState.theme = target;
-    localStorage.setItem(STORAGE_THEME_KEY, appState.theme);
-    soundEngine.playUiClick();
-    applyThemeAndDevice();
-    refreshChrome(true);
-    if (target === 'petal') {
-      particles.spawnCelebrationPetals?.(14);
-    }
+    applyThemeChoice(nextTheme);
   },
   onOpticsChange: (mode) => {
     soundEngine.playUiClick();
@@ -1367,6 +1463,31 @@ resetBtnEl?.addEventListener('click', () => {
 });
 
 // Global Keyboard Shortcuts (guarded cleanly against inputs & modifiers)
+window.addEventListener('blur', () => {
+  zHeldPopupShown = false;
+  hideQuickHoldPopup();
+});
+
+window.addEventListener('keyup', (e) => {
+  const low = (e.key || '').toLowerCase();
+  if (low === 'z' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (zHoldTimer) {
+      clearTimeout(zHoldTimer);
+      zHoldTimer = null;
+    }
+    if (zHeldPopupShown || quickHoldMode === 'theme') {
+      zHeldPopupShown = false;
+      hideQuickHoldPopup();
+    } else if (!e.shiftKey) {
+      const next = applyThemeChoice();
+      const thObj = THEME_OPTIONS.find((x) => x.id === next);
+      showToast(`🎨 ${thObj ? getTranslator()(thObj.key) : next}`);
+    }
+  } else if (low === 'f' && quickHoldMode === 'preset') {
+    hideQuickHoldPopup();
+  }
+});
+
 window.addEventListener('keydown', (e) => {
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement?.isContentEditable) {
@@ -1374,6 +1495,8 @@ window.addEventListener('keydown', (e) => {
   }
 
   if (e.key === 'Escape') {
+    zHeldPopupShown = false;
+    hideQuickHoldPopup();
     contextUI.closeMenu();
     contextUI.closeDialog();
     cabinetModal?.close();
@@ -1383,14 +1506,41 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
+  const low = (e.key || '').toLowerCase();
   const anyModalOpen =
     (modalEl && !modalEl.classList.contains('hidden')) ||
     cabinetModal?.isOpen ||
     storageModal?.isOpen ||
     contextUI.isDialogOpen();
 
+  // Shift+E: import .vlab file directly
+  if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && low === 'e') {
+    if (!e.repeat) {
+      e.preventDefault();
+      soundEngine.playUiClick();
+      labTabsEl?.querySelector('#input-import-vlab-bar')?.click();
+    }
+    return;
+  }
+
+  // B toggles Storage Cabinet even when cabinet modal is currently open
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && low === 'b' && !e.repeat) {
+    const otherOpen =
+      (modalEl && !modalEl.classList.contains('hidden')) ||
+      storageModal?.isOpen ||
+      contextUI.isDialogOpen();
+    if (!otherOpen) {
+      e.preventDefault();
+      soundEngine.playUiClick();
+      if (cabinetModal.isOpen) cabinetModal.close();
+      else cabinetModal.open();
+      if (isMobileViewActive()) setMobileTab('bench');
+      return;
+    }
+  }
+
   // Single-key shortcuts (MUST NOT fire with Ctrl/Meta/Alt pressed!)
-  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
     if (e.key === 'F2' && shortcutTarget === 'tab' && !anyModalOpen) {
       e.preventDefault();
       startRenameLabTab(labManager.activeIndex);
@@ -1420,6 +1570,18 @@ window.addEventListener('keydown', (e) => {
 
     if (anyModalOpen) return;
 
+    // 1..9 & 0 -> Switch to Lab Bench #1..#10 (no-op if tab index does not exist)
+    if (/^[0-9]$/.test(e.key) && !e.repeat) {
+      const idx = e.key === '0' ? 9 : Number(e.key) - 1;
+      if (idx >= 0 && idx < labManager.labs.length) {
+        e.preventDefault();
+        soundEngine.playUiClick();
+        labManager.switchLab(idx);
+        refreshChrome(true);
+      }
+      return;
+    }
+
     if (e.code === 'Space') {
       e.preventDefault();
       sim.environment.paused = !sim.environment.paused;
@@ -1430,7 +1592,136 @@ window.addEventListener('keydown', (e) => {
       return;
     }
 
-    const low = (e.key || '').toLowerCase();
+    if (low === 'q' && !e.repeat) {
+      const heldId = workbench?.dragState?.itemId || null;
+      const targetIds = heldId
+        ? [heldId]
+        : sim.selectedIds && sim.selectedIds.size > 0
+        ? Array.from(sim.selectedIds)
+        : sim.selectedId
+        ? [sim.selectedId]
+        : [];
+      let emptiedLabels = [];
+      for (const id of targetIds) {
+        const it = sim.getItem(id);
+        if (it && sim.emptyApparatus?.(id)) {
+          emptiedLabels.push(it.label || it.typeId);
+        }
+      }
+      if (emptiedLabels.length > 0) {
+        e.preventDefault();
+        soundEngine.playWaterRinse();
+        showToast(`🧼 ${getTranslator()('toastEmptiedApparatus').replace('{label}', emptiedLabels.join(', '))}`);
+        refreshChrome();
+      }
+      return;
+    }
+
+    if (low === 'e' && !e.repeat) {
+      e.preventDefault();
+      const modes = ['normal', 'aerodynamics', 'thermal'];
+      const cur = sim.environment.opticsMode || 'normal';
+      const next = modes[(modes.indexOf(cur) + 1) % modes.length];
+      sim.setOpticsMode?.(next);
+      soundEngine.playUiClick();
+      const t = getTranslator();
+      const labelKey = next === 'aerodynamics' ? 'opticsAero' : next === 'thermal' ? 'opticsThermal' : 'opticsNormal';
+      showToast(`👁️ ${t(labelKey)}`);
+      refreshChrome();
+      return;
+    }
+
+    if (low === 'l' && !e.repeat) {
+      e.preventDefault();
+      sim.setUvLight(!sim.environment.uvLight);
+      soundEngine.playUiClick();
+      const t = getTranslator();
+      showToast(sim.environment.uvLight ? t('envUvBright') : `💡 ${t('envUvRoom')}`);
+      refreshChrome();
+      return;
+    }
+
+    if (low === 'a' && !e.repeat) {
+      e.preventDefault();
+      const next = sim.environment.atmosphereMode === 'inert' ? 'air' : 'inert';
+      sim.setAtmosphereMode(next);
+      soundEngine.playUiClick();
+      const t = getTranslator();
+      showToast(next === 'inert' ? `🛡️ ${t('envAtmInert')}` : `🌬️ ${t('envAtmAir')}`);
+      refreshChrome();
+      return;
+    }
+
+    if (low === 'z' && !e.repeat) {
+      e.preventDefault();
+      zHeldPopupShown = false;
+      if (zHoldTimer) clearTimeout(zHoldTimer);
+      zHoldTimer = setTimeout(() => {
+        zHoldTimer = null;
+        zHeldPopupShown = true;
+        showQuickHoldPopup('theme');
+      }, 220);
+      return;
+    }
+
+    if (low === 'f' && !e.repeat) {
+      e.preventDefault();
+      showQuickHoldPopup('preset');
+      return;
+    }
+
+    if (low === 'n' && !e.repeat) {
+      e.preventDefault();
+      const res = labManager.addLab('starter');
+      soundEngine.playUiClick();
+      if (!res.ok) {
+        showToast(`⚠️ ${getTranslator()('labMaxLimit')}`);
+      } else {
+        ensureLabSubscribed(res.lab);
+        refreshChrome(true);
+      }
+      return;
+    }
+
+    if (low === 'm' && !e.repeat) {
+      e.preventDefault();
+      appState.soundEnabled = soundEngine.toggleEnabled();
+      refreshChrome(true);
+      const t = getTranslator();
+      showToast(appState.soundEnabled ? `🔊 ${t('soundOn')}` : `🔇 ${t('soundMuted')}`);
+      return;
+    }
+
+    if (low === 'k' && !e.repeat) {
+      e.preventDefault();
+      appState.lang = appState.lang === 'vi' ? 'en' : 'vi';
+      localStorage.setItem(STORAGE_LANG_KEY, appState.lang);
+      soundEngine.playUiClick();
+      refreshChrome(true);
+      showToast(appState.lang === 'vi' ? '🇻🇳 Tiếng Việt' : '🇬🇧 English');
+      return;
+    }
+
+    if (low === 't' || low === 'y') {
+      e.preventDefault();
+      const curT = sim.environment.tempK || 298.15;
+      sim.setAmbientTempK(curT + (low === 't' ? 1 : -1));
+      refreshChrome();
+      showToast(`🌡️ ${(sim.environment.tempK || 298.15).toFixed(2)} K (${(sim.environment.tempK - 273.15).toFixed(1)}°C)`);
+      return;
+    }
+
+    if (low === 'g' || low === 'h') {
+      e.preventDefault();
+      const curP = sim.environment.pressureBar || 1.0;
+      const nextP = Math.max(0.2, Math.min(4.0, Math.round((curP + (low === 'g' ? 0.1 : -0.1)) * 100) / 100));
+      sim.environment.pressureBar = nextP;
+      sim.emitChange();
+      refreshChrome();
+      showToast(`⏱️ ${nextP.toFixed(2)} bar`);
+      return;
+    }
+
     if (low === 'w') {
       e.preventDefault();
       const cycleW = [1, 2, 4, 0.5];
@@ -1471,7 +1762,7 @@ window.addEventListener('keydown', (e) => {
   }
 
   if (!(e.ctrlKey || e.metaKey)) return;
-  const key = (e.key || '').toLowerCase();
+  const key = low;
   if (key === 'z' && !e.shiftKey) {
     e.preventDefault();
     runUndoAction();
@@ -1486,7 +1777,7 @@ window.addEventListener('keydown', (e) => {
   } else if (key === 'v') {
     const includeChemicals = !e.shiftKey;
     if (runPasteAction(includeChemicals)) e.preventDefault();
-  } else if (key === 'e') {
+  } else if (key === 'e' && !e.shiftKey) {
     e.preventDefault();
     promptExportSingleBench(labManager.activeIndex);
   } else if (key === 's') {

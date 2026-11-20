@@ -199,10 +199,12 @@ export function stepVesselSolidBodies(vessel, hasLiquid, surfaceRatioFromBottom,
   const gx = Math.sin(effTilt) * gBase * (vessel.isInverted ? -1 : 1);
   const gyBase = Math.cos(effTilt) * gBase * (vessel.isInverted ? -1 : 1);
 
+  const invWaterTopY = -halfInnerH + halfInnerH * 1.85 * Math.max(0, Math.min(1, surfaceRatioFromBottom));
   for (let i = 0; i < bodies.length; i++) {
     const b = bodies[i];
     let fy = gyBase;
-    if (hasLiquid && b.y >= surfaceOffsetY) {
+    const inLiquid = vessel.isInverted ? b.y <= invWaterTopY : b.y >= surfaceOffsetY;
+    if (hasLiquid && inLiquid) {
       // Archimedes buoyancy: F_net = g * (1 - rho_liq / rho_solid)
       const rhoS = Math.max(0.25, b.behavior.density || 2.5);
       const buoyRatio = 1.0 - liqDensityGml / rhoS;
@@ -224,12 +226,17 @@ export function stepVesselSolidBodies(vessel, hasLiquid, surfaceRatioFromBottom,
     // Clamping inside inner walls with friction & gentle restitution
     const friction = b.behavior.sticky ? 0.55 : 0.88;
     const bounce = b.behavior.sticky ? 0.05 : 0.25;
-    if (b.x < -halfInnerW + b.r) {
-      b.x = -halfInnerW + b.r;
+    const neckHalfW = Math.max(9, (spec.neckRadius || spec.width * 0.24) * 0.92);
+    const localMaxW =
+      vessel.isInverted && b.y < 0
+        ? neckHalfW + (halfInnerW - neckHalfW) * Math.max(0, 1 + b.y / Math.max(12, halfInnerH * 0.65))
+        : halfInnerW;
+    if (b.x < -localMaxW + b.r) {
+      b.x = -localMaxW + b.r;
       b.vx = Math.abs(b.vx) * bounce;
       b.vy *= friction;
-    } else if (b.x > halfInnerW - b.r) {
-      b.x = halfInnerW - b.r;
+    } else if (b.x > localMaxW - b.r) {
+      b.x = localMaxW - b.r;
       b.vx = -Math.abs(b.vx) * bounce;
       b.vy *= friction;
     }

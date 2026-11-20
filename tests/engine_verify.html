@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.13';
+      const expectedBuild = 'virlab_beta_v4+build.14';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,7 +2515,7 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.13 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-46 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.14 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-46 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
           STARTER_REAGENTS.length === 23 &&
           !APPARATUS.clay_triangle &&
@@ -7959,6 +7959,77 @@
         'Prompt 47 invariants: 1D surface spring sloshing & H2SO4 viscosity damping (0 mean drift), pour impact wave ripple, 4 solid physics groups (buoyant Na vs sinking Zn, sticky NaOH, cbrt shrinking)',
         waveOk && pourOk && solidsOk,
         `wave=${waveOk}(viscRatio=${(computeLiquidViscosityFactor(bVisc)/computeLiquidViscosityFactor(bW)).toFixed(2)},w=${postWater.toFixed(3)},acid=${postAcid.toFixed(4)}), pour=${pourOk}(dstWave=${dstWaveAfterPour.toFixed(3)}), solids=${solidsOk}(g=${g1.group}/${g2.group}/${g3.group},NaY=${naBody?.y?.toFixed(1)}<ZnY=${znBody?.y?.toFixed(1)},shrink=${rZnBefore.toFixed(2)}->${rZnAfter.toFixed(2)})`
+      );
+    }
+
+    // TEST 166: Prompt 48 (virlab_beta_v4+build.14) — Q Empty Apparatus, Inverted Stoppered Solid Neck Confinement, Stoppered Gas Aero Containment, Thermal Hot-Gas Composite & SOS All-Caps Formatter
+    {
+      const { beginCanvasLabelFrame, formatCanvasText } = await import('../src/canvas/vesselRenderer.js');
+      const { stepVesselSolidBodies } = await import('../src/engine/liquidSurfacePhysics.js');
+      const simP = new LabSimulation();
+
+      // 1) sim.emptyApparatus (Q shortcut backend) empties chemicals, gases & solid bodies cleanly while preserving geometry
+      const bClean = simP.createApparatus('beaker_250', 200, 427);
+      simP.addReagentToVessel(bClean.id, 'hcl_aq', 40, { silentAnim: true });
+      bClean.headspaceGasMoles.H2_g = 0.015;
+      bClean.escapedGasMoles.HCl_g = 0.004;
+      bClean.moles.Zn_s = 0.02;
+      const emptiedOk = simP.emptyApparatus(bClean.id);
+      const cleanStateOk =
+        emptiedOk &&
+        Object.keys(bClean.moles).length === 0 &&
+        (bClean.headspaceGasMoles.H2_g || 0) === 0 &&
+        (bClean.escapedGasMoles.HCl_g || 0) === 0 &&
+        (bClean._solidBodies || []).length === 0;
+
+      // 2) Inverted stoppered Erlenmeyer confines _solidBodies to mouth/neck width without ceiling hang or spill
+      const fInv = simP.createApparatus('erlenmeyer_250', 420, 380);
+      fInv.isStoppered = true;
+      fInv.stopperMode = 'solid';
+      fInv.isInverted = true;
+      fInv.moles = { H2O_l: 1.8, NaCl_s: 0.08 };
+      for (let i = 0; i < 100; i++) stepVesselSolidBodies(fInv, true, 0.35, 1.0, 0.025);
+      const bList = fInv._solidBodies || [];
+      const neckLim = Math.max(9, (APPARATUS.erlenmeyer_250.neckRadius || 18) * 0.92);
+      const invSolidOk = bList.length > 0 && bList.every((b) => b.y < 0 && Math.abs(b.x) <= neckLim + b.r + 1.5);
+
+      // 3) SOS uppercase vs Olivia lowercase canvas text formatter
+      beginCanvasLabelFrame(null, 'upper');
+      const sosUpper = formatCanvasText('ChemLab Studio · SOS');
+      beginCanvasLabelFrame(null, 'lower');
+      const oliviaLower = formatCanvasText('ChemLab Studio · Olivia');
+      beginCanvasLabelFrame(null, false);
+      const caseFormatOk = sosUpper === 'CHEMLAB STUDIO · SOS' && oliviaLower === 'chemlab studio · olivia';
+
+      // 4) Render Stoppered H2 flask in 'aerodynamics' & 51C HCl beaker in 'thermal' via LabWorkbenchCanvas cleanly
+      const fH2 = simP.createApparatus('erlenmeyer_250', 620, 400);
+      fH2.isStoppered = true;
+      fH2.stopperMode = 'solid';
+      fH2.headspaceGasMoles.H2_g = 0.005;
+      const bHot = simP.createApparatus('beaker_250', 780, 427);
+      simP.addReagentToVessel(bHot.id, 'hcl_37', 50, { silentAnim: true });
+      bHot.tempK = 324.15; // 51 C
+      bHot.headspaceGasMoles.HCl_g = 0.004;
+
+      const host48 = document.createElement('div');
+      host48.style.cssText = 'position:fixed;left:0;top:0;width:800px;height:448px;pointer-events:none;opacity:0.01;';
+      const cvs48 = document.createElement('canvas');
+      cvs48.style.cssText = 'width:800px;height:448px;display:block;';
+      host48.appendChild(cvs48);
+      document.body.appendChild(host48);
+      const wb48 = new LabWorkbenchCanvas(cvs48, simP, new ParticleSystem());
+      wb48.resize();
+      wb48.setTheme(true, 'sos');
+      simP.setOpticsMode('aerodynamics');
+      wb48.render(1.2);
+      simP.setOpticsMode('thermal');
+      wb48.render(1.3);
+      host48.remove();
+
+      assert(
+        'Prompt 48 invariants: sim.emptyApparatus (Q), inverted stoppered solids neck/mouth settle, SOS uppercase & Olivia lowercase formatters, sealed H2 aero + 51C thermal FLIR renders',
+        cleanStateOk && invSolidOk && caseFormatOk,
+        `clean=${cleanStateOk}, invSolids=${invSolidOk}(n=${bList.length}), case=${caseFormatOk}(${sosUpper})`
       );
     }
 

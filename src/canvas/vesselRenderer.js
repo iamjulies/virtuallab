@@ -159,19 +159,21 @@ let _labelFrameActive = false;
 let _allowedLabelIds = null;
 let _currentLabelItemId = null;
 let _deferredPills = [];
-let _lowercaseMode = false;
+let _textCaseMode = false;
 
 export function formatCanvasText(text) {
   const s = String(text ?? '');
-  return _lowercaseMode ? s.toLowerCase() : s;
+  if (_textCaseMode === 'lower' || _textCaseMode === true) return s.toLowerCase();
+  if (_textCaseMode === 'upper') return s.toUpperCase();
+  return s;
 }
 
-export function beginCanvasLabelFrame(allowedIds = null, lowercaseMode = false) {
+export function beginCanvasLabelFrame(allowedIds = null, caseMode = false) {
   _labelFrameActive = Boolean(allowedIds);
   _allowedLabelIds = allowedIds;
   _currentLabelItemId = null;
   _deferredPills = [];
-  _lowercaseMode = Boolean(lowercaseMode);
+  _textCaseMode = caseMode === true ? 'lower' : caseMode || false;
 }
 
 export function setCurrentLabelItemId(id) {
@@ -192,7 +194,7 @@ export function flushCanvasLabelFrame(ctx) {
 
 function renderLabelPillImmediate(ctx, cx, cy, text, opts = {}) {
   const { pal, borderColor, font = '600 11px system-ui, sans-serif', alpha = 1.0, height = 20 } = opts;
-  const drawText = _lowercaseMode ? String(text ?? '').toLowerCase() : String(text ?? '');
+  const drawText = formatCanvasText(text);
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.font = font;
@@ -2306,15 +2308,16 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.restore();
   }
 
-  // Draw rotating PTFE magnetic stir bar on vessel bottom
+  // Draw rotating PTFE magnetic stir bar on vessel floor (or stopper/mouth bottom when inverted)
   if (vessel.hasStirBar) {
     const spinHalf = 11 * Math.max(0.28, Math.abs(Math.cos(vessel.stirBarPhase || 0)));
+    const stirY = vessel.isInverted ? top + 2.5 : interiorBottom - 7;
     ctx.save();
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#64748b';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(x - spinHalf, interiorBottom - 7, spinHalf * 2, 5.5, 2.5);
+    ctx.roundRect(x - spinHalf, stirY, spinHalf * 2, 5.5, 2.5);
     ctx.fill();
     ctx.stroke();
     ctx.restore();
@@ -2384,10 +2387,23 @@ export function renderVessel(ctx, vessel, opts) {
   }
 
   // Draw solids, crystals, precipitates, and floating Na inside clipped region
-  const currentWidthAtBottom = w - 6;
+  // When inverted, mirror static gravity-bound solids cleanly against the bottom mouth/stopper instead of ceiling
+  const invertedNeckSpan = Math.min(w - 8, Math.max(20, (spec.neckRadius || w * 0.24) * 2.15));
+  const currentWidthAtBottom = vessel.isInverted ? invertedNeckSpan : w - 6;
   const naInterfaceY = vessel.naInterfaceMl != null && strat.hasLightCover ? volumeMlToY(vessel.naInterfaceMl) : null;
   const solidBulkMl = solMl * 1.25;
   const solidPileTopY = solidBulkMl > 1e-4 ? Math.max(top + 2, volumeMlToY(Math.min(spec.maxVolumeMl * 1.04, solidBulkMl))) : interiorBottom;
+  let solidSurfaceY = surfaceY;
+  ctx.save();
+  if (vessel.isInverted) {
+    ctx.translate(0, top + interiorBottom);
+    ctx.scale(1, -1);
+    if (hasWater) {
+      const invFrac = Math.max(0.05, Math.min(0.98, liqMl / Math.max(1, spec.maxVolumeMl)));
+      const invDivY = top + (interiorBottom - top) * invFrac;
+      solidSurfaceY = top + interiorBottom - invDivY;
+    }
+  }
   renderVesselSolids(
     ctx,
     vessel,
@@ -2402,8 +2418,9 @@ export function renderVessel(ctx, vessel, opts) {
       solidBulkMl,
     },
     hasWater,
-    surfaceY
+    solidSurfaceY
   );
+  ctx.restore();
 
   // Glassware Surface Memory: Persistent Tollens Silver Mirror, stubborn CuO/BaSO4 wall crust, and NH4Cl frost dust
   if ((vessel.silverMirrorLevel || 0) > 0.04) {

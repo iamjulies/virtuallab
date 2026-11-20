@@ -286,6 +286,60 @@ export class LabSimulation {
     return validIds.length;
   }
 
+  /**
+   * Empty all chemicals, liquids, solids, and trapped/escaped gases from a vessel, spoon,
+   * pipette, or gas syringe without deleting or moving the apparatus itself.
+   */
+  emptyApparatus(itemId) {
+    const it = this.getItem(itemId);
+    if (!it) return false;
+    const drainable = it.kind === 'vessel' || it.kind === 'spoon' || it.kind === 'pipette' || it.kind === 'gas_syringe';
+    if (!drainable) return false;
+    this.recordUndo();
+    it.moles = {};
+    if (it.kind === 'vessel') {
+      it.headspaceGasMoles = createEmptyGasMap();
+      it.escapedGasMoles = createEmptyGasMap();
+      it.lastGasRateMap = createEmptyGasMap();
+      it.overflowMoles = {};
+      it.groundPowderMap = {};
+      it.precipitateSettle = {};
+      it._solidBodies = [];
+      it._surfaceWave = null;
+      it.volumeMl = 0;
+      it.condensedWaterMol = 0;
+      it.condensedEtOHMol = 0;
+      it.frozenWaterMol = 0;
+      it.escapedFrostH2OMol = 0;
+      it.wallCondenseLevel = 0;
+      it.caCo3FilmFrac = 0;
+      it.silverMirrorLevel = 0;
+      it.silverMirrorFrac = 0;
+      it.sulfurO2Flame = 0;
+      it.gardenActive = false;
+      it.gardenGrowth = 0;
+      it.suspensionLevel = 0;
+      it.phenBleachFrac = 0;
+      it.phenIrrevFrac = 0;
+      it.naDryBurnTimer = 0;
+      it.kDryBurnTimer = 0;
+      it.feSparkBurning = 0;
+      it.znCombustionTimer = 0;
+      it.pressureAtm = this.environment?.pressureBar || CONSTANTS.P_STD_BAR;
+      it.tempK = this.environment?.tempK || CONSTANTS.T_STD_K;
+    } else if (it.kind === 'spoon' || it.kind === 'pipette') {
+      it.volumeMl = 0;
+      it.tempK = this.environment?.tempK || CONSTANTS.T_STD_K;
+    } else if (it.kind === 'gas_syringe') {
+      it.gasMoles = createEmptyGasMap();
+      it.liquidMoles = {};
+      it.pistonPositionMl = 0;
+      it.tempK = this.environment?.tempK || CONSTANTS.T_STD_K;
+    }
+    this.emitChange();
+    return true;
+  }
+
   subscribe(fn) {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);

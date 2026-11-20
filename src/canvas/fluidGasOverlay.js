@@ -177,12 +177,14 @@ vec3 ironbowLut(float t) {
 void main() {
   if (uModeThermal == 1) {
     float temp = clamp(texture(uTempBuoy, vUv).r, 0.0, 1.0);
-    if (temp < 0.015) {
+    float dyeMag = clamp(texture(uDye, vUv).a, 0.0, 1.0);
+    float signal = max(temp, dyeMag * temp * 3.5);
+    if (signal < 0.006) {
       fragColor = vec4(0.0);
       return;
     }
-    vec3 col = ironbowLut(pow(temp, 0.72));
-    float alpha = smoothstep(0.015, 0.42, temp) * 0.46;
+    vec3 col = ironbowLut(clamp(pow(signal, 0.62) * 1.18, 0.14, 1.0));
+    float alpha = smoothstep(0.006, 0.28, signal) * 0.72;
     fragColor = vec4(col * alpha, alpha);
     return;
   }
@@ -467,19 +469,29 @@ export class FluidGasOverlay {
       const spec = APPARATUS[it.typeId] || APPARATUS.beaker_250;
       const head = it.headspaceGasMoles || {};
       const rateMap = it.lastGasRateMap || {};
+      const hasTubing = Boolean(it.connectedTargetId || it.connectedSyringeId || it.connectedFromId);
+      const isSealedStopper = Boolean(it.isStoppered && (it.stopperMode === 'solid' || hasTubing));
+      const isOneHoleVent = Boolean(it.isStoppered && it.stopperMode !== 'solid' && !hasTubing);
+
       let sumColor = [0, 0, 0];
       let totalVisMol = 0;
       let weightedRelD = 0;
 
       for (const [gId, rgb] of Object.entries(GAS_COLOR_MAP)) {
         const mHead = head[gId] || 0;
-        const mRate = (rateMap[gId] || 0) * 0.14;
+        const mRate = (rateMap[gId] || 0) * 0.24;
         const weight = mHead + mRate;
         if (weight <= 1e-6) continue;
         // Tint subtle clear gases lightly while vibrant colored gases (NO2, Br2, I2, Cl2) glow strongly
         const isColored = gId === 'NO2_g' || gId === 'Br2_g' || gId === 'I2_g' || gId === 'Cl2_g';
-        const visScale = isColored ? 220 : opticsMode === 'aerodynamics' ? 140 : gId === 'H2O_g' || gId === 'HCl_g' ? 75 : 22;
-        const w = Math.min(0.65, weight * visScale);
+        const visScale = isColored
+          ? 220
+          : opticsMode === 'aerodynamics'
+          ? 145
+          : gId === 'H2O_g' || gId === 'HCl_g'
+          ? 85
+          : 26;
+        const w = Math.min(0.68, weight * visScale);
         sumColor[0] += rgb[0] * w;
         sumColor[1] += rgb[1] * w;
         sumColor[2] += rgb[2] * w;
@@ -487,15 +499,22 @@ export class FluidGasOverlay {
         weightedRelD += w * getGasRelativeAirDensity(gId);
       }
 
-      const dTNorm = Math.max(0, ((it.tempK || envT) - envT) / 600);
+      const dTK = Math.max(0, (it.tempK || envT) - envT);
+      const dTNorm = dTK > 3 ? Math.min(1.0, Math.pow(dTK / 145, 0.72)) : 0;
       if (dTNorm > 0.04) {
         const cx = it.x / BENCH_LOGICAL_W;
         const cy = 1.0 - it.y / BENCH_LOGICAL_H;
-        this._splat(this.tempBuoy, cx, cy, 0.0018, [Math.min(0.5, dTNorm) * dt * 3.5, 0, 0, 0], 1);
+        this._splat(this.tempBuoy, cx, cy, 0.0020, [Math.min(0.85, dTNorm) * dt * 4.2, 0, 0, 0], 1);
       }
 
-      if (totalVisMol <= 0.015) continue;
-      const avgRelD = weightedRelD / totalVisMol;
+      // Sealed stoppered vessels NEVER release an external gas plume through the cork
+      if (isSealedStopper) continue;
+
+      // In Thermal FLIR mode, even colorless escaping hot gases (e.g. 51°C HCl(g) or H2O(g)) create a hot plume
+      const hasThermalGasOut = opticsMode === 'thermal' && dTNorm > 0.05 && totalVisMol > 0.002;
+      if (totalVisMol <= 0.015 && !hasThermalGasOut) continue;
+
+      const avgRelD = totalVisMol > 1e-5 ? weightedRelD / totalVisMol : 1.0;
       const mouthOffY = it.isInverted ? spec.height * 0.44 : -spec.height * 0.36;
       const tilt = ((it.tiltDir < 0 ? -1 : 1) * (it.tiltDeg || 0) * Math.PI) / 180;
       const mx = it.x - Math.sin(tilt) * mouthOffY;
@@ -503,15 +522,25 @@ export class FluidGasOverlay {
       const uvX = mx / BENCH_LOGICAL_W;
       const uvY = 1.0 - my / BENCH_LOGICAL_H;
 
-      const cR = sumColor[0] / totalVisMol;
-      const cG = sumColor[1] / totalVisMol;
-      const cB = sumColor[2] / totalVisMol;
-      const strength = Math.min(0.32, totalVisMol * dt * 2.4);
-      this._splat(this.dye, uvX, uvY, 0.0015, [cR * strength, cG * strength, cB * strength, strength], 1);
+      const effVis = Math.max(totalVisMol, hasThermalGasOut ? 0.16 : 0);
+      const ventScale = isOneHoleVent ? 0.18 : 1.0;
+      const cR = totalVisMol > 1e-5 ? sumColor[0] / totalVisMol : 0.92;
+      const cG = totalVisMol > 1e-5 ? sumColor[1] / totalVisMol : 0.55;
+      const cB = totalVisMol > 1e-5 ? sumColor[2] / totalVisMol : 0.25;
+      const strength = Math.min(0.36, effVis * dt * 2.5) * ventScale;
+      this._splat(this.dye, uvX, uvY, 0.0016, [cR * strength, cG * strength, cB * strength, strength], 1);
 
-      // Buoyancy weight: relD > 1.05 -> heavy downward (-Y); relD < 0.95 -> light upward (+Y)
+      // Buoyancy weight: heavy gas > 1 sinks (-Y), light or thermally hot gas rises (+Y)
       const buoyDrive = avgRelD >= 1.0 ? Math.min(1.8, (avgRelD - 1.0) * 1.15) : -Math.min(1.6, (1.0 - avgRelD) * 1.8);
-      this._splat(this.tempBuoy, uvX, uvY, 0.0016, [dTNorm * dt * 1.8, buoyDrive * dt * 4.5, 0, 0], 1);
+      const thermalDrive = Math.min(0.95, dTNorm * (opticsMode === 'thermal' ? 2.4 : 1.25));
+      this._splat(
+        this.tempBuoy,
+        uvX,
+        uvY,
+        hasThermalGasOut ? 0.0024 : 0.0017,
+        [thermalDrive * dt * 3.8 * ventScale, (buoyDrive - dTNorm * 0.9) * dt * 4.5 * ventScale, 0, 0],
+        1
+      );
     }
 
     // 2. Buoyancy & thermal vortex force

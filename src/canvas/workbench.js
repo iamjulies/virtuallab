@@ -2233,14 +2233,14 @@ export class LabWorkbenchCanvas {
       ctx.fillStyle = skyGrad;
       ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
     } else if (this.themeName === 'ctrl') {
-      // SZA Ctrl (2017): pale atmospheric sky-blue + delicate hand-drawn notebook grid
+      // SZA Ctrl (2017): pale atmospheric sky-blue + delicate hand-drawn notebook grid + red sketchbook margin + corner CRT vignetting
       const ctrlGrad = ctx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
       ctrlGrad.addColorStop(0, '#B9DEF2');
       ctrlGrad.addColorStop(0.55, '#DCEEFB');
       ctrlGrad.addColorStop(1, '#EAF5FC');
       ctx.fillStyle = ctrlGrad;
       ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
-      ctx.strokeStyle = 'rgba(79, 99, 88, 0.08)';
+      ctx.strokeStyle = 'rgba(79, 99, 88, 0.12)';
       ctx.lineWidth = 1;
       for (let gx = 40; gx < BENCH_LOGICAL_W; gx += 40) {
         ctx.beginPath();
@@ -2254,8 +2254,14 @@ export class LabWorkbenchCanvas {
         ctx.lineTo(BENCH_LOGICAL_W, gy);
         ctx.stroke();
       }
+      ctx.strokeStyle = 'rgba(180, 83, 9, 0.24)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(52, 0);
+      ctx.lineTo(52, BENCH_FLOOR_Y);
+      ctx.stroke();
     } else if (this.themeName === 'sos') {
-      // SZA SOS (2022): deep abyssal ocean backdrop with calm horizon luminescence
+      // SZA SOS (2022): deep abyssal ocean backdrop with calm horizon luminescence + sonar rings
       const sosGrad = ctx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
       sosGrad.addColorStop(0, '#071728');
       sosGrad.addColorStop(0.55, '#0A2540');
@@ -2263,9 +2269,18 @@ export class LabWorkbenchCanvas {
       ctx.fillStyle = sosGrad;
       ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
       const mistG = ctx.createRadialGradient(BENCH_LOGICAL_W * 0.5, BENCH_FLOOR_Y - 10, 30, BENCH_LOGICAL_W * 0.5, BENCH_FLOOR_Y - 40, 460);
-      mistG.addColorStop(0, 'rgba(91, 181, 201, 0.14)');
+      mistG.addColorStop(0, 'rgba(91, 181, 201, 0.18)');
       mistG.addColorStop(1, 'rgba(91, 181, 201, 0)');
       ctx.fillStyle = mistG;
+      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      const sonarPulse = 0.72 + Math.sin(performance.now() * 0.0016) * 0.28;
+      ctx.strokeStyle = `rgba(91, 181, 201, ${(0.095 * sonarPulse).toFixed(3)})`;
+      ctx.lineWidth = 1.25;
+      for (const rad of [140, 260, 380]) {
+        ctx.beginPath();
+        ctx.arc(BENCH_LOGICAL_W * 0.5, BENCH_FLOOR_Y + 38, rad, Math.PI, 0);
+        ctx.stroke();
+      }
       ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
     } else if (this.themeName === 'petal') {
       ctx.fillStyle = '#111113';
@@ -2369,8 +2384,13 @@ export class LabWorkbenchCanvas {
       if (this.dragState?.pipetteTargetId) activeTooltipIds.add(this.dragState.pipetteTargetId);
       if (this.portDragState?.condId) activeTooltipIds.add(this.portDragState.condId);
     }
-    const isLowercaseTheme = this.themeName === 'olivia' || this.themeName === 'petal';
-    beginCanvasLabelFrame(activeTooltipIds, isLowercaseTheme);
+    const labelCaseMode =
+      this.themeName === 'olivia' || this.themeName === 'petal'
+        ? 'lower'
+        : this.themeName === 'sos'
+        ? 'upper'
+        : false;
+    beginCanvasLabelFrame(activeTooltipIds, labelCaseMode);
 
     renderTubingConnections(ctx, this.sim.items, this.isDark, timeNow, this.langCode);
     renderElectrodeCollectorTubes(ctx, this.sim.items, this.isDark, timeNow);
@@ -2618,15 +2638,18 @@ export class LabWorkbenchCanvas {
     }
 
     // 5. Render WebGL2 Eulerian Stable Fluids gas/thermal field + discrete particles
+    // In Thermal FLIR mode, step WebGL2 field now and composite AFTER _thermalCanvas so hot plumes glow visibly over cool sky!
     if (this.fluidGasOverlay?.enabled) {
       if (this._prevFluidTime !== timeNow) {
         const fluidDt = Math.max(0.008, Math.min(0.05, timeNow - (this._prevFluidTime ?? timeNow - 0.016)));
         this._prevFluidTime = timeNow;
         this.fluidGasOverlay.stepAndRender(this.sim, fluidDt, this.isDark);
       }
-      ctx.save();
-      ctx.drawImage(this.fluidGasOverlay.canvas, 0, 0, BENCH_LOGICAL_W, BENCH_LOGICAL_H);
-      ctx.restore();
+      if ((this.sim.environment?.opticsMode || 'normal') !== 'thermal') {
+        ctx.save();
+        ctx.drawImage(this.fluidGasOverlay.canvas, 0, 0, BENCH_LOGICAL_W, BENCH_LOGICAL_H);
+        ctx.restore();
+      }
     }
     this.particles.render(ctx);
 
@@ -2819,8 +2842,11 @@ export class LabWorkbenchCanvas {
         const rimX = v.x - Math.sin(effRad) * (-spec.height * 0.44);
         const rimY = v.y + Math.cos(effRad) * (-spec.height * 0.44);
         const scrollPhase = -(timeNow * 40);
+        const hasOutTube = Boolean(v.connectedTargetId || v.connectedSyringeId || v.connectedFromId);
+        const isSealedStopper = Boolean(v.isStoppered && (v.stopperMode === 'solid' || hasOutTube));
+        const isOneHoleVent = Boolean(v.isStoppered && v.stopperMode !== 'solid' && !hasOutTube);
 
-        if (isHeavy && (v.tiltDeg || 0) >= 12) {
+        if (isHeavy && (v.tiltDeg || 0) >= 12 && !v.isStoppered) {
           const spreadG = ctx.createLinearGradient(rimX, rimY, rimX + dirSign * 44, BENCH_FLOOR_Y);
           spreadG.addColorStop(0, pal.core);
           spreadG.addColorStop(0.65, pal.rgba);
@@ -2927,27 +2953,64 @@ export class LabWorkbenchCanvas {
               4.0
             );
           }
+        } else if (isSealedStopper) {
+          // Sealed or tubed stoppered flask: trap gas circulation strictly INSIDE flask glass bounds
+          const topMouthY = v.y - spec.height * 0.42;
+          const domeY = v.y - spec.height * 0.14;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(v.x - spec.width * 0.42, topMouthY + 6, spec.width * 0.84, spec.height * 0.82);
+          ctx.clip();
+          const inG = ctx.createRadialGradient(v.x, domeY, 4, v.x, domeY, spec.width * 0.40);
+          inG.addColorStop(0, pal.core);
+          inG.addColorStop(0.65, pal.rgba);
+          inG.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = inG;
+          ctx.beginPath();
+          ctx.ellipse(v.x, domeY, spec.width * 0.34, spec.height * 0.28, 0, 0, Math.PI * 2);
+          ctx.fill();
+          for (let k = -1; k <= 1; k++) {
+            const xOff = k * (spec.width * 0.11);
+            const sw = Math.sin(timeNow * 2.6 + k) * 3;
+            drawFlowStreamline(
+              [
+                { x: v.x + xOff, y: v.y + spec.height * 0.14 },
+                { x: v.x + xOff * 0.7 + sw, y: domeY },
+                { x: v.x + xOff * 0.35, y: topMouthY + 14 },
+              ],
+              pal.stroke,
+              k === 0 ? 1.4 : 1.05,
+              scrollPhase + k * 5,
+              k === 0 ? pal.formula : '',
+              3.2
+            );
+          }
+          ctx.restore();
         } else {
+          // Open mouth (or minor trickle from unplugged 1-hole stopper)
+          const ventScale = isOneHoleVent ? 0.28 : 1.0;
           const basePlumeX = rimX;
           const basePlumeY = rimY;
-          const domeRadius = Math.max(46, spec.width * 0.58);
-          const domeG = ctx.createRadialGradient(basePlumeX, basePlumeY - 38, 8, basePlumeX, basePlumeY - 48, 102);
+          const domeRadius = Math.max(20, spec.width * 0.58 * ventScale);
+          const domeH = 82 * ventScale;
+          const domeG = ctx.createRadialGradient(basePlumeX, basePlumeY - 38 * ventScale, 6, basePlumeX, basePlumeY - 48 * ventScale, 102 * ventScale);
           domeG.addColorStop(0, pal.core);
           domeG.addColorStop(0.58, pal.rgba);
           domeG.addColorStop(1, 'rgba(0,0,0,0)');
           ctx.fillStyle = domeG;
           ctx.beginPath();
-          ctx.ellipse(basePlumeX, basePlumeY - 42, domeRadius, 82, 0, 0, Math.PI * 2);
+          ctx.ellipse(basePlumeX, basePlumeY - 42 * ventScale, domeRadius, domeH, 0, 0, Math.PI * 2);
           ctx.fill();
 
-          for (let s = -2; s <= 2; s++) {
-            const u = s / 2;
-            const sw = Math.sin(timeNow * 2.8 + s * 1.1) * 5;
+          const sLim = isOneHoleVent ? 0 : 2;
+          for (let s = -sLim; s <= sLim; s++) {
+            const u = sLim === 0 ? 0 : s / sLim;
+            const sw = Math.sin(timeNow * 2.8 + s * 1.1) * 5 * ventScale;
             const pts = [
               { x: basePlumeX + u * Math.min(12, spec.neckRadius || 12), y: basePlumeY + 12 },
-              { x: basePlumeX + u * (domeRadius * 0.42) + sw * 0.5, y: basePlumeY - 18 },
-              { x: basePlumeX + u * (domeRadius * 0.65) - sw * 0.4, y: Math.max(24, basePlumeY - 62) },
-              { x: basePlumeX + u * (domeRadius * 0.78), y: Math.max(16, basePlumeY - 102 + Math.abs(s) * 4) },
+              { x: basePlumeX + u * (domeRadius * 0.42) + sw * 0.5, y: basePlumeY - 18 * ventScale },
+              { x: basePlumeX + u * (domeRadius * 0.65) - sw * 0.4, y: Math.max(24, basePlumeY - 62 * ventScale) },
+              { x: basePlumeX + u * (domeRadius * 0.78), y: Math.max(16, basePlumeY - 102 * ventScale + Math.abs(s) * 4) },
             ];
             drawFlowStreamline(pts, pal.stroke, s === 0 ? 1.65 : 1.25, scrollPhase + s * 6, s === 0 ? pal.formula : '', 3.8);
           }
@@ -3150,6 +3213,43 @@ export class LabWorkbenchCanvas {
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(this._thermalCanvas, 0, 0, BENCH_LOGICAL_W, BENCH_LOGICAL_H);
+
+      // Composite WebGL2 buoyant thermal gas plumes directly OVER the background FLIR map
+      if (this.fluidGasOverlay?.enabled && this.fluidGasOverlay?.canvas) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        ctx.globalAlpha = 0.94;
+        ctx.drawImage(this.fluidGasOverlay.canvas, 0, 0, BENCH_LOGICAL_W, BENCH_LOGICAL_H);
+        ctx.restore();
+      }
+
+      // Draw soft warm FLIR convective gas plume columns above vessels actively venting hot gases (> ambC + 5 C)
+      for (const v of this.sim.items) {
+        if (v.kind !== 'vessel' || v.isShattered) continue;
+        const hasTube = Boolean(v.connectedTargetId || v.connectedSyringeId || v.connectedFromId);
+        if (v.isStoppered && (v.stopperMode === 'solid' || hasTube)) continue;
+        const dC = (v.tempK || 298.15) - 273.15 - ambC;
+        if (dC < 5) continue;
+        const head = v.headspaceGasMoles || {};
+        const rates = v.lastGasRateMap || {};
+        let gasSig = 0;
+        for (const k of Object.keys(head)) gasSig += head[k] || 0;
+        for (const k of Object.keys(rates)) gasSig += (rates[k] || 0) * 0.25;
+        if (gasSig <= 1e-5 && (v.tempK || 298.15) < 345) continue;
+        const sp = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+        const mouthY = v.y - sp.height * 0.44;
+        const plumeH = Math.min(115, 36 + dC * 0.95);
+        const plumeW = Math.max(16, (sp.neckRadius || sp.width * 0.3) * 1.15);
+        const warmCol = dC >= 90 ? 'rgba(255, 215, 90, 0.56)' : dC >= 20 ? 'rgba(249, 115, 22, 0.52)' : 'rgba(56, 189, 248, 0.42)';
+        const gPlume = ctx.createRadialGradient(v.x, mouthY - plumeH * 0.38, 4, v.x, mouthY - plumeH * 0.48, plumeH);
+        gPlume.addColorStop(0, warmCol);
+        gPlume.addColorStop(0.55, 'rgba(6, 182, 212, 0.26)');
+        gPlume.addColorStop(1, 'rgba(6, 182, 212, 0)');
+        ctx.fillStyle = gPlume;
+        ctx.beginPath();
+        ctx.ellipse(v.x + Math.sin(timeNow * 3 + v.x) * 2.5, mouthY - plumeH * 0.45, plumeW, plumeH * 0.58, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.52)';
       ctx.lineWidth = 1.4;
