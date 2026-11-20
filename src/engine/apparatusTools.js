@@ -8,6 +8,7 @@ import {
   computeSolutionVisuals,
 } from './equilibrium.js';
 import { computeHeatCapacityJK } from './thermodynamics.js';
+import { stepVesselChemistry } from './chemistry.js';
 
 const UNIVERSAL_PH_COLORS = [
   '#dc2626', // 0-1
@@ -1552,25 +1553,29 @@ function stepCrucibleTongs(sim, tongs, dt) {
 }
 
 /**
- * Step Iron Combustion / Deflagrating Spoon (heating over burner flames, burning Zn / Na / Cu / salts in air or O2/Cl2 jars).
+ * Step Iron Combustion / Deflagrating Spoon using the unified engine (stepVesselChemistry)
+ * so every metal, nonmetal, oxide, salt, decomposition & gas-jar reaction works identically.
  */
 function stepIronSpoon(sim, spoon, dt) {
   if (!spoon || spoon.kind !== 'spoon') return;
   const { x: bowlX, y: bowlY } = getProbeTipPos(spoon);
   spoon.burnTimer = Math.max(0, (spoon.burnTimer || 0) - dt);
+  if (spoon.burnTimer === 0) spoon.flameColor = null;
 
-  // 1. Check thermal coupling with any active Alcohol or Bunsen burner (or lit wooden splint)
+  // 1. Thermal coupling with active Alcohol / Bunsen burner or lit wooden splint
   let flameTargetK = sim.environment.tempK || CONSTANTS.T_STD_K;
   let kHeat = 0.14;
   let inBurnerFlame = false;
+  let heatSrc = null;
   for (const b of sim.items) {
     if (b.kind === 'splint' && (b.mode === 'burning' || b.mode === 'glowing')) {
       const tip = getProbeTipPos(b);
       if (Math.hypot(bowlX - tip.x, bowlY - tip.y) <= 28) {
-        const splTargetK = b.mode === 'burning' ? 793.15 : 653.15;
+        const splTargetK = b.mode === 'burning' ? 840.0 : 653.15;
         if (splTargetK > flameTargetK) {
           flameTargetK = splTargetK;
-          kHeat = Math.max(kHeat, 0.32);
+          kHeat = Math.max(kHeat, 0.36);
+          inBurnerFlame = b.mode === 'burning';
         }
       }
       continue;
@@ -1583,22 +1588,30 @@ function stepIronSpoon(sim, spoon, dt) {
       const fl = Math.round(b.flameLevel || 3);
       const isBunsen = b.typeId === 'bunsen_burner';
       const airOpen = b.airHoleOpen !== false;
+      const alcPeakK = fl >= 3 ? 915.0 : fl === 2 ? 785.0 : 645.0;
       const peakK = isBunsen
         ? (airOpen ? bSpec.effectiveFlameK[fl] || 1520 : bSpec.yellowFlameK[fl] || 950)
-        : (bSpec.effectiveFlameK[fl] || 720);
+        : Math.max(bSpec.effectiveFlameK[fl] || 720, alcPeakK);
       flameTargetK = Math.max(flameTargetK, peakK);
-      kHeat = isBunsen && airOpen ? 1.55 : 0.92;
+      kHeat = isBunsen && airOpen ? 1.55 : 0.96;
       inBurnerFlame = true;
+      heatSrc = { burner: b, powerW: b.powerW || 0 };
     }
   }
 
   spoon.tempK = (spoon.tempK ?? 298.15) + (flameTargetK - (spoon.tempK ?? 298.15)) * Math.min(1, kHeat * dt);
 
   const moles = spoon.moles || {};
-  const totalSolidMol = Object.values(moles).reduce((s, n) => s + (n > 0 ? n : 0), 0);
-  if (totalSolidMol <= 1e-9) return;
+  let hasContents = false;
+  for (const n of Object.values(moles)) {
+    if (n > 1e-9) {
+      hasContents = true;
+      break;
+    }
+  }
+  if (!hasContents) return;
 
-  // 2. Check if spoon bowl is dipped inside a vessel headspace (e.g. O2 or Cl2 gas jar)
+  // 2. Detect surrounding gas-jar vessel headspace if spoon bowl is dipped inside an unstoppered vessel
   let hostV = null;
   for (const v of sim.items) {
     if (v.kind !== 'vessel' || v.isShattered || v.isStoppered) continue;
@@ -1613,235 +1626,110 @@ function stepIronSpoon(sim, spoon, dt) {
     }
   }
 
-  const headO2 = hostV?.headspaceGasMoles?.O2_g || 0;
-  const headCl2 = hostV?.headspaceGasMoles?.Cl2_g || 0;
-  const inO2Jar = headO2 > 8e-5;
-  const inCl2Jar = headCl2 > 8e-5;
-  const inOpenAir = (sim.environment.atmosphereMode || 'air') === 'air';
+  // 3. Delegate chemistry uniformly to stepVesselChemistry (temporarily sharing host jar atmosphere or open air)
+  const savedHeadspace = spoon.headspaceGasMoles;
+  const savedPurge = spoon.airO2PurgeFrac;
+  const savedLiqVol = spoon.liquidVolL;
+  spoon.particleCounts = spoon.particleCounts || {};
+  spoon.seenReactions = spoon.seenReactions || {};
+  spoon.escapedGasMoles = spoon.escapedGasMoles || createZeroGasMap();
+  spoon.isStoppered = false;
+  spoon.lidState = 'open';
+  spoon.headspaceGasMoles = hostV ? (hostV.headspaceGasMoles = hostV.headspaceGasMoles || createZeroGasMap()) : createZeroGasMap();
+  spoon.airO2PurgeFrac = hostV && hostV.airO2PurgeFrac !== undefined ? hostV.airO2PurgeFrac : 1.0;
 
-  // A. Zinc combustion on spoon: 2Zn(s) + O2(g) -> 2ZnO(s) (cyan-blue flame + white ZnO smoke)
-  const nZn = moles.Zn_s || 0;
-  const znIgnK = inO2Jar ? 615.0 : inBurnerFlame ? 665.0 : 753.15;
-  if (nZn > 1e-8 && spoon.tempK >= znIgnK && (inO2Jar || inOpenAir)) {
-    const rateScale = inO2Jar ? 1.45 : 0.75;
-    const maxByO2 = inO2Jar ? headO2 * 2 : nZn;
-    const dBurn = Math.min(nZn, maxByO2, Math.max(8e-5 * dt, nZn * rateScale * dt));
-    if (dBurn > 1e-10) {
-      moles.Zn_s -= dBurn;
-      if (moles.Zn_s < 1e-10) delete moles.Zn_s;
-      moles.ZnO_s = (moles.ZnO_s || 0) + dBurn;
-      if (inO2Jar && hostV?.headspaceGasMoles) {
-        hostV.headspaceGasMoles.O2_g = Math.max(0, headO2 - 0.5 * dBurn);
-      }
-      spoon.burnTimer = 0.95;
-      spoon.flameColor = 'cyan_zn';
-      spoon.tempK = Math.max(spoon.tempK, 1180);
-      if (sim.visualHooks?.onParticlesNeeded) {
-        sim.visualHooks.onParticlesNeeded(
-          { x: bowlX, y: bowlY + 8, typeId: 'crucible_porcelain', moles: { ZnO_s: mOrZero(moles.ZnO_s) }, tempK: spoon.tempK },
-          { znBurning: true, heatRate: 800 }
-        );
-      }
-      if ((sim.timeSec - (spoon.seenReactions?.zn_spoon_burn ?? -99)) > 4.0) {
-        spoon.seenReactions = spoon.seenReactions || {};
-        spoon.seenReactions.zn_spoon_burn = sim.timeSec;
-        sim.addLog({
-          type: 'reaction',
-          equation: '2Zn(s) + O₂(g) —(t°)→ 2ZnO(s) (ngọn lửa xanh lam & khói trắng)',
-          nameVi: 'Đốt cháy Zinc trên thìa sắt tạo Zinc oxide trắng',
-          nameEn: 'Zinc combustion on iron spoon forming white ZnO(s)',
-          descVi: 'Zinc trên thìa sắt bốc cháy với ngọn lửa xanh lam nhạt đặc trưng và khói trắng ZnO (khi nóng có màu vàng, để nguội hóa trắng).',
-          descEn: 'Zinc on the iron spoon burns with a pale bluish-cyan flame and dense white ZnO smoke (yellow while hot, white when cooled).',
-          vesselLabel: spoon.label,
-        });
-      }
-    }
+  let chemRes;
+  try {
+    chemRes = stepVesselChemistry(spoon, dt, {
+      environment: sim.environment,
+      heatSrc,
+      spoonInFlame: inBurnerFlame,
+    });
+  } finally {
+    spoon.headspaceGasMoles = savedHeadspace || createZeroGasMap();
+    spoon.airO2PurgeFrac = savedPurge;
+    spoon.liquidVolL = savedLiqVol;
   }
 
-  // B. Sodium combustion on spoon: 2Na + O2 -> Na2O2 (589 nm yellow flame) or 2Na + Cl2 -> 2NaCl
-  const nNa = moles.Na_s || 0;
-  if (nNa > 1e-8 && inCl2Jar && spoon.tempK >= 360) {
-    const dBurn = Math.min(nNa, headCl2 * 2, Math.max(1e-4 * dt, nNa * 1.6 * dt));
-    moles.Na_s -= dBurn;
-    if (moles.Na_s < 1e-10) delete moles.Na_s;
-    moles.NaCl_s = (moles.NaCl_s || 0) + dBurn;
-    hostV.headspaceGasMoles.Cl2_g = Math.max(0, headCl2 - 0.5 * dBurn);
-    spoon.burnTimer = 0.95;
-    spoon.flameColor = 'yellow_na';
-    spoon.tempK = Math.max(spoon.tempK, 980);
-  } else if (nNa > 1e-8 && spoon.tempK >= 393.15 && (inO2Jar || inOpenAir)) {
-    const maxByO2 = inO2Jar ? headO2 : nNa;
-    const dBurn = Math.min(nNa, maxByO2, Math.max(1e-4 * dt, nNa * 1.35 * dt));
-    if (dBurn > 1e-10) {
-      moles.Na_s -= dBurn;
-      if (moles.Na_s < 1e-10) delete moles.Na_s;
-      moles.Na2O2_s = (moles.Na2O2_s || 0) + dBurn * 0.45;
-      moles.Na2O_s = (moles.Na2O_s || 0) + dBurn * 0.05;
-      if (inO2Jar && hostV?.headspaceGasMoles) {
-        hostV.headspaceGasMoles.O2_g = Math.max(0, headO2 - 0.95 * dBurn);
-      }
-      spoon.burnTimer = 0.95;
-      spoon.flameColor = 'yellow_na';
-      spoon.tempK = Math.max(spoon.tempK, 920);
-      if (sim.visualHooks?.onParticlesNeeded) {
-        sim.visualHooks.onParticlesNeeded(
-          { x: bowlX, y: bowlY + 8, typeId: 'crucible_porcelain', moles: { Na2O2_s: mOrZero(moles.Na2O2_s) }, tempK: spoon.tempK },
-          { naDryBurning: true }
-        );
-      }
-      if ((sim.timeSec - (spoon.seenReactions?.na_spoon_burn ?? -99)) > 4.0) {
-        spoon.seenReactions = spoon.seenReactions || {};
-        spoon.seenReactions.na_spoon_burn = sim.timeSec;
-        sim.addLog({
-          type: 'reaction',
-          equation: '2Na(s/l) + O₂(g) → Na₂O₂(s) (cháy ngọn lửa vàng 589 nm)',
-          nameVi: 'Đốt cháy Sodium trên thìa sắt (ngọn lửa vàng → Na₂O₂)',
-          nameEn: 'Sodium combustion on iron spoon (yellow flame → Na₂O₂)',
-          descVi: 'Sodium nóng chảy trên thìa sắt bốc cháy với ngọn lửa vàng 589 nm tạo Sodium peroxide vàng nhạt.',
-          descEn: 'Molten Sodium on the iron spoon burns with an intense 589 nm yellow flame yielding pale-yellow Na₂O₂.',
-          vesselLabel: spoon.label,
-        });
-      }
+  // Route produced gases to host jar headspace or open bench escape + heat exotherm
+  if (chemRes?.gasProduced) {
+    const destGas = hostV ? hostV.headspaceGasMoles : spoon.escapedGasMoles;
+    for (const [gId, gMol] of Object.entries(chemRes.gasProduced)) {
+      if (gMol > 0) destGas[gId] = (destGas[gId] || 0) + gMol;
     }
+  }
+  const cpSpoon = computeHeatCapacityJK(spoon);
+  if (chemRes?.reactionHeatJ) {
+    spoon.tempK = Math.max(155, Math.min(1850, spoon.tempK + chemRes.reactionHeatJ / Math.max(8, cpSpoon)));
   }
 
-  // C. Copper thermal oxidation on spoon: 2Cu + O2 -> 2CuO (black)
-  const nCu = moles.Cu_s || 0;
-  if (nCu > 1e-8 && spoon.tempK >= 585 && (inO2Jar || inOpenAir)) {
-    const dOx = Math.min(nCu, Math.max(4e-5 * dt, nCu * 0.45 * dt));
-    moles.Cu_s -= dOx;
-    if (moles.Cu_s < 1e-10) delete moles.Cu_s;
-    moles.CuO_s = (moles.CuO_s || 0) + dOx;
-    if (inBurnerFlame && spoon.tempK >= 820) {
-      spoon.burnTimer = Math.max(spoon.burnTimer || 0, 0.35);
-      spoon.flameColor = 'emerald_cu';
-    }
+  // 4. Open-spoon phase evaporation for I2(s/l), Sulfur fumes, and trace moisture boil-off
+  let evapI2Mol = 0;
+  if ((moles.I2_s || 0) > 1e-8 && spoon.tempK >= 313.15) {
+    const rate = spoon.tempK >= 457.45 ? 0.45 : spoon.tempK >= 386.85 ? 0.16 : 0.025;
+    evapI2Mol = Math.min(moles.I2_s, moles.I2_s * rate * dt);
+    moles.I2_s -= evapI2Mol;
+    if (moles.I2_s < 1e-12) delete moles.I2_s;
+    const destGas = hostV ? hostV.headspaceGasMoles : spoon.escapedGasMoles;
+    destGas.I2_g = (destGas.I2_g || 0) + evapI2Mol;
+  }
+  if ((moles.H2O_l || 0) > 1e-7 && spoon.tempK >= 373.15) {
+    const dBoil = Math.min(moles.H2O_l, Math.max(2e-4 * dt, moles.H2O_l * 0.65 * dt));
+    moles.H2O_l -= dBoil;
+    if (moles.H2O_l < 1e-12) delete moles.H2O_l;
   }
 
-  // C2. Iron combustion in O2(g) jar (any form -> sparks!) vs fine powder in air (>= 760 °C -> sparks!)
-  // Bulk iron nail NEVER sparks in ordinary air (only glows red/orange/yellow-white with surface scale)!
-  const nFeSpoon = moles.Fe_s || 0;
-  const feSpoonFine = Boolean(spoon.groundPowderMap?.Fe_s) || (spoon.particleCounts?.Fe_s || 0) >= 18;
-  const feSpoonIgnK = inO2Jar ? (feSpoonFine ? 610 : 760) : 1033.15;
-  if (nFeSpoon > 1e-8 && spoon.tempK >= feSpoonIgnK && (inO2Jar || (inOpenAir && feSpoonFine))) {
-    const rateScale = inO2Jar ? 1.55 : 0.72;
-    const maxByO2 = inO2Jar ? headO2 * 1.5 : nFeSpoon;
-    const dBurn = Math.min(nFeSpoon, maxByO2, Math.max(2e-5, nFeSpoon * rateScale * dt));
-    if (dBurn > 1e-10) {
-      moles.Fe_s -= dBurn;
-      if (moles.Fe_s < 1e-10) delete moles.Fe_s;
-      if (inO2Jar && hostV?.headspaceGasMoles) {
-        hostV.headspaceGasMoles.O2_g = Math.max(0, (hostV.headspaceGasMoles.O2_g || 0) - (2 / 3) * dBurn);
-        moles.Fe3O4_s = (moles.Fe3O4_s || 0) + dBurn / 3;
-      } else {
-        // Fine powder burning in air: ~75% Fe -> Fe3O4, ~25% Fe -> Fe2O3 (ratio 8 Fe -> 2 Fe3O4 + 1 Fe2O3)
-        moles.Fe3O4_s = (moles.Fe3O4_s || 0) + dBurn * 0.25;
-        moles.Fe2O3_s = (moles.Fe2O3_s || 0) + dBurn * 0.125;
-      }
-      spoon.burnTimer = 0.95;
-      spoon.flameColor = 'sparks_fe';
-      spoon.tempK = Math.max(spoon.tempK, inO2Jar ? 1460 : 1280);
-      if ((sim.timeSec - (spoon.seenReactions?.fe_spoon_burn ?? -99)) > 4.0) {
-        spoon.seenReactions = spoon.seenReactions || {};
-        spoon.seenReactions.fe_spoon_burn = sim.timeSec;
-        sim.addLog({
-          type: 'reaction',
-          equation: inO2Jar ? '3Fe(s) + 2O₂(g) —(t°)→ Fe₃O₄(s)' : '8Fe(bột) + 5.5O₂(kk) —(760–1300 °C)→ 2Fe₃O₄(s) + Fe₂O₃(s)',
-          nameVi: inO2Jar ? 'Đốt cháy Iron trên muôi sắt trong Oxygen (tia lửa sáng → Fe₃O₄)' : 'Đốt cháy bột Iron mịn ngoài không khí (tia lửa vàng-cam)',
-          nameEn: inO2Jar ? 'Iron combustion on spoon in Oxygen yielding dark brown-black Fe₃O₄' : 'Combustion of fine Iron powder in air (golden-orange sparks)',
-          descVi: inO2Jar ? 'Iron nung đỏ cháy sáng rực trong khí O₂, bắn tia lửa vàng và tạo oxit Fe₃O₄ nâu đen.' : 'Bột Iron mịn cháy bắn tia lửa vàng-cam từ 760 °C, tạo chủ yếu Fe₃O₄ và lớp mỏng Fe₂O₃.',
-          descEn: inO2Jar ? 'Red-hot Iron burns intensely in O₂ gas emitting bright sparks and forming dark Fe₃O₄.' : 'Fine Iron powder ignites above 760 °C in air with golden-orange sparks forming Fe₃O₄ + Fe₂O₃.',
-          vesselLabel: spoon.label,
-        });
-      }
+  // 5. Synchronize flame aura, radiant heat floors, particle plumes & reaction logs
+  const activeIds = new Set((chemRes?.activeReactions || []).map((r) => r.id));
+  const flameSpec =
+    (spoon.mgCombustionTimer || 0) > 0.02
+      ? { color: 'white_mg', floorK: 1650, flags: { mgBurning: true }, dur: 1.05 }
+      : (spoon.alCombustionTimer || 0) > 0.02
+      ? { color: 'white_al', floorK: 1580, flags: { alBurning: true }, dur: 1.0 }
+      : (spoon.feSparkBurning || 0) > 0.02
+      ? { color: 'sparks_fe', floorK: hostV ? 1460 : 1280, flags: { feSparkBurning: true }, dur: 0.95 }
+      : (spoon.kDryBurnTimer || 0) > 0.02
+      ? { color: 'violet_k', floorK: 1020, flags: { kDryBurning: true }, dur: 0.95 }
+      : (spoon.naDryBurnTimer || 0) > 0.02
+      ? { color: 'yellow_na', floorK: 920, flags: { naDryBurning: true }, dur: 0.95 }
+      : (spoon.znCombustionTimer || 0) > 0.02 || activeIds.has('zn_o2_burn')
+      ? { color: 'cyan_zn', floorK: 1180, flags: { znBurning: true, heatRate: 800 }, dur: 0.95 }
+      : (spoon.sulfurFlameTimer || 0) > 0.02
+      ? { color: spoon.sulfurO2Flame ? 'sulfur_violet' : 'sulfur_blue', floorK: 820, flags: { sulfurBurning: true }, dur: 0.85 }
+      : activeIds.has('cu_o2_ox') && inBurnerFlame && spoon.tempK >= 820
+      ? { color: 'emerald_cu', floorK: 0, flags: {}, dur: 0.35 }
+      : null;
+
+  if (flameSpec) {
+    spoon.burnTimer = Math.max(spoon.burnTimer || 0, flameSpec.dur);
+    spoon.flameColor = flameSpec.color;
+    if (flameSpec.floorK > 0) spoon.tempK = Math.max(spoon.tempK, flameSpec.floorK);
+    if (sim.visualHooks?.onParticlesNeeded) {
+      sim.visualHooks.onParticlesNeeded(
+        { x: bowlX, y: bowlY + 8, typeId: 'crucible_porcelain', moles, tempK: spoon.tempK },
+        flameSpec.flags
+      );
     }
-  } else if (nFeSpoon > 1e-8 && !feSpoonFine && inOpenAir && spoon.tempK >= 843.15) {
-    // Bulk Iron nail heated above 570 °C in air grows thin 3-layer scale slowly without sparks
-    const dScale = Math.min(nFeSpoon, Math.max(1e-6, nFeSpoon * 0.015 * dt));
-    moles.Fe_s -= dScale;
-    if (moles.Fe_s < 1e-10) delete moles.Fe_s;
-    moles.FeO_s = (moles.FeO_s || 0) + dScale * 0.5;
-    moles.Fe3O4_s = (moles.Fe3O4_s || 0) + dScale * 0.1;
-    moles.Fe2O3_s = (moles.Fe2O3_s || 0) + dScale * 0.1;
+  } else if (evapI2Mol > 1e-6 && sim.visualHooks?.onParticlesNeeded) {
+    sim.visualHooks.onParticlesNeeded(
+      { x: bowlX, y: bowlY + 6, typeId: 'crucible_porcelain', moles, tempK: spoon.tempK },
+      { i2RateMolS: evapI2Mol / Math.max(1e-3, dt) }
+    );
   }
 
-  // C3. Magnesium & Potassium combustion on spoon
-  const nMgSpoon = moles.Mg_s || 0;
-  if (nMgSpoon > 1e-8 && spoon.tempK >= 723.15 && (inO2Jar || inOpenAir)) {
-    const dBurn = Math.min(nMgSpoon, inO2Jar ? headO2 * 2 : nMgSpoon, Math.max(1e-4 * dt, nMgSpoon * 1.4 * dt));
-    if (dBurn > 1e-10) {
-      moles.Mg_s -= dBurn;
-      if (moles.Mg_s < 1e-10) delete moles.Mg_s;
-      moles.MgO_s = (moles.MgO_s || 0) + dBurn * (inOpenAir ? 0.85 : 1.0);
-      if (inOpenAir) moles.Mg3N2_s = (moles.Mg3N2_s || 0) + dBurn * 0.05;
-      if (inO2Jar && hostV?.headspaceGasMoles) hostV.headspaceGasMoles.O2_g = Math.max(0, headO2 - 0.5 * dBurn);
-      spoon.burnTimer = 1.05;
-      spoon.flameColor = 'white_mg';
-      spoon.tempK = Math.max(spoon.tempK, 1650);
-      if (sim.visualHooks?.onParticlesNeeded) {
-        sim.visualHooks.onParticlesNeeded(
-          { x: bowlX, y: bowlY + 8, typeId: 'crucible_porcelain', moles: { MgO_s: mOrZero(moles.MgO_s) }, tempK: spoon.tempK },
-          { mgBurning: true }
-        );
-      }
+  for (const r of chemRes?.activeReactions || []) {
+    if ((sim.timeSec - (spoon.seenReactions[r.id] ?? -99)) > 4.0) {
+      spoon.seenReactions[r.id] = sim.timeSec;
+      sim.addLog({
+        type: 'reaction',
+        equation: r.equation,
+        nameVi: r.nameVi,
+        nameEn: r.nameEn,
+        descVi: r.descVi,
+        descEn: r.descEn,
+        vesselLabel: spoon.label,
+      });
     }
-  }
-  const nKSpoon = moles.K_s || 0;
-  if (nKSpoon > 1e-8 && spoon.tempK >= 336.0 && (inO2Jar || inOpenAir || inCl2Jar)) {
-    const dBurn = Math.min(nKSpoon, Math.max(1e-4 * dt, nKSpoon * 1.6 * dt));
-    if (dBurn > 1e-10) {
-      moles.K_s -= dBurn;
-      if (moles.K_s < 1e-10) delete moles.K_s;
-      if (inCl2Jar) {
-        moles.KCl_s = (moles.KCl_s || 0) + dBurn;
-        hostV.headspaceGasMoles.Cl2_g = Math.max(0, headCl2 - 0.5 * dBurn);
-      } else {
-        moles.KO2_s = (moles.KO2_s || 0) + dBurn;
-        if (inO2Jar && hostV?.headspaceGasMoles) hostV.headspaceGasMoles.O2_g = Math.max(0, headO2 - dBurn);
-      }
-      spoon.burnTimer = 0.95;
-      spoon.flameColor = 'violet_k';
-      spoon.tempK = Math.max(spoon.tempK, 1020);
-      if (sim.visualHooks?.onParticlesNeeded) {
-        sim.visualHooks.onParticlesNeeded(
-          { x: bowlX, y: bowlY + 8, typeId: 'crucible_porcelain', moles: { KO2_s: mOrZero(moles.KO2_s) }, tempK: spoon.tempK },
-          { kDryBurning: true }
-        );
-      }
-    }
-  }
-
-  // D. Solid thermal decompositions directly on heated spoon (CuSO4.5H2O, Cu(OH)2, CuCO3, CaCO3)
-  if ((moles.CuSO4_5H2O_s || 0) > 1e-8 && spoon.tempK >= 385) {
-    const d = Math.min(moles.CuSO4_5H2O_s, moles.CuSO4_5H2O_s * 0.65 * dt);
-    moles.CuSO4_5H2O_s -= d;
-    if (moles.CuSO4_5H2O_s < 1e-10) delete moles.CuSO4_5H2O_s;
-    moles.CuSO4_s = (moles.CuSO4_s || 0) + d;
-  }
-  if ((moles.CuOH2_s || 0) > 1e-8 && spoon.tempK >= 440) {
-    const d = Math.min(moles.CuOH2_s, moles.CuOH2_s * 0.75 * dt);
-    moles.CuOH2_s -= d;
-    if (moles.CuOH2_s < 1e-10) delete moles.CuOH2_s;
-    moles.CuO_s = (moles.CuO_s || 0) + d;
-  }
-  if ((moles.CuCO3_s || 0) > 1e-8 && spoon.tempK >= 480) {
-    const d = Math.min(moles.CuCO3_s, moles.CuCO3_s * 0.75 * dt);
-    moles.CuCO3_s -= d;
-    if (moles.CuCO3_s < 1e-10) delete moles.CuCO3_s;
-    moles.CuO_s = (moles.CuO_s || 0) + d;
-  }
-  if ((moles.CaCO3_s || 0) > 1e-8 && spoon.tempK >= 1120) {
-    const d = Math.min(moles.CaCO3_s, moles.CaCO3_s * 0.45 * dt);
-    moles.CaCO3_s -= d;
-    if (moles.CaCO3_s < 1e-10) delete moles.CaCO3_s;
-    moles.CaO_s = (moles.CaO_s || 0) + d;
-  }
-  if ((moles.KMnO4_s || 0) > 1e-8 && spoon.tempK >= 485) {
-    const d = Math.min(moles.KMnO4_s / 2, moles.KMnO4_s * 0.48 * dt);
-    moles.KMnO4_s -= 2 * d;
-    if (moles.KMnO4_s < 1e-10) delete moles.KMnO4_s;
-    moles.K2MnO4_s = (moles.K2MnO4_s || 0) + d;
-    moles.MnO2_s = (moles.MnO2_s || 0) + d;
   }
 }
 

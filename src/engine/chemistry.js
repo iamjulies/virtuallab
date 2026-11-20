@@ -54,9 +54,10 @@ export function getKIgnitionTempK(vessel, env = null) {
  * - Fine Zinc powder in standard Air (1 atm): ~460-500 C (753 K)
  * - Bulk solid Zinc protected by ZnO layer in standard Air: requires bp ~907 C (1180 K)
  */
-export function getZnIgnitionTempK(vessel, env = null) {
+export function getZnIgnitionTempK(vessel, env = null, options = null) {
   const headO2 = vessel?.headspaceGasMoles?.O2_g || 0;
   if (headO2 > 1.2e-4) return 615.0;
+  if (vessel?.kind === 'spoon' && options?.spoonInFlame) return 665.0;
   const pCnt = vessel?.particleCounts?.Zn_s ?? 6;
   const isPowder = Boolean(vessel?.groundPowderMap?.Zn_s) || pCnt >= 60;
   return isPowder ? 753.15 : 1180.15;
@@ -793,7 +794,7 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     if (solidId === 'Al_s' && !isFineAl && !inEnrichedO2) return 0;
     const minTK =
       solidId === 'Zn_s'
-        ? getZnIgnitionTempK(vessel, options.environment)
+        ? getZnIgnitionTempK(vessel, options.environment, options)
         : solidId === 'Fe_s'
         ? (isFineMetal ? 610 : rxn.minTempK || 760)
         : solidId === 'Al_s'

@@ -1529,7 +1529,7 @@ export class LabSimulation {
     const curSpoonBulkMl = computeSolidVolumeMl(spoon.moles || {}) * 1.25;
     const remVolMl = Math.max(0, SPOON_MAX_VOL_ML - curSpoonBulkMl);
     if (remVolMl <= 0.02) return false;
-    const priorityOrder = ['Zn_s', 'Mg_s', 'Al_s', 'Na_s', 'K_s', 'KMnO4_s', 'MnO2_s', 'K2MnO4_s', 'CaCO3_s', 'CuO_s', 'CuSO4_5H2O_s', 'Fe_s', 'Cu_s', 'CaO_s'];
+    const priorityOrder = ['Zn_s', 'Mg_s', 'Al_s', 'Na_s', 'K_s', 'S_s', 'I2_s', 'KMnO4_s', 'MnO2_s', 'K2MnO4_s', 'K3MnO4_s', 'K2MnO3_s', 'Mn2O3_s', 'Mn3O4_s', 'CaCO3_s', 'CuO_s', 'CuSO4_5H2O_s', 'Fe_s', 'Cu_s', 'CaO_s'];
     const allSolidKeys = [
       ...priorityOrder.filter((k) => (v.moles?.[k] || 0) > 1e-8),
       ...Object.keys(v.moles || {}).filter(
@@ -2715,7 +2715,7 @@ export class LabSimulation {
       v.kind === 'vessel' ||
       v.kind === 'filter_funnel' ||
       (v.kind === 'burette' && reg.kind === 'liquid') ||
-      (v.kind === 'spoon' && reg.kind === 'solid');
+      (v.kind === 'spoon' && (reg.kind === 'solid' || reg.kind === 'liquid'));
     if (!isContainer) return false;
 
     let amt = Math.max(0, Number(amount) || 0);

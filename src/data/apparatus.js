@@ -582,6 +582,7 @@ export const APPARATUS = {
     maxThermalStressK: 1723,
     maxVolumeMl: 2.8,
     tareMassG: 28.0,
+    glassHeatCapacityJK: 14.5,
     width: 30,
     height: 118,
     fragilityDropPx: Infinity,

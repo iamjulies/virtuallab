@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.10';
+      const expectedBuild = 'virlab_beta_v4+build.11';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,7 +2515,7 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.10 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-44 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.11 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-45 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
           STARTER_REAGENTS.length === 23 &&
           !APPARATUS.clay_triangle &&
@@ -7703,6 +7703,87 @@
         'Prompt 44 Nonmetal Filter & Br2/I2 Vapor Physics: nonmetal filter (Br2/I2/S), heavy sinking room-T Br2 fumes & -7.2C freezing, silent open room-T I2 vs sealed violet tint, >=45C sublimation fumes & 113.7C sealed I2 melt',
         filterOk && brBehaviorOk && i2BehaviorOk,
         `filter=${filterOk}(${nonmetals.join(',')}), br=${brBehaviorOk}(rate=${brRateOpen.toExponential(2)},sink=${SPECIES.Br2_g.plume?.sinkAccel},Br2_s=${(vBrCold.moles.Br2_s||0).toFixed(3)}), i2=${i2BehaviorOk}(room=${i2RoomRate.toExponential(2)},sealedHead=${(vI2Sealed.headspaceGasMoles?.I2_g||0).toExponential(2)},warm=${i2WarmRate.toExponential(2)},meltI2=${(vI2Melt.moles.I2_s||0).toFixed(3)})`
+      );
+    }
+
+    // TEST 163: Prompt 45 (virlab_beta_v4+build.11) — I2 3-Regime Heating Past 134.8C -> 184.3C Boiling, Mn Thermal Cascade (K2MnO4/K2MnO3/K3MnO4/Mn2O3/Mn3O4), Unified Iron Spoon
+    {
+      // 1) I2 heated over burner climbs cleanly past former 134.8 C stall (408 K) -> 184.3 C (457.45 K) true boiling
+      const simI2 = new LabSimulation();
+      const bnI2 = simI2.createApparatus('burner', 220, 480);
+      simI2.setBurnerFlame(bnI2.id, 3);
+      const bI2 = simI2.createApparatus('beaker_250', 220, 427);
+      bI2.restingOnId = bnI2.id;
+      simI2.addReagentToVessel(bI2.id, 'i2', 25.0, { silentAnim: true });
+      bI2.tempK = 406.0; // Start right near former 134.8 C stall
+      stepSeconds(simI2, 4.5, 0.05);
+      const tBeforeBoil = bI2.tempK; // Climbed smoothly past 134.8 C (408 K) while still emitting molten violet fumes
+      const i2PastStallOk = tBeforeBoil > 416.0 && tBeforeBoil < 457.5 && (bI2.moles.I2_s || 0) > 0.02 && (bI2.escapedGasMoles?.I2_g || 0) > 1e-4;
+      stepSeconds(simI2, 12.0, 0.05);
+      const i2BoilOk = bI2.tempK >= 456.8 && bI2.tempK <= 458.2 && Boolean(bI2.wasBoiling) && (bI2.moles.I2_s || 0) > 0.005;
+
+      // 2) Full Manganese thermal cascade & aqueous hydrolysis (K2MnO4 noMelt @ 190C, decomp >= 500C -> K2MnO3 + blue K3MnO4 + MnO2 -> Mn2O3 @ 530C -> Mn3O4 @ 880C)
+      const simMn = new LabSimulation();
+      const c190 = simMn.createApparatus('crucible_porcelain', 120, 427);
+      c190.moles = { KMnO4_s: 0.02 };
+      c190.tempK = 463.15; // 190 C (< 200 C): inert!
+      const c260 = simMn.createApparatus('crucible_porcelain', 240, 427);
+      c260.moles = { KMnO4_s: 0.04 };
+      c260.tempK = 533.15; // 260 C (220-300 C): 2KMnO4 -> K2MnO4 + MnO2 + O2, K2MnO4 stays intact & non-molten
+      const c540 = simMn.createApparatus('crucible_porcelain', 360, 427);
+      c540.moles = { K2MnO4_s: 0.06, MnO2_s: 0.04 };
+      c540.tempK = 818.15; // 545 C (> 530 C): K2MnO4 -> K2MnO3 + K3MnO4 (bright blue); MnO2 -> Mn2O3
+      const c940 = simMn.createApparatus('crucible_porcelain', 480, 427);
+      c940.moles = { Mn2O3_s: 0.06, K2MnO3_s: 0.03 };
+      c940.tempK = 1213.15; // 940 C (> 900 C): Mn2O3 -> Mn3O4; K2MnO3 -> Mn3O4 + K2O + O2
+      for (let i = 0; i < 60; i++) {
+        c190.tempK = 463.15;
+        c260.tempK = 533.15;
+        c540.tempK = 818.15;
+        c940.tempK = 1213.15;
+        simMn.step(0.05);
+      }
+      const noMeltK2 = !isSolidMoltenAtTemp(SPECIES.K2MnO4_s, c260.tempK, c260.moles) && (c260.moles.K2MnO4_s || 0) > 0.008 && (c260.moles.K3MnO4_s || 0) === 0;
+      const inertBelow200 = (c190.moles.K2MnO4_s || 0) === 0;
+      const cascade545Ok = (c540.moles.K3MnO4_s || 0) > 0.005 && (c540.moles.K2MnO3_s || 0) > 0.004 && (c540.moles.Mn2O3_s || 0) > 0.005 && (c540.moles.Mn3O4_s || 0) === 0;
+      const cascade940Ok = (c940.moles.Mn3O4_s || 0) > 0.015 && (c940.moles.K2O_s || 0) > 0.005;
+
+      // Hydrolysis check: K2MnO3 + H2O -> MnO2 + KOH; 2K3MnO4 + 2H2O -> MnO4^2- + MnO2 + OH-
+      const simHyd = new LabSimulation();
+      const bH1 = simHyd.createApparatus('beaker_250', 140, 427);
+      bH1.moles = { H2O_l: 1.5, K2MnO3_s: 0.01 };
+      const bH2 = simHyd.createApparatus('beaker_250', 300, 427);
+      bH2.moles = { H2O_l: 1.5, K3MnO4_s: 0.02 };
+      stepSeconds(simHyd, 1.5, 0.05);
+      const hydOk =
+        (bH1.moles.MnO2_s || 0) > 0.008 && (bH1.moles.OH_aq || 0) > 0.016 &&
+        (bH2.moles.MnO4_2_aq || 0) > 0.008 && (bH2.moles.MnO2_s || 0) > 0.008;
+
+      // 3) Unified Iron Spoon (stepVesselChemistry): Al fine powder -> Al2O3 (white_al), Sulfur -> blue flame -> SO2, KMnO4 -> K2MnO4 + MnO2
+      const simSp = new LabSimulation();
+      const bnAl = simSp.createApparatus('bunsen_burner', 200, 434);
+      simSp.setBurnerFlame(bnAl.id, 3);
+      const spAl = simSp.createApparatus('iron_spoon', 202, 326);
+      simSp.addReagentToVessel(spAl.id, 'al', 0.54, { silentAnim: true, fine: true });
+      const bnS = simSp.createApparatus('burner', 420, 434);
+      simSp.setBurnerFlame(bnS.id, 3);
+      const spS = simSp.createApparatus('iron_spoon', 422, 326);
+      simSp.addReagentToVessel(spS.id, 's', 0.8, { silentAnim: true });
+      const spKmn = simSp.createApparatus('iron_spoon', 640, 326);
+      const bnKmn = simSp.createApparatus('burner', 640, 434);
+      simSp.setBurnerFlame(bnKmn.id, 2);
+      simSp.addReagentToVessel(spKmn.id, 'kmno4', 0.6, { silentAnim: true });
+      stepSeconds(simSp, 0.85, 0.05);
+      const midFlameS = spS.flameColor;
+      stepSeconds(simSp, 3.65, 0.05);
+      const spoonAlOk = (spAl.moles.Al2O3_s || 0) > 0.002 && spAl.flameColor === 'white_al';
+      const spoonSOk = (spS.escapedGasMoles?.SO2_g || 0) > 0.002 && midFlameS === 'sulfur_blue';
+      const spoonKmnOk = (spKmn.moles.K2MnO4_s || 0) > 0.0005 && (spKmn.moles.MnO2_s || 0) > 0.0005;
+
+      assert(
+        'Prompt 45 invariants: I2 bypasses 134.8C stall to 184.3C boil, full Mn cascade (<200C inert, 260C K2MnO4 non-molten, 545C K2MnO3/blue K3MnO4/Mn2O3, 940C Mn3O4 + K2O, hydrolysis), unified Iron Spoon (Al/S/KMnO4)',
+        i2PastStallOk && i2BoilOk && inertBelow200 && noMeltK2 && cascade545Ok && cascade940Ok && hydOk && spoonAlOk && spoonSOk && spoonKmnOk,
+        `I2(t1=${(tBeforeBoil-273.15).toFixed(1)}C,end=${(bI2.tempK-273.15).toFixed(1)}C,boil=${bI2.wasBoiling}), Mn(inert=${inertBelow200},noMelt=${noMeltK2},545=${cascade545Ok}[K3=${(c540.moles.K3MnO4_s||0).toFixed(3)},Mn2O3=${(c540.moles.Mn2O3_s||0).toFixed(3)}],940=${cascade940Ok},hyd=${hydOk}), spoon(Al=${spoonAlOk},S=${spoonSOk}/${midFlameS},KMn=${spoonKmnOk})`
       );
     }
 

@@ -1513,21 +1513,32 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
     entries.sort((a, b) => b[1] - a[1]);
     const topSpId = entries[0][0];
     const sp = SPECIES[topSpId];
-    const moundCol =
+    let moundCol =
       topSpId === 'ZnO_s' && tempK >= (sp?.hotColorTempK || 573.15)
         ? sp?.hotColor || '#fef08a'
+        : sp?.meltTempK && tempK >= sp.meltTempK
+        ? sp?.moltenColor || sp?.color || '#cbd5e1'
         : sp?.color || '#cbd5e1';
+    if (topSpId === 'S_s' && tempK >= 493.15) {
+      moundCol = '#7c2d12';
+    } else if (topSpId === 'S_s' && tempK >= 433.15) {
+      moundCol = '#b45309';
+    }
 
     // Active combustion flame envelope above spoon bowl
     if ((item.burnTimer || 0) > 0.04) {
       const isFeSparks = item.flameColor === 'sparks_fe';
       const fCol =
-        item.flameColor === 'white_mg'
+        item.flameColor === 'white_mg' || item.flameColor === 'white_al'
           ? 'rgba(248, 250, 252, 0.98)'
           : item.flameColor === 'violet_k'
           ? 'rgba(192, 132, 252, 0.94)'
           : item.flameColor === 'cyan_zn'
           ? 'rgba(103, 232, 249, 0.92)'
+          : item.flameColor === 'sulfur_blue'
+          ? 'rgba(96, 165, 250, 0.90)'
+          : item.flameColor === 'sulfur_violet'
+          ? 'rgba(139, 92, 246, 0.94)'
           : item.flameColor === 'emerald_cu'
           ? 'rgba(52, 211, 153, 0.90)'
           : isFeSparks

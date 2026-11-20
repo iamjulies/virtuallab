@@ -20,7 +20,8 @@ import {
  */
 export function computeHeatCapacityJK(vessel) {
   const spec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
-  let cpTotal = spec.glassHeatCapacityJK || 80.0;
+  const baseCap = spec.glassHeatCapacityJK || 80.0;
+  let cpTotal = baseCap;
 
   for (const [id, n] of Object.entries(vessel.moles)) {
     if (n <= 0) continue;
@@ -29,7 +30,7 @@ export function computeHeatCapacityJK(vessel) {
       cpTotal += n * sp.cp;
     }
   }
-  return Math.max(spec.glassHeatCapacityJK * 0.7, cpTotal);
+  return Math.max(baseCap * 0.7, cpTotal);
 }
 
 /**
@@ -507,20 +508,43 @@ export function stepVesselThermodynamics(
       }
     }
 
-    // 1f) Iodine sublimation I2(s) -> I2(g): virtually fume-free below 40 C in open air; vigorous violet plumes >= 40-50 C
-    if (nI2Solid > 1e-9 && vessel.tempK >= 290.15 && (!vessel.isStoppered || hasOpenTube) && (nWater < 0.06 || vessel.tempK >= 338.15)) {
+    // 1f) Iodine 3-regime open evaporation:
+    //  - Regime A (< 113.7 C / 386.85 K): Solid I2(s) -> I2(g) sublimation (silent < 40 C, gentle violet plumes 40..113.7 C)
+    //  - Regime B (113.7..184.3 C / 386.85..457.45 K): Molten I2(l) intense surface violet steaming WITHOUT stalling below bp!
+    //  - Regime C (>= 184.3 C / 457.45 K): Handled by Regime 2 true bulk boiling clamp
+    if (nI2Solid > 1e-9 && vessel.tempK >= 290.15 && vessel.tempK < 457.45 && (!vessel.isStoppered || hasOpenTube) && (nWater < 0.06 || vessel.tempK >= 338.15)) {
       let evapI2MolS = 8.0e-8; // Room-temp solid vapor emission stays silent (< plume rateMin 2.5e-6)
-      if (vessel.tempK >= 313.15) {
-        const pSubBar = 0.00041 * Math.exp((62400 / CONSTANTS.R_J_MOL_K) * (1 / 298.15 - 1 / Math.min(480, vessel.tempK)));
-        const boost = vessel.tempK >= 323.15 ? 1.8 : 0.75;
-        evapI2MolS = (effAreaCm2 / 10.0) * 0.055 * pSubBar * boost * (isStirred ? 1.35 : 1.0);
-      }
-      const sublI2 = Math.min(nI2Solid, evapI2MolS * dt);
-      if (sublI2 > 1e-12) {
-        vessel.moles.I2_s = Math.max(0, nI2Solid - sublI2);
-        if (vessel.moles.I2_s < 1e-13) delete vessel.moles.I2_s;
-        i2ProducedMol += sublI2;
-        evapCoolingJ -= sublI2 * 62400;
+      let rawCoolingJ = 0;
+      if (vessel.tempK >= 386.85) {
+        // Molten surface evaporation: thick violet vapor scaling smoothly from 113.7 C -> 184.3 C without runaway cooling stall
+        const moltenFrac = Math.max(0, Math.min(1, (vessel.tempK - 386.85) / (457.45 - 386.85)));
+        const surfScale = Math.max(0.45, Math.min(2.2, effAreaCm2 / 14.0));
+        evapI2MolS = (1.1e-4 + 4.2e-4 * moltenFrac * moltenFrac) * surfScale * (isStirred ? 1.35 : 1.0);
+        const sublI2 = Math.min(nI2Solid * Math.min(0.45, 0.25 * dt), Math.min(nI2Solid, evapI2MolS * dt));
+        if (sublI2 > 1e-12) {
+          vessel.moles.I2_s = Math.max(0, nI2Solid - sublI2);
+          if (vessel.moles.I2_s < 1e-13) delete vessel.moles.I2_s;
+          i2ProducedMol += sublI2;
+          rawCoolingJ = sublI2 * 41800;
+          // Bound sub-boiling evaporative heat loss so burner drives molten I2 cleanly from 113.7 C to bp 184.3 C
+          const maxCoolBudget = effectiveBurnerW > 10 ? Math.max(8 * dt, effectiveBurnerW * 0.22 * dt) : rawCoolingJ;
+          evapCoolingJ -= Math.min(rawCoolingJ, maxCoolBudget);
+        }
+      } else {
+        if (vessel.tempK >= 313.15) {
+          const pSubBar = 0.00041 * Math.exp((62400 / CONSTANTS.R_J_MOL_K) * (1 / 298.15 - 1 / vessel.tempK));
+          const boost = vessel.tempK >= 348.15 ? 1.15 : 0.75;
+          evapI2MolS = (effAreaCm2 / 14.0) * 0.012 * pSubBar * boost * (isStirred ? 1.35 : 1.0);
+        }
+        const sublI2 = Math.min(nI2Solid, evapI2MolS * dt);
+        if (sublI2 > 1e-12) {
+          vessel.moles.I2_s = Math.max(0, nI2Solid - sublI2);
+          if (vessel.moles.I2_s < 1e-13) delete vessel.moles.I2_s;
+          i2ProducedMol += sublI2;
+          const rawSubCoolJ = sublI2 * 62400;
+          const maxSubBudget = effectiveBurnerW > 10 ? Math.max(4 * dt, effectiveBurnerW * 0.16 * dt) : rawSubCoolJ;
+          evapCoolingJ -= Math.min(rawSubCoolJ, maxSubBudget);
+        }
       }
     }
   }
