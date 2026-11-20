@@ -39,14 +39,43 @@ function getElectrodeLiquidInfo(items, elec) {
   return { vessel: v, liqL, isMoltenNaCl: false };
 }
 
-function findBridgingSaltBridge(items, vIdA, vIdB) {
-  return items.find(
-    (sb) =>
-      sb.kind === 'salt_bridge' &&
-      !sb.isBroken &&
-      ((sb.vesselAId === vIdA && sb.vesselBId === vIdB) ||
-        (sb.vesselAId === vIdB && sb.vesselBId === vIdA))
+function findBridgingSaltBridgePath(items, vIdA, vIdB) {
+  if (!vIdA || !vIdB || vIdA === vIdB) return [];
+  const validBridges = items.filter(
+    (sb) => sb.kind === 'salt_bridge' && !sb.isBroken && sb.vesselAId && sb.vesselBId && sb.vesselAId !== sb.vesselBId
   );
+  const visited = new Set([vIdA]);
+  const queue = [{ vId: vIdA, path: [] }];
+  while (queue.length > 0) {
+    const { vId, path } = queue.shift();
+    for (const sb of validBridges) {
+      const nextId = sb.vesselAId === vId ? sb.vesselBId : sb.vesselBId === vId ? sb.vesselAId : null;
+      if (!nextId || visited.has(nextId)) continue;
+      if (nextId !== vIdB) {
+        // Intermediate series vessel must contain conductive aqueous liquid electrolyte
+        const midV = items.find((it) => it.id === nextId && it.kind === 'vessel' && !it.isShattered);
+        if (!midV) continue;
+        const midLiq = computeLiquidVolumeL(midV.moles || {}, midV.tempK || 298.15);
+        const midIon =
+          (midV.moles?.H_aq || 0) +
+          (midV.moles?.OH_aq || 0) +
+          (midV.moles?.Na_aq || 0) +
+          (midV.moles?.K_aq || 0) +
+          (midV.moles?.Cu2_aq || 0) +
+          (midV.moles?.Ag_aq || 0) +
+          (midV.moles?.Zn2_aq || 0) +
+          (midV.moles?.Cl_aq || 0) +
+          (midV.moles?.SO4_2_aq || 0) +
+          (midV.moles?.NO3_aq || 0);
+        if (midLiq < 0.002 || midIon < 1e-5) continue;
+      }
+      const nextPath = [...path, sb];
+      if (nextId === vIdB) return nextPath;
+      visited.add(nextId);
+      queue.push({ vId: nextId, path: nextPath });
+    }
+  }
+  return null;
 }
 
 /**
@@ -168,15 +197,15 @@ export function stepElectrochemistry(sim, dt) {
   for (const sb of bridges) {
     sb.activeCurrentA = 0;
     const valid = items.filter(
-      (v) => v.kind === 'vessel' && !v.isShattered && !APPARATUS[v.typeId]?.isMortar && Math.abs(v.y - sb.y) <= 150
+      (v) => v.kind === 'vessel' && !v.isShattered && !APPARATUS[v.typeId]?.isMortar && Math.abs(v.y - sb.y) <= 170
     );
     const leftCands = valid
-      .filter((v) => v.x <= sb.x + 24 && Math.abs(v.x - sb.x) <= 145)
-      .sort((a, b) => Math.abs(a.x - (sb.x - 44)) - Math.abs(b.x - (sb.x - 44)));
+      .filter((v) => v.x <= sb.x + 28 && Math.abs(v.x - sb.x) <= 175)
+      .sort((a, b) => Math.abs(a.x - (sb.x - 48)) - Math.abs(b.x - (sb.x - 48)));
     const bestA = leftCands[0] || null;
     const rightCands = valid
-      .filter((v) => (!bestA || v.id !== bestA.id) && v.x >= sb.x - 24 && Math.abs(v.x - sb.x) <= 145)
-      .sort((a, b) => Math.abs(a.x - (sb.x + 44)) - Math.abs(b.x - (sb.x + 44)));
+      .filter((v) => (!bestA || v.id !== bestA.id) && v.x >= sb.x - 28 && Math.abs(v.x - sb.x) <= 175)
+      .sort((a, b) => Math.abs(a.x - (sb.x + 48)) - Math.abs(b.x - (sb.x + 48)));
     const bestB = rightCands[0] || null;
 
     if (bestA && bestB && bestA.id !== bestB.id) {
@@ -428,19 +457,27 @@ export function stepElectrochemistry(sim, dt) {
         },
       ];
     } else {
-      // 2. Two-vessel DC Electrolysis across salt bridge (diaphragm brine / chloralkali) OR Galvanic discharge
-      const bridge = findBridgingSaltBridge(items, infoPos.vessel.id, infoNeg.vessel.id);
+      // 2. Multi-vessel DC Electrolysis across 1 or more salt bridges in series OR Galvanic discharge
+      const bridgePath = findBridgingSaltBridgePath(items, infoPos.vessel.id, infoNeg.vessel.id);
       const vSet = Math.max(0, Math.min(12, sup.voltageV ?? 6.0));
       const e1 = computeHalfCellPotentialV(elPos.material, infoPos.vessel, infoPos.liqL);
       const e2 = computeHalfCellPotentialV(elNeg.material, infoNeg.vessel, infoNeg.liqL);
       const emfV = Math.max(0, Math.abs(e1 - e2));
       const vPos = infoPos.vessel;
       const cClPos = (vPos.moles.Cl_aq || 0) / Math.max(1e-5, infoPos.liqL);
+      const hasBridgeChain = Boolean(bridgePath && bridgePath.length >= 1);
       const forceTwoVesselElectrolysis = Boolean(
-        sup.powerOn && bridge && vSet >= 1.8 && (cClPos >= 0.45 || vSet > emfV + 0.3)
+        hasBridgeChain && (sup.powerOn || emfV < 0.02) && vSet >= 1.8 && (cClPos >= 0.45 || vSet > emfV + 0.3)
       );
       if (forceTwoVesselElectrolysis) {
-        stepTwoVesselElectrolysis(sim, sup, elPos, elNeg, infoPos, infoNeg, bridge, dt);
+        if (!sup.powerOn) {
+          sup.circuitMode = 'electrolysis';
+          sup.measuredV = 0;
+          sup.measuredCurrentA = 0;
+          sup.currentDensityADm2 = 0;
+        } else {
+          stepTwoVesselElectrolysis(sim, sup, elPos, elNeg, infoPos, infoNeg, bridgePath, dt);
+        }
       } else {
         stepGalvanicInstrument(sim, sup, elPos, elNeg, infoPos, infoNeg, items, dt, true);
       }
@@ -529,7 +566,8 @@ export function stepElectrochemistry(sim, dt) {
   }
 }
 
-function stepTwoVesselElectrolysis(sim, sup, elPos, elNeg, infoPos, infoNeg, bridge, dt) {
+function stepTwoVesselElectrolysis(sim, sup, elPos, elNeg, infoPos, infoNeg, bridgeOrPath, dt) {
+  const bridgeList = Array.isArray(bridgeOrPath) ? bridgeOrPath : bridgeOrPath ? [bridgeOrPath] : [];
   const CATHODE_AREA_DM2 = 0.08;
   const vPos = infoPos.vessel;
   const vNeg = infoNeg.vessel;
@@ -537,7 +575,7 @@ function stepTwoVesselElectrolysis(sim, sup, elPos, elNeg, infoPos, infoNeg, bri
   const rheoOhm = Math.max(0.2, Math.min(25, sup.rheostatOhm ?? 2.0));
   const condPos = Math.min(1.0, 0.08 + 0.35 * ((vPos.moles.Cl_aq || 0) + (vPos.moles.Na_aq || 0) + (vPos.moles.SO4_2_aq || 0) + (vPos.moles.H_aq || 0) + (vPos.moles.OH_aq || 0)) / Math.max(0.05, infoPos.liqL));
   const condNeg = Math.min(1.0, 0.08 + 0.35 * ((vNeg.moles.Cl_aq || 0) + (vNeg.moles.Na_aq || 0) + (vNeg.moles.SO4_2_aq || 0) + (vNeg.moles.H_aq || 0) + (vNeg.moles.OH_aq || 0)) / Math.max(0.05, infoNeg.liqL));
-  const effRes = rheoOhm + 1.8 / Math.max(0.04, Math.min(condPos, condNeg));
+  const effRes = rheoOhm + (1.8 * Math.max(1, bridgeList.length)) / Math.max(0.04, Math.min(condPos, condNeg));
   const decompV = 1.65;
   const currentA = vSet > decompV ? Math.min(5.0, (vSet - decompV) / effRes) : 0;
   const jADm2 = currentA / CATHODE_AREA_DM2;
@@ -549,7 +587,9 @@ function stepTwoVesselElectrolysis(sim, sup, elPos, elNeg, infoPos, infoNeg, bri
   elNeg.polarityLabel = `- Cathode (${jADm2.toFixed(1)} A/dm²)`;
   elNeg.currentDensityADm2 = jADm2;
   if (currentA <= 1e-4) return;
-  bridge.activeCurrentA = Math.max(bridge.activeCurrentA || 0, currentA);
+  for (const sb of bridgeList) {
+    sb.activeCurrentA = Math.max(sb.activeCurrentA || 0, currentA);
+  }
 
   const neMol = (currentA * dt) / CONSTANTS.FARADAY_C_MOL;
   let cathDesc = '2H₂O + 2e⁻ → H₂(g)↑ + 2OH⁻';
@@ -628,8 +668,8 @@ function stepTwoVesselElectrolysis(sim, sup, elPos, elNeg, infoPos, infoNeg, bri
 }
 
 function stepGalvanicInstrument(sim, inst, elPos, elNeg, infoPos, infoNeg, items, dt, allowLoad = false, loadOhm = 2.2) {
-  const bridge = findBridgingSaltBridge(items, infoPos.vessel.id, infoNeg.vessel.id);
-  if (!bridge) {
+  const bridgePath = findBridgingSaltBridgePath(items, infoPos.vessel.id, infoNeg.vessel.id);
+  if (!bridgePath || bridgePath.length === 0) {
     inst.circuitMode = 'open_circuit';
     inst.measuredV = 0;
     inst.measuredCurrentA = 0;
@@ -662,7 +702,9 @@ function stepGalvanicInstrument(sim, inst, elPos, elNeg, infoPos, infoNeg, items
     (cathInfo.vessel.moles.H_aq || 0) > 1e-5;
   const currentA = hasCathIon ? Math.min(2.0, emfV / Math.max(0.2, loadOhm)) : 0;
   inst.measuredCurrentA = currentA;
-  if (currentA > 1e-5) bridge.activeCurrentA = Math.max(bridge.activeCurrentA || 0, currentA);
+  if (currentA > 1e-5) {
+    for (const sb of bridgePath) sb.activeCurrentA = Math.max(sb.activeCurrentA || 0, currentA);
+  }
   if (currentA <= 1e-5) return;
 
   const neMol = (currentA * dt) / CONSTANTS.FARADAY_C_MOL;

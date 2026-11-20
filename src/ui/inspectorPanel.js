@@ -1472,7 +1472,7 @@ export class InspectorPanel {
                 : ''
             }
             ${
-              spec.invertible && !item.isStoppered
+              spec.invertible
                 ? `<button type="button" id="ins-invert" class="px-2.5 py-1.5 rounded-lg border ${
                     item.isInverted ? 'border-sky-500/60 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface'
                   } text-xs font-medium hover:border-accent">${

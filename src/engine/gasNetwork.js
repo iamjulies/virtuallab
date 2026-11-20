@@ -750,27 +750,66 @@ export function stepVesselGasAndPressure(
     vessel._openRightEnd = false;
   }
 
-  // Open vessel or partially-open dual-ended tube vents to room; closed porcelain crucible acts as semi-sealed vessel
+  // 1. Open vessel (or unconnected 1-hole stopper) retention vs plume venting
   if (!effectiveSealed || flowThroughVentOnly) {
-    if (flowThroughVentOnly) {
-      const liqMlF = computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000;
-      const solMlF = computeSolidVolumeMl(vessel.moles);
-      const headLF = Math.max(0.015, (spec.maxVolumeMl - Math.min(spec.maxVolumeMl * 0.94, liqMlF + solMlF)) / 1000);
-      const keepMol = Math.max(0.0025, (env.pressureBar * headLF) / (CONSTANTS.R_L_BAR_MOL_K * Math.max(250, vessel.tempK)));
-      vessel.headspaceGasMoles = vessel.headspaceGasMoles || createEmptyGasMap();
+    const liqMlF = computeLiquidVolumeL(vessel.moles, vessel.tempK) * 1000;
+    const solMlF = computeSolidVolumeMl(vessel.moles);
+    const headLF = Math.max(0.015, (spec.maxVolumeMl - Math.min(spec.maxVolumeMl * 0.94, liqMlF + solMlF)) / 1000);
+    const headCapMol = Math.max(0.0005, (env.pressureBar * headLF) / (CONSTANTS.R_L_BAR_MOL_K * Math.max(200, vessel.tempK || env.tempK || 298.15)));
+    vessel.headspaceGasMoles = vessel.headspaceGasMoles || createEmptyGasMap();
+
+    const isNarrowFlask =
+      !vessel.isInverted &&
+      !spec.hasLid &&
+      !spec.isMortar &&
+      ((spec.neckRadius || spec.width * 0.45) <= 22 || vessel.typeId?.startsWith('erlenmeyer') || vessel.typeId?.startsWith('round_flask'));
+    const isCoolAmbient = (vessel.tempK || env.tempK || 298.15) < 355.0;
+    const EVAP_OR_VAPOR_SET = new Set(['H2O_g', 'C2H5OH_g', 'HCl_g', 'HBr_g', 'HI_g', 'HNO3_g', 'SO3_g', 'Br2_g', 'I2_g']);
+
+    for (const g of NON_STEAM_GASES) {
+      const m = produced[g] || 0;
+      if (m <= 0) continue;
+      if (flowThroughVentOnly) {
+        // Connected/open 1-hole bung traps generated gases in headspace up to 1 atm; excess vents through bore
+        vessel.headspaceGasMoles[g] = (vessel.headspaceGasMoles[g] || 0) + m;
+      } else if (isNarrowFlask && isCoolAmbient && !EVAP_OR_VAPOR_SET.has(g) && getGasRelativeAirDensity(g) > 1.25) {
+        // Unstoppered narrow-neck upright flask retains ~35% of dense generated gases (Cl2, CO2, NO2, SO2) in its trough
+        const trapM = m * 0.35;
+        const escM = m - trapM;
+        vessel.headspaceGasMoles[g] = (vessel.headspaceGasMoles[g] || 0) + trapM;
+        vessel.escapedGasMoles[g] = (vessel.escapedGasMoles[g] || 0) + escM;
+        vessel._stepGasOutMol = (vessel._stepGasOutMol || 0) + escM;
+      } else {
+        vessel.escapedGasMoles[g] = (vessel.escapedGasMoles[g] || 0) + m;
+        vessel._stepGasOutMol = (vessel._stepGasOutMol || 0) + m;
+      }
+    }
+
+    if (totalSteam > 0) {
+      vessel._stepGasOutMol = (vessel._stepGasOutMol || 0) + totalSteam;
+      if (env.tempK < CONSTANTS.T_FREEZE_WATER_K) {
+        vessel.escapedFrostH2OMol = (vessel.escapedFrostH2OMol || 0) + totalSteam;
+      } else {
+        vessel.escapedGasMoles.H2O_g = (vessel.escapedGasMoles.H2O_g || 0) + totalSteam;
+      }
+    }
+
+    // Any excess headspace volume beyond 1-atm capacity overflows cleanly out the rim/bore
+    let totalHead = 0;
+    for (const g of NON_STEAM_GASES) totalHead += vessel.headspaceGasMoles[g] || 0;
+    if (totalHead > headCapMol) {
+      const exFrac = (totalHead - headCapMol) / totalHead;
       for (const g of NON_STEAM_GASES) {
         const cur = vessel.headspaceGasMoles[g] || 0;
-        if (cur > keepMol) {
-          const ex = cur - keepMol;
-          vessel.headspaceGasMoles[g] = keepMol;
+        if (cur > 1e-12) {
+          const ex = cur * exFrac;
+          vessel.headspaceGasMoles[g] = cur - ex;
           vessel.escapedGasMoles[g] = (vessel.escapedGasMoles[g] || 0) + ex;
           vessel._stepGasOutMol = (vessel._stepGasOutMol || 0) + ex;
         }
       }
-      ventToRoom();
-      return events;
     }
-    ventToRoom();
+    vessel.internalPressureBar = env.pressureBar;
     return events;
   }
 
@@ -853,14 +892,11 @@ export function stepVesselGasAndPressure(
       return events;
     } else if (canAcceptTargetVessel) {
       target.headspaceGasMoles = target.headspaceGasMoles || createEmptyGasMap();
-      const targetTrapsUnabsorbed = Boolean(target.isStoppered && !(target.connectedTargetId || target.connectedSyringeId));
       const storeUnabsorbedGas = (gasKey, amt) => {
         if (amt <= 0) return;
-        if (targetTrapsUnabsorbed) {
-          target.headspaceGasMoles[gasKey] = (target.headspaceGasMoles[gasKey] || 0) + amt;
-        } else {
-          target.escapedGasMoles[gasKey] = (target.escapedGasMoles[gasKey] || 0) + amt;
-        }
+        // Delivered gases always enter target headspace first; stepOpenGasBuoyancy & displacement handle overflow/diffusion
+        target.headspaceGasMoles[gasKey] = (target.headspaceGasMoles[gasKey] || 0) + amt;
+        target.gasFlushInMol = (target.gasFlushInMol || 0) + amt;
       };
       // Condense steam, scrub HCl(g) onto dry CuSO4(s) or water, dissolve NH3(g) into water, trap or vent permanent gases
       let heatAddedJ = 0;
@@ -1419,9 +1455,20 @@ export function stepOpenGasBuoyancy(vessel, env, dt) {
     }
   }
 
-  if (vessel.isStoppered || isClosedLid || (vessel.isInverted && vessel.submergedInTroughId)) {
+  const isSolidStoppered = Boolean(vessel.isStoppered && vessel.stopperMode === 'solid');
+  if (isSolidStoppered || isClosedLid || (vessel.isInverted && vessel.submergedInTroughId)) {
     return;
   }
+  const hasOutTube = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);
+  if (vessel.isStoppered && hasOutTube) {
+    return;
+  }
+  const holeApertureScale = vessel.isStoppered && vessel.stopperMode !== 'solid' && !hasOutTube ? 0.16 : 1.0;
+  const mouthRadiusPx = vSpecB?.neckRadius || (vSpecB?.width ? vSpecB.width * 0.36 : 22);
+  const mouthFactor = Math.min(1.9, Math.max(0.45, mouthRadiusPx / 18.0));
+  const T = Math.max(200, vessel.tempK || env?.tempK || CONSTANTS.T_STD_K);
+  const pBar = Math.max(0.25, env?.pressureBar || CONSTANTS.P_STD_BAR);
+  const tpFactor = Math.pow(T / 298.15, 1.35) * (1.0 / pBar);
   const head = vessel.headspaceGasMoles;
   if (!head) return;
 
@@ -1459,16 +1506,26 @@ export function stepOpenGasBuoyancy(vessel, env, dt) {
     const relD = getGasRelativeAirDensity(gId);
     let leakRateS = 0;
     if (vessel.isInverted) {
-      // Inverted in open air (not in water trough): light gases (H2, NH3) float upward inside the inverted dome;
-      // heavy gases (Cl2, NO2, O2, HCl, CO2) pour downward out of the mouth
-      leakRateS = relD < 0.96 ? 0.032 * Math.sqrt(relD) : 0.35 + 1.35 * (relD - 0.95);
+      // Inverted in open air: light gases (d < 1) stay buoyantly trapped at top dome; heavy gases (d > 1) pour out downward
+      leakRateS =
+        relD < 0.96
+          ? 0.018 * Math.sqrt(Math.max(0.05, relD)) * tpFactor
+          : (0.45 + 1.35 * (relD - 0.95)) * Math.sqrt(T / 298.15);
     } else if (vSpecB?.isHorizontalTube && vessel.connectedFromId) {
       // Flowing plug-flow stream through open-ended horizontal quartz tube retains reactive carrier concentration briefly
-      leakRateS = relD < 0.96 ? 0.55 + 0.35 * (1 - relD) : 0.16 / Math.max(0.55, relD);
+      leakRateS = relD < 0.96 ? 0.55 + 0.35 * (1 - relD) : 0.14 / Math.max(0.55, relD);
     } else {
-      // Upright open vessel: light gases shoot upward quickly; heavy gases linger in the bottom trough
-      leakRateS = relD < 0.96 ? 1.05 + 1.4 * (1 - relD) : 0.14 / Math.max(0.55, relD);
+      // Upright open vessel: light gases (d < 1) escape upward quickly; heavy gases (d > 1) linger & diffuse slowly by T/P/M
+      if (relD < 0.96) {
+        leakRateS = (1.05 + 1.45 * (1 - relD)) * Math.pow(T / 298.15, 0.85) * mouthFactor;
+      } else if (relD > 1.18) {
+        leakRateS = (0.014 / Math.pow(relD, 0.85)) * tpFactor * mouthFactor;
+      } else {
+        // Near-air density (O2, CO, N2): moderate thermal eddy diffusion
+        leakRateS = 0.095 * tpFactor * mouthFactor;
+      }
     }
+    leakRateS *= holeApertureScale;
     const lost = n * (1 - Math.exp(-leakRateS * dt));
     if (lost > 1e-12) {
       head[gId] = Math.max(0, n - lost);

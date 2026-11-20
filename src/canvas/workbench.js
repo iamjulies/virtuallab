@@ -29,6 +29,7 @@ import {
 } from '../engine/apparatusTools.js';
 import { renderActiveReagentTransfer } from './reagentRenderer.js';
 import { soundEngine } from '../audio/soundEngine.js';
+import { FluidGasOverlay } from './fluidGasOverlay.js';
 import {
   beginCanvasLabelFrame,
   flushCanvasLabelFrame,
@@ -100,6 +101,7 @@ export class LabWorkbenchCanvas {
     this.shakeDuration = 0;
     this.shakeMagnitude = 0;
     this.lastRenderMs = performance.now();
+    this.fluidGasOverlay = new FluidGasOverlay();
 
     // Magnifier / Camera Zoom & Loupe state
     this.zoomMode = false;
@@ -1948,6 +1950,26 @@ export class LabWorkbenchCanvas {
       'wheel',
       (e) => {
         const pt = this.clientToLogical(e.clientX, e.clientY);
+        if (e.ctrlKey && !e.metaKey) {
+          const heldItem = this.dragState ? this.sim.getItem(this.dragState.itemId) : null;
+          const hit = heldItem || this.hitTestItem(pt.x, pt.y);
+          const hSpec = hit ? APPARATUS[hit.typeId] : null;
+          if (hit && (hSpec?.invertible || hSpec?.flippable)) {
+            e.preventDefault();
+            if (this._wheelAccum.key !== `ctrl-flip:${hit.id}`) this._wheelAccum = { key: `ctrl-flip:${hit.id}`, sum: 0 };
+            this._wheelAccum.sum += e.deltaY;
+            if (Math.abs(this._wheelAccum.sum) >= 60) {
+              this._wheelAccum.sum = 0;
+              soundEngine.playUiClick();
+              if (hSpec.invertible) {
+                this.sim.toggleVesselInverted(hit.id);
+              } else {
+                this.sim.flipItemLR(hit.id);
+              }
+            }
+            return;
+          }
+        }
         if (!this.zoomMode && this.zoomScale <= 1.01 && !e.ctrlKey && !e.metaKey) {
           if (this.handleCanvasWheel(pt, e.deltaY, Boolean(e.shiftKey))) {
             e.preventDefault();
@@ -2595,7 +2617,17 @@ export class LabWorkbenchCanvas {
       }
     }
 
-    // 5. Render particles (bubbles, steam, Na yellow flame, sparks, glass shards)
+    // 5. Render WebGL2 Eulerian Stable Fluids gas/thermal field + discrete particles
+    if (this.fluidGasOverlay?.enabled) {
+      if (this._prevFluidTime !== timeNow) {
+        const fluidDt = Math.max(0.008, Math.min(0.05, timeNow - (this._prevFluidTime ?? timeNow - 0.016)));
+        this._prevFluidTime = timeNow;
+        this.fluidGasOverlay.stepAndRender(this.sim, fluidDt, this.isDark);
+      }
+      ctx.save();
+      ctx.drawImage(this.fluidGasOverlay.canvas, 0, 0, BENCH_LOGICAL_W, BENCH_LOGICAL_H);
+      ctx.restore();
+    }
     this.particles.render(ctx);
 
     // 6. Render visual pick target rings when awaiting user direct click on bench

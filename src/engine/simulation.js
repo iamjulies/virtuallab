@@ -2021,12 +2021,22 @@ export class LabSimulation {
         this.disconnectSyringe(v.id);
       }
       if (!v.isStoppered) {
-        for (const g of ALL_GASES) {
-          v.escapedGasMoles[g] = (v.escapedGasMoles[g] || 0) + (v.headspaceGasMoles[g] || 0);
-          v.headspaceGasMoles[g] = 0;
+        // Equalize ONLY excess gauge overpressure on unstoppering; keep ~1 atm gas in headspace for realistic density diffusion!
+        const pEnv = this.environment.pressureBar || CONSTANTS.P_STD_BAR;
+        const pIn = v.internalPressureBar || pEnv;
+        const releaseFrac = pIn > pEnv + 0.005 ? Math.min(1, (pIn - pEnv) / pIn) : 0;
+        if (releaseFrac > 0) {
+          for (const g of ALL_GASES) {
+            const cur = v.headspaceGasMoles[g] || 0;
+            if (cur > 0) {
+              const ex = cur * releaseFrac;
+              v.escapedGasMoles[g] = (v.escapedGasMoles[g] || 0) + ex;
+              v.headspaceGasMoles[g] = cur - ex;
+            }
+          }
         }
         v.sealedAirMoles = null;
-        v.internalPressureBar = this.environment.pressureBar;
+        v.internalPressureBar = pEnv;
       }
     }
     if (!opts.silent) this.emitChange();
@@ -2122,6 +2132,27 @@ export class LabSimulation {
     return true;
   }
 
+  ensureAttachedStopper(vesselId, side = 'main', mode = 'holed') {
+    const v = this.getItem(vesselId);
+    if (!v || v.kind !== 'vessel' || v.isShattered) return null;
+    const spec = APPARATUS[v.typeId];
+    if (!spec?.stopperable) return null;
+    const chosenSide = spec.hasTwoEnds ? (side === 'left' || side === 'right' ? side : 'right') : 'main';
+    let st = this.items.find(
+      (it) => it.kind === 'rubber_stopper' && it.attachedToId === v.id && (it.attachedSide || 'main') === chosenSide
+    );
+    if (!st) {
+      const slot = this.getMouthSlotCoords(v, chosenSide) || { x: v.x, y: v.y - 40 };
+      st = this.createApparatus('rubber_stopper', slot.x, slot.y, { silent: true });
+      st.stopperMode = mode === 'solid' ? 'solid' : 'holed';
+      this.attachRubberStopper(st.id, v.id, chosenSide);
+    } else if (mode && st.stopperMode !== mode) {
+      st.stopperMode = mode === 'solid' ? 'solid' : 'holed';
+      v.stopperMode = st.stopperMode;
+    }
+    return st;
+  }
+
   toggleStopper(vesselId, side = null) {
     const v = this.getItem(vesselId);
     if (!v || v.kind !== 'vessel' || v.isShattered) return false;
@@ -2130,60 +2161,43 @@ export class LabSimulation {
 
     if (spec.hasTwoEnds && (side === 'left' || side === 'right')) {
       const flag = side === 'left' ? 'leftStoppered' : 'rightStoppered';
-      v[flag] = !v[flag];
-      if (!v[flag] && (v.connectedPortSide || (v.flippedX ? 'left' : 'right')) === side) {
-        this.disconnectSyringe(v.id);
-      }
-      if (!v[flag]) {
+      if (v[flag]) {
+        v[flag] = false;
+        if ((v.connectedPortSide || (v.flippedX ? 'left' : 'right')) === side) {
+          this.disconnectSyringe(v.id);
+        }
         for (const it of this.items) {
           if (it.kind === 'rubber_stopper' && it.attachedToId === v.id && (it.attachedSide || 'right') === side) {
-            it.attachedToId = null;
-            it.attachedSide = null;
-            it.fallStartY = it.y;
+            this.detachRubberStopper(it.id, { silent: true });
           }
         }
+      } else {
+        this.ensureAttachedStopper(v.id, side, 'solid');
       }
       v.isStoppered = Boolean(v.leftStoppered && v.rightStoppered);
-      if (!v.isStoppered) {
-        for (const g of ALL_GASES) {
-          v.escapedGasMoles[g] = (v.escapedGasMoles[g] || 0) + (v.headspaceGasMoles[g] || 0);
-          v.headspaceGasMoles[g] = 0;
-        }
-        v.sealedAirMoles = null;
-        v.internalPressureBar = this.environment.pressureBar;
-      }
       this.emitChange();
       return true;
     }
 
     if (v.isStoppered) {
-      v.isStoppered = false;
-      v.leftStoppered = false;
-      v.rightStoppered = false;
       this.disconnectSyringe(v.id);
-      for (const it of this.items) {
-        if (it.kind === 'rubber_stopper' && it.attachedToId === v.id) {
-          it.attachedToId = null;
-          it.attachedSide = null;
-          it.fallStartY = it.y;
-        }
+      const attached = this.items.filter((it) => it.kind === 'rubber_stopper' && it.attachedToId === v.id);
+      if (attached.length > 0) {
+        for (const st of attached) this.detachRubberStopper(st.id, { silent: true });
+      } else {
+        v.isStoppered = false;
+        v.leftStoppered = false;
+        v.rightStoppered = false;
+        v.sealedAirMoles = null;
+        v.internalPressureBar = this.environment.pressureBar;
       }
-      for (const g of ALL_GASES) {
-        v.escapedGasMoles[g] = (v.escapedGasMoles[g] || 0) + (v.headspaceGasMoles[g] || 0);
-        v.headspaceGasMoles[g] = 0;
-      }
-      v.sealedAirMoles = null;
-      v.internalPressureBar = this.environment.pressureBar;
     } else {
-      v.isStoppered = true;
       if (spec.hasTwoEnds) {
-        v.leftStoppered = true;
-        v.rightStoppered = true;
+        this.ensureAttachedStopper(v.id, 'left', 'solid');
+        this.ensureAttachedStopper(v.id, 'right', 'solid');
+      } else {
+        this.ensureAttachedStopper(v.id, 'main', 'solid');
       }
-      v.overflowRateMlS = 0;
-      v.wasOverflowing = false;
-      v.sealedAirMoles = null;
-      this.checkOverflow(v);
     }
     this.emitChange();
     return true;
@@ -2222,14 +2236,18 @@ export class LabSimulation {
         v.connectedPortSide ||
         (inSide ? (inSide === 'left' ? 'right' : 'left') : v.flippedX ? 'left' : 'right');
       v.connectedPortSide = side;
-      if (side === 'left') v.leftStoppered = true;
-      else v.rightStoppered = true;
+      this.ensureAttachedStopper(v.id, side, 'holed');
       // When invoked without explicit side (e.g. preset workflow) and not part of an active flow-through train, seal opposite end so gas drives downstream cleanly
-      if (!opts.side && !v.connectedFromId && !v.leftStoppered && side === 'right') v.leftStoppered = true;
-      if (!opts.side && !v.connectedFromId && !v.rightStoppered && side === 'left') v.rightStoppered = true;
+      if (!opts.side && !v.connectedFromId && !v.leftStoppered && side === 'right') {
+        this.ensureAttachedStopper(v.id, 'left', 'solid');
+      }
+      if (!opts.side && !v.connectedFromId && !v.rightStoppered && side === 'left') {
+        this.ensureAttachedStopper(v.id, 'right', 'solid');
+      }
       v.isStoppered = Boolean(v.leftStoppered && v.rightStoppered);
     } else {
-      v.isStoppered = true;
+      // Unified single stopper system: attach a real removable holed rubber_stopper item
+      this.ensureAttachedStopper(v.id, 'main', 'holed');
     }
     v.overflowRateMlS = 0;
     v.wasOverflowing = false;
@@ -2240,8 +2258,8 @@ export class LabSimulation {
     }
     target.connectedFromId = v.id;
 
-    // Vent non-steam headspace equilibrium into syringe
-    if (target.kind === 'gas_syringe') {
+    // Only vent pressurized excess into syringe on initial connection (do not suck quiescent gas prematurely)
+    if (target.kind === 'gas_syringe' && (v.internalPressureBar || this.environment.pressureBar) > this.environment.pressureBar + 0.005) {
       for (const g of NON_STEAM_GASES) {
         if (v.headspaceGasMoles[g] > 0) {
           target.gasMoles[g] = (target.gasMoles[g] || 0) + v.headspaceGasMoles[g];
@@ -2339,9 +2357,7 @@ export class LabSimulation {
   setSyringeDischarge(syringeId, active, mode = 'both') {
     const syr = this.getItem(syringeId);
     if (!syr || syr.kind !== 'gas_syringe' || syr.isBroken) return false;
-    if (active && syr.connectedFromId) {
-      this.disconnectSyringe(syr.connectedFromId);
-    }
+    // Do NOT disconnect intact tubing when pushing plunger! Connected syringe pumps gradually through the tube.
     syr.isDischarging = !!active;
     syr.dischargeMode = mode || 'both';
     if (!active) {
@@ -2351,35 +2367,20 @@ export class LabSimulation {
     return true;
   }
 
-  pumpSyringeToVessel(syringeId, targetVesselId, targetVolMl = null) {
-    const syr = this.getItem(syringeId);
-    const dst = this.getItem(targetVesselId);
-    if (!syr || syr.kind !== 'gas_syringe' || syr.isBroken) return 0;
-    if (!dst || dst.kind !== 'vessel' || dst.isShattered) return 0;
-    if (syr.connectedFromId) this.disconnectSyringe(syr.connectedFromId);
-
-    const syrT = syr.tempK ?? this.environment.tempK;
-    const liqMl = computeSyringeLiquidVolumeMl(syr, this.environment);
-    const gasMl = computeSyringeGasVolumeMl(syr, this.environment);
-    const totMl = liqMl + gasMl;
-    if (totMl <= 0.005) return 0;
-
-    const reqMl = targetVolMl == null ? totMl : Math.min(totMl, Math.max(0, Number(targetVolMl) || 0));
-    const fracTotal = Math.min(1, reqMl / totMl);
-    let transferredMl = 0;
-
-    // 1. Transfer stoichiometric aqueous liquid + solutes first
-    if (liqMl > 0.005) {
-      const liqMoveFrac = targetVolMl == null ? 1.0 : Math.min(1, reqMl / liqMl);
+  /**
+   * Shared delivery helper: transfer fractional liquid and gas from Gas Syringe into a receiving Vessel's moles & headspaceGasMoles.
+   */
+  _deliverSyringeSliceToVessel(syr, dst, liqMoveFrac, gasMoveFrac, syrT, dtApprox = 0.05) {
+    let movedLiqColor = 'rgba(186, 230, 253, 0.85)';
+    if (liqMoveFrac > 1e-6) {
       const combMoles = buildCombinedSyringeLiquidMoles(syr);
       const combL = computeLiquidVolumeL(combMoles, syrT);
-      const vis = combL > 1e-8
-        ? computeSolutionVisuals(combMoles, combL, computePH(combMoles, combL, syrT), 2.5, syr.overflowBleachFrac || 0)
-        : null;
+      if (combL > 1e-8) {
+        movedLiqColor = computeSolutionVisuals(combMoles, combL, computePH(combMoles, combL, syrT), 2.5, syr.overflowBleachFrac || 0).css;
+      }
       const cDstOld = computeHeatCapacityJK(dst);
       const oldDstPhen = dst.moles.Phenolphthalein_aq || 0;
       const oldDstBleach = dst.phenBleachFrac || 0;
-
       const { movedHeatCapJK, movedPhenMol } = extractSyringeLiquidFraction(syr, liqMoveFrac, dst.moles);
       if (movedPhenMol > 0) {
         const totP = oldDstPhen + movedPhenMol;
@@ -2389,24 +2390,13 @@ export class LabSimulation {
       if (cDstOld + movedHeatCapJK > 0) {
         dst.tempK = (cDstOld * dst.tempK + movedHeatCapJK * syrT) / (cDstOld + movedHeatCapJK);
       }
-      transferredMl += liqMl * liqMoveFrac;
-      this.activePourStream = {
-        fromX: getSyringeGeometry(syr).nozzleX,
-        fromY: syr.y,
-        toX: dst.x,
-        toY: dst.y - APPARATUS[dst.typeId].height * 0.28,
-        color: vis ? vis.css : 'rgba(186, 230, 253, 0.85)',
-        timer: 0.35,
-        pouredMl: liqMl * liqMoveFrac,
-      };
     }
 
-    // 2. Inject gas fraction: steam condenses & soluble HCl(g) dissolves into dst water; insoluble gases bubble out
-    if (gasMl > 0.01 && (targetVolMl == null || transferredMl < reqMl)) {
-      const remGasFrac = targetVolMl == null ? 1.0 : Math.min(1, (reqMl - transferredMl) / gasMl);
+    if (gasMoveFrac > 1e-6) {
       let heatAddedJ = 0;
       let addedCapJK = 0;
-      const steamMol = (syr.gasMoles.H2O_g || 0) * remGasFrac;
+      dst.headspaceGasMoles = dst.headspaceGasMoles || createEmptyGasMap();
+      const steamMol = (syr.gasMoles.H2O_g || 0) * gasMoveFrac;
       if (steamMol > 1e-10) {
         syr.gasMoles.H2O_g = Math.max(0, (syr.gasMoles.H2O_g || 0) - steamMol);
         if (dst.tempK < waterBoilingPointK(this.environment.pressureBar)) {
@@ -2414,10 +2404,10 @@ export class LabSimulation {
           heatAddedJ += steamMol * CONSTANTS.DELTA_H_VAP_WATER_J;
           addedCapJK += steamMol * CONSTANTS.CP_H2O_J_MOL_K;
         } else {
-          dst.escapedGasMoles.H2O_g = (dst.escapedGasMoles.H2O_g || 0) + steamMol;
+          dst.headspaceGasMoles.H2O_g = (dst.headspaceGasMoles.H2O_g || 0) + steamMol;
         }
       }
-      const etMol = (syr.gasMoles.C2H5OH_g || 0) * remGasFrac;
+      const etMol = (syr.gasMoles.C2H5OH_g || 0) * gasMoveFrac;
       if (etMol > 1e-10) {
         syr.gasMoles.C2H5OH_g = Math.max(0, (syr.gasMoles.C2H5OH_g || 0) - etMol);
         if (dst.tempK < SPECIES.C2H5OH_l.boilTempK) {
@@ -2425,10 +2415,10 @@ export class LabSimulation {
           heatAddedJ += etMol * SPECIES.C2H5OH_l.dHVapJ;
           addedCapJK += etMol * SPECIES.C2H5OH_l.cp;
         } else {
-          dst.escapedGasMoles.C2H5OH_g = (dst.escapedGasMoles.C2H5OH_g || 0) + etMol;
+          dst.headspaceGasMoles.C2H5OH_g = (dst.headspaceGasMoles.C2H5OH_g || 0) + etMol;
         }
       }
-      const hclMol = (syr.gasMoles.HCl_g || 0) * remGasFrac;
+      const hclMol = (syr.gasMoles.HCl_g || 0) * gasMoveFrac;
       if (hclMol > 1e-10) {
         syr.gasMoles.HCl_g = Math.max(0, (syr.gasMoles.HCl_g || 0) - hclMol);
         if ((dst.moles.CuSO4_s || 0) > 1e-8 && (dst.moles.H2O_l || 0) < 1e-3 && dst.tempK < 405) {
@@ -2438,45 +2428,107 @@ export class LabSimulation {
           dst.moles.CuSO4_2HCl_s = (dst.moles.CuSO4_2HCl_s || 0) + dAdd;
           heatAddedJ += dAdd * 68000;
           const rem = hclMol - 2 * dAdd;
-          if (rem > 1e-12) dst.escapedGasMoles.HCl_g = (dst.escapedGasMoles.HCl_g || 0) + rem;
+          if (rem > 1e-12) dst.headspaceGasMoles.HCl_g = (dst.headspaceGasMoles.HCl_g || 0) + rem;
         } else if ((dst.moles.H2O_l || 0) > 1e-4) {
           dst.moles.H_aq = (dst.moles.H_aq || 0) + hclMol;
           dst.moles.Cl_aq = (dst.moles.Cl_aq || 0) + hclMol;
           heatAddedJ += hclMol * CONSTANTS.DELTA_H_VAP_HCL_AQ_J;
         } else {
-          dst.escapedGasMoles.HCl_g = (dst.escapedGasMoles.HCl_g || 0) + hclMol;
+          dst.headspaceGasMoles.HCl_g = (dst.headspaceGasMoles.HCl_g || 0) + hclMol;
         }
+        dst.gasFlushInMol = (dst.gasFlushInMol || 0) + hclMol;
       }
-      const nh3Mol = (syr.gasMoles.NH3_g || 0) * remGasFrac;
+      const nh3Mol = (syr.gasMoles.NH3_g || 0) * gasMoveFrac;
       if (nh3Mol > 1e-10) {
         syr.gasMoles.NH3_g = Math.max(0, (syr.gasMoles.NH3_g || 0) - nh3Mol);
         if ((dst.moles.H2O_l || 0) > 1e-4) {
           dst.moles.NH3_aq = (dst.moles.NH3_aq || 0) + nh3Mol;
           heatAddedJ += nh3Mol * 35400;
         } else {
-          dst.escapedGasMoles.NH3_g = (dst.escapedGasMoles.NH3_g || 0) + nh3Mol;
+          dst.headspaceGasMoles.NH3_g = (dst.headspaceGasMoles.NH3_g || 0) + nh3Mol;
         }
         if (dst.hasPhenCotton) dst.phenCottonLevel = 1.0;
+        dst.gasFlushInMol = (dst.gasFlushInMol || 0) + nh3Mol;
       }
-      if ((syr.gasMoles.C2H5Cl_g || 0) * remGasFrac > 1e-9 && dst.restingOnId) {
+      if ((syr.gasMoles.C2H5Cl_g || 0) * gasMoveFrac > 1e-9 && dst.restingOnId) {
         dst.recentHalogenGasTimer = 1.8;
       }
+      let pushedNonSteamMol = 0;
+      const compList = [];
       for (const g of NON_STEAM_GASES) {
         if (g === 'HCl_g' || g === 'NH3_g') continue;
-        const m = (syr.gasMoles[g] || 0) * remGasFrac;
+        const m = (syr.gasMoles[g] || 0) * gasMoveFrac;
         if (m > 1e-10) {
           syr.gasMoles[g] = Math.max(0, (syr.gasMoles[g] || 0) - m);
-          dst.escapedGasMoles[g] = (dst.escapedGasMoles[g] || 0) + m;
+          dst.headspaceGasMoles[g] = (dst.headspaceGasMoles[g] || 0) + m;
+          dst.gasFlushInMol = (dst.gasFlushInMol || 0) + m;
+          pushedNonSteamMol += m;
+          compList.push({ id: g, formula: SPECIES[g]?.formula || g, mol: m });
         }
+      }
+      if (pushedNonSteamMol > 1e-10) {
+        if ((dst.moles.H2O_l || 0) > 1e-4) {
+          dst._tubeBubbleGasMol = (dst._tubeBubbleGasMol || 0) + pushedNonSteamMol;
+        }
+        compList.sort((a, b) => b.mol - a.mol);
+        const volMlS = (((pushedNonSteamMol * CONSTANTS.R_L_BAR_MOL_K * syrT) / Math.max(0.2, this.environment.pressureBar)) * 1000) / Math.max(0.01, dtApprox);
+        dst._liveTubeFlow = {
+          composition: compList.slice(0, 3).map((c) => ({ ...c, pct: Math.round((c.mol / pushedNonSteamMol) * 100) })),
+          rateMlS: Number.isFinite(volMlS) ? volMlS : 0,
+          totalMlS: Number.isFinite(volMlS) ? volMlS : 0,
+          tempC: syrT - 273.15,
+          updatedAt: Date.now(),
+        };
       }
       if (heatAddedJ > 0) {
         const cDst = computeHeatCapacityJK(dst);
         dst.tempK = Math.min(waterBoilingPointK(this.environment.pressureBar), dst.tempK + heatAddedJ / Math.max(30, cDst + addedCapJK));
       }
-      transferredMl += gasMl * remGasFrac;
+    }
+    this.checkOverflow(dst);
+    return movedLiqColor;
+  }
+
+  pumpSyringeToVessel(syringeId, targetVesselId, targetVolMl = null) {
+    const syr = this.getItem(syringeId);
+    const dst = this.getItem(targetVesselId);
+    if (!syr || syr.kind !== 'gas_syringe' || syr.isBroken) return 0;
+    if (!dst || dst.kind !== 'vessel' || dst.isShattered) return 0;
+    // Keep tubing intact if pumping into the already connected vessel! Only detach if targeting a separate flask manually.
+    if (syr.connectedFromId && syr.connectedFromId !== dst.id) this.disconnectSyringe(syr.connectedFromId);
+
+    const syrT = syr.tempK ?? this.environment.tempK;
+    const liqMl = computeSyringeLiquidVolumeMl(syr, this.environment);
+    const gasMl = computeSyringeGasVolumeMl(syr, this.environment);
+    const totMl = liqMl + gasMl;
+    if (totMl <= 0.005) return 0;
+
+    const reqMl = targetVolMl == null ? totMl : Math.min(totMl, Math.max(0, Number(targetVolMl) || 0));
+    let transferredMl = 0;
+    let liqMoveFrac = 0;
+    let gasMoveFrac = 0;
+
+    if (liqMl > 0.005) {
+      liqMoveFrac = targetVolMl == null ? 1.0 : Math.min(1, reqMl / liqMl);
+      transferredMl += liqMl * liqMoveFrac;
+    }
+    if (gasMl > 0.01 && (targetVolMl == null || transferredMl < reqMl)) {
+      gasMoveFrac = targetVolMl == null ? 1.0 : Math.min(1, (reqMl - transferredMl) / gasMl);
+      transferredMl += gasMl * gasMoveFrac;
     }
 
-    this.checkOverflow(dst);
+    const visCss = this._deliverSyringeSliceToVessel(syr, dst, liqMoveFrac, gasMoveFrac, syrT, 0.25);
+    if (liqMoveFrac > 0 && syr.connectedFromId !== dst.id) {
+      this.activePourStream = {
+        fromX: getSyringeGeometry(syr).nozzleX,
+        fromY: syr.y,
+        toX: dst.x,
+        toY: dst.y - APPARATUS[dst.typeId].height * 0.28,
+        color: visCss,
+        timer: 0.35,
+        pouredMl: liqMl * liqMoveFrac,
+      };
+    }
     this.recomputeScaleReadings();
     this.emitChange();
     return transferredMl;
@@ -2507,6 +2559,30 @@ export class LabSimulation {
     }
 
     const syrT = syringe.tempK ?? this.environment.tempK;
+    const connectedDst = syringe.connectedFromId ? this.getItem(syringe.connectedFromId) : null;
+    if (connectedDst && connectedDst.kind === 'vessel' && !connectedDst.isShattered) {
+      // Gradual controlled pumping through connected tubing (~18..55 mL/s) straight into receiving vessel headspace/solution!
+      syringe.dischargeArc = null;
+      const rateMlS = isAuto
+        ? Math.max(14, totalMl / Math.max(0.45, syringe.autoDischargeTimer + dt))
+        : Math.max(15, Math.min(55, 16 + totalMl * 0.22));
+      const pushTotalMl = Math.min(totalMl, rateMlS * dt);
+      let pushLiqMl = 0;
+      let pushGasMl = 0;
+      if (liqMl > 0.002) {
+        pushLiqMl = Math.min(liqMl, pushTotalMl * (gasMl <= 0.05 ? 1.0 : 0.65));
+        pushGasMl = Math.min(gasMl, Math.max(0, pushTotalMl - pushLiqMl));
+      } else {
+        pushGasMl = Math.min(gasMl, pushTotalMl);
+      }
+      const fracLiq = liqMl > 1e-5 ? Math.min(1, pushLiqMl / liqMl) : 0;
+      const fracGas = gasMl > 1e-5 ? Math.min(1, pushGasMl / gasMl) : 0;
+      const movedColor = this._deliverSyringeSliceToVessel(syringe, connectedDst, fracLiq, fracGas, syrT, dt);
+      syringe.dischargeLiquidRateMlS = pushLiqMl > 1e-4 ? pushLiqMl / Math.max(1e-4, dt) : 0;
+      syringe.dischargeColor = movedColor;
+      return;
+    }
+
     const arc = computeSyringeDischargeArc(
       syringe,
       this.items,
@@ -3437,10 +3513,9 @@ export class LabSimulation {
     const spec = v ? APPARATUS[v.typeId] : null;
     if (!v || !spec?.invertible || v.isShattered) return false;
     v.isInverted = !v.isInverted;
-    if (v.isInverted) {
-      v.isStoppered = false;
+    if (v.isInverted && !v.isStoppered) {
       const mouthY = v.y + spec.height / 2;
-      // Pull working water column ONLY when the inverted mouth sits submerged inside a wet water trough
+      // Pull working water column ONLY when the unstoppered inverted mouth sits submerged inside a wet water trough
       const trough = this.items.find((t) => {
         if (t.typeId !== 'water_trough' || t.isShattered || (t.moles.H2O_l || 0) <= 2.0) return false;
         const tSpec = APPARATUS.water_trough;
@@ -3460,10 +3535,11 @@ export class LabSimulation {
       } else {
         v.submergedInTroughId = null;
       }
-    } else {
+    } else if (!v.isInverted) {
       v.submergedInTroughId = null;
       v.gravitySpillRateMlS = 0;
     }
+    this.syncAttachedMouthTools();
     this.emitChange();
     return true;
   }
@@ -5011,7 +5087,7 @@ export class LabSimulation {
   stepInvertedGravitySpill(v, dt) {
     v.gravitySpillRateMlS = 0;
     v.gravitySpillColor = null;
-    if (!v || v.kind !== 'vessel' || v.isShattered || !v.isInverted || v.isStoppered || v.submergedInTroughId || v.mountedOverElectrodeId) {
+    if (!v || v.kind !== 'vessel' || v.isShattered || !v.isInverted || v.isStoppered || (APPARATUS[v.typeId]?.hasLid && v.lidState === 'closed') || v.submergedInTroughId || v.mountedOverElectrodeId) {
       return;
     }
     const spec = APPARATUS[v.typeId];
@@ -5258,17 +5334,18 @@ export class LabSimulation {
 
   stepVesselTiltPouring(v, dt) {
     v.tiltPourRateMlS = 0;
+    const spec = v ? APPARATUS[v.typeId] || APPARATUS.beaker_250 : null;
     if (
       !v ||
       (v.kind !== 'vessel' && v.kind !== 'filter_funnel' && v.kind !== 'spoon') ||
       v.isShattered ||
       v.isBroken ||
       v.isStoppered ||
+      (spec?.hasLid && v.lidState === 'closed') ||
       (v.tiltDeg || 0) <= 0.5
     ) {
       return;
     }
-    const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
     const dir = v.tiltDir < 0 ? -1 : 1;
     const effTilt = dir * (((v.tiltDeg || 0) * Math.PI) / 180) + (v.landingTilt || 0);
     const { vertices } = getInnerPolygonPx(spec);
@@ -5281,17 +5358,18 @@ export class LabSimulation {
     let dst = null;
     let bestScore = Infinity;
     for (const cand of this.items) {
+      const cSpec = APPARATUS[cand.typeId] || APPARATUS.beaker_250;
       if (
         cand.id === v.id ||
         (cand.kind !== 'vessel' && cand.kind !== 'filter_funnel') ||
         cand.isShattered ||
         cand.isBroken ||
         cand.isStoppered ||
+        (cSpec.hasLid && cand.lidState === 'closed') ||
         cand.isInverted
       ) {
         continue;
       }
-      const cSpec = APPARATUS[cand.typeId] || APPARATUS.beaker_250;
       const dx = Math.abs(cand.x - pourX);
       if (dx <= Math.max(48, cSpec.width * 0.55) && cand.y >= v.y - 28) {
         const score = dx - (cand.kind === 'filter_funnel' ? 28 : 0);

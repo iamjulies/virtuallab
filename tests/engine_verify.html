@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.11';
+      const expectedBuild = 'virlab_beta_v4+build.12';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2515,7 +2515,7 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.11 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-45 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.12 parity: All apparatus & 23 starter reagents translated in VI/EN, Prompt 40-46 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 40 &&
           STARTER_REAGENTS.length === 23 &&
           !APPARATUS.clay_triangle &&
@@ -7784,6 +7784,112 @@
         'Prompt 45 invariants: I2 bypasses 134.8C stall to 184.3C boil, full Mn cascade (<200C inert, 260C K2MnO4 non-molten, 545C K2MnO3/blue K3MnO4/Mn2O3, 940C Mn3O4 + K2O, hydrolysis), unified Iron Spoon (Al/S/KMnO4)',
         i2PastStallOk && i2BoilOk && inertBelow200 && noMeltK2 && cascade545Ok && cascade940Ok && hydOk && spoonAlOk && spoonSOk && spoonKmnOk,
         `I2(t1=${(tBeforeBoil-273.15).toFixed(1)}C,end=${(bI2.tempK-273.15).toFixed(1)}C,boil=${bI2.wasBoiling}), Mn(inert=${inertBelow200},noMelt=${noMeltK2},545=${cascade545Ok}[K3=${(c540.moles.K3MnO4_s||0).toFixed(3)},Mn2O3=${(c540.moles.Mn2O3_s||0).toFixed(3)}],940=${cascade940Ok},hyd=${hydOk}), spoon(Al=${spoonAlOk},S=${spoonSOk}/${midFlameS},KMn=${spoonKmnOk})`
+      );
+    }
+
+    // TEST 164: Prompt 46 (virlab_beta_v4+build.12) — K2O/KO2/K2O2 Thermal Stages, Multi-Bridge Series Electrolysis, Unified Stopper/Syringe Cl2 Retention & Inverted Stoppered Vessel & Covered Crucible No-Spill
+    {
+      // 1) K2O (~740C melt; stable dry in air; 300-400C inert disprop -> K2O2 + K) & KO2 (400-560C -> K2O2 + O2; >560C -> K2O + O2)
+      const simKOx = new LabSimulation();
+      const cK2OAir = simKOx.createApparatus('crucible_porcelain', 140, 427);
+      cK2OAir.moles = { K2O_s: 0.04 };
+      const cKO2Mid = simKOx.createApparatus('crucible_porcelain', 280, 427);
+      cKO2Mid.moles = { KO2_s: 0.04 };
+      const cKO2High = simKOx.createApparatus('crucible_porcelain', 420, 427);
+      cKO2High.moles = { KO2_s: 0.04 };
+      for (let i = 0; i < 60; i++) {
+        cK2OAir.tempK = 640.0;  // 367 C in open air -> K2O remains stable!
+        cKO2Mid.tempK = 795.0;  // 522 C -> Stage 1 KO2 -> K2O2 + O2
+        cKO2High.tempK = 975.0; // 702 C -> Stage 2 K2O2 -> K2O + O2
+        simKOx.step(0.05);
+      }
+      const simKInert = new LabSimulation();
+      simKInert.environment.atmosphereMode = 'inert';
+      const cK2OInert = simKInert.createApparatus('crucible_porcelain', 140, 427);
+      cK2OInert.moles = { K2O_s: 0.04 };
+      for (let i = 0; i < 60; i++) {
+        cK2OInert.tempK = 640.0; // 367 C in inert atmosphere -> 2K2O -> K2O2 + 2K
+        simKInert.step(0.05);
+      }
+      const koxOk =
+        (SPECIES.K2O_s.meltTempK || 0) >= 1000 &&
+        (cK2OAir.moles.K2O_s || 0) > 0.039 &&
+        (cK2OInert.moles.K2O2_s || 0) > 0.005 &&
+        (cK2OInert.moles.K_s || 0) > 0.01 &&
+        (cKO2Mid.moles.K2O2_s || 0) > 0.003 &&
+        (cKO2High.moles.K2O_s || 0) > 0.01;
+
+      // 2) Multi-bridge Series Electrolysis (V1 <-> sb1 <-> V2 <-> sb2 <-> V3, 172858.png layout)
+      const simEl = new LabSimulation();
+      const v1 = simEl.createApparatus('beaker_250', 180, 427);
+      v1.moles = { H2O_l: 3.0, Na_aq: 0.25, Cl_aq: 0.25 };
+      const v2 = simEl.createApparatus('erlenmeyer_250', 340, 427);
+      v2.moles = { H2O_l: 3.0, Na_aq: 0.2, Cl_aq: 0.2 };
+      const v3 = simEl.createApparatus('round_flask_250', 500, 427);
+      v3.moles = { H2O_l: 3.0, Na_aq: 0.25, Cl_aq: 0.25 };
+      const sb1 = simEl.createApparatus('salt_bridge', 260, 392);
+      const sb2 = simEl.createApparatus('salt_bridge', 420, 392);
+      const elPos = simEl.createApparatus('electrode_rod', 165, 380);
+      elPos.dockedVesselId = v1.id;
+      const elNeg = simEl.createApparatus('electrode_rod', 515, 380);
+      elNeg.dockedVesselId = v3.id;
+      const dc = simEl.createApparatus('dc_power', 680, 440);
+      dc.posElectrodeId = elPos.id;
+      dc.negElectrodeId = elNeg.id;
+      dc.voltageV = 8.0;
+      dc.powerOn = true;
+      stepSeconds(simEl, 1.5, 0.05);
+      const seriesOk =
+        dc.circuitMode === 'electrolysis' &&
+        (dc.measuredCurrentA || 0) > 0.25 &&
+        (sb1.activeCurrentA || 0) > 0.25 &&
+        (sb2.activeCurrentA || 0) > 0.25;
+
+      // 3) Unified stopper, Cl2 syringe pumping without tube detach + open dense vs light retention & upright/inverted parity
+      const simGas = new LabSimulation();
+      const syr = simGas.createApparatus('gas_syringe', 180, 340);
+      syr.gasMoles.Cl2_g = 0.005;
+      const erlRecv = simGas.createApparatus('erlenmeyer_250', 420, 410);
+      simGas.connectTube(erlRecv.id, syr.id);
+      const hasUnifiedStopper = simGas.items.some((it) => it.kind === 'rubber_stopper' && it.attachedToId === erlRecv.id);
+      simGas.setSyringeDischarge(syr.id, true);
+      const tubeKeptOnPush = Boolean(erlRecv.connectedSyringeId === syr.id && syr.connectedFromId === erlRecv.id);
+      stepSeconds(simGas, 2.5, 0.05);
+      const cl2PumpedIn = erlRecv.headspaceGasMoles?.Cl2_g || 0;
+
+      // Remove stopper while Cl2 is inside upright Erlenmeyer (d > 1): stays pooled cleanly vs open upright H2 (d < 1)
+      const stRecv = simGas.items.find((it) => it.kind === 'rubber_stopper' && it.attachedToId === erlRecv.id);
+      if (stRecv) simGas.detachRubberStopper(stRecv.id);
+      const erlH2 = simGas.createApparatus('erlenmeyer_250', 620, 410);
+      erlH2.headspaceGasMoles.H2_g = cl2PumpedIn;
+      stepSeconds(simGas, 2.5, 0.05);
+      const cl2OpenLeft = erlRecv.headspaceGasMoles?.Cl2_g || 0;
+      const h2OpenLeft = erlH2.headspaceGasMoles?.H2_g || 0;
+
+      // 4) Inverting WHILE stoppered keeps stopper attached & preserves headspace gas!
+      const fInv = simGas.createApparatus('erlenmeyer_250', 780, 380);
+      const stInv = simGas.createApparatus('rubber_stopper', 780, 310);
+      stInv.stopperMode = 'solid';
+      simGas.attachRubberStopper(stInv.id, fInv.id);
+      fInv.headspaceGasMoles.H2_g = 0.004;
+      simGas.toggleVesselInverted(fInv.id);
+      stepSeconds(simGas, 0.5, 0.05);
+      const invStopOk = fInv.isInverted && fInv.isStoppered && stInv.attachedToId === fInv.id && (fInv.headspaceGasMoles.H2_g || 0) > 0.0038;
+
+      // 5) Closed-lid porcelain crucible NEVER spills contents when tilted!
+      const simCruc = new LabSimulation();
+      const cr = simCruc.createApparatus('crucible_porcelain', 300, 427);
+      simCruc.addReagentToVessel(cr.id, 'kmno4', 3.16, { silentAnim: true });
+      const nKmn0 = cr.moles.KMnO4_s || 0;
+      cr.lidState = 'closed';
+      simCruc.setVesselTiltDeg(cr.id, 90, 1);
+      stepSeconds(simCruc, 1.5, 0.05);
+      const crucNoSpillOk = Math.abs((cr.moles.KMnO4_s || 0) - nKmn0) < 1e-9;
+
+      assert(
+        'Prompt 46 invariants: K2O/KO2/K2O2 stages, 3-vessel series salt-bridge electrolysis, unified stopper & syringe Cl2 pumping without disconnect + upright Cl2/H2 diffusion, stoppered invert, closed crucible no-spill',
+        koxOk && seriesOk && hasUnifiedStopper && tubeKeptOnPush && cl2PumpedIn > 0.003 && cl2OpenLeft > h2OpenLeft * 4 && invStopOk && crucNoSpillOk,
+        `kox=${koxOk}, series=${seriesOk}(I=${(dc.measuredCurrentA||0).toFixed(2)}A), gas=(st:${hasUnifiedStopper},kept:${tubeKeptOnPush},in:${(cl2PumpedIn*1000).toFixed(2)}mmol,openCl2:${(cl2OpenLeft*1000).toFixed(2)} vs H2:${(h2OpenLeft*1000).toFixed(2)}), invStop=${invStopOk}, crucNoSpill=${crucNoSpillOk}`
       );
     }
 

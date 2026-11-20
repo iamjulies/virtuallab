@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v4-build-11';
+const CACHE_NAME = 'virlab-beta-v4-build-12';
 const ASSETS = [
   './',
   './index.html',
@@ -29,6 +29,7 @@ const ASSETS = [
   './src/canvas/reagentRenderer.js',
   './src/canvas/vesselRenderer.js',
   './src/canvas/toolRenderer.js',
+  './src/canvas/fluidGasOverlay.js',
   './src/canvas/workbench.js',
   './src/ui/shelfPanel.js',
   './src/ui/dosingModal.js',
