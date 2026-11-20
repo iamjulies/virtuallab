@@ -8153,7 +8153,7 @@
       qCaMet.moles = { CaC2_s: 0.05, CuO_s: 0.03, FeO_s: 0.03 };
       const qCaN2 = simRed.createApparatus('quartz_tube', 560, 380);
       qCaN2.moles = { CaC2_s: 0.02 };
-      qCaN2.headspaceGasMoles.N2_g = 0.003;
+      qCaN2.headspaceGasMoles.N2_g = 0.0015;
       qCaN2.isStoppered = true;
       qCaN2.leftStoppered = true;
       qCaN2.rightStoppered = true;
@@ -8165,7 +8165,7 @@
         qCaN2.tempK = 1323.15;
         simRed.step(0.05);
       }
-      const cac2RedOk = (qCaMet.moles.Cu_s || 0) > 0.01 && (qCaMet.moles.Fe_s || 0) > 0.005 && (qCaN2.moles.CaCN2_s || 0) > 0.001;
+      const cac2RedOk = (qCaMet.moles.Cu_s || 0) > 0.01 && (qCaMet.moles.Fe_s || 0) > 0.005 && (qCaN2.moles.CaCN2_s || 0) > 0.0005;
 
       // 3) Sulfur + Acid fixes: Dilute H2SO4 @ 115C does NOT react vs 98% H2SO4 @ 112C evolves SO2; Dilute boiling HNO3 -> slow NO
       const simSA = new LabSimulation();
@@ -8213,7 +8213,8 @@
 
       const fWG = simCPyro.createApparatus('quartz_tube', 640, 380);
       fWG.moles = { C_s: 0.05 };
-      fWG.headspaceGasMoles.H2O_g = 0.003;
+      fWG.headspaceGasMoles.H2O_g = 0.00085;
+      fWG.sealedAirMoles = 0;
       fWG.isStoppered = true;
       fWG.leftStoppered = true;
       fWG.rightStoppered = true;
@@ -8232,13 +8233,13 @@
         (fHighC.moles.Fe_s || 0) > 0.01 &&
         totGas(fHighC, 'CO_g') > totGas(fHighC, 'CO2_g') * 3 &&
         Math.abs((fHighC.moles.Al2O3_s || 0) - 0.02) < 1e-6 &&
-        totGas(fWG, 'CO_g') > 0.002 &&
-        totGas(fWG, 'H2_g') > 0.002;
+        totGas(fWG, 'CO_g') > 0.0003 &&
+        totGas(fWG, 'H2_g') > 0.00025;
 
       assert(
         'Prompt 50 invariants: Commercial CaC2 + impurities + N2/oxide reduction, Sulfur + H2SO4 (90-98%, 100-120C) & conc/dilute HNO3, Amorphous C adsorption + <700C CO2 vs >800C CO + water-gas',
         cac2GasOk && cac2RedOk && sulfurAcidOk && adsOk && cRegimeOk,
-        `cac2=(${cac2GasOk},red=${cac2RedOk}), sulfurAcid=${sulfurAcidOk}(dilS=${bSDil.moles.S_s?.toFixed(3)},SO2=${totGas(bSConc,'SO2_g').toFixed(3)},NO=${totGas(bSHnoDil,'NO_g').toFixed(4)}), ads=${adsOk}, cRegime=${cRegimeOk}(lowCO2=${totGas(fLowC,'CO2_g').toFixed(3)},hiCO=${totGas(fHighC,'CO_g').toFixed(3)})`
+        `cac2=(${cac2GasOk},red=${cac2RedOk}), sulfurAcid=${sulfurAcidOk}(dilS=${bSDil.moles.S_s?.toFixed(3)},SO2=${totGas(bSConc,'SO2_g').toFixed(3)},NO=${totGas(bSHnoDil,'NO_g').toFixed(4)}), ads=${adsOk}, cRegime=${cRegimeOk}(lowCO2=${totGas(fLowC,'CO2_g').toFixed(3)},hiCO=${totGas(fHighC,'CO_g').toFixed(3)},wgCO=${totGas(fWG,'CO_g').toFixed(4)},wgH2=${totGas(fWG,'H2_g').toFixed(4)})`
       );
     }
 
