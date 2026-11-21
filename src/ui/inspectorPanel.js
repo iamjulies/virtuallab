@@ -12,6 +12,7 @@ import {
   computePhaseStratification,
   computeSolidVolumeMl,
   computeVesselElectrochemicalMetrics,
+  estimateVesselEsterificationMetrics,
 } from '../engine/equilibrium.js';
 import {
   computeSyringeDischargeArc,
@@ -92,6 +93,28 @@ function formatSimTimestamp(sec) {
   const mStr = String(mins).padStart(2, '0');
   const sStr = rem.toFixed(1).padStart(4, '0');
   return `[${mStr}:${sStr}s]`;
+}
+
+function formatChemEquation(eqText) {
+  const escapeHtml = (str) =>
+    String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const src = String(eqText ?? '');
+  const parts = [];
+  let lastIdx = 0;
+  const rx = /(—|⇌|⇄)\(([^)]+)\)(→)?/g;
+  for (const m of src.matchAll(rx)) {
+    const [full, kind, rawCond, arrowAfter] = m;
+    if (kind === '—' && arrowAfter !== '→') continue;
+    parts.push(escapeHtml(src.slice(lastIdx, m.index)));
+    const [rawTop = '', rawBottom = ''] = rawCond.split(';').map((s) => s.trim());
+    const revCls = kind === '—' ? '' : ' chem-arrow--rev';
+    parts.push(
+      `<span class="chem-arrow${revCls}"><span class="chem-arrow__top">${escapeHtml(rawTop)}</span><span class="chem-arrow__line"></span>${rawBottom ? `<span class="chem-arrow__bottom">${escapeHtml(rawBottom)}</span>` : ''}</span>`
+    );
+    lastIdx = m.index + full.length;
+  }
+  parts.push(escapeHtml(src.slice(lastIdx)));
+  return parts.join('');
 }
 
 function getGasRelAirDensity(spId) {
@@ -1905,6 +1928,14 @@ export class InspectorPanel {
                 <div class="text-[10.5px] font-mono text-emerald-400" id="live-conv-yield">H = ${convStr}</div>
               </div>
             </div>
+            ${(() => {
+              const estM = estimateVesselEsterificationMetrics(item, liqL);
+              if (!estM) return '';
+              return `<div class="p-2 rounded-lg border border-sky-500/35 bg-sky-500/10 text-[11px] flex items-center justify-between gap-2 font-mono" id="live-ester-eq">
+                <span class="text-muted">Ester (Kc=${estM.Kc.toFixed(2)})</span>
+                <span><strong class="text-sky-400">H_lt = ${estM.yieldEqPct.toFixed(1)}%</strong> · H_tt = ${estM.yieldActualPct.toFixed(1)}%</span>
+              </div>`;
+            })()}
             ${
               redoxMetrics.hasElectroLink
                 ? `<div class="p-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs flex flex-col gap-1" id="live-redox-card">
@@ -1994,11 +2025,11 @@ export class InspectorPanel {
                       const phStr = Number.isFinite(log.phNow) ? log.phNow.toFixed(2) : '—';
                       const dPStr = Number.isFinite(log.deltaPBar) ? `${log.deltaPBar >= 0 ? '+' : ''}${log.deltaPBar.toFixed(3)} bar` : '0.000 bar';
                       return `<div class="p-2 rounded-lg border border-theme bg-surface text-xs">
-                        <div class="flex items-center justify-between gap-1">
-                          <span class="font-mono font-bold text-accent truncate">${log.equation}</span>
-                          <span class="font-mono text-muted shrink-0">${log.vesselLabel} · ${ts}</span>
+                        <div class="flex items-center justify-between text-[11px] font-mono text-muted mb-1">
+                          <span>${log.vesselLabel || '—'} · ${ts}</span>
                         </div>
-                        <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 mt-1 text-[10.5px] font-mono text-muted">
+                        <div class="chem-eq-line font-mono font-bold text-accent">${formatChemEquation(log.equation)}</div>
+                        <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10.5px] font-mono text-muted">
                           <span>ΔH: <strong class="text-main">${dHStr}</strong></span>
                           <span>v: <strong class="text-sky-400">${rateStr}</strong></span>
                           <span>pH: <strong class="text-main">${phStr}</strong></span>
@@ -2007,12 +2038,12 @@ export class InspectorPanel {
                       </div>`;
                     }
                     return `<div class="p-2 rounded-lg border border-theme bg-surface text-xs">
-                      <div class="flex items-center justify-between gap-1">
-                        <span class="font-mono font-bold text-accent">${log.equation}</span>
-                        <span class="font-mono text-muted shrink-0">${log.vesselLabel} · ${ts}</span>
+                      <div class="flex items-center justify-between text-[11px] font-mono text-muted mb-1">
+                        <span>${log.vesselLabel || '—'} · ${ts}</span>
                       </div>
-                      ${log.ionicEq ? `<div class="font-mono text-[10.5px] text-sky-400 mt-0.5">${log.ionicEq}</div>` : ''}
-                      <p class="text-muted mt-0.5">${langCode === 'vi' ? log.descVi : log.descEn}</p>
+                      <div class="chem-eq-line font-mono font-bold text-accent">${formatChemEquation(log.equation)}</div>
+                      ${log.ionicEq ? `<div class="font-mono text-[10.5px] text-sky-400 mb-1">${formatChemEquation(log.ionicEq)}</div>` : ''}
+                      <p class="text-muted leading-relaxed">${langCode === 'vi' ? log.descVi : log.descEn}</p>
                     </div>`;
                   })
                   .join('')
@@ -2946,6 +2977,13 @@ export class InspectorPanel {
     const convEl = this.container.querySelector('#live-conv-yield');
     if (convEl) {
       convEl.textContent = `H = ${item.conversionYieldPct !== null && item.conversionYieldPct !== undefined ? `${item.conversionYieldPct.toFixed(1)}%` : '—'}`;
+    }
+    const esterEl = this.container.querySelector('#live-ester-eq');
+    if (esterEl) {
+      const estM = estimateVesselEsterificationMetrics(item, liqL);
+      if (estM) {
+        esterEl.innerHTML = `<span class="text-muted">Ester (Kc=${estM.Kc.toFixed(2)})</span><span><strong class="text-sky-400">H_lt = ${estM.yieldEqPct.toFixed(1)}%</strong> · H_tt = ${estM.yieldActualPct.toFixed(1)}%</span>`;
+      }
     }
     const ehEl = this.container.querySelector('#live-eh-mv');
     if (ehEl) {

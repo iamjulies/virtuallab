@@ -1766,3 +1766,80 @@ header button.bg-amber-500 {
 table {
   border-collapse: collapse;
 }
+
+/* Dynamic auto-stretching chemical reaction arrows with stacked top/bottom conditions */
+.chem-eq-line {
+  width: 100%;
+  display: block;
+  margin-bottom: 6px;
+  word-break: break-word;
+  line-height: 1.5;
+}
+.chem-arrow {
+  display: inline-grid;
+  grid-template-rows: 1.15em auto 1.15em;
+  align-items: center;
+  justify-items: center;
+  vertical-align: middle;
+  margin: 0 5px;
+}
+.chem-arrow__top {
+  grid-row: 1;
+  align-self: end;
+  font-size: 0.72em;
+  line-height: 1.05;
+  padding: 0 7px 2px;
+  white-space: nowrap;
+  opacity: 0.88;
+}
+.chem-arrow__bottom {
+  grid-row: 3;
+  align-self: start;
+  font-size: 0.72em;
+  line-height: 1.05;
+  padding: 2px 7px 0;
+  white-space: nowrap;
+  opacity: 0.88;
+}
+.chem-arrow__line {
+  grid-row: 2;
+  position: relative;
+  width: 100%;
+  min-width: 28px;
+  height: 1.5px;
+  background: currentColor;
+}
+.chem-arrow__line::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid currentColor;
+}
+.chem-arrow--rev .chem-arrow__line {
+  height: 5px;
+  background: transparent;
+  border-top: 1.4px solid currentColor;
+  border-bottom: 1.4px solid currentColor;
+}
+.chem-arrow--rev .chem-arrow__line::after {
+  right: -2px;
+  top: 0;
+  transform: translateY(-50%);
+  border-top: 3.5px solid transparent;
+  border-bottom: 1px solid transparent;
+  border-left: 6px solid currentColor;
+}
+.chem-arrow--rev .chem-arrow__line::before {
+  content: "";
+  position: absolute;
+  left: -2px;
+  bottom: -1px;
+  transform: translateY(50%);
+  border-top: 1px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  border-right: 6px solid currentColor;
+}

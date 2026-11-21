@@ -233,10 +233,22 @@ export function solutionBoilingPointK(moles, P_bar) {
   const nH2O = moles.H2O_l || 0;
   const nEtOH = moles.C2H5OH_l || 0;
   const nAcOH = moles.CH3COOH_l || 0;
+  const nEtOAc = moles.CH3COOC2H5_l || 0;
   const nBr2Liq = moles.Br2_l || 0;
   const nSO4Tot = (moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0);
   const nH2SO4Aq = Math.min(nSO4Tot, ((moles.H_aq || 0) + (moles.HSO4_aq || 0)) * 0.5);
   const nH2SO4Tot = nPureH2SO4 + nH2SO4Aq;
+  // Ternary azeotrope: CH3COOC2H5 (82.6%) + C2H5OH (8.4%) + H2O (9.0%) boils at 70.2 C (343.35 K), below pure EtOAc 77.1 C
+  if (nEtOAc > 1e-6 && nEtOH > 1e-6 && nH2O > 1e-6 && nPureH2SO4 <= 0.15) {
+    const azBpK =
+      1 / (1 / 343.35 - (CONSTANTS.R_J_MOL_K / 31500) * Math.log(pSafe / CONSTANTS.P_STD_BAR));
+    return Math.max(290, azBpK);
+  }
+  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nPureHNO3 <= 1e-10 && nEtOAc > 1e-8) {
+    const etOAcBpK =
+      1 / (1 / 350.25 - (CONSTANTS.R_J_MOL_K / 31900) * Math.log(pSafe / CONSTANTS.P_STD_BAR));
+    return Math.max(290, etOAcBpK);
+  }
   if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nPureHNO3 <= 1e-10 && nAcOH > 1e-10) {
     const pureAcBpK =
       1 / (1 / 391.05 - (CONSTANTS.R_J_MOL_K / 23700) * Math.log(pSafe / CONSTANTS.P_STD_BAR));

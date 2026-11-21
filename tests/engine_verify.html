@@ -99,6 +99,9 @@
     import { checkThermometerInteractions, computeWashBottleStreamArc, syncDockedToolPositions } from '../src/engine/apparatusTools.js';
     import { calcEvaporationRateMol, computeSteamOpacity, stepVesselThermodynamics } from '../src/engine/thermodynamics.js';
     import {
+      calcEsterificationConcAtTime,
+      calcEsterificationEquilibrium,
+      calcEsterificationRateConstantK1,
       calcSolidPourDischargeRate,
       computeAqueousVolumeL,
       computeAtmospherePartialPressures,
@@ -113,6 +116,7 @@
       computeSolidVolumeMl,
       computeSolutionVisuals,
       computeVesselElectrochemicalMetrics,
+      estimateVesselEsterificationMetrics,
       solutionFreezingPointK,
     } from '../src/engine/equilibrium.js';
     import { EnvironmentBar } from '../src/ui/environmentBar.js';
@@ -2470,7 +2474,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.21';
+      const expectedBuild = 'virlab_beta_v4+build.22';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2528,7 +2532,7 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.21 parity: All 39 apparatus & 30 starter reagents translated in VI/EN, Prompt 55 Inspector/Telemetry keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.22 parity: All 39 apparatus & 30 starter reagents translated in VI/EN, Prompt 55 Inspector/Telemetry keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 39 &&
           STARTER_REAGENTS.length === 30 &&
           !APPARATUS.clay_triangle &&
@@ -9159,6 +9163,133 @@
         'Prompt 55 invariants: Zero-ghost species hidden, vessel/angle solid pouring & filtration, AcOH liquid visual, Bench Telemetry + 3 Inspector groups + split Liquid/Solid/Gas tables + Electro kinetics & CSV',
         noGhostV && noGhostSpoon && pourPhysOk && acVisualOk && benchOk && inspector55Ok,
         `noGhost=(${noGhostV},${noGhostSpoon}), pour=${pourPhysOk}(e45=${rErl45.ratePerSec.toFixed(2)},b45=${rBeaker45.ratePerSec.toFixed(2)},fnl=${(fnlMounted.moles.AgCl_s||0).toFixed(4)}), acLiq=${acLiqMl.toFixed(1)}mL, bench=${benchOk}, ins55=${inspector55Ok}(sig=${emHCl.conductivityMSCm.toFixed(1)}/${emAc.conductivityMSCm.toFixed(2)},Eh=${redox.ehMv?.toFixed(0)}mV)`
+      );
+    }
+
+    // TEST 174: Prompt 56 (virlab_beta_v4+build.22) — K2Cr2O7 1500C Air vs Vacuum Thermal Stages, Reversible Esterification Kc=4 & Analytical Kinetics + Ternary Azeotrope, Dynamic .chem-arrow Log Cards
+    {
+      // 1) K2Cr2O7 thermal milestones & Air vs Vacuum divergence up to 1500 C
+      const specMetaOk =
+        Math.abs(SPECIES.K2Cr2O7_s.hotColorTempK - 514.75) < 0.2 &&
+        Math.abs(SPECIES.K2Cr2O7_s.meltTempK - 671.15) < 0.2 &&
+        Math.abs(SPECIES.K2CrO4_s.hotColorTempK - 941.15) < 0.2 &&
+        Math.abs(SPECIES.K2CrO4_s.meltTempK - 1241.15) < 0.2;
+
+      // Vacuum: early Stage 1 @ 460 C (733 K), full Stage 2 @ 1350 C (1623 K) -> pure Cr2O3(s) + K(g)↑ + O2↑
+      const simVacCr = new LabSimulation();
+      simVacCr.environment.atmosphereMode = 'vacuum';
+      simVacCr.environment.pressureBar = 0.001;
+      const vVac1 = simVacCr.createApparatus('crucible_porcelain', 220, 450);
+      vVac1.moles = { K2Cr2O7_s: 0.04 };
+      const vVac2 = simVacCr.createApparatus('crucible_porcelain', 300, 450);
+      vVac2.moles = { K2CrO4_s: 0.04 };
+      let vacKGas = 0;
+      for (let i = 0; i < 40; i++) {
+        vVac1.tempK = 733.15; // 460 C in vacuum -> Stage 1 already active!
+        stepVesselChemistry(vVac1, 0.2, { environment: simVacCr.environment });
+        vVac2.tempK = 1623.15; // 1350 C in vacuum -> K2CrO4 -> Cr2O3 + 4K↑ + 2.5 O2↑
+        vacKGas += stepVesselChemistry(vVac2, 0.2, { environment: simVacCr.environment }).gasProduced?.K_g || 0;
+      }
+      const vacOk =
+        (vVac1.moles.K2CrO4_s || 0) > 0.01 &&
+        (vVac2.moles.Cr2O3_s || 0) > 0.019 &&
+        (vVac2.moles.K2CrO4_s || 0) < 1e-4 &&
+        (vVac2.moles.K2O_s || 0) < 1e-4 &&
+        vacKGas > 0.07;
+
+      // Air: stable K2CrO4 at 1050 C (1323 K), partial Stage 2 > 1200 C (1723 K = 1450 C)
+      const simAirCr = new LabSimulation();
+      const vAirHold = simAirCr.createApparatus('crucible_porcelain', 380, 450);
+      vAirHold.moles = { K2CrO4_s: 0.04 };
+      const vAirHi = simAirCr.createApparatus('crucible_porcelain', 460, 450);
+      vAirHi.moles = { K2CrO4_s: 0.04 };
+      for (let i = 0; i < 40; i++) {
+        vAirHold.tempK = 1323.15; // 1050 C < 1200 C in air -> thermally stable
+        stepVesselChemistry(vAirHold, 0.2, { environment: simAirCr.environment });
+        vAirHi.tempK = 1723.15; // 1450 C > 1200 C in air -> Stage 2 + K2O/K
+        stepVesselChemistry(vAirHi, 0.2, { environment: simAirCr.environment });
+      }
+      const airCrOk =
+        Math.abs((vAirHold.moles.K2CrO4_s || 0) - 0.04) < 1e-9 &&
+        (vAirHi.moles.Cr2O3_s || 0) > 0.01 &&
+        (vAirHi.moles.K2CrO4_s || 0) < 0.03;
+
+      // 2) Analytical Esterification Equations + Reversible Simulation Kc=4 + Ternary Azeotrope 70.2 C
+      const eq11 = calcEsterificationEquilibrium({ a: 1, b: 1, Kc: 4 }); // 66.67%
+      const eq12 = calcEsterificationEquilibrium({ a: 1, b: 2, Kc: 4 }); // 84.53%
+      const eq13 = calcEsterificationEquilibrium({ a: 1, b: 3, Kc: 4 }); // 90.27%
+      const k25Uncat = calcEsterificationRateConstantK1({ tempK: 298.15, cHPlus: 0 });
+      const k25Cat = calcEsterificationRateConstantK1({ tempK: 298.15, cHPlus: 0.5 });
+      const xt0 = calcEsterificationConcAtTime({ a: 1, b: 1, tSec: 0, k1: k25Cat, Kc: 4 });
+      const xtMid = calcEsterificationConcAtTime({ a: 1, b: 1, tSec: 80000, k1: k25Cat, Kc: 4 });
+      const xtInf = calcEsterificationConcAtTime({ a: 1, b: 1, tSec: 1e9, k1: k25Cat, Kc: 4 });
+
+      const simEst = new LabSimulation();
+      const vE11 = simEst.createApparatus('round_flask_250', 160, 427);
+      vE11.moles = { CH3COOH_l: 0.2, C2H5OH_l: 0.2, H2SO4_l: 0.015 };
+      const vE12 = simEst.createApparatus('round_flask_250', 260, 427);
+      vE12.moles = { CH3COOH_l: 0.2, C2H5OH_l: 0.4, H2SO4_l: 0.015 };
+      const vEUncat = simEst.createApparatus('round_flask_250', 360, 427);
+      vEUncat.moles = { CH3COOH_l: 0.2, C2H5OH_l: 0.2 };
+      for (let i = 0; i < 120; i++) {
+        vE11.tempK = 351.15;
+        stepVesselChemistry(vE11, 0.15, { environment: simEst.environment });
+        vE12.tempK = 351.15;
+        stepVesselChemistry(vE12, 0.15, { environment: simEst.environment });
+        vEUncat.tempK = 298.15;
+        stepVesselChemistry(vEUncat, 0.15, { environment: simEst.environment });
+      }
+      const estY11 = ((vE11.moles.CH3COOC2H5_l || 0) / 0.2) * 100;
+      const estY12 = ((vE12.moles.CH3COOC2H5_l || 0) / 0.2) * 100;
+      const estYU = ((vEUncat.moles.CH3COOC2H5_l || 0) / 0.2) * 100;
+      const azBpC = solutionBoilingPointK({ CH3COOC2H5_l: 0.2, C2H5OH_l: 0.04, H2O_l: 0.1 }, 1.0) - 273.15;
+      const estLive = estimateVesselEsterificationMetrics(vE11, computeLiquidVolumeL(vE11.moles, vE11.tempK));
+      const estOk =
+        Math.abs(eq11.yieldPct - 66.67) < 0.05 &&
+        Math.abs(eq12.yieldPct - 84.53) < 0.08 &&
+        eq13.yieldPct > 90.0 &&
+        k25Uncat > 5e-9 && k25Uncat < 2e-8 &&
+        k25Cat > k25Uncat * 500 &&
+        xt0 === 0 && xtMid > 0.1 && xtMid < eq11.xEq &&
+        Math.abs(xtInf - eq11.xEq) < 1e-4 &&
+        estY11 > 62 && estY11 < 70 &&
+        estY12 > 80 && estY12 < 88 &&
+        estYU < 0.5 &&
+        Math.abs(azBpC - 70.2) < 0.3 &&
+        estLive && Math.abs(estLive.yieldEqPct - 66.7) < 1.5;
+
+      // 3) Log card layout (#label · [MM:SS.ds] header + 100% chem-eq-line + dynamic .chem-arrow w/ escaping)
+      const hostLog = document.createElement('div');
+      const tVi56 = (k) => I18N.vi[k] || k;
+      const insLog = new InspectorPanel(hostLog, simEst, () => tVi56, {});
+      simEst.addLog({
+        type: 'reaction',
+        equation: '4K₂Cr₂O₇(l) —(>500 °C)→ 4K₂CrO₄ + 2Cr₂O₃ + 3O₂↑',
+        descVi: 'Nhiệt phân K₂Cr₂O₇ trên 500 °C.',
+        descEn: 'K₂Cr₂O₇ thermal decomposition >500 °C.',
+        vesselLabel: '#19',
+      });
+      simEst.addLog({
+        type: 'reaction',
+        equation: '2K₂CrO₄ —(chân không; 900–1200 °C)→ Cr₂O₃ + 4K↑ + 2.5O₂↑',
+        descVi: 'Phân hủy trong chân không.',
+        descEn: 'Vacuum decomposition.',
+        vesselLabel: '#20',
+      });
+      simEst.selectedId = vE11.id;
+      insLog.update('vi', true);
+      const l1 = hostLog.innerHTML.includes('live-ester-eq');
+      const l2 = hostLog.innerHTML.includes('H_lt =');
+      const l3 = hostLog.innerHTML.includes('class="chem-eq-line');
+      const l4 = hostLog.innerHTML.includes('class="chem-arrow"');
+      const l5 = Array.from(hostLog.querySelectorAll('.chem-arrow__top')).some((el) => el.textContent === '>500 °C');
+      const l6 = hostLog.innerHTML.includes('<span class="chem-arrow__bottom">900–1200 °C</span>');
+      const logDomOk = l1 && l2 && l3 && l4 && l5 && l6;
+
+      assert(
+        'Prompt 56 invariants: K2Cr2O7 1500C Air vs Vacuum thermal stages, reversible Esterification Kc=4 (66.7%/84.5%) & analytical kinetics + 70.2C ternary azeotrope, .chem-arrow log cards',
+        specMetaOk && vacOk && airCrOk && estOk && logDomOk,
+        `meta=${specMetaOk}, vac=${vacOk}(K=${vacKGas.toFixed(3)}), air=${airCrOk}(cr=${(vAirHi.moles.Cr2O3_s||0).toFixed(3)}), est=${estOk}(Y11=${estY11.toFixed(1)}%,Y12=${estY12.toFixed(1)}%,az=${azBpC.toFixed(1)}C), logUI=${logDomOk}(${l1}/${l2}/${l3}/${l4}/${l5}/${l6})`
       );
     }
 

@@ -5057,6 +5057,62 @@ function stepSiliconAndChromiumChemistry(vessel, liquidVolL, dt, activeReactions
     }
   }
 
+  // 2h. High-temperature K2Cr2O7 / K2CrO4 / K2O stages up to 1500 C (Vacuum shift vs Air > 1200 C Stage 2)
+  if ((moles.H2O_l || 0) < 0.015 && ((moles.K2Cr2O7_s || 0) > 1e-10 || (moles.K2CrO4_s || 0) > 1e-10 || (moles.K2O_s || 0) > 1e-10)) {
+    const isVacThermal =
+      options?.environment?.atmosphereMode === 'vacuum' ||
+      (options?.environment?.pressureBar ?? 1.0) <= 0.15;
+
+    // Early vacuum Stage 1 (450–470 C = 723.15 K .. 773.15 K, ~30-50 C lower than air)
+    if (isVacThermal && (moles.K2Cr2O7_s || 0) > 1e-10 && T >= 723.15 && T < 773.15) {
+      const dVac1 = (moles.K2Cr2O7_s / 4) * (1 - Math.exp(-0.28 * dt));
+      if (dVac1 > 1e-11) {
+        consumeSpecies('K2Cr2O7_s', 4 * dVac1);
+        moles.K2CrO4_s = (moles.K2CrO4_s || 0) + 4 * dVac1;
+        moles.Cr2O3_s = (moles.Cr2O3_s || 0) + 2 * dVac1;
+        gasProduced.O2_g = (gasProduced.O2_g || 0) + 3 * dVac1;
+        pushRxn('k2cr2o7_vac_stage1', '4K₂Cr₂O₇ —(chân không; 450–470 °C)→ 4K₂CrO₄ + 2Cr₂O₃ + 3O₂↑', 'Chân không hạ nhiệt độ nhiệt phân K₂Cr₂O₇ xuống 450–470 °C', 'Vacuum lowers K₂Cr₂O₇ decomposition onset to 450–470 °C', 'Hút chân không rút liên tục O₂ nên K₂Cr₂O₇ phân hủy sớm ở 450–470 °C thành K₂CrO₄ vàng và Cr₂O₃ lục.', 'Continuous vacuum O₂ pumping shifts K₂Cr₂O₇ decomposition ~40 °C lower to 450–470 °C.', dVac1, true);
+      }
+    }
+
+    // Stage 2: Molten K2CrO4 (mp 968 C) — Vacuum (>= 850 C: full volatilization to pure Cr2O3) vs Air (> 1200 C: partial Stage 2)
+    if ((moles.K2CrO4_s || 0) > 1e-10) {
+      if (isVacThermal && T >= 1123.15) {
+        // 850–1200 C vacuum: 2K2CrO4 -> Cr2O3(s) + 4K↑ + 2.5 O2↑ (leaves 100% pure Cr2O3 by 1200–1500 C)
+        const kVac2 = T >= 1473.15 ? 1.8 : 0.45 + 0.9 * Math.min(1, (T - 1123.15) / 350);
+        const dVac2 = (moles.K2CrO4_s / 2) * (1 - Math.exp(-kVac2 * dt));
+        if (dVac2 > 1e-11) {
+          consumeSpecies('K2CrO4_s', 2 * dVac2);
+          moles.Cr2O3_s = (moles.Cr2O3_s || 0) + dVac2;
+          gasProduced.K_g = (gasProduced.K_g || 0) + 4 * dVac2;
+          gasProduced.O2_g = (gasProduced.O2_g || 0) + 2.5 * dVac2;
+          pushRxn('k2cro4_vac_stage2', '2K₂CrO₄ —(chân không; 900–1200 °C)→ Cr₂O₃(s) + 4K↑ + 2.5O₂↑', 'Nhiệt phân K₂CrO₄ trong chân không (850–1200 °C) còn 100% Cr₂O₃ tinh khiết', 'Vacuum decomposition of K₂CrO₄ (850–1200 °C) leaves pure Cr₂O₃', 'Chân không hút liên tục O₂ và hơi K làm K₂CrO₄ phân hủy mạnh từ 850–1200 °C; tới 1500 °C chỉ còn Cr₂O₃ rắn lục thẫm tinh khiết.', 'Continuous vacuum evacuation removes K vapor and O₂ from 850–1200 °C, leaving 100% solid Cr₂O₃ at 1500 °C.', dVac2, true);
+        }
+      } else if (!isVacThermal && T >= 1473.15) {
+        // Air > 1200 C (1473 K): molten K2CrO4 thermally stable at 968-1200 C; >1200 C partial Stage 2: 4K2CrO4(l) -> 2Cr2O3(s) + 4K2O + 3O2↑
+        const kAir2 = 0.08 + 0.22 * Math.min(1, (T - 1473.15) / 300);
+        const dAir2 = (moles.K2CrO4_s / 4) * (1 - Math.exp(-kAir2 * dt));
+        if (dAir2 > 1e-11) {
+          consumeSpecies('K2CrO4_s', 4 * dAir2);
+          moles.Cr2O3_s = (moles.Cr2O3_s || 0) + 2 * dAir2;
+          moles.K2O_s = (moles.K2O_s || 0) + 4 * dAir2;
+          gasProduced.O2_g = (gasProduced.O2_g || 0) + 3 * dAir2;
+          pushRxn('k2cro4_air_stage2', '4K₂CrO₄(l) —(>1200 °C)→ 2Cr₂O₃(s) + 4K₂O + 3O₂↑', 'Nhiệt phân K₂CrO₄ nóng chảy (>1200 °C trong không khí) tạo Cr₂O₃ và K₂O/K', 'Molten K₂CrO₄ partial Stage 2 decomposition (>1200 °C in air) → Cr₂O₃ + K₂O + O₂↑', 'Ở 968–1200 °C trong không khí (~0.21 atm O₂), K₂CrO₄ nóng chảy bền nhiệt; trên 1200 °C phân hủy một phần và bay hơi mạnh dần đến 1500 °C, chủ yếu còn Cr₂O₃ (t_nc 2435 °C).', 'Molten K₂CrO₄ stays stable at 968–1200 °C in air; above 1200 °C it partially decomposes toward dark-green Cr₂O₃ (mp 2435 °C) and K/O₂ vapor.', dAir2, true);
+        }
+      }
+    }
+    // K2O instability above 1000 C (1273 K air) or >= 850 C (1123 K vacuum): 2K2O -> 4K(g)↑ + O2(g)↑
+    if ((moles.K2O_s || 0) > 1e-10 && !vessel.isStoppered && T >= (isVacThermal ? 1123.15 : 1273.15)) {
+      const dK2O = (moles.K2O_s / 2) * (1 - Math.exp(-(isVacThermal ? 1.6 : 0.45) * dt));
+      if (dK2O > 1e-11) {
+        consumeSpecies('K2O_s', 2 * dK2O);
+        gasProduced.K_g = (gasProduced.K_g || 0) + 4 * dK2O;
+        gasProduced.O2_g = (gasProduced.O2_g || 0) + dK2O;
+        pushRxn('k2o_hi_dissoc', '2K₂O —(>1000 °C)→ 4K(g)↑ + O₂(g)↑', 'K₂O phân ly ở nhiệt độ cao (>1000 °C) thành hơi Kali và O₂', 'High-temperature dissociation of K₂O (>1000 °C) into K(g)↑ + O₂↑', 'Trên 800–1000 °C (đặc biệt trong chân không), K₂O không bền và phân ly thành hơi K và khí O₂ thoát ra.', 'Above 800–1000 °C (especially in vacuum), K₂O dissociates into K vapor and O₂ gas.', dK2O);
+      }
+    }
+  }
+
   return heatJ;
 }
 
@@ -5359,16 +5415,60 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
       }
     }
 
-    // 2d. Fischer Esterification: CH3COOH + C2H5OH ⇄ CH3COOC2H5 + H2O (conc H2SO4 cat, 60-80 C = >= 333.15 K)
-    const hasAcidCat = (moles.H2SO4_l || 0) > 1e-5 || ((moles.H_aq || 0) / Math.max(1e-6, liquidVolL) >= 0.4 && ((moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0)) > 1e-5);
-    if ((moles.CH3COOH_l || 0) > 1e-9 && (moles.C2H5OH_l || 0) > 1e-9 && hasAcidCat && T >= 333.15) {
-      const dEst = Math.min(moles.CH3COOH_l, moles.C2H5OH_l) * (1 - Math.exp(-0.55 * dt));
-      if (dEst > 1e-11) {
-        consumeSpecies('CH3COOH_l', dEst);
-        consumeSpecies('C2H5OH_l', dEst);
-        moles.CH3COOC2H5_l = (moles.CH3COOC2H5_l || 0) + dEst;
-        moles.H2O_l = (moles.H2O_l || 0) + dEst;
-        pushRxn('fischer_esterification', 'CH₃COOH + C₂H₅OH ⇌(H₂SO₄ đặc, 60–80 °C) CH₃COOC₂H₅ + H₂O', 'Phản ứng Ester hóa: Tạo Ethyl acetate (mùi dầu chuối thơm)', 'Fischer Esterification: Acetic acid + Ethanol → Ethyl acetate', 'Đun nóng 60–80 °C có H₂SO₄ đặc xúc tác tạo ester Ethyl acetate có mùi thơm hoa quả đặc trưng.', 'Heating at 60–80 °C with conc. H₂SO₄ yields fruity-smelling Ethyl acetate ester.', dEst);
+    // 2d. Reversible Fischer Esterification: CH3COOH + C2H5OH ⇄ CH3COOC2H5 + H2O (Kc ~ 4.0, dH° = -3.8 kJ/mol, Ea ~ 50 kJ/mol)
+    // Extended Arrhenius sensitivity: k1 = (k_uncat + k_cat * [H+]) * exp(-Ea/(R*T)), scaled into playable lab speed while preserving exact Kc = 4.0 equilibrium!
+    const effVolEst = Math.max(1e-4, liquidVolL || 0.02);
+    const cAcidCat = ((moles.H2SO4_l || 0) * 1.6 + (moles.H_aq || 0)) / effVolEst;
+    const hasAcidCat = (moles.H2SO4_l || 0) > 1e-5 || (cAcidCat >= 0.35 && ((moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0) + (moles.Cl_aq || 0)) > 1e-5);
+    if (((moles.CH3COOH_l || 0) > 1e-8 && (moles.C2H5OH_l || 0) > 1e-8) || ((moles.CH3COOC2H5_l || 0) > 1e-8 && (moles.H2O_l || 0) > 1e-8 && hasAcidCat)) {
+      const KcEst = Math.max(3.5, Math.min(4.4, 4.0 * Math.exp((-3800 / CONSTANTS.R_J_MOL_K) * (1 / Math.max(250, T) - 1 / 348.15))));
+      const eaEstJ = 50000;
+      const arrhRatio = Math.exp((-eaEstJ / CONSTANTS.R_J_MOL_K) * (1 / Math.max(250, T) - 1 / 353.15));
+      // Catalyzed reflux (75–85 C, ~1 M H+) equilibrates in ~4–8s lab time; cold (25 C) ~23x slower; uncatalyzed ~1000x slower!
+      const catFactor = (hasAcidCat ? 0.001 + 1.0 * Math.max(0.25, Math.min(3.5, cAcidCat)) : 0.0008);
+      const k1Sim = 0.055 * catFactor * arrhRatio;
+      const kRevSim = k1Sim / KcEst;
+
+      const cAc = (moles.CH3COOH_l || 0) / effVolEst;
+      const cEt = (moles.C2H5OH_l || 0) / effVolEst;
+      const cEst = (moles.CH3COOC2H5_l || 0) / effVolEst;
+      const cW = (moles.H2O_l || 0) / effVolEst;
+      const dcDt = k1Sim * cAc * cEt - kRevSim * cEst * cW;
+      const dMolRaw = dcDt * effVolEst * dt;
+      if (dMolRaw > 1e-11) {
+        const dEst = Math.min(moles.CH3COOH_l || 0, moles.C2H5OH_l || 0, dMolRaw * 1.0);
+        if (dEst > 1e-11) {
+          consumeSpecies('CH3COOH_l', dEst);
+          consumeSpecies('C2H5OH_l', dEst);
+          moles.CH3COOC2H5_l = (moles.CH3COOC2H5_l || 0) + dEst;
+          moles.H2O_l = (moles.H2O_l || 0) + dEst;
+          heatJ += dEst * 3800; // slightly exothermic ΔH° = -3.8 kJ/mol
+          if (hasAcidCat || T >= 345.0) {
+            pushRxn('fischer_esterification', 'CH₃COOH + C₂H₅OH ⇌(H₂SO₄ đặc; 75–85 °C) CH₃COOC₂H₅ + H₂O', 'Phản ứng Ester hóa thuận nghịch (Kc ≈ 4): Tạo Ethyl acetate thơm dầu chuối', 'Reversible Fischer Esterification (Kc ≈ 4): Acetic acid + Ethanol ⇄ Ethyl acetate + H₂O', 'H₂SO₄ đặc vừa xúc tác vừa hút nước; đạt cân bằng thuận nghịch Kc ≈ 4 (tỉ lệ 1:1 đạt 66,7%, dư EtOH 1:2 đạt 84,5%, tách nước đạt ~100%).', 'Conc. H₂SO₄ catalyzes reversible esterification (Kc ≈ 4: 1:1 gives 66.7%, 1:2 EtOH excess gives 84.5%, removing H₂O approaches 100%).', dEst);
+          }
+        }
+      } else if (dMolRaw < -1e-11 && hasAcidCat) {
+        const dHyd = Math.min(moles.CH3COOC2H5_l || 0, moles.H2O_l || 0, -dMolRaw);
+        if (dHyd > 1e-11) {
+          consumeSpecies('CH3COOC2H5_l', dHyd);
+          consumeSpecies('H2O_l', dHyd);
+          moles.CH3COOH_l = (moles.CH3COOH_l || 0) + dHyd;
+          moles.C2H5OH_l = (moles.C2H5OH_l || 0) + dHyd;
+          heatJ -= dHyd * 3800;
+          pushRxn('fischer_hydrolysis', 'CH₃COOC₂H₅ + H₂O ⇌(H⁺; t°) CH₃COOH + C₂H₅OH', 'Thủy phân thuận nghịch Ethyl acetate tiến về trạng thái cân bằng Kc ≈ 4', 'Acid-catalyzed reverse ester hydrolysis approaching Kc ≈ 4', 'Khi dư nước hoặc sản phẩm vượt quá cân bằng Kc ≈ 4, ester bị thủy phân ngược lại một phần.', 'Excess water partially hydrolyzes Ethyl acetate back toward Kc ≈ 4 equilibrium.', dHyd);
+        }
+      }
+      // Overheating conc. H2SO4 side-charring > 145 C with large excess conc. H2SO4
+      if (T >= 418.15 && (moles.H2SO4_l || 0) >= 0.08 && (moles.C2H5OH_l || 0) > 1e-4 && (moles.H2SO4_l || 0) > (moles.C2H5OH_l || 0) * 0.45) {
+        const dChar = Math.min(moles.C2H5OH_l, moles.H2SO4_l / 6) * (1 - Math.exp(-0.08 * dt));
+        if (dChar > 1e-10) {
+          consumeSpecies('C2H5OH_l', dChar);
+          consumeSpecies('H2SO4_l', 6 * dChar);
+          moles.C_s = (moles.C_s || 0) + 2 * dChar;
+          moles.H2O_l = (moles.H2O_l || 0) + 9 * dChar;
+          gasProduced.SO2_g = (gasProduced.SO2_g || 0) + 6 * dChar;
+          pushRxn('etoh_h2so4_char', 'C₂H₅OH + 6H₂SO₄(đặc) —(>145 °C)→ 2C↓ (đen) + 6SO₂↑ + 9H₂O', 'Quá nhiệt H₂SO₄ đặc (>140 °C) oxi hóa sẫm màu hỗn hợp & sinh khí SO₂', 'Conc. H₂SO₄ overheating (>140 °C) chars mixture & evolves SO₂↑', 'Dùng quá nhiều H₂SO₄ đặc hoặc đun >130–140 °C gây tách nước tạo ether/ethene và oxi hóa sẫm màu.', 'Excess conc. H₂SO₄ or overheating (>130–140 °C) triggers ether/ethene side-reactions and dark charring.', dChar);
+        }
       }
     }
 

@@ -965,3 +965,116 @@ export function computeBenchTelemetry(sim) {
     toolCount,
   };
 }
+
+/**
+ * Analytical Fischer Esterification Equilibrium Solver (Kc ~ 4.0 for AcOH + EtOH ⇄ EtOAc + H2O):
+ *   x = [Kc(a+b) - sqrt(Kc^2(a-b)^2 + 4*Kc*a*b)] / (2*(Kc - 1)) when cEst=0, cW=0;
+ *   or generalized root for arbitrary initial product concentrations cEst, cW.
+ */
+export function calcEsterificationEquilibrium({ a = 0, b = 0, cEst = 0, cW = 0, Kc = 4.0 }) {
+  const safeA = Math.max(0, Number(a) || 0);
+  const safeB = Math.max(0, Number(b) || 0);
+  const safeC = Math.max(0, Number(cEst) || 0);
+  const safeW = Math.max(0, Number(cW) || 0);
+  const safeK = Math.max(1e-4, Number(Kc) || 4.0);
+  const minAB = Math.min(safeA, safeB);
+  if (minAB <= 1e-12 && (safeC <= 1e-12 || safeW <= 1e-12)) {
+    return { xEq: 0, x1: 0, x2: 0, yieldPct: 0 };
+  }
+
+  // Quadratic: (Kc - 1) x^2 - [Kc(a + b) + cEst + cW] x + (Kc*a*b - cEst*cW) = 0
+  const A = safeK - 1;
+  const B = -(safeK * (safeA + safeB) + safeC + safeW);
+  const C = safeK * safeA * safeB - safeC * safeW;
+
+  if (Math.abs(A) < 1e-9) {
+    const xEq = Math.abs(B) > 1e-12 ? -C / B : 0;
+    const clamped = Math.max(-Math.min(safeC, safeW), Math.min(minAB, xEq));
+    return {
+      xEq: clamped,
+      x1: clamped,
+      x2: Infinity,
+      yieldPct: minAB > 1e-12 ? Math.max(0, (clamped / minAB) * 100) : 0,
+    };
+  }
+
+  const disc = Math.max(0, B * B - 4 * A * C);
+  const sqrtD = Math.sqrt(disc);
+  const r1 = (-B - sqrtD) / (2 * A);
+  const r2 = (-B + sqrtD) / (2 * A);
+  const x1 = A > 0 ? r1 : r2;
+  const x2 = A > 0 ? r2 : r1;
+  const clamped = Math.max(-Math.min(safeC, safeW), Math.min(minAB, x1));
+  return {
+    xEq: clamped,
+    x1,
+    x2,
+    yieldPct: minAB > 1e-12 ? Math.max(0, ((safeC + clamped) / (minAB + safeC)) * 100) : 0,
+  };
+}
+
+/**
+ * Extended Arrhenius forward rate constant k1 (L / (mol * s)):
+ *   k1 = (k_uncat + k_cat * [H+]) * exp(-Ea / (R * T))
+ */
+export function calcEsterificationRateConstantK1({
+  tempK = CONSTANTS.T_STD_K,
+  cHPlus = 0,
+  kUncat = 5.76,
+  kCat = 11500.0,
+  eaJ = 50000.0,
+}) {
+  const T = Math.max(200, Math.min(800, Number(tempK) || CONSTANTS.T_STD_K));
+  const H = Math.max(0, Number(cHPlus) || 0);
+  return (kUncat + kCat * H) * Math.exp(-eaJ / (CONSTANTS.R_J_MOL_K * T));
+}
+
+/**
+ * Closed-form integrated second-order reversible esterification concentration x(t) (mol/L):
+ *   ln[(x - x1)/(x - x2) * (x2 / x1)] = k1 * (1 - 1/Kc) * (x1 - x2) * t
+ */
+export function calcEsterificationConcAtTime({ a = 0, b = 0, tSec = 0, k1 = 0, Kc = 4.0 }) {
+  const safeA = Math.max(0, Number(a) || 0);
+  const safeB = Math.max(0, Number(b) || 0);
+  const t = Math.max(0, Number(tSec) || 0);
+  const k = Math.max(0, Number(k1) || 0);
+  const safeK = Math.max(1e-4, Number(Kc) || 4.0);
+  if (safeA <= 1e-12 || safeB <= 1e-12 || t <= 0 || k <= 0) return 0;
+
+  const { x1, x2 } = calcEsterificationEquilibrium({ a: safeA, b: safeB, Kc: safeK });
+  if (Math.abs(safeK - 1) < 1e-7) {
+    const expTerm = Math.exp(-k * (safeA + safeB) * t);
+    return (safeA * safeB * (1 - expTerm)) / Math.max(1e-12, safeA + safeB);
+  }
+  const E = k * (1 - 1 / safeK) * (x1 - x2) * t;
+  const eE = Math.exp(Math.max(-60, Math.min(0, E)));
+  const denom = x2 - x1 * eE;
+  return Math.abs(denom) > 1e-12 ? Math.max(0, Math.min(Math.min(safeA, safeB), (x1 * x2 * (1 - eE)) / denom)) : x1;
+}
+
+/**
+ * Compute live Fischer Esterification diagnostics (Kc, theoretical equilibrium yield %, actual conversion %) for a vessel.
+ */
+export function estimateVesselEsterificationMetrics(vessel, liqL = 0) {
+  if (!vessel || liqL <= 1e-6) return null;
+  const m = vessel.moles || {};
+  const nAc = m.CH3COOH_l || 0;
+  const nEt = m.C2H5OH_l || 0;
+  const nEst = m.CH3COOC2H5_l || 0;
+  const nW = m.H2O_l || 0;
+  if (nAc + nEst <= 1e-8 || (nEt + nEst <= 1e-8 && nEst <= 1e-8)) return null;
+  if (nAc <= 1e-8 && nEst <= 1e-8) return null;
+
+  const T = Number.isFinite(vessel.tempK) ? vessel.tempK : CONSTANTS.T_STD_K;
+  const Kc = 4.0 * Math.exp((-3800 / CONSTANTS.R_J_MOL_K) * (1 / Math.max(250, T) - 1 / 348.15));
+  const aTot = (nAc + nEst) / liqL;
+  const bTot = (nEt + nEst) / liqL;
+  const cW0 = Math.max(0, (nW - nEst) / liqL);
+  const { xEq } = calcEsterificationEquilibrium({ a: aTot, b: bTot, cEst: 0, cW: cW0, Kc });
+  const minAB = Math.min(aTot, bTot);
+  const yieldEqPct = minAB > 1e-9 ? Math.min(100, Math.max(0, (xEq / minAB) * 100)) : 0;
+  const yieldActualPct = minAB > 1e-9 ? Math.min(100, Math.max(0, ((nEst / liqL) / minAB) * 100)) : 0;
+  const cHPlus = ((m.H_aq || 0) + (m.H2SO4_l || 0) * 1.5) / liqL;
+  const k1Phys = calcEsterificationRateConstantK1({ tempK: T, cHPlus });
+  return { Kc, yieldEqPct, yieldActualPct, k1Phys, minABMol: minAB * liqL };
+}
