@@ -747,3 +747,89 @@ function stepGalvanicInstrument(sim, inst, elPos, elNeg, infoPos, infoNeg, items
     },
   ];
 }
+
+/**
+ * Compute solution redox potential Eh (mV vs SHE) and Galvanic/Cell EMF Epin (V) for a vessel.
+ * Shown automatically whenever an electrode is docked or a salt bridge links this vessel.
+ */
+export function computeVesselRedoxAndCellMetrics(vessel, items = [], liqL = 0, ph = null) {
+  if (!vessel) return { hasElectroLink: false, ehMv: null, ePinV: null, cellPairLabel: null };
+  const dockedEls = items.filter((i) => i.kind === 'electrode' && i.dockedVesselId === vessel.id);
+  const linkedBridges = items.filter(
+    (i) => i.kind === 'salt_bridge' && !i.isBroken && (i.vesselAId === vessel.id || i.vesselBId === vessel.id)
+  );
+  const hasElectroLink = dockedEls.length > 0 || linkedBridges.length > 0;
+  if (!hasElectroLink || liqL <= 1e-6 || vessel.isFrozenSolid) {
+    return { hasElectroLink, ehMv: null, ePinV: null, cellPairLabel: null };
+  }
+
+  const m = vessel.moles || {};
+  const vSafe = Math.max(1e-4, liqL);
+  const T = Number.isFinite(vessel.tempK) ? vessel.tempK : CONSTANTS.T_STD_K;
+  const rtF = (CONSTANTS.R_J_MOL_K * T) / CONSTANTS.FARADAY_C_MOL;
+  const effPh = ph ?? 7.0;
+  const cH = Math.pow(10, -effPh);
+
+  let ehV = null;
+  const metalEl = dockedEls.find((e) => e.material === 'Zn' || e.material === 'Cu');
+  if (metalEl) {
+    ehV = computeHalfCellPotentialV(metalEl.material, vessel, vSafe);
+  } else if ((m.MnO4_aq || 0) > 1e-7) {
+    const ratio = ((m.MnO4_aq || 0) / vSafe) * Math.pow(Math.max(1e-8, cH), 8) / Math.max(1e-6, (m.Mn2_aq || 0) / vSafe);
+    ehV = 1.507 + (rtF / 5) * Math.log(Math.max(1e-20, ratio));
+  } else if ((m.Cr2O7_2_aq || 0) > 1e-7) {
+    const ratio = ((m.Cr2O7_2_aq || 0) / vSafe) * Math.pow(Math.max(1e-8, cH), 14) / Math.pow(Math.max(1e-6, (m.Cr3_aq || 0) / vSafe), 2);
+    ehV = 1.36 + (rtF / 6) * Math.log(Math.max(1e-20, ratio));
+  } else if ((m.Fe3_aq || 0) > 1e-7 || ((m.Fe2_aq || 0) > 1e-7 && (m.Fe3_aq || 0) > 1e-9)) {
+    const c3 = Math.max(1e-6, (m.Fe3_aq || 0) / vSafe);
+    const c2 = Math.max(1e-6, (m.Fe2_aq || 0) / vSafe);
+    ehV = 0.771 + rtF * Math.log(c3 / c2);
+  } else if ((m.Ag_aq || 0) > 1e-7) {
+    ehV = 0.7996 + rtF * Math.log(Math.max(1e-12, (m.Ag_aq || 0) / vSafe));
+  } else if ((m.Cu2_aq || 0) > 1e-7) {
+    ehV = 0.3419 + (rtF / 2) * Math.log(Math.max(1e-12, (m.Cu2_aq || 0) / vSafe));
+  } else if ((m.Zn2_aq || 0) > 1e-7) {
+    ehV = -0.7618 + (rtF / 2) * Math.log(Math.max(1e-12, (m.Zn2_aq || 0) / vSafe));
+  } else {
+    // Aerated aqueous solution (C/inert electrode): O2/H2O mixed potential vs pH
+    ehV = 0.81 - 0.05916 * (T / 298.15) * effPh;
+  }
+
+  let ePinV = null;
+  let cellPairLabel = null;
+  for (const sb of linkedBridges) {
+    const partnerId = sb.vesselAId === vessel.id ? sb.vesselBId : sb.vesselAId;
+    const partnerV = items.find((i) => i.id === partnerId && i.kind === 'vessel' && !i.isShattered);
+    if (!partnerV) continue;
+    const partnerLiq = computeLiquidVolumeL(partnerV.moles, partnerV.tempK);
+    if (partnerLiq <= 1e-5) continue;
+    const partnerEl = items.find((i) => i.kind === 'electrode' && i.dockedVesselId === partnerId);
+    const selfEl = dockedEls[0];
+    if (selfEl && partnerEl) {
+      const eSelf = computeHalfCellPotentialV(selfEl.material, vessel, vSafe);
+      const ePart = computeHalfCellPotentialV(partnerEl.material, partnerV, partnerLiq);
+      ePinV = Math.abs(eSelf - ePart);
+      cellPairLabel = eSelf >= ePart ? `${partnerEl.material}(−) / ${selfEl.material}(+)` : `${selfEl.material}(−) / ${partnerEl.material}(+)`;
+      break;
+    }
+  }
+  if (ePinV === null) {
+    const activeMeters = items.filter((mIt) => mIt.kind === 'volt_ammeter' && Math.abs(mIt.measuredV || 0) > 1e-4);
+    const allEls = items.filter((i) => i.kind === 'electrode');
+    for (const vm of activeMeters) {
+      const pEl = allEls.find((e) => e.id === vm.posElectrodeId);
+      const nEl = allEls.find((e) => e.id === vm.negElectrodeId);
+      if (pEl?.dockedVesselId === vessel.id || nEl?.dockedVesselId === vessel.id) {
+        ePinV = Math.abs(vm.measuredV || 0);
+        break;
+      }
+    }
+  }
+
+  return {
+    hasElectroLink,
+    ehMv: ehV !== null && Number.isFinite(ehV) ? ehV * 1000 : null,
+    ePinV: ePinV !== null && Number.isFinite(ePinV) ? ePinV : null,
+    cellPairLabel,
+  };
+}

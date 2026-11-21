@@ -1,11 +1,17 @@
 import { APPARATUS, getStandGeometry } from '../data/apparatus.js';
 import { CONSTANTS, formatNumber, kelvinToCelsius } from '../data/constants.js';
 import { GAS_DISPLAY_META, isSolidMoltenAtTemp, SPECIES, STARTER_REAGENTS } from '../data/species.js';
-import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
+import { ELECTRODE_MATERIALS, computeVesselRedoxAndCellMetrics } from '../engine/electrochemistry.js';
 import {
+  computeAtmospherePartialPressures,
+  computeBenchTelemetry,
   computeContentsMassG,
+  computeLiquidSpeciesTableData,
   computeLiquidVolumeL,
   computePH,
+  computePhaseStratification,
+  computeSolidVolumeMl,
+  computeVesselElectrochemicalMetrics,
 } from '../engine/equilibrium.js';
 import {
   computeSyringeDischargeArc,
@@ -71,10 +77,34 @@ function computeVesselPressureMetrics(item, spec, env) {
   return { localPBar, deltaPBar, maxDeltaPBar, limitPct: Math.min(100, limitRatio * 100), rawRatio: limitRatio };
 }
 
+function hasDisplayableSpeciesAmount(spId, n) {
+  if (!Number.isFinite(n) || n <= 0) return false;
+  const sp = SPECIES[spId];
+  if (!sp) return false;
+  if (n >= 5e-7) return true;
+  return n * (sp.molarMass || 0) >= 5e-4;
+}
+
+function formatSimTimestamp(sec) {
+  const s = Math.max(0, Number.isFinite(sec) ? sec : 0);
+  const mins = Math.floor(s / 60);
+  const rem = s - mins * 60;
+  const mStr = String(mins).padStart(2, '0');
+  const sStr = rem.toFixed(1).padStart(4, '0');
+  return `[${mStr}:${sStr}s]`;
+}
+
+function getGasRelAirDensity(spId) {
+  const sp = SPECIES[spId];
+  if (typeof sp?.relAirDensity === 'number') return sp.relAirDensity;
+  if (sp?.molarMass) return sp.molarMass / 28.97;
+  return 1.0;
+}
+
 function buildVesselGasCompositionHtml(item, spec, env, liqL, t) {
   const headMap = item.headspaceGasMoles || {};
   const activeGases = Object.entries(headMap)
-    .filter(([gId, n]) => (n || 0) > 1e-8 && SPECIES[gId]?.phase === 'g')
+    .filter(([gId, n]) => hasDisplayableSpeciesAmount(gId, n) && SPECIES[gId]?.phase === 'g')
     .sort((a, b) => (b[1] || 0) - (a[1] || 0));
   if (activeGases.length === 0) {
     return `<p class="text-xs text-muted">${t('emptyGasMsg')}</p>`;
@@ -88,11 +118,13 @@ function buildVesselGasCompositionHtml(item, spec, env, liqL, t) {
       const sp = SPECIES[gId];
       const mmol = n * 1000;
       const volMl = n * vMolarMl;
+      const dAir = getGasRelAirDensity(gId);
       return `
         <tr class="border-b border-theme/50 last:border-0">
           <td class="py-1 font-semibold">${sp?.formula || gId}</td>
           <td class="py-1 text-right font-mono">${formatNumber(mmol, 3)}</td>
           <td class="py-1 text-right font-mono text-sky-400">${formatNumber(volMl, 2)}</td>
+          <td class="py-1 text-right font-mono text-muted">${dAir.toFixed(2)}</td>
         </tr>`;
     })
     .join('');
@@ -104,6 +136,7 @@ function buildVesselGasCompositionHtml(item, spec, env, liqL, t) {
             <th class="pb-1 font-medium">${t('colSpecies')}</th>
             <th class="pb-1 font-medium text-right">${t('colGasMmol')}</th>
             <th class="pb-1 font-medium text-right">${t('colGasVolMl')}</th>
+            <th class="pb-1 font-medium text-right">${t('colAirDensity')}</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -125,12 +158,17 @@ function buildEscapedGasVerticalHtml(item, env, t) {
     if (volMl <= 0.005 && rateMolS <= 1e-7) continue; // Only show gases physically present or evolving
     const rateMmolS = rateMolS * 1000;
     const rateMlS = ((rateMolS * CONSTANTS.R_L_BAR_MOL_K * tempK) / pBar) * 1000;
+    const dAir = getGasRelAirDensity(g.id);
     activeRows.push(`
       <tr class="border-b border-theme/40 last:border-0">
-        <td class="py-1 font-semibold">${g.label}</td>
-        <td class="py-1 text-right font-mono">${(mol * 1000).toFixed(2)} mmol</td>
-        <td class="py-1 text-right font-mono text-sky-400">${volMl >= 10 ? volMl.toFixed(1) : volMl.toFixed(2)} mL</td>
-        <td class="py-1 text-right font-mono text-muted">${rateMmolS.toFixed(2)} mmol/s · ${rateMlS.toFixed(1)} mL/s</td>
+        <td class="py-1 font-semibold align-top">${g.label}</td>
+        <td class="py-1 text-right font-mono align-top">${(mol * 1000).toFixed(2)} mmol</td>
+        <td class="py-1 text-right font-mono text-sky-400 align-top">${volMl >= 10 ? volMl.toFixed(1) : volMl.toFixed(2)} mL</td>
+        <td class="py-1 text-right font-mono text-muted leading-tight align-top">
+          <div>${rateMmolS.toFixed(2)} mmol/s</div>
+          <div class="text-[10px] opacity-85">${rateMlS.toFixed(1)} mL/s</div>
+        </td>
+        <td class="py-1 text-right font-mono text-muted align-top">${dAir.toFixed(2)}</td>
       </tr>
     `);
   }
@@ -142,6 +180,7 @@ function buildEscapedGasVerticalHtml(item, env, t) {
         <td class="py-1 text-right font-mono">${(fm * 1000).toFixed(2)} mmol</td>
         <td class="py-1 text-right font-mono">—</td>
         <td class="py-1 text-right font-mono">${t('frostEscapedTag')}</td>
+        <td class="py-1 text-right font-mono">—</td>
       </tr>
     `);
   }
@@ -149,18 +188,85 @@ function buildEscapedGasVerticalHtml(item, env, t) {
     return `<p class="text-[11px] text-muted">—</p>`;
   }
   return `
-    <table class="w-full text-[11px]">
-      <thead>
-        <tr class="text-muted border-b border-theme text-left">
-          <th class="pb-1 font-medium">${t('escapedColGas')}</th>
-          <th class="pb-1 font-medium text-right">${t('escapedColMol')}</th>
-          <th class="pb-1 font-medium text-right">${t('escapedColVol')}</th>
-          <th class="pb-1 font-medium text-right">${t('escapedColRate')}</th>
-        </tr>
-      </thead>
-      <tbody>${activeRows.join('')}</tbody>
-    </table>
+    <div class="overflow-x-auto">
+      <table class="w-full text-[11px]">
+        <thead>
+          <tr class="text-muted border-b border-theme text-left">
+            <th class="pb-1 font-medium">${t('escapedColGas')}</th>
+            <th class="pb-1 font-medium text-right">${t('escapedColMol')}</th>
+            <th class="pb-1 font-medium text-right">${t('escapedColVol')}</th>
+            <th class="pb-1 font-medium text-right">${t('escapedColRate')}</th>
+            <th class="pb-1 font-medium text-right">${t('colAirDensity')}</th>
+          </tr>
+        </thead>
+        <tbody>${activeRows.join('')}</tbody>
+      </table>
+    </div>
   `;
+}
+
+function buildLiquidRowsHtml(liqData) {
+  return liqData.rows
+    .map(({ spId, sp, mol, massG, volMl, cM, cPct, layerGroup }) => {
+      const molStr = mol >= 0.01 ? `${formatNumber(mol, 4)}` : `${formatNumber(mol * 1000, 3)}m`;
+      const layerBadge =
+        layerGroup === 'organic_heavy'
+          ? ' <span class="text-[10px] text-amber-400">↓</span>'
+          : layerGroup === 'organic_light'
+          ? ' <span class="text-[10px] text-sky-400">↑</span>'
+          : '';
+      const volStr = volMl !== null ? `${formatNumber(volMl, 2)} mL` : '—';
+      const cmStr = cM > 0.0005 ? `${cM.toFixed(cM >= 10 ? 1 : 2)} M` : '—';
+      const pctStr = cPct > 0.005 ? `${cPct.toFixed(1)}%` : '<0.01%';
+      return `
+        <tr class="border-b border-theme/50 last:border-0" id="sp-liq-row-${spId}">
+          <td class="py-1 font-semibold">${sp.formula}${layerBadge}</td>
+          <td class="py-1 text-right font-mono" id="sp-mol-${spId}">${molStr}</td>
+          <td class="py-1 text-right font-mono" id="sp-mass-${spId}">${formatNumber(massG, 3)}g</td>
+          <td class="py-1 text-right font-mono text-sky-400" id="sp-vol-${spId}">${volStr}</td>
+          <td class="py-1 text-right font-mono leading-tight" id="sp-conc-${spId}">
+            <div>${cmStr}</div>
+            <div class="text-[10px] text-muted">${pctStr}</div>
+          </td>
+        </tr>
+      `;
+    })
+    .join('');
+}
+
+function buildSolidRowsHtml(item, t) {
+  const entries = Object.entries(item.moles || {})
+    .filter(([spId, n]) => SPECIES[spId]?.phase === 's' && hasDisplayableSpeciesAmount(spId, n))
+    .sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return '';
+  return entries
+    .map(([spId, n]) => {
+      const sp = SPECIES[spId];
+      const massG = n * sp.molarMass;
+      const isMolten = isSolidMoltenAtTemp(sp, item.tempK, item.moles);
+      const isFrozen = spId === 'H2O_s' || spId === 'CH3COOH_s' || spId === 'Br2_s' || Boolean(item.isFrozenSolid);
+      const stateTagHtml = isMolten
+        ? ` <span id="sp-conc-${spId}" class="text-[10.5px] font-mono text-orange-400 font-semibold">${t('moltenStateTag')}</span>`
+        : isFrozen
+        ? ` <span id="sp-conc-${spId}" class="text-[10.5px] font-mono text-sky-400 font-semibold">${t('frozenSolidTag')}</span>`
+        : '';
+      const thermalTitle = [
+        sp.meltTempK && !sp.noMelt ? `T_nc: ${kelvinToCelsius(sp.meltTempK).toFixed(0)}°C` : null,
+        sp.boilTempK ? `T_s: ${kelvinToCelsius(sp.boilTempK).toFixed(0)}°C` : null,
+        sp.decompTempK ? `T_dec: ${kelvinToCelsius(sp.decompTempK).toFixed(0)}°C` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      const molStr = n >= 0.01 ? `${formatNumber(n, 4)}` : `${formatNumber(n * 1000, 3)}m`;
+      return `
+        <tr class="border-b border-theme/50 last:border-0" id="sp-sol-row-${spId}" title="${thermalTitle}">
+          <td class="py-1 font-semibold">${sp.formula}${stateTagHtml}</td>
+          <td class="py-1 text-right font-mono" id="sp-mol-${spId}">${molStr}</td>
+          <td class="py-1 text-right font-mono" id="sp-mass-${spId}">${formatNumber(massG, 3)}g</td>
+        </tr>
+      `;
+    })
+    .join('');
 }
 
 function getSyringeCondenseInfo(syr, env, t) {
@@ -229,6 +335,8 @@ export class InspectorPanel {
     this.callbacks = callbacks; // { onOpenTransfer, onNotify }
     this.lastStructureSig = '';
     this.isDark = true;
+    this.logMode = 'student'; // 'student' | 'expert'
+    this.sectionOpen = { thermo: true, phases: true, electro: true };
   }
 
   setTheme(isDark) {
@@ -247,11 +355,12 @@ export class InspectorPanel {
     const labsInfo = this.callbacks.getLabsMeta?.();
     const labSig = labsInfo ? `${labsInfo.labs.length}:${labsInfo.activeIndex}` : '';
     const atmMode = this.sim.environment?.atmosphereMode || 'air';
-    if (!item) return `none|${atmMode}|${labSig}|${langCode}|${logLen}`;
+    const itemCount = this.sim.items.length;
+    if (!item) return `none|${atmMode}|${labSig}|${itemCount}|${this.logMode}|${langCode}|${logLen}`;
 
     if (item.kind === 'vessel') {
       const spKeys = Object.keys(item.moles)
-        .filter((k) => item.moles[k] > 1e-10)
+        .filter((k) => hasDisplayableSpeciesAmount(k, item.moles[k]))
         .sort()
         .join(',');
       const rxnKeys = item.activeReactions.map((r) => r.id).join(',');
@@ -267,11 +376,18 @@ export class InspectorPanel {
       const mirrorFlag = (item.silverMirrorLevel || 0) > 0.04 ? 1 : 0;
       const resFlag = ((item.wallResidueMap?.CuO_s || 0) > 0.05 || (item.wallResidueMap?.BaSO4_s || 0) > 0.05) ? 1 : 0;
       const escSig = GAS_DISPLAY_META.filter((g) => (item.escapedGasMoles?.[g.id] || 0) > 1e-7).map((g) => g.id).join(',');
+      const hasElec = this.sim.items.some(
+        (x) =>
+          (x.kind === 'electrode' && x.dockedVesselId === item.id) ||
+          (x.kind === 'salt_bridge' && !x.isBroken && (x.vesselAId === item.id || x.vesselBId === item.id))
+      )
+        ? 1
+        : 0;
       const caoScore = computeCaOOptimizationScore(item);
       const caoSig = caoScore
         ? `${caoScore.points}:${caoScore.groundFine ? 1 : 0}${caoScore.ventedWhileHeating ? 1 : 0}${caoScore.roaringBlueZone ? 1 : 0}${caoScore.cooledProtected ? 1 : 0}`
         : 'n';
-      return `v|${atmMode}|${labSig}|${airFlags}|${item.id}|${item.isStoppered}|${item.lidState || 'open'}|${cmpFlag}|${softenFlag}|${sootFlag}|${mirrorFlag}|${resFlag}|${escSig}|${caoSig}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${langCode}|${logLen}`;
+      return `v|${atmMode}|${labSig}|${airFlags}|${item.id}|${item.isStoppered}|${item.lidState || 'open'}|${cmpFlag}|${softenFlag}|${sootFlag}|${mirrorFlag}|${resFlag}|${escSig}|${hasElec}|${caoSig}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${this.logMode}|${langCode}|${logLen}`;
     }
     if (item.kind === 'bath') {
       const nestedCnt = this.sim.items.filter((i) => i.submergedInBathId === item.id).length;
@@ -302,8 +418,8 @@ export class InspectorPanel {
       return `wb|${item.id}|${item.flippedX ? 1 : 0}|${item.isSpraying ? 1 : 0}|${langCode}|${logLen}`;
     }
     if (item.kind === 'filter_funnel' || item.kind === 'burette') {
-      const spKeys = Object.keys(item.moles || {}).filter((k) => item.moles[k] > 1e-10).sort().join(',');
-      return `${item.kind}|${item.id}|${item.isBroken ? 1 : 0}|${item.clampedToId}|${item.valveRateMlS || 0}|${item.isFiltering ? 1 : 0}|${item.uvMaskHalf ? 1 : 0}|${spKeys}|${langCode}|${logLen}`;
+      const spKeys = Object.keys(item.moles || {}).filter((k) => hasDisplayableSpeciesAmount(k, item.moles[k])).sort().join(',');
+      return `${item.kind}|${item.id}|${item.isBroken ? 1 : 0}|${item.clampedToId}|${item.valveRateMlS || 0}|${item.isFiltering ? 1 : 0}|${item.uvMaskHalf ? 1 : 0}|${spKeys}|${this.logMode}|${langCode}|${logLen}`;
     }
     if (item.kind === 'rubber_stopper') {
       return `rb|${item.id}|${item.stopperMode || 'holed'}|${item.attachedToId || ''}|${item.attachedSide || ''}|${langCode}|${logLen}`;
@@ -349,10 +465,10 @@ export class InspectorPanel {
       return `sbr|${item.id}|${item.isBroken ? 1 : 0}|${item.vesselAId || ''}|${item.vesselBId || ''}|${langCode}|${logLen}`;
     }
     if (item.kind === 'spoon') {
-      const spEntries = Object.entries(item.moles || {}).filter(([, n]) => n > 1e-10);
+      const spEntries = Object.entries(item.moles || {}).filter(([k, n]) => hasDisplayableSpeciesAmount(k, n));
       const spKeys = spEntries.map(([k]) => `${k}:${item.groundPowderMap?.[k] ? 1 : 0}`).sort().join(',');
       const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered).length;
-      return `spn|${item.id}|${item.flippedX ? 1 : 0}|${spKeys}|${vCnt}|${langCode}|${logLen}`;
+      return `spn|${item.id}|${item.flippedX ? 1 : 0}|${spKeys}|${vCnt}|${this.logMode}|${langCode}|${logLen}`;
     }
     if (item.kind === 'bath') {
       return `bath|${item.id}|${item.isBroken ? 1 : 0}|${item.bathMode || 'ice'}|${langCode}|${logLen}`;
@@ -377,10 +493,77 @@ export class InspectorPanel {
     let topSection = '';
 
     if (!item) {
+      const bt = computeBenchTelemetry(this.sim);
+      const atm = computeAtmospherePartialPressures(this.sim.environment);
+      const labsMeta = this.callbacks.getLabsMeta?.();
+      const activeLab = labsMeta?.labs?.[labsMeta.activeIndex];
+      const labBadge = activeLab?.customName || `${t('labTabPrefix')} ${activeLab?.number || 1}`;
+      const roomTempK = this.sim.environment?.tempK ?? CONSTANTS.T_STD_K;
+      const roomTempC = kelvinToCelsius(roomTempK);
       topSection = `
-        <div class="p-4 rounded-xl border border-theme bg-surface-alt text-center">
-          <div class="text-sm font-semibold">${t('noSelection')}</div>
-          <p class="text-xs text-muted mt-1 leading-relaxed">${t('selectVesselTip')}</p>
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3" id="bench-telemetry-panel">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold flex items-center gap-1.5">📊 ${t('benchTelemetryTitle')}</div>
+              <div class="text-[11px] text-muted">${t('benchNoVesselsHint')}</div>
+            </div>
+            <span class="px-2 py-0.5 rounded-md border border-accent/40 bg-accent/15 text-accent text-[11px] font-bold shrink-0">${labBadge}</span>
+          </div>
+
+          <div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-1">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-muted">${t('benchTotalMassLabel')}</span>
+              <strong class="font-mono text-sm text-emerald-400" id="live-bench-mass">${formatNumber(bt.totalBenchMassG, 2)} g</strong>
+            </div>
+            <div class="grid grid-cols-3 gap-1 text-[10.5px] font-mono text-muted pt-1 border-t border-theme/40">
+              <span title="${t('benchChemMassLabel')}">🧪 <strong class="text-main" id="live-bench-chem">${formatNumber(bt.totalChemMassG, 2)}g</strong></span>
+              <span title="${t('benchTareMassLabel')}">⚖️ <strong class="text-main" id="live-bench-tare">${formatNumber(bt.totalTareMassG, 1)}g</strong></span>
+              <span title="${t('benchEscapedGasMassLabel')}">💨 <strong class="text-sky-400" id="live-bench-escaped">${formatNumber(bt.totalEscapedGasMassG, 3)}g</strong></span>
+            </div>
+          </div>
+
+          <div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-1.5 text-xs">
+            <div class="flex items-center justify-between">
+              <span class="font-semibold text-muted">${t('benchAtmTitle')}</span>
+              <span class="font-mono text-[11px] font-bold text-sky-400" id="live-bench-atm-tp">${roomTempC.toFixed(1)}°C · ${atm.pTotalBar.toFixed(2)} bar</span>
+            </div>
+            <div class="grid grid-cols-2 gap-1.5 text-[11px] font-mono">
+              <div class="px-2 py-1 rounded bg-surface-alt border border-theme/60 flex justify-between">
+                <span class="text-muted">P(N₂)</span><strong id="live-bench-pn2">${atm.pN2Bar.toFixed(3)} bar</strong>
+              </div>
+              <div class="px-2 py-1 rounded bg-surface-alt border border-theme/60 flex justify-between">
+                <span class="text-muted">P(O₂)</span><strong id="live-bench-po2">${atm.pO2Bar.toFixed(3)} bar</strong>
+              </div>
+              <div class="px-2 py-1 rounded bg-surface-alt border border-theme/60 flex justify-between">
+                <span class="text-muted">P(CO₂)</span><strong id="live-bench-pco2">${(atm.pCO2Bar * 1000).toFixed(2)} mbar</strong>
+              </div>
+              <div class="px-2 py-1 rounded bg-surface-alt border border-theme/60 flex justify-between">
+                <span class="text-muted">RH</span><strong class="text-sky-400" id="live-bench-rh">${atm.rhPct.toFixed(0)}%</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-1.5 text-xs">
+            <div class="font-semibold text-muted">${t('benchActivityTitle')}</div>
+            <div class="grid grid-cols-2 gap-1.5 text-[11px]">
+              <div class="px-2 py-1 rounded bg-surface-alt border border-theme/60 flex justify-between">
+                <span class="text-muted">${t('benchActiveRxnsLabel')}</span>
+                <strong class="font-mono text-accent" id="live-bench-rxns">${bt.activeReactionCount}</strong>
+              </div>
+              <div class="px-2 py-1 rounded bg-surface-alt border border-theme/60 flex justify-between">
+                <span class="text-muted">${t('benchHeatingVesselsLabel')}</span>
+                <strong class="font-mono text-amber-400" id="live-bench-heating">${bt.heatingVesselCount} / ${bt.boilingVesselCount}</strong>
+              </div>
+              <div class="px-2 py-1 rounded bg-surface-alt border border-theme/60 flex justify-between">
+                <span class="text-muted">${t('benchOverpressureVesselsLabel')}</span>
+                <strong class="font-mono ${bt.overpressureVesselCount > 0 ? 'text-red-400' : ''}" id="live-bench-overp">${bt.overpressureVesselCount}</strong>
+              </div>
+              <div class="px-2 py-1 rounded bg-surface-alt border border-theme/60 flex justify-between">
+                <span class="text-muted">${t('benchVesselCountLabel')}</span>
+                <strong class="font-mono" id="live-bench-counts">${bt.vesselCount} + ${bt.toolCount}</strong>
+              </div>
+            </div>
+          </div>
         </div>
       `;
     } else if (item.kind === 'bath') {
@@ -1157,7 +1340,7 @@ export class InspectorPanel {
       `;
     } else if (item.kind === 'spoon') {
       const spSpec = APPARATUS.iron_spoon;
-      const entries = Object.entries(item.moles || {}).filter(([, n]) => n > 1e-10);
+      const entries = Object.entries(item.moles || {}).filter(([spId, n]) => hasDisplayableSpeciesAmount(spId, n));
       const maxBowlMl = spSpec.maxVolumeMl || 2.8;
       let bowlBulkMl = 0;
       for (const [k, n] of entries) {
@@ -1210,7 +1393,7 @@ export class InspectorPanel {
                         const massG = n * sp.molarMass;
                         const molStr = n >= 0.01 ? `${n.toFixed(4)}` : `${(n * 1000).toFixed(3)}m`;
                         return `
-                          <tr class="border-b border-theme/50 last:border-0">
+                          <tr class="border-b border-theme/50 last:border-0" id="live-spoon-row-${spId}">
                             <td class="py-1 font-semibold">${sp.formula}</td>
                             <td class="py-1 text-right font-mono" id="live-spoon-mol-${spId}">${molStr}</td>
                             <td class="py-1 text-right font-mono" id="live-spoon-mass-${spId}">${massG.toFixed(3)}g</td>
@@ -1513,255 +1696,322 @@ export class InspectorPanel {
           }
         </div>
 
-        <!-- Telemetry Grid -->
-        <div class="grid grid-cols-2 gap-2">
-          <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
-            <div class="text-xs text-muted">${t('metricPH')}</div>
-            <div class="text-sm font-bold font-mono" id="live-ph">${item.isFrozenSolid ? '— ❄️' : ph === null ? '—' : ph.toFixed(2)}</div>
-          </div>
-          <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
-            <div class="text-xs text-muted">${t('metricTemp')}</div>
-            <div class="text-sm font-bold font-mono" id="live-temp">${formatNumber(item.tempK, 1)} K (${formatNumber(kelvinToCelsius(item.tempK), 1)}°C)</div>
-          </div>
-          <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
-            <div class="text-xs text-muted">${t('metricVol')}</div>
-            <div class="text-sm font-bold font-mono" id="live-vol">${volDisplayStr}</div>
-            <div class="text-[11px] text-muted font-mono" id="live-brim">${t('brimLabel')}: ~${formatNumber(
-        spec.geometry ? spec.geometry.maxVolumeMl * 0.96 : spec.maxVolumeMl,
-        0
-      )} mL</div>
-          </div>
-          <div class="p-2.5 rounded-lg border border-theme bg-surface-alt">
-            <div class="text-xs text-muted">${t('netMassLabel')}</div>
-            <div class="text-sm font-bold font-mono" id="live-mass">${formatNumber(contentsG, 2)} g / ${formatNumber(grossG, 2)} g</div>
-            <div class="text-[11px] text-muted font-mono" id="live-mass-gross">${t('grossMassShort')} (${t('tarePrefix')} ${formatNumber(spec.tareMassG, 0)}g)</div>
-          </div>
-        </div>
-
+        <!-- Group 1: Thermodynamics & Instantaneous Physics -->
         ${(() => {
           const pm = computeVesselPressureMetrics(item, spec, this.sim.environment);
           const barCol = pm.rawRatio >= 0.85 ? '#D62839' : pm.rawRatio >= 0.6 ? '#f59e0b' : '#38bdf8';
           const dSign = pm.deltaPBar >= 0 ? '+' : '';
           const themeCur = typeof document !== 'undefined' ? document.documentElement.getAttribute('data-theme') : 'dark';
           const warnPrefix = themeCur === 'petal' ? `${t('themeWarningSignsTitle')} · ` : '';
-          return `<div class="p-2.5 rounded-lg border border-theme bg-surface-alt flex flex-col gap-1.5 press-card-warning">
-            <div class="flex items-center justify-between text-xs">
-              <span class="text-muted">${warnPrefix}${t('pressureCardLabel')} · ${t('pressureLocalLabel')}</span>
-              <strong class="font-mono" id="live-press-local">${pm.localPBar.toFixed(2)} bar</strong>
-            </div>
-            <div class="flex items-center justify-between text-[11px]">
-              <span class="text-muted">${t('pressureLimitLabel')}</span>
-              <strong class="font-mono ${pm.rawRatio >= 0.85 ? 'text-red-400' : ''}" id="live-press-limit">${dSign}${pm.deltaPBar.toFixed(2)} / +${pm.maxDeltaPBar.toFixed(2)} bar</strong>
-            </div>
-            <div class="w-full h-1.5 rounded-full bg-surface overflow-hidden border border-theme/50">
-              <div id="live-press-bar" class="h-full transition-all duration-150" style="width:${pm.limitPct.toFixed(1)}%;background-color:${barCol};"></div>
-            </div>
-          </div>`;
-        })()}
-
-        ${
-          tubeGeom
-            ? `<div class="px-3 py-1.5 rounded-lg border border-sky-500/35 bg-sky-500/10 text-[11px] flex flex-col gap-1.5">
-                <div class="flex items-center justify-between gap-2">
-                  <span class="text-muted">${t('tubeStatsNote')} · ${connTarget.label}</span>
-                  <strong class="font-mono text-sky-400" id="live-tube-stats">${tubeGeom.arcLengthCm.toFixed(1)} cm · ${Math.min(tubeVolMl, tubeGeom.capacityMl).toFixed(2)}/${tubeGeom.capacityMl.toFixed(2)} mL</strong>
-                </div>
-                ${
-                  connTarget.kind === 'vessel' && !connTarget.isInverted
-                    ? `<label class="flex flex-col gap-1 border-t border-sky-500/20 pt-1">
-                         <div class="flex justify-between text-[11px]">
-                           <span class="text-muted">${t('tubeDepthLabel')}</span>
-                           <strong class="font-mono text-sky-300" id="live-tube-depth-pct">${Math.round((item.tubeSubmersionRatio ?? 0.72) * 100)}%</strong>
-                         </div>
-                         <input type="range" id="ins-tube-depth-slider" min="0" max="100" step="2" value="${Math.round((item.tubeSubmersionRatio ?? 0.72) * 100)}" class="w-full accent-sky-500 cursor-pointer" />
-                       </label>`
-                    : ''
-                }
-              </div>`
-            : ''
-        }
-        ${
-          (item.sootLevel || 0) > 0.05
-            ? `<div class="px-3 py-1.5 rounded-lg border border-slate-500/50 bg-slate-800/40 text-xs flex items-center justify-between">
-                 <span class="text-slate-300">🖤 ${t('sootLevelLabel')}</span>
-                 <strong class="font-mono text-amber-300" id="live-soot-pct">${Math.round((item.sootLevel || 0) * 100)}%</strong>
-               </div>`
-            : ''
-        }
-        ${
-          syr
-            ? `<div class="px-3 py-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs flex flex-col gap-0.5">
-                <div class="flex justify-between gap-2">
-                  <span>${t('gasCollectedNote')}</span>
-                  <strong class="font-mono" id="live-collected-gas">${syrVol.toFixed(2)} mL · ${syrCondInfo.syrTempC.toFixed(1)}°C</strong>
-                </div>
-                <div class="text-[11px] text-sky-400 font-mono" id="live-collected-cond">${
-                  syrCondInfo.totalFluidMl > 0.0005 || syrCondInfo.isCondensing
-                    ? `${syrCondInfo.frozenMol > syrCondInfo.condensedMol ? '❄️' : '💧'} ${t(syrCondInfo.frozenMol > syrCondInfo.condensedMol ? 'syringeFrozenShort' : 'gasCondensedShort')}: ${syrCondInfo.totalFluidMl.toFixed(2)} mL ${syrCondInfo.condSpec}`
-                    : ''
-                }</div>
-              </div>`
-            : connTarget
-            ? `<div class="px-3 py-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs flex justify-between gap-2">
-                <span>${t('tubeHoldNote')}</span>
-                <strong class="font-mono">${t(APPARATUS[connTarget.typeId].i18nKey)} ${connTarget.label}</strong>
-              </div>`
-            : ''
-        }
-        <div class="px-3 py-2 rounded-lg border border-theme bg-surface-alt text-xs flex flex-col gap-1.5">
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-muted font-semibold">${t('gasEscapedNote')}</span>
-            <span class="font-mono text-[11px] text-amber-400" id="live-escaped-gas-temp">${
-              item.lastGasOutTempK
-                ? `${t('gasOutTempTag')} ${kelvinToCelsius(item.lastGasOutTempK).toFixed(1)}°C`
-                : ''
-            }</span>
-          </div>
-          <div id="live-escaped-gas">${buildEscapedGasVerticalHtml(item, this.sim.environment, t)}</div>
-        </div>
-        ${(() => {
-          const headGases = Object.entries(item.headspaceGasMoles || {}).filter(([g, n]) => g !== 'H2O_g' && (n || 0) > 1e-6);
-          if (headGases.length === 0) return '';
-          const rows = headGases
-            .map(([gId, n]) => {
-              const sp = SPECIES[gId];
-              const dAir = (sp?.relAirDensity ?? (sp?.molarMass ? sp.molarMass / 28.97 : 1.0)).toFixed(2);
-              return `<span class="whitespace-nowrap">${sp?.formula || gId}: ${(n * 1000).toFixed(2)} mmol (d=${dAir})</span>`;
-            })
-            .join('<span class="text-muted px-1">·</span>');
-          return `<div class="px-3 py-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-xs flex flex-col gap-1">
-            <span class="text-sky-400 font-semibold">${t('collectedGasHeadspaceLabel')}</span>
-            <div class="font-mono text-main flex flex-wrap gap-x-1" id="live-headspace-gas">${rows}</div>
-          </div>`;
-        })()}
-
-        <!-- Species Breakdown Table -->
-        <div class="rounded-xl border border-theme bg-surface-alt p-3">
-          <div class="flex items-center justify-between gap-2 mb-2">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-muted">${t('speciesTableTitle')}</h3>
-            <button type="button" id="btn-export-xlsx" title="${t('exportXlsxBtn')}" class="px-2 py-0.5 rounded border border-theme bg-surface text-[10.5px] font-semibold hover:border-accent">📥 ${t('exportXlsxBtn')}</button>
-          </div>
-          ${
-            activeSpecies.length === 0
-              ? `<p class="text-xs text-muted">${item.isShattered ? t('shatteredEmptyMsg') : t('emptyVesselMsg')}</p>`
-              : `
-              <div class="overflow-x-auto max-h-44 overflow-y-auto">
-                <table class="w-full text-xs">
-                  <thead>
-                    <tr class="text-muted border-b border-theme text-left">
-                      <th class="pb-1 font-medium">${t('colSpecies')}</th>
-                      <th class="pb-1 font-medium text-right">${t('colMoles')}</th>
-                      <th class="pb-1 font-medium text-right">${t('colMass')}</th>
-                      <th class="pb-1 font-medium text-right">${t('colConc')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${activeSpecies
-                      .map(([spId, n]) => {
-                        const sp = SPECIES[spId];
-                        const mass = n * sp.molarMass;
-                        const isMolten = isSolidMoltenAtTemp(sp, item.tempK, item.moles);
-                        const isFrozenSolidSp = spId === 'H2O_s' || (Boolean(item.isFrozenSolid) && sp.phase === 's');
-                        const conc = isMolten
-                          ? t('moltenStateTag')
-                          : isFrozenSolidSp
-                          ? t('frozenSolidTag')
-                          : sp.phase === 'aq' && liqL > 1e-6
-                          ? `${(n / liqL).toFixed(3)} M`
-                          : sp.phase;
-                        const thermalTitle =
-                          sp.phase === 's'
-                            ? [
-                                sp.meltTempK && !sp.noMelt ? `T_nc: ${kelvinToCelsius(sp.meltTempK).toFixed(0)}°C` : null,
-                                sp.boilTempK ? `T_s: ${kelvinToCelsius(sp.boilTempK).toFixed(0)}°C` : null,
-                                sp.decompTempK ? `T_dec: ${kelvinToCelsius(sp.decompTempK).toFixed(0)}°C` : null,
-                              ]
-                                .filter(Boolean)
-                                .join(' · ')
-                            : '';
-                        const molStr = n >= 0.01 ? `${formatNumber(n, 4)}` : `${formatNumber(n * 1000, 3)}m`;
-                        return `
-                          <tr class="border-b border-theme/50 last:border-0" title="${thermalTitle}">
-                            <td class="py-1 font-semibold">${sp.formula}${isMolten ? ' 🔥' : ''}</td>
-                            <td class="py-1 text-right font-mono" id="sp-mol-${spId}">${molStr}</td>
-                            <td class="py-1 text-right font-mono" id="sp-mass-${spId}">${formatNumber(mass, 3)}g</td>
-                            <td class="py-1 text-right font-mono ${isMolten ? 'text-orange-400 font-semibold' : isFrozenSolidSp ? 'text-sky-400 font-semibold' : 'text-muted'}" id="sp-conc-${spId}">${conc}</td>
-                          </tr>
-                        `;
-                      })
-                      .join('')}
-                  </tbody>
-                </table>
+          const liqTabData = computeLiquidSpeciesTableData(item.moles, item.tempK);
+          const solidRowsStr = buildSolidRowsHtml(item, t);
+          const electroMetrics = computeVesselElectrochemicalMetrics(item, ph, liqL);
+          const redoxMetrics = computeVesselRedoxAndCellMetrics(item, this.sim.items, liqL, ph);
+          const qRelKJ = (item.cumulativeReactionHeatJ || 0) / 1000;
+          const dTdt = item.lastTempRateCS || 0;
+          const dTdtSign = dTdt > 0.005 ? '+' : '';
+          const pAtm = pm.localPBar * 0.986923;
+          const vRate = liqL > 1e-5 ? (item.lastTotalRateMolS || 0) / liqL : 0;
+          const convStr = item.conversionYieldPct !== null && item.conversionYieldPct !== undefined ? `${item.conversionYieldPct.toFixed(1)}%` : '—';
+          const open1 = this.sectionOpen?.thermo !== false ? 'open' : '';
+          const open2 = this.sectionOpen?.phases !== false ? 'open' : '';
+          const open3 = this.sectionOpen?.electro !== false ? 'open' : '';
+          return `
+        <details class="rounded-xl border border-theme bg-surface-alt group" data-ins-sec="thermo" ${open1}>
+          <summary class="px-3 py-2.5 cursor-pointer select-none flex items-center justify-between text-xs font-bold uppercase tracking-wider text-muted hover:text-main">
+            <span>🌡️ ${t('groupThermoPhysics')}</span>
+            <span class="text-[10px] font-mono text-sky-400">${formatNumber(kelvinToCelsius(item.tempK), 1)}°C · ${pm.localPBar.toFixed(2)} bar</span>
+          </summary>
+          <div class="px-3 pb-3 flex flex-col gap-2 border-t border-theme/40 pt-2">
+            <div class="grid grid-cols-2 gap-2">
+              <div class="p-2 rounded-lg border border-theme bg-surface">
+                <div class="text-[11px] text-muted">${t('metricTemp')} &amp; ΔT/Δt</div>
+                <div class="text-xs font-bold font-mono mt-0.5" id="live-temp">${formatNumber(item.tempK, 1)} K (${formatNumber(kelvinToCelsius(item.tempK), 1)}°C)</div>
+                <div class="text-[10.5px] font-mono ${Math.abs(dTdt) > 0.05 ? (dTdt > 0 ? 'text-orange-400' : 'text-sky-400') : 'text-muted'}" id="live-dtemp">${dTdtSign}${dTdt.toFixed(2)} °C/s</div>
               </div>
-              `
-          }
-        </div>
-
-        <!-- Gas Composition in Vessel Table -->
-        <div class="rounded-xl border border-theme bg-surface-alt p-3">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-muted mb-2">${t('gasTableTitle')}</h3>
-          <div id="gas-comp-box">${buildVesselGasCompositionHtml(item, spec, this.sim.environment, liqL, t)}</div>
-        </div>
-
-        <!-- Real-Time Moles vs Time Chart -->
-        <div class="rounded-xl border border-theme bg-surface-alt p-3">
-          <div class="flex items-center justify-between mb-1.5">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-muted">${t('liveChartTitle')}</h3>
-          </div>
-          <canvas id="vessel-mole-chart" width="320" height="115" class="w-full h-[115px] rounded-lg bg-surface border border-theme"></canvas>
-          <div id="chart-legend" class="flex flex-wrap gap-2 mt-1.5 text-xs"></div>
-        </div>
-
-        <!-- Active Reactions -->
-        <div class="rounded-xl border border-theme bg-surface-alt p-3">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-muted mb-1.5">${t('activeReactionsTitle')}</h3>
-          <div id="active-rxn-box" class="space-y-1.5">
+              <div class="p-2 rounded-lg border border-theme bg-surface">
+                <div class="text-[11px] text-muted">${t('metricCumHeat')}</div>
+                <div class="text-xs font-bold font-mono mt-0.5 ${qRelKJ > 0.005 ? 'text-orange-400' : qRelKJ < -0.005 ? 'text-sky-400' : ''}" id="live-cum-heat">${qRelKJ >= 0 ? `Q=${qRelKJ.toFixed(2)} kJ` : `Q=${qRelKJ.toFixed(2)} kJ`}</div>
+                <div class="text-[10.5px] font-mono text-muted" id="live-cum-dh">ΔH_rxn ≈ ${(-qRelKJ).toFixed(2)} kJ</div>
+              </div>
+              <div class="p-2 rounded-lg border border-theme bg-surface">
+                <div class="text-[11px] text-muted">${t('metricVol')} &amp; ${t('metricMixDensity')}</div>
+                <div class="text-xs font-bold font-mono mt-0.5" id="live-vol">${volDisplayStr}</div>
+                <div class="text-[10.5px] font-mono text-sky-400" id="live-mix-density">ρ=${liqTabData.mixDensity > 0 ? liqTabData.mixDensity.toFixed(3) : '—'} g/mL</div>
+                <div class="text-[10px] text-muted font-mono" id="live-brim">${t('brimLabel')}: ~${formatNumber(spec.geometry ? spec.geometry.maxVolumeMl * 0.96 : spec.maxVolumeMl, 0)} mL</div>
+              </div>
+              <div class="p-2 rounded-lg border border-theme bg-surface">
+                <div class="text-[11px] text-muted">${t('netMassLabel')}</div>
+                <div class="text-xs font-bold font-mono mt-0.5" id="live-mass">${formatNumber(contentsG, 2)} g / ${formatNumber(grossG, 2)} g</div>
+                <div class="text-[10.5px] text-muted font-mono" id="live-mass-gross">${t('grossMassShort')} (${t('tarePrefix')} ${formatNumber(spec.tareMassG, 0)}g)</div>
+              </div>
+            </div>
+            <div class="p-2 rounded-lg border border-theme bg-surface flex flex-col gap-1 press-card-warning">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-muted">${warnPrefix}${t('pressureCardLabel')} · ${t('pressureLocalLabel')}</span>
+                <strong class="font-mono" id="live-press-local">${pm.localPBar.toFixed(2)} bar (${pAtm.toFixed(2)} atm)</strong>
+              </div>
+              <div class="flex items-center justify-between text-[11px]">
+                <span class="text-muted">${t('pressureLimitLabel')}</span>
+                <strong class="font-mono ${pm.rawRatio >= 0.85 ? 'text-red-400' : ''}" id="live-press-limit">${dSign}${pm.deltaPBar.toFixed(2)} / +${pm.maxDeltaPBar.toFixed(2)} bar</strong>
+              </div>
+              <div class="w-full h-1.5 rounded-full bg-surface-alt overflow-hidden border border-theme/50">
+                <div id="live-press-bar" class="h-full transition-all duration-150" style="width:${pm.limitPct.toFixed(1)}%;background-color:${barCol};"></div>
+              </div>
+            </div>
             ${
-              item.activeReactions.length === 0
-                ? `<p class="text-xs text-muted">${t('noActiveReaction')}</p>`
-                : item.activeReactions
-                    .map(
-                      (r, rIdx) => `
-                  <div class="rxn-card-item px-2.5 py-2 rounded-lg border border-theme bg-surface flex items-center justify-between gap-2 cursor-context-menu" data-ridx="${rIdx}">
-                    <span class="text-xs font-mono font-bold text-accent truncate">${r.equation}</span>
-                    <span class="text-xs font-mono text-muted shrink-0">${(r.rateMolS * 1000).toFixed(2)} mmol/s</span>
-                  </div>
-                `
-                    )
-                    .join('')
+              tubeGeom
+                ? `<div class="px-2.5 py-1.5 rounded-lg border border-sky-500/35 bg-sky-500/10 text-[11px] flex flex-col gap-1.5">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="text-muted">${t('tubeStatsNote')} · ${connTarget.label}</span>
+                      <strong class="font-mono text-sky-400" id="live-tube-stats">${tubeGeom.arcLengthCm.toFixed(1)} cm · ${Math.min(tubeVolMl, tubeGeom.capacityMl).toFixed(2)}/${tubeGeom.capacityMl.toFixed(2)} mL</strong>
+                    </div>
+                    ${
+                      connTarget.kind === 'vessel' && !connTarget.isInverted
+                        ? `<label class="flex flex-col gap-1 border-t border-sky-500/20 pt-1">
+                             <div class="flex justify-between text-[11px]">
+                               <span class="text-muted">${t('tubeDepthLabel')}</span>
+                               <strong class="font-mono text-sky-300" id="live-tube-depth-pct">${Math.round((item.tubeSubmersionRatio ?? 0.72) * 100)}%</strong>
+                             </div>
+                             <input type="range" id="ins-tube-depth-slider" min="0" max="100" step="2" value="${Math.round((item.tubeSubmersionRatio ?? 0.72) * 100)}" class="w-full accent-sky-500 cursor-pointer" />
+                           </label>`
+                        : ''
+                    }
+                  </div>`
+                : ''
+            }
+            ${
+              (item.sootLevel || 0) > 0.05
+                ? `<div class="px-2.5 py-1.5 rounded-lg border border-slate-500/50 bg-slate-800/40 text-xs flex items-center justify-between">
+                     <span class="text-slate-300">🖤 ${t('sootLevelLabel')}</span>
+                     <strong class="font-mono text-amber-300" id="live-soot-pct">${Math.round((item.sootLevel || 0) * 100)}%</strong>
+                   </div>`
+                : ''
+            }
+            ${
+              syr
+                ? `<div class="px-2.5 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs flex flex-col gap-0.5">
+                    <div class="flex justify-between gap-2">
+                      <span>${t('gasCollectedNote')}</span>
+                      <strong class="font-mono" id="live-collected-gas">${syrVol.toFixed(2)} mL · ${syrCondInfo.syrTempC.toFixed(1)}°C</strong>
+                    </div>
+                    <div class="text-[11px] text-sky-400 font-mono" id="live-collected-cond">${
+                      syrCondInfo.totalFluidMl > 0.0005 || syrCondInfo.isCondensing
+                        ? `${syrCondInfo.frozenMol > syrCondInfo.condensedMol ? '❄️' : '💧'} ${t(syrCondInfo.frozenMol > syrCondInfo.condensedMol ? 'syringeFrozenShort' : 'gasCondensedShort')}: ${syrCondInfo.totalFluidMl.toFixed(2)} mL ${syrCondInfo.condSpec}`
+                        : ''
+                    }</div>
+                  </div>`
+                : connTarget
+                ? `<div class="px-2.5 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs flex justify-between gap-2">
+                    <span>${t('tubeHoldNote')}</span>
+                    <strong class="font-mono">${t(APPARATUS[connTarget.typeId].i18nKey)} ${connTarget.label}</strong>
+                  </div>`
+                : ''
             }
           </div>
-        </div>
+        </details>
+
+        <!-- Group 2: Phase Composition & Concentrations (Gas, Liquid, Solid) -->
+        <details class="rounded-xl border border-theme bg-surface-alt group" data-ins-sec="phases" ${open2}>
+          <summary class="px-3 py-2.5 cursor-pointer select-none flex items-center justify-between text-xs font-bold uppercase tracking-wider text-muted hover:text-main">
+            <span>⚗️ ${t('groupPhaseComposition')}</span>
+            <span class="text-[10px] font-mono text-muted">${liqTabData.rows.length}L · ${Object.keys(item.moles || {}).filter((k) => SPECIES[k]?.phase === 's' && hasDisplayableSpeciesAmount(k, item.moles[k])).length}S</span>
+          </summary>
+          <div class="px-3 pb-3 flex flex-col gap-2.5 border-t border-theme/40 pt-2">
+            <!-- Gas & Vapor -->
+            <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex flex-col gap-1.5">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-muted font-semibold">${t('gasEscapedNote')}</span>
+                <span class="font-mono text-[11px] text-amber-400" id="live-escaped-gas-temp">${
+                  item.lastGasOutTempK ? `${t('gasOutTempTag')} ${kelvinToCelsius(item.lastGasOutTempK).toFixed(1)}°C` : ''
+                }</span>
+              </div>
+              <div id="live-escaped-gas">${buildEscapedGasVerticalHtml(item, this.sim.environment, t)}</div>
+            </div>
+            <div class="p-2.5 rounded-lg border border-theme bg-surface">
+              <h4 class="text-[11px] font-bold uppercase tracking-wider text-muted mb-1.5">${t('gasTableTitle')}</h4>
+              <div id="gas-comp-box">${buildVesselGasCompositionHtml(item, spec, this.sim.environment, liqL, t)}</div>
+            </div>
+
+            <!-- Separate Liquid & Solution Table -->
+            <div class="p-2.5 rounded-lg border border-theme bg-surface">
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <h4 class="text-[11px] font-bold uppercase tracking-wider text-muted">${t('liquidTableTitle')}</h4>
+                <button type="button" id="btn-export-xlsx" title="${t('exportXlsxBtn')}" class="px-2 py-0.5 rounded border border-theme bg-surface-alt text-[10.5px] font-semibold hover:border-accent">📥 ${t('exportXlsxBtn')}</button>
+              </div>
+              <div id="sp-liq-box">
+                ${
+                  liqTabData.rows.length === 0
+                    ? `<p class="text-xs text-muted">${item.isShattered ? t('shatteredEmptyMsg') : t('emptyLiquidMsg')}</p>`
+                    : `<div class="overflow-x-auto max-h-44 overflow-y-auto">
+                        <table class="w-full text-[11px]">
+                          <thead>
+                            <tr class="text-muted border-b border-theme text-left">
+                              <th class="pb-1 font-medium">${t('colSpecies')}</th>
+                              <th class="pb-1 font-medium text-right">${t('colMoles')}</th>
+                              <th class="pb-1 font-medium text-right">${t('colMass')}</th>
+                              <th class="pb-1 font-medium text-right">${t('colVolumeMl')}</th>
+                              <th class="pb-1 font-medium text-right">${t('colConc')}</th>
+                            </tr>
+                          </thead>
+                          <tbody id="sp-liq-body">${buildLiquidRowsHtml(liqTabData)}</tbody>
+                        </table>
+                      </div>`
+                }
+              </div>
+            </div>
+
+            <!-- Separate Solid & Precipitate Table -->
+            <div class="p-2.5 rounded-lg border border-theme bg-surface">
+              <h4 class="text-[11px] font-bold uppercase tracking-wider text-muted mb-1.5">${t('solidTableTitle')}</h4>
+              <div id="sp-sol-box">
+                ${
+                  !solidRowsStr
+                    ? `<p class="text-xs text-muted">${t('emptySolidMsg')}</p>`
+                    : `<div class="overflow-x-auto max-h-40 overflow-y-auto">
+                        <table class="w-full text-xs">
+                          <thead>
+                            <tr class="text-muted border-b border-theme text-left">
+                              <th class="pb-1 font-medium">${t('colSpecies')}</th>
+                              <th class="pb-1 font-medium text-right">${t('colMoles')}</th>
+                              <th class="pb-1 font-medium text-right">${t('colMass')}</th>
+                            </tr>
+                          </thead>
+                          <tbody id="sp-sol-body">${solidRowsStr}</tbody>
+                        </table>
+                      </div>`
+                }
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Group 3: Electrolytes, Kinetics & Electrochemistry -->
+        <details class="rounded-xl border border-theme bg-surface-alt group" data-ins-sec="electro" ${open3}>
+          <summary class="px-3 py-2.5 cursor-pointer select-none flex items-center justify-between text-xs font-bold uppercase tracking-wider text-muted hover:text-main">
+            <span>⚡ ${t('groupElectroKinetics')}</span>
+            <span class="text-[10px] font-mono text-emerald-400">pH ${item.isFrozenSolid ? '—' : ph === null ? '—' : ph.toFixed(2)}</span>
+          </summary>
+          <div class="px-3 pb-3 flex flex-col gap-2.5 border-t border-theme/40 pt-2">
+            <div class="grid grid-cols-2 gap-2">
+              <div class="p-2 rounded-lg border border-theme bg-surface">
+                <div class="text-[11px] text-muted">${t('metricPH')} &amp; ${t('metricIonicStrength')}</div>
+                <div class="text-sm font-bold font-mono" id="live-ph">${item.isFrozenSolid ? '— ❄️' : ph === null ? '—' : ph.toFixed(2)}</div>
+                <div class="text-[10.5px] font-mono text-muted" id="live-ionic-str">I=${electroMetrics.ionicStrengthM.toFixed(3)} M · σ=<span id="live-cond-sigma">${electroMetrics.conductivityMSCm.toFixed(2)}</span> mS/cm</div>
+              </div>
+              <div class="p-2 rounded-lg border border-theme bg-surface">
+                <div class="text-[11px] text-muted">${t('metricRxnRate')} &amp; ${t('metricConversionYield')}</div>
+                <div class="text-xs font-bold font-mono text-accent mt-0.5" id="live-rxn-rate">${vRate > 0 ? `${vRate.toFixed(4)} mol/L·s` : `${((item.lastTotalRateMolS || 0) * 1000).toFixed(2)} mmol/s`}</div>
+                <div class="text-[10.5px] font-mono text-emerald-400" id="live-conv-yield">H = ${convStr}</div>
+              </div>
+            </div>
+            ${
+              redoxMetrics.hasElectroLink
+                ? `<div class="p-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs flex flex-col gap-1" id="live-redox-card">
+                    <div class="flex items-center justify-between">
+                      <span class="text-muted">${t('metricRedoxEh')}</span>
+                      <strong class="font-mono text-emerald-400" id="live-eh-mv">${redoxMetrics.ehMv !== null ? `${redoxMetrics.ehMv >= 0 ? '+' : ''}${redoxMetrics.ehMv.toFixed(1)} mV` : '—'}</strong>
+                    </div>
+                    ${
+                      redoxMetrics.ePinV !== null
+                        ? `<div class="flex items-center justify-between text-[11px]">
+                             <span class="text-muted">${t('metricCellEmf')}${redoxMetrics.cellPairLabel ? ` (${redoxMetrics.cellPairLabel})` : ''}</span>
+                             <strong class="font-mono text-amber-300" id="live-epin-v">${redoxMetrics.ePinV.toFixed(3)} V</strong>
+                           </div>`
+                        : ''
+                    }
+                  </div>`
+                : ''
+            }
+            <div class="p-2.5 rounded-lg border border-theme bg-surface">
+              <div class="flex items-center justify-between mb-1.5">
+                <h4 class="text-[11px] font-bold uppercase tracking-wider text-muted">${t('liveChartTitle')}</h4>
+              </div>
+              <canvas id="vessel-mole-chart" width="320" height="115" class="w-full h-[115px] rounded-lg bg-surface-alt border border-theme"></canvas>
+              <div id="chart-legend" class="flex flex-wrap gap-2 mt-1.5 text-xs"></div>
+            </div>
+            <div class="p-2.5 rounded-lg border border-theme bg-surface">
+              <h4 class="text-[11px] font-bold uppercase tracking-wider text-muted mb-1.5">${t('activeReactionsTitle')}</h4>
+              <div id="active-rxn-box" class="space-y-1.5">
+                ${
+                  item.activeReactions.length === 0
+                    ? `<p class="text-xs text-muted">${t('noActiveReaction')}</p>`
+                    : item.activeReactions
+                        .map(
+                          (r, rIdx) => `
+                      <div class="rxn-card-item px-2.5 py-2 rounded-lg border border-theme bg-surface-alt flex items-center justify-between gap-2 cursor-context-menu" data-ridx="${rIdx}">
+                        <span class="text-xs font-mono font-bold text-accent truncate">${r.equation}</span>
+                        <span class="text-xs font-mono text-muted shrink-0">${(r.rateMolS * 1000).toFixed(2)} mmol/s</span>
+                      </div>
+                    `
+                        )
+                        .join('')
+                }
+              </div>
+            </div>
+          </div>
+        </details>`;
+        })()}
       `;
     }
 
-    // Reaction Log at bottom
+    // Reaction Log at bottom (with [MM:SS.ds] timestamps, Student/Expert mode toggle, CSV & Copy export)
     const logsHtml = `
       <div class="rounded-xl border border-theme bg-surface-alt p-3">
-        <h3 class="text-xs font-bold uppercase tracking-wider text-muted mb-2">${t('reactionLogTitle')}</h3>
-        <div class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+        <div class="flex flex-wrap items-center justify-between gap-1.5 mb-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-muted">${t('reactionLogTitle')}</h3>
+          <div class="flex items-center gap-1">
+            <div class="inline-flex rounded-md border border-theme bg-surface overflow-hidden text-[10.5px]">
+              <button type="button" id="btn-log-student" class="px-2 py-0.5 font-semibold ${this.logMode !== 'expert' ? 'bg-accent text-white' : 'text-muted hover:text-main'}">${t('logModeStudent')}</button>
+              <button type="button" id="btn-log-expert" class="px-2 py-0.5 font-semibold ${this.logMode === 'expert' ? 'bg-accent text-white' : 'text-muted hover:text-main'}">${t('logModeExpert')}</button>
+            </div>
+            <button type="button" id="btn-export-csv" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10.5px] font-semibold hover:border-accent" title="${t('logExportCsv')}">📥 ${t('logExportCsv')}</button>
+            <button type="button" id="btn-copy-data" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10.5px] font-semibold hover:border-accent" title="${t('logCopyData')}">📋</button>
+          </div>
+        </div>
+        <div class="space-y-1.5 max-h-52 overflow-y-auto pr-1">
           ${
             this.sim.logs.length === 0
               ? `<p class="text-xs text-muted">—</p>`
               : this.sim.logs
                   .map((log) => {
+                    const ts = formatSimTimestamp(log.timeSec);
                     if (log.type === 'alert') {
                       return `<div class="p-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-xs">
-                        <span class="font-mono text-muted">[${log.timeSec.toFixed(1)}s]</span> ⚠️ ${t(log.key)}
+                        <span class="font-mono text-muted">${ts}</span> ${log.vesselLabel ? `<strong class="font-mono">${log.vesselLabel}</strong> · ` : ''}⚠️ ${t(log.key)}
                       </div>`;
                     }
                     if (log.type === 'info') {
                       const themeCur = document.documentElement.getAttribute('data-theme');
                       const cureHead = themeCur === 'olivia' ? `<div class="font-bold text-[10.5px] mb-0.5">🩹 ${t('themeCureTitle')}</div>` : '';
                       return `<div class="olivia-cure-card p-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-xs leading-relaxed">
-                        ${cureHead}${t(log.key)}
+                        ${cureHead}<span class="font-mono text-muted mr-1">${ts}</span>${t(log.key)}
+                      </div>`;
+                    }
+                    if (this.logMode === 'expert') {
+                      const dHStr = Number.isFinite(log.dH_kJ) ? `${log.dH_kJ >= 0 ? '+' : ''}${log.dH_kJ.toFixed(3)} kJ` : '—';
+                      const rateStr = Number.isFinite(log.rateMolS) ? `${(log.rateMolS * 1000).toFixed(2)} mmol/s` : '—';
+                      const phStr = Number.isFinite(log.phNow) ? log.phNow.toFixed(2) : '—';
+                      const dPStr = Number.isFinite(log.deltaPBar) ? `${log.deltaPBar >= 0 ? '+' : ''}${log.deltaPBar.toFixed(3)} bar` : '0.000 bar';
+                      return `<div class="p-2 rounded-lg border border-theme bg-surface text-xs">
+                        <div class="flex items-center justify-between gap-1">
+                          <span class="font-mono font-bold text-accent truncate">${log.equation}</span>
+                          <span class="font-mono text-muted shrink-0">${log.vesselLabel} · ${ts}</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 mt-1 text-[10.5px] font-mono text-muted">
+                          <span>ΔH: <strong class="text-main">${dHStr}</strong></span>
+                          <span>v: <strong class="text-sky-400">${rateStr}</strong></span>
+                          <span>pH: <strong class="text-main">${phStr}</strong></span>
+                          <span>ΔP: <strong class="text-main">${dPStr}</strong></span>
+                        </div>
                       </div>`;
                     }
                     return `<div class="p-2 rounded-lg border border-theme bg-surface text-xs">
                       <div class="flex items-center justify-between gap-1">
                         <span class="font-mono font-bold text-accent">${log.equation}</span>
-                        <span class="font-mono text-muted">${log.vesselLabel} · ${log.timeSec.toFixed(1)}s</span>
+                        <span class="font-mono text-muted shrink-0">${log.vesselLabel} · ${ts}</span>
                       </div>
+                      ${log.ionicEq ? `<div class="font-mono text-[10.5px] text-sky-400 mt-0.5">${log.ionicEq}</div>` : ''}
                       <p class="text-muted mt-0.5">${langCode === 'vi' ? log.descVi : log.descEn}</p>
                     </div>`;
                   })
@@ -1795,7 +2045,82 @@ export class InspectorPanel {
     this.bindInspectorEvents(item, t);
   }
 
+  buildTelemetryCsv(item) {
+    if (item && item.kind === 'vessel') {
+      const hist = Array.isArray(item.history) ? item.history : [];
+      const topIds = Object.keys(item.moles || {})
+        .filter((k) => k !== 'H2O_l' && hasDisplayableSpeciesAmount(k, item.moles[k]))
+        .slice(0, 6);
+      const header = ['t_s', 'T_C', 'pH', 'P_bar', 'rate_mmol_s', ...topIds.map((id) => `${id}_M`)].join(',');
+      if (hist.length === 0) {
+        const liqL = computeLiquidVolumeL(item.moles, item.tempK);
+        const ph = item.isFrozenSolid ? '' : computePH(item.moles, liqL, item.tempK)?.toFixed(2) ?? '';
+        const pBar = (item.internalPressureBar ?? this.sim.environment?.pressureBar ?? 1).toFixed(4);
+        const cmVals = topIds.map((id) => (liqL > 1e-6 ? ((item.moles[id] || 0) / liqL).toFixed(4) : '0.0000'));
+        return `${header}\n${this.sim.timeSec.toFixed(2)},${kelvinToCelsius(item.tempK).toFixed(2)},${ph},${pBar},${((item.lastTotalRateMolS || 0) * 1000).toFixed(3)},${cmVals.join(',')}`;
+      }
+      const rows = hist.map((pt) => {
+        const tC = kelvinToCelsius(pt.tempK ?? item.tempK).toFixed(2);
+        const phS = pt.ph !== null && pt.ph !== undefined ? Number(pt.ph).toFixed(2) : '';
+        const pS = Number.isFinite(pt.pressureBar) ? pt.pressureBar.toFixed(4) : '';
+        const rS = ((pt.rateMolS || 0) * 1000).toFixed(3);
+        const vL = pt.liqL ?? computeLiquidVolumeL(pt.moles || {}, pt.tempK);
+        const cmVals = topIds.map((id) => (vL > 1e-6 ? (((pt.moles || {})[id] || 0) / vL).toFixed(4) : '0.0000'));
+        return `${pt.t.toFixed(2)},${tC},${phS},${pS},${rS},${cmVals.join(',')}`;
+      });
+      return `${header}\n${rows.join('\n')}`;
+    }
+    const bt = computeBenchTelemetry(this.sim);
+    const atm = computeAtmospherePartialPressures(this.sim.environment);
+    const header = 'time_s,bench_mass_g,chem_mass_g,escaped_gas_g,p_total_bar,p_o2_bar,rh_pct,event';
+    const baseRow = `${this.sim.timeSec.toFixed(2)},${bt.totalBenchMassG.toFixed(3)},${bt.totalChemMassG.toFixed(3)},${bt.totalEscapedGasMassG.toFixed(4)},${atm.pTotalBar.toFixed(3)},${atm.pO2Bar.toFixed(3)},${atm.rhPct.toFixed(1)},BENCH_SNAPSHOT`;
+    const logRows = (this.sim.logs || []).slice(0, 30).map((lg) => {
+      const msg = (lg.equation || lg.key || '').replace(/"/g, "'");
+      return `${(lg.timeSec || 0).toFixed(2)},,,,,,,\"${msg}\"`;
+    });
+    return `${header}\n${baseRow}${logRows.length ? '\n' + logRows.join('\n') : ''}`;
+  }
+
   bindInspectorEvents(item, t) {
+    this.container.querySelectorAll('details[data-ins-sec]').forEach((det) => {
+      det.addEventListener('toggle', () => {
+        const key = det.dataset.insSec;
+        if (key) this.sectionOpen[key] = det.open;
+      });
+    });
+
+    this.container.querySelector('#btn-log-student')?.addEventListener('click', () => {
+      this.logMode = 'student';
+      this.update(document.documentElement.lang || 'vi', true);
+    });
+    this.container.querySelector('#btn-log-expert')?.addEventListener('click', () => {
+      this.logMode = 'expert';
+      this.update(document.documentElement.lang || 'vi', true);
+    });
+    this.container.querySelector('#btn-export-csv')?.addEventListener('click', () => {
+      const csv = this.buildTelemetryCsv(item);
+      const filename = `chemlab_${item?.label?.replace(/[^a-zA-Z0-9_-]/g, '') || 'bench'}_${Date.now()}.csv`;
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      this.callbacks.onNotify?.(t('logCsvExportedToast').replace('{filename}', filename));
+    });
+    this.container.querySelector('#btn-copy-data')?.addEventListener('click', async () => {
+      const csv = this.buildTelemetryCsv(item);
+      try {
+        await navigator.clipboard?.writeText(csv);
+        this.callbacks.onNotify?.(t('logCopiedToast'));
+      } catch {
+        this.callbacks.onNotify?.(t('logCopiedToast'));
+      }
+    });
+
     if (!item) return;
 
     this.container.querySelector('#ins-move-lab-btn')?.addEventListener('click', () => {
@@ -1987,7 +2312,7 @@ export class InspectorPanel {
         const activeLab = labsMeta?.labs?.[labsMeta.activeIndex];
         const labTitle = activeLab?.customName || `Lab ${activeLab?.number || 1}`;
         const rowsData = Object.entries(item.moles || {})
-          .filter(([, n]) => n > 1e-10)
+          .filter(([spId, n]) => hasDisplayableSpeciesAmount(spId, n))
           .sort((a, b) => b[1] - a[1])
           .map(([spId, n]) => {
             const sp = SPECIES[spId];
@@ -2350,7 +2675,29 @@ export class InspectorPanel {
 
   updateLiveNumbers(t) {
     const item = this.sim.getItem(this.sim.selectedId);
-    if (!item) return;
+    if (!item) {
+      const bt = computeBenchTelemetry(this.sim);
+      const atm = computeAtmospherePartialPressures(this.sim.environment);
+      const roomTempC = kelvinToCelsius(this.sim.environment?.tempK ?? CONSTANTS.T_STD_K);
+      const setTxt = (sel, txt) => {
+        const el = this.container.querySelector(sel);
+        if (el) el.textContent = txt;
+      };
+      setTxt('#live-bench-mass', `${formatNumber(bt.totalBenchMassG, 2)} g`);
+      setTxt('#live-bench-chem', `${formatNumber(bt.totalChemMassG, 2)}g`);
+      setTxt('#live-bench-tare', `${formatNumber(bt.totalTareMassG, 1)}g`);
+      setTxt('#live-bench-escaped', `${formatNumber(bt.totalEscapedGasMassG, 3)}g`);
+      setTxt('#live-bench-atm-tp', `${roomTempC.toFixed(1)}°C · ${atm.pTotalBar.toFixed(2)} bar`);
+      setTxt('#live-bench-pn2', `${atm.pN2Bar.toFixed(3)} bar`);
+      setTxt('#live-bench-po2', `${atm.pO2Bar.toFixed(3)} bar`);
+      setTxt('#live-bench-pco2', `${(atm.pCO2Bar * 1000).toFixed(2)} mbar`);
+      setTxt('#live-bench-rh', `${atm.rhPct.toFixed(0)}%`);
+      setTxt('#live-bench-rxns', String(bt.activeReactionCount));
+      setTxt('#live-bench-heating', `${bt.heatingVesselCount} / ${bt.boilingVesselCount}`);
+      setTxt('#live-bench-overp', String(bt.overpressureVesselCount));
+      setTxt('#live-bench-counts', `${bt.vesselCount} + ${bt.toolCount}`);
+      return;
+    }
 
     if (item.kind === 'rubber_stopper') return;
     if (item.kind === 'phen_cotton') {
@@ -2406,19 +2753,28 @@ export class InspectorPanel {
       }
       const maxBowlMl = APPARATUS.iron_spoon?.maxVolumeMl || 2.8;
       let bowlBulkMl = 0;
+      let needsSpoonRebuild = false;
+      this.container.querySelectorAll('[id^="live-spoon-row-"]').forEach((rowEl) => {
+        const sid = rowEl.id.replace('live-spoon-row-', '');
+        if (!hasDisplayableSpeciesAmount(sid, item.moles?.[sid])) needsSpoonRebuild = true;
+      });
       for (const [spId, n] of Object.entries(item.moles || {})) {
-        if (n <= 1e-10) continue;
+        if (!hasDisplayableSpeciesAmount(spId, n)) continue;
         const sp = SPECIES[spId];
         if (sp?.phase === 's' && sp.density) {
           bowlBulkMl += ((n * sp.molarMass) / sp.density) * 1.25;
         }
         const mEl = this.container.querySelector(`#live-spoon-mol-${spId}`);
         const gEl = this.container.querySelector(`#live-spoon-mass-${spId}`);
+        if (!mEl) needsSpoonRebuild = true;
         if (mEl) mEl.textContent = n >= 0.01 ? `${n.toFixed(4)}` : `${(n * 1000).toFixed(3)}m`;
         if (gEl && sp) gEl.textContent = `${(n * sp.molarMass).toFixed(3)}g`;
       }
       if (vEl) {
         vEl.textContent = `${bowlBulkMl.toFixed(2)} / ${maxBowlMl.toFixed(1)} mL`;
+      }
+      if (needsSpoonRebuild) {
+        this.lastStructureSig = '';
       }
       return;
     }
@@ -2556,11 +2912,47 @@ export class InspectorPanel {
     const pLocEl = this.container.querySelector('#live-press-local');
     const pLimEl = this.container.querySelector('#live-press-limit');
     const pBarEl = this.container.querySelector('#live-press-bar');
-    if (pLocEl) pLocEl.textContent = `${pm.localPBar.toFixed(2)} bar`;
+    if (pLocEl) pLocEl.textContent = `${pm.localPBar.toFixed(2)} bar (${(pm.localPBar * 0.986923).toFixed(2)} atm)`;
     if (pLimEl) pLimEl.textContent = `${pm.deltaPBar >= 0 ? '+' : ''}${pm.deltaPBar.toFixed(2)} / +${pm.maxDeltaPBar.toFixed(2)} bar`;
     if (pBarEl) {
       pBarEl.style.width = `${pm.limitPct.toFixed(1)}%`;
       pBarEl.style.backgroundColor = pm.rawRatio >= 0.85 ? '#D62839' : pm.rawRatio >= 0.6 ? '#f59e0b' : '#38bdf8';
+    }
+
+    const dTdt = item.lastTempRateCS || 0;
+    const dTempEl = this.container.querySelector('#live-dtemp');
+    if (dTempEl) {
+      dTempEl.textContent = `${dTdt > 0.005 ? '+' : ''}${dTdt.toFixed(2)} °C/s`;
+      dTempEl.className = `text-[10.5px] font-mono ${Math.abs(dTdt) > 0.05 ? (dTdt > 0 ? 'text-orange-400' : 'text-sky-400') : 'text-muted'}`;
+    }
+    const qRelKJ = (item.cumulativeReactionHeatJ || 0) / 1000;
+    const qEl = this.container.querySelector('#live-cum-heat');
+    const dhEl = this.container.querySelector('#live-cum-dh');
+    if (qEl) qEl.textContent = `Q=${qRelKJ.toFixed(2)} kJ`;
+    if (dhEl) dhEl.textContent = `ΔH_rxn ≈ ${(-qRelKJ).toFixed(2)} kJ`;
+
+    const liqTabData = computeLiquidSpeciesTableData(item.moles, item.tempK);
+    const rhoEl = this.container.querySelector('#live-mix-density');
+    if (rhoEl) rhoEl.textContent = `ρ=${liqTabData.mixDensity > 0 ? liqTabData.mixDensity.toFixed(3) : '—'} g/mL`;
+
+    const electroMetrics = computeVesselElectrochemicalMetrics(item, ph, liqL);
+    const ionEl = this.container.querySelector('#live-ionic-str');
+    if (ionEl) ionEl.innerHTML = `I=${electroMetrics.ionicStrengthM.toFixed(3)} M · σ=<span id="live-cond-sigma">${electroMetrics.conductivityMSCm.toFixed(2)}</span> mS/cm`;
+    const rateEl = this.container.querySelector('#live-rxn-rate');
+    if (rateEl) {
+      const vRate = liqL > 1e-5 ? (item.lastTotalRateMolS || 0) / liqL : 0;
+      rateEl.textContent = vRate > 0 ? `${vRate.toFixed(4)} mol/L·s` : `${((item.lastTotalRateMolS || 0) * 1000).toFixed(2)} mmol/s`;
+    }
+    const convEl = this.container.querySelector('#live-conv-yield');
+    if (convEl) {
+      convEl.textContent = `H = ${item.conversionYieldPct !== null && item.conversionYieldPct !== undefined ? `${item.conversionYieldPct.toFixed(1)}%` : '—'}`;
+    }
+    const ehEl = this.container.querySelector('#live-eh-mv');
+    if (ehEl) {
+      const redoxMetrics = computeVesselRedoxAndCellMetrics(item, this.sim.items, liqL, ph);
+      ehEl.textContent = redoxMetrics.ehMv !== null ? `${redoxMetrics.ehMv >= 0 ? '+' : ''}${redoxMetrics.ehMv.toFixed(1)} mV` : '—';
+      const epEl = this.container.querySelector('#live-epin-v');
+      if (epEl && redoxMetrics.ePinV !== null) epEl.textContent = `${redoxMetrics.ePinV.toFixed(3)} V`;
     }
 
     const escEl = this.container.querySelector('#live-escaped-gas');
@@ -2612,25 +3004,13 @@ export class InspectorPanel {
       gasCompEl.innerHTML = buildVesselGasCompositionHtml(item, spec, this.sim.environment, liqL, t);
     }
 
-    for (const [spId, n] of Object.entries(item.moles)) {
-      const sp = SPECIES[spId];
-      if (!sp) continue;
-      const molEl = this.container.querySelector(`#sp-mol-${spId}`);
-      const mEl = this.container.querySelector(`#sp-mass-${spId}`);
-      const cEl = this.container.querySelector(`#sp-conc-${spId}`);
-      if (molEl) molEl.textContent = n >= 0.01 ? `${formatNumber(n, 4)}` : `${formatNumber(n * 1000, 3)}m`;
-      if (mEl) mEl.textContent = `${formatNumber(n * sp.molarMass, 3)}g`;
-      if (cEl) {
-        const isMolten = isSolidMoltenAtTemp(sp, item.tempK, item.moles);
-        const isFrozenSolidSp = spId === 'H2O_s' || (Boolean(item.isFrozenSolid) && sp.phase === 's');
-        cEl.textContent = isMolten
-          ? t('moltenStateTag')
-          : isFrozenSolidSp
-          ? t('frozenSolidTag')
-          : sp.phase === 'aq' && liqL > 1e-6
-          ? `${(n / liqL).toFixed(3)} M`
-          : sp.phase;
-      }
+    const liqBodyEl = this.container.querySelector('#sp-liq-body');
+    if (liqBodyEl) {
+      liqBodyEl.innerHTML = buildLiquidRowsHtml(liqTabData);
+    }
+    const solBodyEl = this.container.querySelector('#sp-sol-body');
+    if (solBodyEl) {
+      solBodyEl.innerHTML = buildSolidRowsHtml(item, t);
     }
   }
 

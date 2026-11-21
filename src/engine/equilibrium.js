@@ -1,3 +1,4 @@
+import { APPARATUS } from '../data/apparatus.js';
 import { CONSTANTS, waterDensityGPerMl } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
 
@@ -10,21 +11,23 @@ export function computeAqueousVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
   if (!moles) return 0;
   const nH2O = Math.max(0, moles.H2O_l || 0);
   const nEtOH = Math.max(0, moles.C2H5OH_l || 0);
+  const nAcOH = Math.max(0, moles.CH3COOH_l || 0);
   const nH2SO4L = Math.max(0, moles.H2SO4_l || 0);
   const nHNO3L = Math.max(0, moles.HNO3_l || 0);
   const nMn2O7L = Math.max(0, moles.Mn2O7_l || 0);
-  if (nH2O <= 1e-12 && nEtOH <= 1e-12 && nH2SO4L <= 1e-12 && nHNO3L <= 1e-12 && nMn2O7L <= 1e-12) return 0;
+  if (nH2O <= 1e-12 && nEtOH <= 1e-12 && nAcOH <= 1e-12 && nH2SO4L <= 1e-12 && nHNO3L <= 1e-12 && nMn2O7L <= 1e-12) return 0;
 
   const T = Number.isFinite(tempK) ? Math.max(155, Math.min(800, tempK)) : CONSTANTS.T_STD_K;
   const rho = waterDensityGPerMl(T);
   const waterVolMl = (nH2O * SPECIES.H2O_l.molarMass) / rho;
   const etohVolMl = (nEtOH * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density;
+  const acohVolMl = nAcOH > 1e-12 ? (nAcOH * SPECIES.CH3COOH_l.molarMass) / SPECIES.CH3COOH_l.density : 0;
   const h2so4VolMl = nH2SO4L > 1e-12 ? (nH2SO4L * SPECIES.H2SO4_l.molarMass) / SPECIES.H2SO4_l.density : 0;
   const hno3VolMl = nHNO3L > 1e-12 ? (nHNO3L * SPECIES.HNO3_l.molarMass) / SPECIES.HNO3_l.density : 0;
   const mn2o7VolMl = nMn2O7L > 1e-12 ? (nMn2O7L * SPECIES.Mn2O7_l.molarMass) / SPECIES.Mn2O7_l.density : 0;
   // Ethanol-water mixtures exhibit ~3.5% excess volume contraction
   const mixFactor = nH2O > 1e-9 && nEtOH > 1e-9 ? 0.965 : 1.0;
-  const solventVolMl = (waterVolMl + etohVolMl) * mixFactor + h2so4VolMl + hno3VolMl + mn2o7VolMl;
+  const solventVolMl = (waterVolMl + etohVolMl) * mixFactor + acohVolMl + h2so4VolMl + hno3VolMl + mn2o7VolMl;
 
   let diluteVolDeltaMl = 0;
   let totalSoluteMoles = 0;
@@ -45,7 +48,8 @@ export function computeAqueousVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
   // Smoothly blend toward positive effective solute volume (~m/2.25) at high molality
   const waterKg = (nH2O * SPECIES.H2O_l.molarMass) / 1000;
   const etohKg = (nEtOH * SPECIES.C2H5OH_l.molarMass) / 1000;
-  const solventKg = waterKg + etohKg;
+  const acohKg = (nAcOH * SPECIES.CH3COOH_l.molarMass) / 1000;
+  const solventKg = waterKg + etohKg + acohKg;
   const molality = solventKg > 1e-9 ? totalSoluteMoles / solventKg : 0;
   const highConcWeight = molality / (molality + 4.0);
   const concVolDeltaMl = totalSoluteMassG / 2.25;
@@ -125,6 +129,7 @@ export function solutionFreezingPointK(moles, useBulkWaterIfFrozen = false) {
   const nWater = moles?.H2O_l || 0;
   const nIce = moles?.H2O_s || 0;
   if (nWater <= 1e-12 && nIce <= 1e-12) {
+    if ((moles?.CH3COOH_l || 0) > 1e-12 && (moles?.C2H5OH_l || 0) <= 1e-9) return 289.75;
     return (moles?.C2H5OH_l || 0) > 1e-12 ? 159.05 : CONSTANTS.T_FREEZE_WATER_K;
   }
   const effectiveSoluteMol = calcEffectiveSoluteMoles(moles);
@@ -452,7 +457,7 @@ export function computeSolidSuspensionFactor(vessel, spId, sp) {
 /**
  * Physical Decantation vs Shake solid transfer ratio during vessel pouring.
  * Accounts for floating solids (Na), suspension/stirring state, Erlenmeyer shoulder trap (98%) vs Beaker (88%),
- * and bottom-sludge disturbance near empty (>75%).
+ * and bottom-sludge disturbance near empty — without shaking, decanting liquid never dumps settled heavy solids cleanly.
  */
 export function calcSolidTransferRatio({
   pourFraction,
@@ -461,24 +466,119 @@ export function calcSolidTransferRatio({
   vesselType,
   suspensionFactor,
   shakeBeforePour,
+  hasLiquid = true,
 }) {
   if (pourFraction <= 0) return 0;
-  if (pourFraction >= 0.995) return 1;
 
   // 1. Floating solids (rho_s < rho_l, e.g. Na metal at 0.968 g/cm3) skim across first
-  if (solidDensity < liquidDensity) {
-    return Math.min(1, pourFraction * 2.5);
+  if (hasLiquid && solidDensity < liquidDensity) {
+    return pourFraction >= 0.995 ? 1 : Math.min(1, pourFraction * 2.5);
   }
 
-  // 2. Sinking solids: governed by suspension vs Erlenmeyer shoulder trap
+  // 2. Sinking solids: governed by suspension vs vessel shoulder trap & inertia
   const effectiveSuspension = shakeBeforePour ? 1.0 : Math.max(0, Math.min(1, suspensionFactor));
-  const suspendedTransfer = pourFraction * effectiveSuspension;
+  if (pourFraction >= 0.995 && (!hasLiquid || effectiveSuspension >= 0.85 || vesselType === 'dish' || vesselType === 'crucible')) {
+    return 1;
+  }
 
-  const vesselTrap = vesselType === 'erlenmeyer' ? 0.98 : 0.88;
-  const bottomDisturbance = Math.pow(pourFraction, 4);
+  const clampedFrac = Math.min(1, pourFraction);
+  const suspendedTransfer = clampedFrac * effectiveSuspension;
+
+  const vesselTrap =
+    vesselType === 'erlenmeyer' || vesselType === 'round_flask' || vesselType === 'distillation_flask'
+      ? 0.98
+      : vesselType === 'test_tube' || vesselType === 'bottle'
+      ? 0.94
+      : vesselType === 'dish' || vesselType === 'crucible'
+      ? 0.45
+      : 0.88;
+  const bottomDisturbance = Math.pow(clampedFrac, 4);
   const settledTransfer = (1 - effectiveSuspension) * (1 - vesselTrap) * bottomDisturbance;
 
   return Math.min(1, suspendedTransfer + settledTransfer);
+}
+
+/**
+ * Physical continuous tilt-pouring fractional rate (/s) for each solid species during interactive tilt pouring.
+ * Combines:
+ *  - Hydrodynamic entrainment in overflowing liquid (buoyant skim + dispersed/colloidal suspension fraction)
+ *  - Vessel-specific neck constriction & shoulder trap (Erlenmeyer/round flask vs Test tube vs Beaker vs Dish vs Spoon)
+ *  - Repose onset angle & smooth sin(excessTilt) granular discharge curve
+ */
+export function calcSolidPourDischargeRate({
+  spec,
+  kind = 'vessel',
+  spId = '',
+  sp,
+  tiltDeg = 0,
+  liquidFlowFrac = 0,
+  liquidDensity = 1.0,
+  hasLiquid = false,
+  suspensionFactor = 0,
+  isPowder = false,
+}) {
+  if (!sp || sp.phase !== 's') return { ratioStep: 0, ratePerSec: 0, onsetDeg: 48 };
+  const sDens = sp.density || 2.5;
+  const vShape = spec?.shape || spec?.typeId || kind || 'beaker';
+
+  // Hydrodynamic entrainment during active liquid overflow (can occur at gentle 20–45° tilts!)
+  let entrainedStep = 0;
+  if (liquidFlowFrac > 0 && hasLiquid) {
+    if (sDens < liquidDensity) {
+      const tiltBoost = 1.55 + 0.9 * Math.sin(Math.min(Math.PI / 2, ((tiltDeg || 25) * Math.PI) / 180));
+      entrainedStep = Math.min(1, liquidFlowFrac * tiltBoost);
+    } else if (suspensionFactor > 0.01) {
+      entrainedStep = Math.min(1, liquidFlowFrac * Math.max(0, Math.min(1, suspensionFactor)));
+    } else if (vShape !== 'erlenmeyer' && vShape !== 'round_flask' && (tiltDeg || 0) >= 52 && liquidFlowFrac > 0.02) {
+      // Gentle bottom scour when heavy liquid washes near-empty beaker rim
+      entrainedStep = Math.min(0.18, liquidFlowFrac * 0.08 * Math.min(1, ((tiltDeg || 52) - 45) / 45));
+    }
+  }
+
+  // Geometry profile for dry/steep solid discharge
+  let onsetDeg = 46;
+  let neckFactor = 1.0;
+  if (kind === 'spoon') {
+    onsetDeg = isPowder || sp.isPrecipitate ? 22 : 26;
+    neckFactor = 2.6;
+  } else if (kind === 'filter_funnel') {
+    onsetDeg = 24;
+    neckFactor = 1.75;
+  } else if (vShape === 'erlenmeyer' || vShape === 'round_flask' || vShape === 'distillation_flask') {
+    onsetDeg = isPowder || sp.isPrecipitate ? 62 : 70;
+    neckFactor = 0.36;
+  } else if (vShape === 'test_tube' || vShape === 'bottle') {
+    onsetDeg = isPowder || sp.isPrecipitate ? 52 : 60;
+    neckFactor = 0.52;
+  } else if (vShape === 'dish' || vShape === 'crucible' || spec?.isPorcelain || spec?.isMortar || spec?.typeId === 'petri_dish') {
+    onsetDeg = isPowder || sp.isPrecipitate ? 30 : 36;
+    neckFactor = 1.45;
+  } else {
+    // Standard cylindrical beaker
+    onsetDeg = isPowder || sp.isPrecipitate ? 41 : 48;
+    neckFactor = 1.0;
+  }
+
+  // Wet settled precipitate clings via capillary cohesion until steeped further or resuspended
+  const isWetCling = hasLiquid && sp.isPrecipitate && suspensionFactor < 0.25 && kind === 'vessel';
+  const effOnsetDeg = isWetCling ? onsetDeg + 9 : onsetDeg;
+  const wetDrag = isWetCling ? 0.52 : 1.0;
+  const morphFactor = isPowder ? 1.32 : sp.isPrecipitate ? 1.08 : sDens >= 5.0 ? 1.15 : 0.92;
+
+  let gravityRateS = 0;
+  if ((tiltDeg || 0) >= effOnsetDeg) {
+    const excess = tiltDeg - effOnsetDeg;
+    const span = Math.max(12, 122 - effOnsetDeg);
+    const angleCurve = Math.sin(Math.min(Math.PI / 2, (excess / span) * (Math.PI / 2)));
+    gravityRateS = 1.65 * neckFactor * morphFactor * wetDrag * (0.14 + 0.86 * angleCurve);
+  }
+
+  return {
+    entrainedStep,
+    ratePerSec: gravityRateS,
+    onsetDeg: effOnsetDeg,
+    neckFactor,
+  };
 }
 
 /**
@@ -597,5 +697,271 @@ export function computePhaseStratification(moles, tempK = CONSTANTS.T_STD_K, ves
     lightOrganicDensity: lightDensity,
     heavyOrganicMl: heavyVolMl,
     heavyOrganicDensity: heavyDensity,
+  };
+}
+
+export const MOLAR_IONIC_CONDUCTIVITY_MS_CM2_MMOL = {
+  H_aq: 349.6,
+  OH_aq: 198.0,
+  Na_aq: 50.1,
+  K_aq: 73.5,
+  NH4_aq: 73.4,
+  Ag_aq: 61.9,
+  Cu2_aq: 107.2,
+  Zn2_aq: 105.6,
+  Fe2_aq: 108.0,
+  Fe3_aq: 204.0,
+  Mg2_aq: 106.1,
+  Ca2_aq: 119.0,
+  Ba2_aq: 127.3,
+  Al3_aq: 183.0,
+  Mn2_aq: 107.0,
+  Cr3_aq: 201.0,
+  Cl_aq: 76.3,
+  Br_aq: 78.1,
+  I_aq: 76.8,
+  NO3_aq: 71.4,
+  HSO4_aq: 50.0,
+  SO4_2_aq: 160.0,
+  HCO3_aq: 44.5,
+  CO3_2_aq: 138.6,
+  CH3COO_aq: 40.9,
+  HCOO_aq: 54.6,
+  MnO4_aq: 61.3,
+  CrO4_2_aq: 170.0,
+  Cr2O7_2_aq: 145.0,
+  AlO2_aq: 50.0,
+  ZnOH4_2_aq: 90.0,
+  CuNH3_4_2_aq: 115.0,
+  AgNH3_2_aq: 65.0,
+};
+
+/**
+ * Compute per-species liquid & dissolved solute breakdown (mol, mass g, phase volume mL, CM, C%).
+ */
+export function computeLiquidSpeciesTableData(moles, tempK = CONSTANTS.T_STD_K, strat = null) {
+  const s = strat || computePhaseStratification(moles, tempK);
+  const T = Number.isFinite(tempK) ? Math.max(155, Math.min(800, tempK)) : CONSTANTS.T_STD_K;
+  const aqVolL = Math.max(0, s.aqueousMl / 1000);
+  const lightVolL = Math.max(0, s.lightOrganicMl / 1000);
+  const heavyVolL = Math.max(0, s.heavyOrganicMl / 1000);
+
+  let aqMassG = 0;
+  let lightMassG = 0;
+  let heavyMassG = 0;
+  const rawEntries = [];
+
+  for (const [spId, n] of Object.entries(moles || {})) {
+    if (!Number.isFinite(n) || n <= 0) continue;
+    const sp = SPECIES[spId];
+    if (!sp || (sp.phase !== 'l' && sp.phase !== 'aq')) continue;
+    const massG = n * (sp.molarMass || 0);
+    if (n < 5e-7 && massG < 5e-4) continue;
+    const lg = sp.phase === 'aq' ? 'aqueous' : sp.liquidGroup || 'aqueous';
+    if (lg === 'organic_light') lightMassG += massG;
+    else if (lg === 'organic_heavy') heavyMassG += massG;
+    else aqMassG += massG;
+    rawEntries.push({ spId, sp, n, massG, lg });
+  }
+
+  const rows = rawEntries
+    .sort((a, b) => b.n - a.n)
+    .map(({ spId, sp, n, massG, lg }) => {
+      const rho = spId === 'H2O_l' ? waterDensityGPerMl(T) : sp.density;
+      const volMl = sp.phase === 'l' && rho > 0 ? massG / rho : null;
+      const hostVolL = lg === 'organic_light' ? lightVolL : lg === 'organic_heavy' ? heavyVolL : aqVolL;
+      const hostMassG = lg === 'organic_light' ? lightMassG : lg === 'organic_heavy' ? heavyMassG : aqMassG;
+      const cM = hostVolL > 1e-7 ? n / hostVolL : 0;
+      const cPct = hostMassG > 1e-7 ? (massG / hostMassG) * 100 : 0;
+      return {
+        spId,
+        sp,
+        mol: n,
+        massG,
+        volMl,
+        cM,
+        cPct,
+        layerGroup: lg,
+      };
+    });
+
+  const totalLiqMl = s.totalLiqMl;
+  const totalLiqMassG = aqMassG + lightMassG + heavyMassG;
+  const solidVolMl = computeSolidVolumeMl(moles);
+  let solidMassG = 0;
+  for (const [spId, n] of Object.entries(moles || {})) {
+    if (n > 0 && SPECIES[spId]?.phase === 's') solidMassG += n * (SPECIES[spId].molarMass || 0);
+  }
+  const mixVolMl = totalLiqMl + solidVolMl;
+  const mixDensity = mixVolMl > 1e-6 ? (totalLiqMassG + solidMassG) / mixVolMl : 0;
+  const liqDensity = totalLiqMl > 1e-6 ? totalLiqMassG / totalLiqMl : 0;
+
+  return {
+    rows,
+    totalLiqMl,
+    totalLiqMassG,
+    liqDensity,
+    mixDensity,
+    strat: s,
+  };
+}
+
+/**
+ * Compute ionic strength I (mol/L) and estimated Kohlrausch electrical conductivity sigma (mS/cm).
+ */
+export function computeVesselElectrochemicalMetrics(vessel, ph = null, liqL = null) {
+  if (!vessel || vessel.isFrozenSolid) return { ionicStrengthM: 0, conductivityMSCm: 0 };
+  const moles = vessel.moles || {};
+  const vL = liqL ?? computeLiquidVolumeL(moles, vessel.tempK);
+  const aqL = computeAqueousVolumeL(moles, vessel.tempK);
+  const effL = aqL > 1e-6 ? aqL : vL;
+  if (effL <= 1e-6) return { ionicStrengthM: 0, conductivityMSCm: 0 };
+
+  const T = Number.isFinite(vessel.tempK) ? vessel.tempK : CONSTANTS.T_STD_K;
+  const effPh = ph ?? computePH(moles, effL, T);
+  const hFromPh = effPh !== null ? Math.pow(10, -effPh) : 0;
+  const ohFromPh = effPh !== null ? computeKw(T) / Math.max(1e-16, hFromPh) : 0;
+
+  let sumCZ2 = 0;
+  let sumLambdaC = 0;
+  let cHRecorded = 0;
+  let cOHRecorded = 0;
+
+  for (const [spId, n] of Object.entries(moles)) {
+    if (!Number.isFinite(n) || n <= 1e-12) continue;
+    const sp = SPECIES[spId];
+    if (!sp || sp.phase !== 'aq') continue;
+    const z = Math.abs(sp.charge || 0);
+    if (z === 0) continue;
+    const c = n / effL;
+    if (spId === 'H_aq') cHRecorded = c;
+    if (spId === 'OH_aq') cOHRecorded = c;
+    sumCZ2 += c * z * z;
+    const lambda0 = MOLAR_IONIC_CONDUCTIVITY_MS_CM2_MMOL[spId] ?? z * 60;
+    sumLambdaC += lambda0 * c;
+  }
+
+  // Include weak-acid / water self-ionization H+ & OH- beyond explicit H_aq/OH_aq (e.g. CH3COOH dissociation -> H+ + CH3COO-)
+  const extraH = Math.max(0, hFromPh - cHRecorded);
+  const extraOH = Math.max(0, ohFromPh - cOHRecorded);
+  if (extraH > 1e-11) {
+    sumCZ2 += extraH;
+    sumLambdaC += MOLAR_IONIC_CONDUCTIVITY_MS_CM2_MMOL.H_aq * extraH;
+    if ((moles.CH3COOH_l || 0) > 1e-8 && (moles.H2O_l || 0) > 1e-7) {
+      sumCZ2 += extraH;
+      sumLambdaC += MOLAR_IONIC_CONDUCTIVITY_MS_CM2_MMOL.CH3COO_aq * extraH;
+    }
+  }
+  if (extraOH > 1e-11) {
+    sumCZ2 += extraOH;
+    sumLambdaC += MOLAR_IONIC_CONDUCTIVITY_MS_CM2_MMOL.OH_aq * extraOH;
+    if ((moles.NH3_aq || 0) > 1e-8) {
+      sumCZ2 += extraOH;
+      sumLambdaC += MOLAR_IONIC_CONDUCTIVITY_MS_CM2_MMOL.NH4_aq * extraOH;
+    }
+  }
+
+  // Concentrated anhydrous liquids without water conduct much less due to incomplete ion solvation
+  const waterFracFactor =
+    (moles.H2O_l || 0) > 1e-5 ? Math.min(1.0, ((moles.H2O_l || 0) * 18) / Math.max(1e-5, (moles.H2O_l || 0) * 18 + (moles.CH3COOH_l || 0) * 60 + (moles.C2H5OH_l || 0) * 46)) : 0.04;
+
+  const ionicStrengthM = 0.5 * sumCZ2;
+  const tempScale = Math.max(0.4, 1 + 0.019 * (T - CONSTANTS.T_STD_K));
+  const crowding = 1 / (1 + 0.30 * Math.sqrt(Math.max(0, ionicStrengthM)));
+  const conductivityMSCm = Math.max(0, sumLambdaC * crowding * tempScale * Math.max(0.04, waterFracFactor));
+
+  return { ionicStrengthM, conductivityMSCm };
+}
+
+/**
+ * Resolve partial pressures of room atmosphere gases and relative humidity from environment state.
+ */
+export function computeAtmospherePartialPressures(env = {}) {
+  const mode = env.atmosphereMode || 'air';
+  const pTotalBar = mode === 'vacuum' ? Math.max(0, env.pressureBar ?? 0.02) : Math.max(0, env.pressureBar ?? CONSTANTS.P_STD_BAR);
+  if (mode === 'vacuum' || pTotalBar <= 0.001) {
+    return { pTotalBar, pN2Bar: 0, pO2Bar: 0, pCO2Bar: 0, pOtherBar: pTotalBar, rhPct: 0 };
+  }
+  if (mode === 'o2') {
+    return { pTotalBar, pN2Bar: 0, pO2Bar: pTotalBar, pCO2Bar: 0, pOtherBar: 0, rhPct: 0 };
+  }
+  if (mode === 'co2') {
+    return { pTotalBar, pN2Bar: 0, pO2Bar: 0, pCO2Bar: pTotalBar, pOtherBar: 0, rhPct: 0 };
+  }
+  if (mode === 'n2' || mode === 'nitrogen') {
+    return { pTotalBar, pN2Bar: pTotalBar, pO2Bar: 0, pCO2Bar: 0, pOtherBar: 0, rhPct: 0 };
+  }
+  if (mode === 'h2' || mode === 'inert' || mode === 'ar') {
+    return { pTotalBar, pN2Bar: 0, pO2Bar: 0, pCO2Bar: 0, pOtherBar: pTotalBar, rhPct: 0 };
+  }
+  // Standard atmospheric air
+  const pN2Bar = pTotalBar * 0.7808;
+  const pO2Bar = pTotalBar * 0.2095;
+  const pCO2Bar = pTotalBar * 0.00042;
+  const pOtherBar = Math.max(0, pTotalBar - pN2Bar - pO2Bar - pCO2Bar);
+  const rhPct = (env.relativeHumidity ?? CONSTANTS.RELATIVE_HUMIDITY ?? 0.6) * 100;
+  return { pTotalBar, pN2Bar, pO2Bar, pCO2Bar, pOtherBar, rhPct };
+}
+
+/**
+ * Aggregate global telemetry across the entire active workbench (for Bench Telemetry panel).
+ */
+export function computeBenchTelemetry(sim) {
+  const items = sim?.items || [];
+  let totalTareMassG = 0;
+  let totalChemMassG = 0;
+  let totalEscapedGasMassG = 0;
+  let activeReactionCount = 0;
+  let heatingVesselCount = 0;
+  let boilingVesselCount = 0;
+  let overpressureVesselCount = 0;
+  let vesselCount = 0;
+  let toolCount = 0;
+  const pEnv = Math.max(0.05, sim?.environment?.pressureBar || CONSTANTS.P_STD_BAR);
+
+  for (const it of items) {
+    const spec = APPARATUS[it.typeId];
+    totalTareMassG += spec?.tareMassG || 0;
+    if (it.kind === 'vessel') {
+      vesselCount++;
+      totalChemMassG += computeContentsMassG(it.moles || {});
+      if (it.tubeMoles) totalChemMassG += computeContentsMassG(it.tubeMoles);
+      if (it.isStoppered && it.headspaceGasMoles) {
+        totalChemMassG += computeContentsMassG(it.headspaceGasMoles);
+      }
+      if (it.escapedGasMoles) {
+        totalEscapedGasMassG += computeContentsMassG(it.escapedGasMoles);
+      }
+      activeReactionCount += (it.activeReactions || []).length;
+      if (it.wasBoiling) boilingVesselCount++;
+      const burnerSrc = typeof sim.getBurnerHeatingSource === 'function' ? sim.getBurnerHeatingSource(it) : null;
+      if ((burnerSrc?.powerW || 0) > 0) heatingVesselCount++;
+      if ((it.internalPressureBar ?? pEnv) - pEnv >= 0.15) overpressureVesselCount++;
+    } else {
+      toolCount++;
+      if (it.moles) totalChemMassG += computeContentsMassG(it.moles);
+      if (it.kind === 'gas_syringe') {
+        if (it.gasMoles) totalChemMassG += computeContentsMassG(it.gasMoles);
+        if (it.overflowMoles) totalChemMassG += computeContentsMassG(it.overflowMoles);
+        totalChemMassG += (it.condensedWaterMol || 0) * CONSTANTS.M_H2O;
+        totalChemMassG += (it.frozenWaterMol || 0) * CONSTANTS.M_H2O;
+        totalChemMassG += (it.condensedEtOHMol || 0) * (SPECIES.C2H5OH_l?.molarMass || 46.068);
+      } else if (it.kind === 'wash_bottle') {
+        totalChemMassG += Math.max(0, it.waterMl || 0) * 0.997;
+      }
+    }
+  }
+
+  return {
+    totalBenchMassG: totalTareMassG + totalChemMassG,
+    totalTareMassG,
+    totalChemMassG,
+    totalEscapedGasMassG,
+    activeReactionCount,
+    heatingVesselCount,
+    boilingVesselCount,
+    overpressureVesselCount,
+    vesselCount,
+    toolCount,
   };
 }

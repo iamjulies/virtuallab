@@ -95,18 +95,24 @@
     } from '../src/engine/chemistry.js';
     import { LabManager } from '../src/engine/labManager.js';
     import { LabSimulation } from '../src/engine/simulation.js';
+    import { computeVesselRedoxAndCellMetrics } from '../src/engine/electrochemistry.js';
     import { checkThermometerInteractions, computeWashBottleStreamArc, syncDockedToolPositions } from '../src/engine/apparatusTools.js';
     import { calcEvaporationRateMol, computeSteamOpacity, stepVesselThermodynamics } from '../src/engine/thermodynamics.js';
     import {
+      calcSolidPourDischargeRate,
       computeAqueousVolumeL,
+      computeAtmospherePartialPressures,
+      computeBenchTelemetry,
       computeContentsMassG,
       computeEthanolWaterExcessEnthalpyJ,
+      computeLiquidSpeciesTableData,
       computeLiquidVolumeL,
       computePH,
       computePhaseStratification,
       computePhenolphthaleinAlpha,
       computeSolidVolumeMl,
       computeSolutionVisuals,
+      computeVesselElectrochemicalMetrics,
       solutionFreezingPointK,
     } from '../src/engine/equilibrium.js';
     import { EnvironmentBar } from '../src/ui/environmentBar.js';
@@ -2464,8 +2470,12 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.20';
+      const expectedBuild = 'virlab_beta_v4+build.21';
       const newKeysPresent =
+        Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
+        Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
+        Boolean(I18N.vi.liquidTableTitle && I18N.en.liquidTableTitle) &&
+        Boolean(I18N.vi.solidTableTitle && I18N.en.solidTableTitle) &&
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
         Boolean(I18N.vi.platedAgDendrite && I18N.en.platedAgDendrite) &&
@@ -2518,7 +2528,7 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.20 parity: All 39 apparatus & 30 starter reagents translated in VI/EN, Ethanol & Acetic acid keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.21 parity: All 39 apparatus & 30 starter reagents translated in VI/EN, Prompt 55 Inspector/Telemetry keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 39 &&
           STARTER_REAGENTS.length === 30 &&
           !APPARATUS.clay_triangle &&
@@ -9004,6 +9014,151 @@
         'Prompt 54 invariants: P+O2 render crash fixed, Absolute Ethanol & Glacial Acetic Acid full reactivity + physical constants',
         pFlameRenderOk && regOrgOk && etohOk && acohOk,
         `pRender=${pFlameRenderOk}, reg=${regOrgOk}, EtOH=${etohOk}, AcOH=${acohOk}(frz=${frozeBelow16},pH=${phAc01?.toFixed(2)}/${phBuf?.toFixed(2)},est=${(vAEster.moles.CH3COOC2H5_l||0).toFixed(3)})`
+      );
+    }
+
+    // TEST 173: Prompt 55 (virlab_beta_v4+build.21) — Zero-Ghost Inspector Rows, Solid/Mixture Tilt Pouring, Glacial AcOH Liquid Render, Split Tables & Bench Telemetry / 3 Groups / Electro Kinetics / Dual Log + CSV
+    {
+      // 1) Zero-display ghost species hidden in Vessel & Spoon Inspector tables
+      const simZ = new LabSimulation();
+      const vZ = simZ.createApparatus('beaker_250', 220, 427);
+      vZ.moles = { H2O_l: 1.0, K3P_s: 1e-8, P_red_s: 2e-9, K_s: 5e-8, Zn_s: 0.02 };
+      const spnZ = simZ.createApparatus('iron_spoon', 400, 440);
+      spnZ.moles = { P_red_s: 1e-9, CaCO3_s: 0.01 };
+      const hostEl = document.createElement('div');
+      const tVi = (k) => I18N.vi[k] || k;
+      const ins = new InspectorPanel(hostEl, simZ, () => tVi, {
+        getLabsMeta: () => ({ labs: [{ number: 1, customName: 'LAB 24' }], activeIndex: 0 }),
+      });
+      simZ.selectedId = vZ.id;
+      ins.update('vi', true);
+      const htmlV = hostEl.innerHTML;
+      const noGhostV =
+        htmlV.includes('sp-liq-body') &&
+        htmlV.includes('sp-sol-body') &&
+        htmlV.includes('sp-sol-row-Zn_s') &&
+        !htmlV.includes('sp-sol-row-K3P_s') &&
+        !htmlV.includes('sp-sol-row-P_red_s') &&
+        !htmlV.includes('sp-sol-row-K_s') &&
+        !htmlV.includes('0.000m') &&
+        !htmlV.includes('0.000g');
+      simZ.selectedId = spnZ.id;
+      ins.update('vi', true);
+      const noGhostSpoon =
+        hostEl.innerHTML.includes('live-spoon-row-CaCO3_s') &&
+        !hostEl.innerHTML.includes('live-spoon-row-P_red_s');
+
+      // 2) Vessel/angle-dependent solid pouring & stirred suspension into filter_funnel
+      const rBeaker45 = calcSolidPourDischargeRate({ spec: APPARATUS.beaker_250, kind: 'vessel', spId: 'CaCO3_s', sp: SPECIES.CaCO3_s, tiltDeg: 45, isPowder: true });
+      const rErl45 = calcSolidPourDischargeRate({ spec: APPARATUS.erlenmeyer_250, kind: 'vessel', spId: 'CaCO3_s', sp: SPECIES.CaCO3_s, tiltDeg: 45, isPowder: true });
+      const rErl85 = calcSolidPourDischargeRate({ spec: APPARATUS.erlenmeyer_250, kind: 'vessel', spId: 'CaCO3_s', sp: SPECIES.CaCO3_s, tiltDeg: 85, isPowder: true });
+      const rDish45 = calcSolidPourDischargeRate({ spec: APPARATUS.porcelain_dish, kind: 'vessel', spId: 'CaCO3_s', sp: SPECIES.CaCO3_s, tiltDeg: 45, isPowder: true });
+      const rEntrained = calcSolidPourDischargeRate({ spec: APPARATUS.beaker_250, kind: 'vessel', spId: 'AgCl_s', sp: SPECIES.AgCl_s, tiltDeg: 28, liquidFlowFrac: 0.25, hasLiquid: true, suspensionFactor: 0.9 });
+
+      const simPour = new LabSimulation();
+      const bSrcMix = simPour.createApparatus('beaker_250', 220, 350);
+      const bRecv = simPour.createApparatus('beaker_250', 310, 427);
+      const fnlMounted = simPour.createApparatus('filter_funnel', 310, 360);
+      fnlMounted.mountedOnVesselId = bRecv.id;
+      bSrcMix.x = 265;
+      bSrcMix.y = 265;
+      bSrcMix.moles = { H2O_l: 4.0, Na_aq: 0.02, Cl_aq: 0.02, AgCl_s: 0.015 };
+      simPour.stirVessel(bSrcMix.id);
+      simPour.setVesselTiltDeg(bSrcMix.id, 42, 1);
+      for (let i = 0; i < 20; i++) simPour.stepVesselTiltPouring(bSrcMix, 0.08);
+      const pourPhysOk =
+        rErl45.ratePerSec === 0 &&
+        rBeaker45.ratePerSec > 0 &&
+        rDish45.ratePerSec > rBeaker45.ratePerSec &&
+        rErl85.ratePerSec > 0 &&
+        rEntrained.entrainedStep > 0.2 &&
+        (fnlMounted.moles.AgCl_s || 0) > 0.002 &&
+        (bSrcMix.moles.AgCl_s || 0) < 0.015;
+
+      // 3) Glacial AcOH (100 mL) liquid volume, stratification, and visual rendering fixed
+      const vAc = simZ.createApparatus('beaker_250', 540, 427);
+      simZ.addReagentToVessel(vAc.id, 'ch3cooh', 100, { silentAnim: true, silentEmit: true });
+      const acLiqMl = computeLiquidVolumeL(vAc.moles, vAc.tempK) * 1000;
+      const acStrat = computePhaseStratification(vAc.moles, vAc.tempK, APPARATUS.beaker_250, 0);
+      const cOff = document.createElement('canvas');
+      cOff.width = 240;
+      cOff.height = 240;
+      const ctxOff = cOff.getContext('2d');
+      renderVessel(ctxOff, vAc, true, 0, true);
+      const acVisualOk = acLiqMl > 98 && acStrat.totalLiqMl > 98 && acStrat.aqueousDensity > 1.02;
+
+      // 4) Bench Telemetry (unselected), 3 Inspector groups, 5-col Liquid Table, Electro kinetics & Redox, Dual Log & CSV
+      simZ.selectedId = null;
+      ins.update('vi', true);
+      const benchHtml = hostEl.innerHTML;
+      const bt = computeBenchTelemetry(simZ);
+      const atm = computeAtmospherePartialPressures(simZ.environment);
+      const benchOk =
+        benchHtml.includes('bench-telemetry-panel') &&
+        benchHtml.includes('P(N₂)') &&
+        benchHtml.includes('P(O₂)') &&
+        benchHtml.includes('P(CO₂)') &&
+        bt.totalBenchMassG > 100 &&
+        atm.pO2Bar > 0.20;
+
+      const vBr = simZ.createApparatus('beaker_250', 680, 427);
+      vBr.moles = { H2O_l: 2.0, Br2_l: 0.08, H_aq: 0.05, Cl_aq: 0.05, BaSO4_s: 0.01 };
+      vBr.escapedGasMoles.H2_g = 0.005;
+      vBr.lastGasRateMap = { ...(vBr.lastGasRateMap || {}), H2_g: 0.0012 };
+      vBr.headspaceGasMoles.Br2_g = 0.0015;
+      vBr.cumulativeReactionHeatJ = 4250;
+      vBr.lastTempRateCS = 1.45;
+      simZ.addLog({
+        type: 'reaction',
+        equation: 'Zn + 2HCl → ZnCl₂ + H₂↑',
+        nameVi: 'Kẽm tan trong HCl',
+        nameEn: 'Zinc dissolves in HCl',
+        descVi: 'Sủi bọt khí không màu',
+        descEn: 'Colorless gas bubbles evolve',
+        vesselLabel: vBr.label,
+        dH_kJ: -15.2,
+        rateMolS: 0.002,
+        phNow: 1.3,
+        deltaPBar: 0.02,
+      });
+      const elCu = simZ.createApparatus('electrode_rod', 680, 380);
+      elCu.material = 'Cu';
+      elCu.dockedVesselId = vBr.id;
+
+      simZ.selectedId = vBr.id;
+      ins.update('vi', true);
+      const selHtml = hostEl.innerHTML;
+      ins.container.querySelector('#btn-log-expert')?.click();
+      const expHtml = hostEl.innerHTML;
+
+      const liqTab = computeLiquidSpeciesTableData(vBr.moles, vBr.tempK);
+      const emHCl = computeVesselElectrochemicalMetrics({ moles: { H2O_l: 5.55, H_aq: 0.01, Cl_aq: 0.01 }, tempK: 298.15 }, 1.0, 0.1);
+      const emAc = computeVesselElectrochemicalMetrics({ moles: { H2O_l: 5.55, CH3COOH_l: 0.01 }, tempK: 298.15 }, 2.88, 0.1);
+      const redox = computeVesselRedoxAndCellMetrics(vBr, simZ.items, computeLiquidVolumeL(vBr.moles, vBr.tempK), 1.3);
+      simZ.recordHistorySnapshot(vBr, true);
+      const csvOut = ins.buildTelemetryCsv(vBr);
+
+      const inspector55Ok =
+        liqTab.rows.some((r) => r.spId === 'Br2_l' && r.volMl > 3.5) &&
+        liqTab.rows.some((r) => r.spId === 'H_aq' && r.cM > 0.9 && r.cPct > 0.05) &&
+        emHCl.conductivityMSCm > 25 &&
+        emHCl.conductivityMSCm > emAc.conductivityMSCm * 10 &&
+        redox.hasElectroLink &&
+        Number.isFinite(redox.ehMv) &&
+        selHtml.includes('data-ins-sec="thermo"') &&
+        selHtml.includes('data-ins-sec="phases"') &&
+        selHtml.includes('data-ins-sec="electro"') &&
+        selHtml.includes('mmol/s') &&
+        selHtml.includes('mL/s') &&
+        selHtml.includes('live-redox-card') &&
+        expHtml.includes('ΔH:') &&
+        expHtml.includes('ΔP:') &&
+        csvOut.includes('t_s,T_C,pH,P_bar,rate_mmol_s');
+
+      assert(
+        'Prompt 55 invariants: Zero-ghost species hidden, vessel/angle solid pouring & filtration, AcOH liquid visual, Bench Telemetry + 3 Inspector groups + split Liquid/Solid/Gas tables + Electro kinetics & CSV',
+        noGhostV && noGhostSpoon && pourPhysOk && acVisualOk && benchOk && inspector55Ok,
+        `noGhost=(${noGhostV},${noGhostSpoon}), pour=${pourPhysOk}(e45=${rErl45.ratePerSec.toFixed(2)},b45=${rBeaker45.ratePerSec.toFixed(2)},fnl=${(fnlMounted.moles.AgCl_s||0).toFixed(4)}), acLiq=${acLiqMl.toFixed(1)}mL, bench=${benchOk}, ins55=${inspector55Ok}(sig=${emHCl.conductivityMSCm.toFixed(1)}/${emAc.conductivityMSCm.toFixed(2)},Eh=${redox.ehMv?.toFixed(0)}mV)`
       );
     }
 

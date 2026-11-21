@@ -1940,7 +1940,7 @@ export function renderVessel(ctx, vessel, opts) {
   const strat = vessel.liquidStratification || computePhaseStratification(vessel.moles, vessel.tempK, spec, solMl);
   const hasWater =
     liqMl > 0.15 &&
-    ((vessel.moles.H2O_l || 0) > 1e-7 || (vessel.moles.C2H5OH_l || 0) > 1e-7 || strat.totalLiqMl > 0.15);
+    ((vessel.moles.H2O_l || 0) > 1e-7 || (vessel.moles.C2H5OH_l || 0) > 1e-7 || (vessel.moles.CH3COOH_l || 0) > 1e-7 || strat.totalLiqMl > 0.15);
 
   // Colored headspace gas tint (Cl2 / NO2 / Br2 / I2) inside any upright vessel even without water
   if (!vessel.isInverted) {

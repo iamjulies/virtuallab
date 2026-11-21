@@ -555,7 +555,7 @@ export function stepVesselThermodynamics(
     flameTempOverrideK &&
     flameTempOverrideK >= 850 &&
     effectiveBurnerW > 200 &&
-    (vessel.moles.H2O_l || 0) + (vessel.moles.C2H5OH_l || 0) + (vessel.moles.HNO3_l || 0) + (vessel.moles.H2SO4_l || 0) < 0.004;
+    (vessel.moles.H2O_l || 0) + (vessel.moles.C2H5OH_l || 0) + (vessel.moles.CH3COOH_l || 0) + (vessel.moles.HNO3_l || 0) + (vessel.moles.H2SO4_l || 0) < 0.004;
   const effHeatCapJK = isDryFocusedBunsen ? Math.max(16.0, cTotal * 0.28) : cTotal;
   const rawHeatJ = reactionHeatJ + effectiveBurnerW * dt + ambientExchangeJ + evapCoolingJ;
   const netHeatJ = Number.isFinite(rawHeatJ) ? rawHeatJ : 0;
@@ -596,7 +596,7 @@ export function stepVesselThermodynamics(
     { id: 'Mg_s', gId: 'Mg_g', bpK: 1363.15, dHVap: 127400, vacFloorK: 760 },
     { id: 'Ca_s', gId: 'Ca_g', bpK: 1757.15, dHVap: 154700, vacFloorK: 950 },
   ];
-  if (remainingWater <= 1e-6 && remainingEtOH <= 1e-6 && remainingPureHNO3 <= 1e-6 && remBr2After <= 1e-6) {
+  if (remainingWater <= 1e-6 && remainingEtOH <= 1e-6 && remainingPureHNO3 <= 1e-6 && (vessel.moles.CH3COOH_l || 0) <= 1e-6 && remBr2After <= 1e-6) {
     for (const vm of volatileMetals) {
       const nMet = vessel.moles[vm.id] || 0;
       if (nMet <= 1e-9) continue;

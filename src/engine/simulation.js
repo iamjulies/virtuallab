@@ -1,4 +1,5 @@
 import { CONSTANTS, waterBoilingPointK } from '../data/constants.js';
+import { REACTIONS } from '../data/reactions.js';
 import {
   ALL_GAS_IDS,
   createZeroGasMap,
@@ -17,6 +18,7 @@ import {
 } from '../data/apparatus.js';
 import { getInnerPolygonPx, getVesselHoldVolumeMl } from '../data/vesselGeometry.js';
 import {
+  calcSolidPourDischargeRate,
   calcSolidTransferRatio,
   computeContentsMassG,
   computeEthanolWaterExcessEnthalpyJ,
@@ -325,6 +327,11 @@ export class LabSimulation {
       it.kDryBurnTimer = 0;
       it.feSparkBurning = 0;
       it.znCombustionTimer = 0;
+      it.cumulativeReactionHeatJ = 0;
+      it.lastTempRateCS = 0;
+      it._reactionExtentMap = {};
+      it.conversionYieldPct = null;
+      it._lastLoggedPhenState = null;
       it.pressureAtm = this.environment?.pressureBar || CONSTANTS.P_STD_BAR;
       it.tempK = this.environment?.tempK || CONSTANTS.T_STD_K;
     } else if (it.kind === 'spoon' || it.kind === 'pipette') {
@@ -3171,6 +3178,7 @@ export class LabSimulation {
               vesselType,
               suspensionFactor: computeSolidSuspensionFactor(src, spId, sp),
               shakeBeforePour,
+              hasLiquid: srcLiqMl > 0.05,
             });
       }
 
@@ -4398,6 +4406,8 @@ export class LabSimulation {
       moles: snap,
       tempK: vessel.tempK,
       ph,
+      pressureBar: vessel.internalPressureBar ?? this.environment.pressureBar,
+      liqL,
       rateMolS: vessel.lastTotalRateMolS || 0,
       cumGasMol: vessel.cumulativeGasMol || 0,
       solidMassG,
@@ -5332,15 +5342,24 @@ export class LabSimulation {
     }
     const dstSpec = dst ? APPARATUS[dst.typeId] || APPARATUS.beaker_250 : null;
 
+    let liqOutFrac = 0;
+    let curLiqMlNow = 0;
+    let liquidDensityPour = 1.0;
+
     if (v.kind !== 'spoon') {
       const vHoldMl = v.kind === 'filter_funnel' ? Math.max(0, 55 * Math.max(0, 1 - v.tiltDeg / 75)) : getVesselHoldVolumeMl(spec, v.tiltDeg);
       const curLiqL = computeLiquidVolumeL(v.moles, v.tempK);
       const curLiqMl = curLiqL * 1000;
+      curLiqMlNow = curLiqMl;
+      if (curLiqMl > 0.05) {
+        liquidDensityPour = Math.max(0.65, Math.min(3.15, computeContentsMassG(v.moles) / Math.max(0.05, curLiqMl)));
+      }
       if (curLiqMl > vHoldMl + 0.02) {
         const visc = computeLiquidViscosityFactor(v);
         const excessMl = curLiqMl - vHoldMl;
         const dMl = Math.min(excessMl, (Math.max(1.2, excessMl * 3.2) / Math.pow(visc, 0.42)) * dt);
         const frac = Math.min(1, dMl / curLiqMl);
+        liqOutFrac = frac;
         const visColor = computeSolutionVisuals(
           v.moles,
           curLiqL,
@@ -5351,8 +5370,18 @@ export class LabSimulation {
         ).css;
         if (dst) {
           if (v.kind === 'vessel' && (dst.kind === 'vessel' || dst.kind === 'filter_funnel')) {
-            const carrySuspended = dst.kind === 'filter_funnel' && ((v.stirTimer || 0) > 0 || (v.tiltDeg || 0) >= 35);
-            this.pourBetweenVessels(v.id, dst.id, dMl, carrySuspended, { silentUndo: true, silentEmit: true });
+            // Tilt pouring liquid only carries dissolved ions/liquids here; solids follow hydrodynamic + gravity solid step below
+            for (const [spId, n] of Object.entries({ ...v.moles })) {
+              const sp = SPECIES[spId];
+              if (!sp) continue;
+              if (sp.phase === 'l' || sp.phase === 'aq' || isSolidMoltenAtTemp(sp, v.tempK, v.moles)) {
+                const mv = n * frac;
+                const rem = n - mv;
+                if (rem < 1e-12) delete v.moles[spId];
+                else v.moles[spId] = rem;
+                dst.moles[spId] = (dst.moles[spId] || 0) + mv;
+              }
+            }
             if (dst.kind === 'vessel') {
               applySurfaceImpulse(dst, 0.5 + (Math.random() - 0.5) * 0.14, -Math.min(0.85, 0.15 + (dMl / Math.max(1e-3, dt)) * 0.01));
             }
@@ -5408,36 +5437,53 @@ export class LabSimulation {
       }
     }
 
-    // Solid particles falling / transferring at steep tilt (>= 48° for vessels/funnels, >= 25° for spoon)
-    const solidTiltThresh = v.kind === 'spoon' ? 25 : 48;
-    if ((v.tiltDeg || 0) >= solidTiltThresh) {
-      const solidEntries = Object.entries(v.moles || {}).filter(([spId, n]) => n > 1e-8 && SPECIES[spId]?.phase === 's');
-      if (solidEntries.length > 0) {
-        const dumpFrac = Math.min(1, (v.kind === 'spoon' ? 2.6 : 1.45) * dt);
-        let domColor = '#e2e8f0';
-        let bestN = 0;
-        for (const [spId, n] of solidEntries) {
-          if (n > bestN) {
-            bestN = n;
-            domColor = SPECIES[spId]?.color || '#e2e8f0';
-          }
-          const mv = n * dumpFrac;
-          if (n - mv < 1e-9) {
-            delete v.moles[spId];
-            if (v.particleCounts) delete v.particleCounts[spId];
-          } else {
-            v.moles[spId] = n - mv;
-          }
-          if (dst) {
-            dst.moles[spId] = (dst.moles[spId] || 0) + mv;
-            dst.particleCounts = dst.particleCounts || {};
-            dst.particleCounts[spId] = (dst.particleCounts[spId] || 0) + Math.max(1, Math.round(mv * 1200));
-            if (SPECIES[spId]?.isPrecipitate) {
-              dst.precipitateSettle = dst.precipitateSettle || {};
-              dst.precipitateSettle[spId] = 0.05;
-            }
+    // Realistic solid & mixture pouring: depends on vessel geometry/neck, tilt angle, buoyancy, and suspension vs settled state
+    const solidEntries = Object.entries(v.moles || {}).filter(([spId, n]) => n > 1e-8 && SPECIES[spId]?.phase === 's');
+    if (solidEntries.length > 0 && (v.tiltDeg || 0) > 12) {
+      let movedAnySolid = false;
+      let domColor = '#e2e8f0';
+      let bestN = 0;
+      for (const [spId, n] of solidEntries) {
+        const sp = SPECIES[spId];
+        if (!sp || isSolidMoltenAtTemp(sp, v.tempK, v.moles)) continue;
+        const susp = computeSolidSuspensionFactor(v, spId, sp);
+        const pInfo = calcSolidPourDischargeRate({
+          spec,
+          kind: v.kind,
+          spId,
+          sp,
+          tiltDeg: v.tiltDeg || 0,
+          liquidFlowFrac: liqOutFrac,
+          liquidDensity: liquidDensityPour,
+          hasLiquid: curLiqMlNow > 0.05,
+          suspensionFactor: susp,
+          isPowder: Boolean(v.groundPowderMap?.[spId] || sp.isPrecipitate),
+        });
+        const dumpFrac = Math.min(1, pInfo.entrainedStep + pInfo.ratePerSec * dt);
+        if (dumpFrac <= 1e-6) continue;
+        movedAnySolid = true;
+        if (n > bestN) {
+          bestN = n;
+          domColor = sp.color || '#e2e8f0';
+        }
+        const mv = n * dumpFrac;
+        if (n - mv < 1e-9) {
+          delete v.moles[spId];
+          if (v.particleCounts) delete v.particleCounts[spId];
+        } else {
+          v.moles[spId] = n - mv;
+        }
+        if (dst && dst.kind !== 'burette') {
+          dst.moles[spId] = (dst.moles[spId] || 0) + mv;
+          dst.particleCounts = dst.particleCounts || {};
+          dst.particleCounts[spId] = (dst.particleCounts[spId] || 0) + Math.max(1, Math.round(mv * 1200));
+          if (sp.isPrecipitate) {
+            dst.precipitateSettle = dst.precipitateSettle || {};
+            dst.precipitateSettle[spId] = 0.05;
           }
         }
+      }
+      if (movedAnySolid) {
         const nowMs = Date.now();
         if (nowMs - (v._lastTiltSolidMs || 0) >= 80) {
           v._lastTiltSolidMs = nowMs;
@@ -5642,6 +5688,10 @@ export class LabSimulation {
       let frameSteamOpacity = 0;
       let frameNaEvent = null;
       let frameKEvent = null;
+      let frameRxnHeatJ = 0;
+      const tempBeforeStepK = v.tempK;
+      const phBeforeStep = computePH(v.moles, computeLiquidVolumeL(v.moles, v.tempK), v.tempK);
+      const pBeforeStepBar = v.internalPressureBar ?? this.environment.pressureBar;
       const frameActiveMap = new Map();
 
       // Safety Check: Heating unpurged H2 + O2 mixture inside vessel over open flame triggers oxyhydrogen pop
@@ -5702,6 +5752,7 @@ export class LabSimulation {
           environment: this.environment,
           heatSrc,
         });
+        frameRxnHeatJ += Number.isFinite(chemRes.reactionHeatJ) ? chemRes.reactionHeatJ : 0;
         const thermRes = stepVesselThermodynamics(
           v,
           dt,
@@ -5772,7 +5823,9 @@ export class LabSimulation {
           frameKEvent = chemRes.kEvent;
         }
 
+        v._reactionExtentMap = v._reactionExtentMap || {};
         for (const rxn of chemRes.activeReactions) {
+          v._reactionExtentMap[rxn.id] = (v._reactionExtentMap[rxn.id] || 0) + (rxn.dXi || 0);
           const prev = frameActiveMap.get(rxn.id);
           if (!prev) {
             frameActiveMap.set(rxn.id, { ...rxn });
@@ -5781,17 +5834,31 @@ export class LabSimulation {
             prev.rateMolS = rxn.rateMolS;
           }
 
-          // Log first occurrence or re-trigger after pause
+          // Log first occurrence or re-trigger after pause with student + expert telemetry
           const lastSeen = v.seenReactions[rxn.id] ?? -99;
           if (this.timeSec - lastSeen > 4.0) {
+            const curLiqL = computeLiquidVolumeL(v.moles, v.tempK);
+            const curPh = computePH(v.moles, curLiqL, v.tempK);
+            const curPBar = v.internalPressureBar ?? this.environment.pressureBar;
+            const dH_kJ = rxn.dH !== undefined ? (rxn.dH * Math.max(1e-5, rxn.dXi || 0.001)) / 1000 : -frameRxnHeatJ / 1000;
             this.addLog({
               type: 'reaction',
+              rxnId: rxn.id,
               equation: rxn.equation,
+              ionicEq: rxn.ionicEquation || '',
               nameVi: rxn.nameVi,
               nameEn: rxn.nameEn,
               descVi: rxn.descVi,
               descEn: rxn.descEn,
               vesselLabel: v.label,
+              rateMolS: rxn.rateMolS || 0,
+              dXi: rxn.dXi || 0,
+              dH_kJ,
+              phNow: curPh,
+              phDelta: phBeforeStep !== null && curPh !== null ? curPh - phBeforeStep : null,
+              pBar: curPBar,
+              deltaPBar: curPBar - pBeforeStepBar,
+              tempC: v.tempK - 273.15,
             });
           }
           v.seenReactions[rxn.id] = this.timeSec;
@@ -5956,7 +6023,7 @@ export class LabSimulation {
           const drainedMoles = {};
           for (const [spId, n] of Object.entries(v.moles)) {
             const sp = SPECIES[spId];
-            if (n > 1e-12 && (spId === 'H2O_l' || spId === 'C2H5OH_l' || sp?.phase === 'aq')) {
+            if (n > 1e-12 && (spId === 'H2O_l' || spId === 'C2H5OH_l' || spId === 'CH3COOH_l' || sp?.phase === 'aq' || sp?.phase === 'l')) {
               const dM = drainFrac >= 0.999 ? n : n * drainFrac;
               drainedMoles[spId] = dM;
               v.moles[spId] = n - dM;
@@ -6375,6 +6442,58 @@ export class LabSimulation {
       v.lastGasRateMap = rateMap;
       this.stepGasFlameInteractions(v, rateMap, scaledDt);
       v.lastTotalRateMolS = Array.from(frameActiveMap.values()).reduce((s, r) => s + (r.rateMolS || 0), 0);
+      v.cumulativeReactionHeatJ = (v.cumulativeReactionHeatJ || 0) + frameRxnHeatJ;
+      if (scaledDt > 1e-4) {
+        const instTempRate = (v.tempK - tempBeforeStepK) / scaledDt;
+        const tAlpha = Math.min(1, Math.max(0.05, realDeltaSec * 3.0));
+        v.lastTempRateCS = (v.lastTempRateCS || 0) * (1 - tAlpha) + instTempRate * tAlpha;
+      }
+      if (frameActiveMap.size > 0) {
+        v._hadActiveRxnPrev = true;
+        v._lastRxnPeakRateMolS = Math.max(v._lastRxnPeakRateMolS || 0, v.lastTotalRateMolS);
+        let bestPct = null;
+        for (const r of frameActiveMap.values()) {
+          const cumXi = v._reactionExtentMap?.[r.id] || r.dXi || 0;
+          const rDef = REACTIONS.find((rx) => rx.id === r.id);
+          if (rDef?.reactants && cumXi > 1e-8) {
+            let remXi = Infinity;
+            for (const [spId, st] of Object.entries(rDef.reactants)) {
+              if (st > 0) remXi = Math.min(remXi, (v.moles[spId] || 0) / st);
+            }
+            if (Number.isFinite(remXi)) {
+              const pct = Math.min(99.9, Math.max(0, (cumXi / Math.max(1e-9, cumXi + remXi)) * 100));
+              bestPct = bestPct === null ? pct : Math.max(bestPct, pct);
+            }
+          }
+        }
+        if (bestPct === null && (v._lastRxnPeakRateMolS || 0) > 1e-8) {
+          bestPct = Math.max(1, Math.min(99.5, (1 - v.lastTotalRateMolS / v._lastRxnPeakRateMolS) * 100));
+        }
+        if (bestPct !== null) v.conversionYieldPct = bestPct;
+      } else if (v._hadActiveRxnPrev) {
+        v._hadActiveRxnPrev = false;
+        v._lastRxnPeakRateMolS = 0;
+        v.conversionYieldPct = 100;
+      }
+      if ((v.moles.Phenolphthalein_aq || 0) > 1e-8) {
+        const liqPhNow = computeLiquidVolumeL(v.moles, v.tempK);
+        const phIndNow = liqPhNow > 1e-6 ? computePH(v.moles, liqPhNow, v.tempK) : null;
+        if (phIndNow !== null) {
+          const phenStateNow = phIndNow >= 8.2 ? 'pink' : 'colorless';
+          if (v._lastLoggedPhenState && v._lastLoggedPhenState !== phenStateNow && (this.timeSec - (v._lastPhenLogSec ?? -99)) > 1.5) {
+            v._lastPhenLogSec = this.timeSec;
+            this.addLog({
+              type: 'alert',
+              key: phenStateNow === 'pink' ? 'logIndicatorPink' : 'logIndicatorColorless',
+              vesselLabel: v.label,
+              phNow: phIndNow,
+            });
+          }
+          v._lastLoggedPhenState = phenStateNow;
+        }
+      } else {
+        v._lastLoggedPhenState = null;
+      }
       for (const gId of ALL_GAS_IDS) {
         if (gId !== 'H2O_g') v.cumulativeGasMol = (v.cumulativeGasMol || 0) + (frameGas[gId] || 0);
       }
