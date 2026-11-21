@@ -690,10 +690,11 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     ctx.arc(cx, cy - flR * 0.4, flR, 0, Math.PI * 2);
     ctx.fill();
     if (!isCl) {
+      const tNow = performance.now() * 0.001;
       ctx.fillStyle = `rgba(255, 255, 255, ${0.52 * flIntensity})`;
       for (let i = 0; i < 6; i++) {
-        const sx = cx + Math.sin(timeNow * 4 + i * 1.1) * flR * 0.55;
-        const sy = cy - flR * (0.7 + ((timeNow * 1.8 + i * 0.23) % 1) * 1.1);
+        const sx = cx + Math.sin(tNow * 4 + i * 1.1) * flR * 0.55;
+        const sy = cy - flR * (0.7 + ((tNow * 1.8 + i * 0.23) % 1) * 1.1);
         ctx.beginPath();
         ctx.arc(sx, sy, 4.5 + (i % 3) * 2.2, 0, Math.PI * 2);
         ctx.fill();

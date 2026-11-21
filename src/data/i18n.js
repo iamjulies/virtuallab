@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.19',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.20',
     toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
     quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
     quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -219,6 +219,10 @@ export const I18N = {
     reg_sio2_desc: 'Bột trắng siêu mịn xốp (2.19 g/cm³ · mềm 1,500–1,600 °C · nc ~1,710 °C) · Trơ với nước & HCl/HNO₃/H₂SO₄; tan trong NaOH đặc nóng/nóng chảy (Na₂SiO₃), phản ứng Mg (600–800 °C -> Si), CaCO₃ (900–1,300 °C -> CaSiO₃) & C (1,700–2,000 °C)',
     reg_k2cr2o7: 'Potassium dichromate (K₂Cr₂O₇)',
     reg_k2cr2o7_desc: 'Tinh thể đỏ cam tươi (2.676 g/cm³ · nc 398 °C · phân hủy >500 °C -> K₂CrO₄ + Cr₂O₃ + O₂↑) · Tan mạnh theo nhiệt độ (~12 g @ 20 °C → 102 g/100 mL @ 100 °C); kiềm hóa → vàng CrO₄²⁻, HCl đặc → Cl₂ + Cr³⁺ xanh lục, H₂SO₄ đặc → CrO₃↓, Ba²⁺ → BaCrO₄↓ vàng, Ag⁺ → Ag₂Cr₂O₇↓ đỏ gạch, H₂O₂/H⁺ → CrO₅ xanh chàm',
+    reg_etoh: 'Ethanol tuyệt đối (C₂H₅OH)',
+    reg_etoh_desc: 'Dung môi khan không màu dễ hút ẩm (0.789 g/cm³ · đs 78.37 °C · nc -114.1 °C · điểm chớp cháy 13 °C) · Tan vô hạn & co thể tích với H₂O; tác dụng Na/K/Mg(I₂), KMnO₄, K₂Cr₂O₇/H⁺, HNO₃ đặc, H₂SO₄ đặc (140 °C -> ete, 170 °C -> C₂H₄), HCl/ZnCl₂ & I₂/NaOH -> CHI₃↓ vàng',
+    reg_ch3cooh: 'Acetic acid băng (CH₃COOH ~17.4 M)',
+    reg_ch3cooh_desc: 'Dung dịch gần như khan không màu, đông đặc <16.6 °C (1.045 g/cm³ · đs 117.9 °C · pKa = 4.76) · Tác dụng Na/K (mạnh), Mg/Zn/Fe(t°), NaOH/NH₃, CaCO₃/CaC₂, ester hóa với C₂H₅OH (H₂SO₄ đặc 60–80 °C) & H₂O₂ -> CH₃COOOH',
 
     // Workbench & Actions
     noSelection: 'Chưa chọn dụng cụ',
@@ -731,7 +735,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.19',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.20',
     toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
     quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
     quickPresetsHoldTitle: 'Quick Setup Presets (Hold F · Release to close)',
@@ -939,6 +943,10 @@ export const I18N = {
     reg_sio2_desc: 'Ultra-fine white porous powder (2.19 g/cm³ · softens 1,500–1,600 °C · mp ~1,710 °C) · Inert toward water & HCl/HNO₃/H₂SO₄; dissolves in hot conc./molten NaOH (Na₂SiO₃), reduced by Mg (600–800 °C -> Si), fuses with CaCO₃ (900–1,300 °C -> CaSiO₃) & C (1,700–2,000 °C)',
     reg_k2cr2o7: 'Potassium dichromate (K₂Cr₂O₇)',
     reg_k2cr2o7_desc: 'Bright orange-red crystals (2.676 g/cm³ · mp 398 °C · decomps >500 °C -> Cr₂O₃ + O₂↑) · Steep aqueous solubility (~12 g @ 20 °C → 102 g/100 mL @ 100 °C); alkali -> yellow CrO₄²⁻, conc. HCl -> Cl₂↑ + green Cr³⁺, conc. H₂SO₄ -> CrO₃↓, Ba²⁺ -> BaCrO₄↓, Ag⁺ -> Ag₂Cr₂O₇↓, H₂O₂/H⁺ -> indigo CrO₅',
+    reg_etoh: 'Absolute Ethanol (C₂H₅OH)',
+    reg_etoh_desc: 'Colorless hygroscopic anhydrous solvent (0.789 g/cm³ · bp 78.37 °C · mp -114.1 °C · flash pt 13 °C) · Miscible w/ H₂O (volume contraction); reacts w/ Na/K/Mg(I₂), KMnO₄, K₂Cr₂O₇/H⁺, conc. HNO₃, conc. H₂SO₄ (140 °C -> ether, 170 °C -> C₂H₄), HCl/ZnCl₂ & I₂/NaOH -> yellow CHI₃↓',
+    reg_ch3cooh: 'Glacial Acetic Acid (CH₃COOH ~17.4 M)',
+    reg_ch3cooh_desc: 'Colorless anhydrous weak acid freezing <16.6 °C (1.045 g/cm³ · bp 117.9 °C · pKa = 4.76) · Reacts w/ Na/K, Mg/Zn/Fe(heat), NaOH/NH₃, CaCO₃/CaC₂, esterifies C₂H₅OH (conc. H₂SO₄ 60–80 °C) & H₂O₂ -> CH₃COOOH',
 
     noSelection: 'No apparatus selected',
     selectVesselTip: 'Click any vessel on the bench, or drag apparatus & reagents directly onto the workbench.',

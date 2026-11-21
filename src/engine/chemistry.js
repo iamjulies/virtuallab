@@ -5061,6 +5061,347 @@ function stepSiliconAndChromiumChemistry(vessel, liquidVolL, dt, activeReactions
 }
 
 /**
+ * Ethanol (C2H5OH) & Glacial Acetic Acid (CH3COOH) organic reaction solver (Prompt 54):
+ *  - Ethanol: Na/K (existing reactions.js), Mg+I2(boiling -> (C2H5O)2Mg↓+H2), KMnO4 (dry flash & aq -> CH3COO-/MnO2/Mn2+),
+ *    K2Cr2O7/H+ (orange -> green Cr3+), HNO3 conc (-> CH3COOH + NO2), H2O2 (Fenton Fe2+/hot acid),
+ *    H2SO4 conc (140 C -> diethyl ether; >=165 C -> C2H4↑), Br2 (warm -> CH3COOC2H5 + HBr), I2+NaOH (CHI3↓ yellow iodoform).
+ *  - Acetic Acid: pKa 4.76, NaOH/NH3 neutralizations, Na/K (fast), Mg/Zn (slow cold dry -> fast hot/aq), Fe (boiling/warm aq), Al passive,
+ *    CaCO3/CaC2 (slow anhydrous -> fast warm/aq), Esterification w/ EtOH (H2SO4, 60-80 C -> CH3COOC2H5),
+ *    H2O2/H2SO4 -> CH3COOOH, prolonged boiling KMnO4/H2SO4 -> CO2↑.
+ */
+function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, iceMob = 1, options = {}) {
+  const moles = vessel.moles;
+  const T = vessel.tempK || CONSTANTS.T_STD_K;
+  const orgMob = vessel.isFrozenSolid ? 0 : 1;
+  let heatJ = 0;
+
+  const consumeSpecies = (id, amt) => {
+    moles[id] = Math.max(0, (moles[id] || 0) - amt);
+    if (moles[id] < 1e-13) delete moles[id];
+  };
+  const pushRxn = (id, equation, nameVi, nameEn, descVi, descEn, dXi, vigorousGas = false) => {
+    activeReactions.push({ id, equation, nameVi, nameEn, descVi, descEn, rateMolS: dXi / dt, vigorousGas, dXi });
+  };
+
+  // ==================== PART 1: ABSOLUTE ETHANOL (C2H5OH_l) ====================
+  if ((moles.C2H5OH_l || 0) > 1e-10 && orgMob > 0) {
+    // 1a. Mg + I2 initiator at reflux >= 70 C (343.15 K) -> (C2H5O)2Mg↓ + H2↑ (cold Mg, Al, Zn, Fe inert!)
+    if ((moles.Mg_s || 0) > 1e-9 && ((moles.I2_s || 0) + (moles.I2_aq || 0)) > 1e-8 && T >= 343.15) {
+      const dMgE = Math.min(moles.Mg_s, moles.C2H5OH_l / 2) * (1 - Math.exp(-0.55 * dt));
+      if (dMgE > 1e-11) {
+        consumeSpecies('Mg_s', dMgE);
+        consumeSpecies('C2H5OH_l', 2 * dMgE);
+        moles.MgC2H5O_2_s = (moles.MgC2H5O_2_s || 0) + dMgE;
+        gasProduced.H2_g = (gasProduced.H2_g || 0) + dMgE;
+        heatJ += dMgE * 145000;
+        pushRxn('etoh_mg_i2', '2C₂H₅OH + Mg —(I₂, 78 °C)→ (C₂H₅O)₂Mg↓ + H₂↑', 'Magnesium phản ứng với Ethanol đun sôi có I₂ khơi mào', 'Mg reacts with boiling Ethanol (I₂ initiator) → (C₂H₅O)₂Mg↓ + H₂↑', 'Khi đun hồi lưu ~78 °C có tinh thể I₂ khơi mào, Mg tạo kết tủa trắng Magnesium ethoxide và H₂.', 'Refluxing Ethanol with clean Mg + I₂ initiator yields white (C₂H₅O)₂Mg and H₂.', dMgE, true);
+      }
+    }
+
+    // 1b. KMnO4 oxidation: anhydrous solid KMnO4_s flash, vs aqueous warm MnO4- (-> CH3COO-/MnO2 or acid -> CH3COOH + Mn2+)
+    if ((moles.H2O_l || 0) < 0.015 && (moles.KMnO4_s || 0) > 1e-10) {
+      const dKMnDry = Math.min(moles.C2H5OH_l / 3, moles.KMnO4_s / 4) * (1 - Math.exp(-2.8 * dt));
+      if (dKMnDry > 1e-11) {
+        consumeSpecies('C2H5OH_l', 3 * dKMnDry);
+        consumeSpecies('KMnO4_s', 4 * dKMnDry);
+        moles.CH3COOK_s = (moles.CH3COOK_s || 0) + 3 * dKMnDry;
+        moles.KOH_s = (moles.KOH_s || 0) + dKMnDry;
+        moles.MnO2_s = (moles.MnO2_s || 0) + 4 * dKMnDry;
+        moles.H2O_l = (moles.H2O_l || 0) + 4 * dKMnDry;
+        heatJ += dKMnDry * 1350000;
+        vessel.naDryBurnTimer = Math.max(vessel.naDryBurnTimer || 0, 0.85);
+        pushRxn('etoh_kmno4_dry', '⚠️ 3C₂H₅OH(khan) + 4KMnO₄(s) → 3CH₃COOK + KOH + 4MnO₂ + 4H₂O (Bốc cháy!)', '⚠️ Nhỏ Ethanol khan lên KMnO₄ tinh thể gây tỏa nhiệt bốc cháy!', '⚠️ Anhydrous Ethanol + solid KMnO₄ ignites vigorously!', 'Ethanol tuyệt đối tiếp xúc KMnO₄ khan (nhất là có thêm H₂SO₄ đặc) tỏa nhiệt rất mạnh gây bốc cháy tức thì.', 'Anhydrous Ethanol on dry KMnO₄ triggers rapid exothermic ignition.', dKMnDry);
+      }
+    } else if (liquidVolL > 1e-6 && (moles.MnO4_aq || 0) > 1e-8) {
+      if ((moles.H_aq || 0) > 1e-4) {
+        const dMnA = Math.min(moles.C2H5OH_l / 5, moles.MnO4_aq / 4, moles.H_aq / 12) * (1 - Math.exp(-0.95 * dt));
+        if (dMnA > 1e-11) {
+          consumeSpecies('C2H5OH_l', 5 * dMnA);
+          consumeSpecies('MnO4_aq', 4 * dMnA);
+          consumeSpecies('H_aq', 12 * dMnA);
+          moles.CH3COOH_l = (moles.CH3COOH_l || 0) + 5 * dMnA;
+          moles.Mn2_aq = (moles.Mn2_aq || 0) + 4 * dMnA;
+          moles.H2O_l = (moles.H2O_l || 0) + 11 * dMnA;
+          heatJ += dMnA * 1280000;
+          pushRxn('etoh_kmno4_acid', '5C₂H₅OH + 4MnO₄⁻ + 12H⁺ → 5CH₃COOH + 4Mn²⁺ + 11H₂O', 'KMnO₄/H⁺ oxi hóa Ethanol thành Acetic acid (mất màu tím)', 'Acidic KMnO₄ oxidizes Ethanol to Acetic acid (decolorizes)', 'Trong môi trường acid H₂SO₄, KMnO₄ mất màu tím hoàn toàn oxi hóa Ethanol lên CH₃COOH.', 'Acidic permanganate oxidizes Ethanol to Acetic acid forming colorless Mn²⁺.', dMnA);
+        }
+      } else if (T >= 313.15) {
+        const dMnN = Math.min(moles.C2H5OH_l / 3, moles.MnO4_aq / 4) * (1 - Math.exp(-0.55 * dt));
+        if (dMnN > 1e-11) {
+          consumeSpecies('C2H5OH_l', 3 * dMnN);
+          consumeSpecies('MnO4_aq', 4 * dMnN);
+          moles.CH3COO_aq = (moles.CH3COO_aq || 0) + 3 * dMnN;
+          moles.MnO2_s = (moles.MnO2_s || 0) + 4 * dMnN;
+          moles.OH_aq = (moles.OH_aq || 0) + dMnN;
+          moles.H2O_l = (moles.H2O_l || 0) + 4 * dMnN;
+          heatJ += dMnN * 780000;
+          pushRxn('etoh_kmno4_neut', '3C₂H₅OH + 4MnO₄⁻ —(t°)→ 3CH₃COO⁻ + 4MnO₂↓ + OH⁻ + 4H₂O', 'KMnO₄ loãng đun nhẹ oxi hóa Ethanol tạo kết tủa nâu đen MnO₂', 'Warm aqueous KMnO₄ oxidizes Ethanol → CH₃COO⁻ + MnO₂↓', 'Dung dịch KMnO₄ loãng đun nhẹ chuyển nâu đen MnO₂↓ oxi hóa Ethanol thành muối acetate.', 'Warm aqueous KMnO₄ yields brown-black MnO₂↓ and acetate salt.', dMnN);
+        }
+      }
+    }
+
+    // 1c. K2Cr2O7 + H+ (breathalyzer reaction: orange -> emerald green Cr3+)
+    if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.Cr2O7_2_aq || 0) > 1e-9 && (moles.H_aq || 0) > 1e-4 && liquidVolL > 1e-6) {
+      const kBr = T >= 313.15 ? 2.4 : 0.85;
+      const dCrE = Math.min(moles.C2H5OH_l / 3, moles.Cr2O7_2_aq / 2, moles.H_aq / 16) * (1 - Math.exp(-kBr * dt));
+      if (dCrE > 1e-11) {
+        consumeSpecies('C2H5OH_l', 3 * dCrE);
+        consumeSpecies('Cr2O7_2_aq', 2 * dCrE);
+        consumeSpecies('H_aq', 16 * dCrE);
+        moles.CH3COOH_l = (moles.CH3COOH_l || 0) + 3 * dCrE;
+        moles.Cr3_aq = (moles.Cr3_aq || 0) + 4 * dCrE;
+        moles.H2O_l = (moles.H2O_l || 0) + 11 * dCrE;
+        heatJ += dCrE * 680000;
+        pushRxn('etoh_k2cr2o7', '3C₂H₅OH + 2Cr₂O₇²⁻ + 16H⁺ → 3CH₃COOH + 4Cr³⁺(xanh lục) + 11H₂O', 'K₂Cr₂O₇/H⁺ oxi hóa Ethanol đổi màu đỏ cam → xanh lục (máy đo nồng độ cồn)', 'Dichromate/H⁺ oxidizes Ethanol: orange Cr₂O₇²⁻ → green Cr³⁺', 'Cơ chế máy thổi nồng độ cồn: K₂Cr₂O₇/H₂SO₄ đổi màu cam sang xanh lục Cr³⁺ khi gặp Ethanol.', 'Classic breathalyzer redox: acidic dichromate shifts from orange to emerald green Cr³⁺.', dCrE);
+      }
+    }
+
+    // 1d. HNO3 conc (>= 55%, warm >= 313 K) -> CH3COOH + NO2↑
+    const nNO3E = Math.min((moles.NO3_aq || 0) + (moles.HNO3_l || 0), (moles.H_aq || 0) + (moles.HNO3_l || 0));
+    if ((moles.C2H5OH_l || 0) > 1e-10 && nNO3E > 1e-4 && T >= 313.15) {
+      const wN = (nNO3E * 63.013) / Math.max(1e-9, nNO3E * 63.013 + (moles.H2O_l || 0) * 18.015);
+      if (wN >= 0.55) {
+        const dNE = Math.min(moles.C2H5OH_l, nNO3E / 4) * (1 - Math.exp(-0.95 * dt));
+        if (dNE > 1e-11) {
+          consumeSpecies('C2H5OH_l', dNE);
+          let rem = 4 * dNE;
+          const tkA = Math.min(moles.H_aq || 0, moles.NO3_aq || 0, rem);
+          if (tkA > 0) { consumeSpecies('H_aq', tkA); consumeSpecies('NO3_aq', tkA); rem -= tkA; }
+          if (rem > 0 && (moles.HNO3_l || 0) > 0) consumeSpecies('HNO3_l', Math.min(moles.HNO3_l, rem));
+          moles.CH3COOH_l = (moles.CH3COOH_l || 0) + dNE;
+          moles.H2O_l = (moles.H2O_l || 0) + 3 * dNE;
+          gasProduced.NO2_g = (gasProduced.NO2_g || 0) + 4 * dNE;
+          heatJ += dNE * 340000;
+          pushRxn('etoh_hno3_conc', 'C₂H₅OH + 4HNO₃(đặc) —(t°)→ CH₃COOH + 4NO₂(g)↑ + 3H₂O', 'HNO₃ đặc đun ấm oxi hóa mãnh liệt Ethanol sinh NO₂ nâu đỏ', 'Warm conc. HNO₃ vigorously oxidizes Ethanol evolving NO₂↑', 'HNO₃ đặc (68%) đun nhẹ oxi hóa mạnh Ethanol giải phóng khí nâu đỏ NO₂.', 'Warm conc. HNO₃ oxidizes Ethanol rapidly with brown NO₂ gas.', dNE, true);
+        }
+      }
+    }
+
+    // 1e. H2O2 + Fenton (Fe2+) or strong acid warm (>= 323 K)
+    if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.H2O2_aq || 0) > 1e-7 && ((moles.Fe2_aq || 0) > 1e-6 || ((moles.H_aq || 0) > 0.01 && T >= 323.15))) {
+      const dFen = Math.min(moles.C2H5OH_l, moles.H2O2_aq / 2) * (1 - Math.exp(-0.65 * dt));
+      if (dFen > 1e-11) {
+        consumeSpecies('C2H5OH_l', dFen);
+        consumeSpecies('H2O2_aq', 2 * dFen);
+        moles.CH3COOH_l = (moles.CH3COOH_l || 0) + dFen;
+        moles.H2O_l = (moles.H2O_l || 0) + 3 * dFen;
+        heatJ += dFen * 290000;
+        pushRxn('etoh_fenton', 'C₂H₅OH + 2H₂O₂ —(Fe²⁺ / H⁺)→ CH₃COOH + 3H₂O', 'Thuốc thử Fenton (H₂O₂/Fe²⁺) oxi hóa Ethanol thành Acetic acid', 'Fenton reagent (H₂O₂/Fe²⁺) oxidizes Ethanol → Acetic acid', 'Có xúc tác Fe²⁺ (thuốc thử Fenton) hoặc acid mạnh đun nóng, H₂O₂ oxi hóa Ethanol.', 'With Fe²⁺ Fenton catalyst or hot acid, H₂O₂ oxidizes Ethanol to Acetic acid.', dFen);
+      }
+    }
+
+    // 1f. Conc H2SO4 dehydration: 130-162 C -> diethyl ether; >= 165 C -> ethylene C2H4↑
+    const sulfE = computeSulfuricAcidState(moles);
+    if ((moles.C2H5OH_l || 0) > 1e-10 && (sulfE.w >= 0.78 || (moles.H2SO4_l || 0) > 1e-4) && T >= 403.15) {
+      if (T < 435.15) {
+        const dEth = (moles.C2H5OH_l / 2) * (1 - Math.exp(-0.75 * dt));
+        if (dEth > 1e-11) {
+          consumeSpecies('C2H5OH_l', 2 * dEth);
+          moles.C2H5OC2H5_l = (moles.C2H5OC2H5_l || 0) + dEth;
+          moles.H2O_l = (moles.H2O_l || 0) + dEth;
+          heatJ -= dEth * 24000;
+          pushRxn('etoh_ether_140', '2C₂H₅OH —(H₂SO₄ đặc, 140 °C)→ C₂H₅OC₂H₅ + H₂O', 'Tách nước liên phân tử Ethanol ở 140 °C tạo Diethyl ether', 'Intermolecular Ethanol dehydration (140 °C) → Diethyl ether', 'Ở 140 °C có xúc tác H₂SO₄ đặc, 2 phân tử Ethanol tách nước tạo Diethyl ether.', 'At 140 °C with conc. H₂SO₄, two Ethanol molecules dehydrate to Diethyl ether.', dEth);
+        }
+      } else {
+        const dC2H4 = moles.C2H5OH_l * (1 - Math.exp(-1.15 * dt));
+        if (dC2H4 > 1e-11) {
+          consumeSpecies('C2H5OH_l', dC2H4);
+          moles.H2O_l = (moles.H2O_l || 0) + dC2H4;
+          gasProduced.C2H4_g = (gasProduced.C2H4_g || 0) + dC2H4;
+          heatJ -= dC2H4 * 45500;
+          pushRxn('etoh_ethene_170', 'C₂H₅OH —(H₂SO₄ đặc, 170–180 °C)→ C₂H₄(g)↑ + H₂O', 'Tách nước nội phân tử Ethanol ở 170 °C điều chế khí Ethylene (C₂H₄)', 'Intramolecular Ethanol dehydration (170 °C) → Ethylene C₂H₄↑', 'Ở 170–180 °C có H₂SO₄ đặc, Ethanol tách nước nội phân tử giải phóng khí Ethene (C₂H₄).', 'At 170–180 °C with conc. H₂SO₄, Ethanol dehydrates cleanly to Ethylene gas.', dC2H4, true);
+        }
+      }
+    }
+
+    // 1g. Halogens: Br2 warm (50-70 C) -> CH3COOC2H5 + 4HBr↑; I2 + NaOH warm (50-60 C) -> CHI3↓ yellow iodoform!
+    const availBr = (moles.Br2_l || 0) + (moles.Br2_aq || 0);
+    if ((moles.C2H5OH_l || 0) > 1e-10 && availBr > 1e-8 && T >= 323.15 && (moles.OH_aq || 0) < 1e-5) {
+      const dBrE = Math.min(moles.C2H5OH_l / 2, availBr / 2) * (1 - Math.exp(-0.72 * dt));
+      if (dBrE > 1e-11) {
+        consumeSpecies('C2H5OH_l', 2 * dBrE);
+        let needB = 2 * dBrE;
+        const tkBL = Math.min(moles.Br2_l || 0, needB);
+        if (tkBL > 0) { consumeSpecies('Br2_l', tkBL); needB -= tkBL; }
+        if (needB > 0) consumeSpecies('Br2_aq', Math.min(moles.Br2_aq || 0, needB));
+        moles.CH3COOC2H5_l = (moles.CH3COOC2H5_l || 0) + dBrE;
+        gasProduced.HBr_g = (gasProduced.HBr_g || 0) + 4 * dBrE;
+        heatJ += dBrE * 85000;
+        pushRxn('etoh_br2_warm', '2C₂H₅OH + 2Br₂ —(50–70 °C)→ CH₃COOC₂H₅ + 4HBr↑ (mất màu nâu đỏ)', 'Ethanol đun nhẹ (50–70 °C) làm mất màu Bromine lỏng', 'Warm Ethanol decolorizes Br₂ → Ethyl acetate + HBr↑', 'Đun nhẹ ở 50–70 °C, Br₂ mất màu nâu đỏ giải phóng HBr.', 'At 50–70 °C, Ethanol reduces brown Br₂ forming ester and HBr.', dBrE);
+      }
+    }
+    const availI2 = (moles.I2_s || 0) + (moles.I2_aq || 0) + (moles.I3_aq || 0);
+    if ((moles.C2H5OH_l || 0) > 1e-10 && availI2 > 1e-7 && (moles.OH_aq || 0) > 1e-6 && T >= 320.15) {
+      const dIodo = Math.min(moles.C2H5OH_l, availI2 / 4, moles.OH_aq / 6) * (1 - Math.exp(-1.1 * dt));
+      if (dIodo > 1e-11) {
+        consumeSpecies('C2H5OH_l', dIodo);
+        let needI = 4 * dIodo;
+        for (const ik of ['I2_s', 'I2_aq', 'I3_aq']) {
+          const tk = Math.min(moles[ik] || 0, needI);
+          if (tk > 0) {
+            consumeSpecies(ik, tk);
+            if (ik === 'I3_aq') moles.I_aq = (moles.I_aq || 0) + tk;
+            needI -= tk;
+          }
+        }
+        consumeSpecies('OH_aq', 6 * dIodo);
+        moles.CHI3_s = (moles.CHI3_s || 0) + dIodo;
+        moles.HCOO_aq = (moles.HCOO_aq || 0) + dIodo;
+        moles.I_aq = (moles.I_aq || 0) + 5 * dIodo;
+        moles.H2O_l = (moles.H2O_l || 0) + 5 * dIodo;
+        heatJ += dIodo * 115000;
+        pushRxn('etoh_iodoform', 'C₂H₅OH + 4I₂ + 6OH⁻ —(60 °C)→ CHI₃(s)↓ (vàng tươi) + HCOO⁻ + 5I⁻ + 5H₂O', 'Phản ứng Iodoform: Ethanol + I₂/NaOH → kết tủa vàng CHI₃↓', 'Iodoform test: Ethanol + I₂/NaOH (50–60 °C) → bright yellow CHI₃↓', 'I₂ đơn chất chỉ tan màu nâu trong Ethanol, nhưng có mặt NaOH đun 50–60 °C tạo kết tủa vàng Iodoform CHI₃↓.', 'Pure I₂ merely dissolves brown in Ethanol, but with NaOH @ 50–60 °C precipitates yellow CHI₃.', dIodo);
+      }
+    }
+  }
+
+  // ==================== PART 2: GLACIAL ACETIC ACID (CH3COOH_l) ====================
+  if ((moles.CH3COOH_l || 0) > 1e-10 && orgMob > 0) {
+    const nWaterAc = moles.H2O_l || 0;
+    const isGlacialDry = nWaterAc < 0.02;
+
+    // 2a. Neutralization with NaOH / OH- & NH3
+    if ((moles.OH_aq || 0) > 1e-9) {
+      const dNeut = Math.min(moles.CH3COOH_l, moles.OH_aq) * (1 - Math.exp(-16.0 * dt));
+      if (dNeut > 1e-11) {
+        consumeSpecies('CH3COOH_l', dNeut);
+        consumeSpecies('OH_aq', dNeut);
+        moles.CH3COO_aq = (moles.CH3COO_aq || 0) + dNeut;
+        moles.H2O_l = (moles.H2O_l || 0) + dNeut;
+        heatJ += dNeut * 56200;
+        pushRxn('acoh_naoh', 'CH₃COOH + OH⁻(aq) → CH₃COO⁻(aq) + H₂O', 'Trung hòa Acetic acid bằng dung dịch kiềm mạnh', 'Neutralization of Acetic acid by strong alkali', 'CH₃COOH phản ứng trung hòa nhanh, tỏa nhiệt với NaOH/KOH tạo muối acetate.', 'Acetic acid neutralizes rapidly with NaOH/OH⁻ yielding acetate salt.', dNeut);
+      }
+    }
+    if ((moles.CH3COOH_l || 0) > 1e-10 && (moles.NH3_aq || 0) > 1e-9) {
+      const dAmA = Math.min(moles.CH3COOH_l, moles.NH3_aq) * (1 - Math.exp(-12.0 * dt));
+      if (dAmA > 1e-11) {
+        consumeSpecies('CH3COOH_l', dAmA);
+        consumeSpecies('NH3_aq', dAmA);
+        moles.CH3COO_aq = (moles.CH3COO_aq || 0) + dAmA;
+        moles.NH4_aq = (moles.NH4_aq || 0) + dAmA;
+        heatJ += dAmA * 51500;
+        pushRxn('acoh_nh3', 'CH₃COOH + NH₃(aq) → CH₃COONH₄(aq)', 'Acetic acid tác dụng với dung dịch Ammonia tạo Ammonium acetate', 'Acetic acid + NH₃(aq) → Ammonium acetate solution', 'Phản ứng xảy ra ngay nhiệt độ thường tạo dung dịch CH₃COONH₄.', 'CH₃COOH reacts immediately with Ammonia forming Ammonium acetate.', dAmA);
+      }
+    }
+
+    // 2b. Metals: Na/K vigorous @ 25 C; Mg/Zn slow glacial 25 C -> fast warm/aq; Fe boiling/aq warm; Al PASSIVE!
+    for (const [mId, catId, kRate] of [['Na_s', 'Na_aq', 3.4], ['K_s', 'K_aq', 4.6]]) {
+      const nAlk = moles[mId] || 0;
+      if (nAlk > 1e-10 && (moles.CH3COOH_l || 0) > 1e-10) {
+        const dAlkA = Math.min(nAlk, moles.CH3COOH_l) * (1 - Math.exp(-kRate * dt));
+        if (dAlkA > 1e-11) {
+          consumeSpecies(mId, dAlkA);
+          consumeSpecies('CH3COOH_l', dAlkA);
+          moles[catId] = (moles[catId] || 0) + dAlkA;
+          moles.CH3COO_aq = (moles.CH3COO_aq || 0) + dAlkA;
+          gasProduced.H2_g = (gasProduced.H2_g || 0) + 0.5 * dAlkA;
+          heatJ += dAlkA * 185000;
+          pushRxn(`acoh_${mId}`, `2CH₃COOH + 2${SPECIES[mId].formula} → 2CH₃COO${SPECIES[mId].formula} + H₂(g)↑`, `${SPECIES[mId].formula} tác dụng mãnh liệt với Acetic acid giải phóng H₂`, `Vigorous reaction: ${SPECIES[mId].formula} + CH₃COOH → acetate + H₂↑`, `${SPECIES[mId].formula} khử ngay H⁺ trong Acetic acid ngay nhiệt độ thường sinh khí H₂.`, `${SPECIES[mId].formula} reacts vigorously with Acetic acid evolving H₂↑.`, dAlkA, true);
+        }
+      }
+    }
+    for (const [mId, catId, kDryCold, kHotAq, minHotK] of [
+      ['Mg_s', 'Mg2_aq', 0.012, 0.95, 323.15],
+      ['Zn_s', 'Zn2_aq', 0.008, 0.65, 333.15],
+      ['Fe_s', 'Fe2_aq', 0.0, 0.22, 373.15],
+    ]) {
+      const nM = moles[mId] || 0;
+      if (nM > 1e-10 && (moles.CH3COOH_l || 0) > 1e-10) {
+        const boosted = T >= minHotK || (!isGlacialDry && (mId !== 'Fe_s' || T >= 333.15));
+        const rate = boosted ? kHotAq : kDryCold;
+        if (rate > 0) {
+          const dMAc = Math.min(nM, moles.CH3COOH_l / 2) * (1 - Math.exp(-rate * dt));
+          if (dMAc > 1e-11) {
+            consumeSpecies(mId, dMAc);
+            consumeSpecies('CH3COOH_l', 2 * dMAc);
+            moles[catId] = (moles[catId] || 0) + dMAc;
+            moles.CH3COO_aq = (moles.CH3COO_aq || 0) + 2 * dMAc;
+            gasProduced.H2_g = (gasProduced.H2_g || 0) + dMAc;
+            heatJ += dMAc * 145000;
+            pushRxn(`acoh_${mId}`, `2CH₃COOH + ${SPECIES[mId].formula} → (CH₃COO)₂${SPECIES[mId].formula} + H₂(g)↑`, `${SPECIES[mId].formula} tan trong Acetic acid giải phóng H₂`, `${SPECIES[mId].formula} reacts with Acetic acid evolving H₂↑`, `${SPECIES[mId].formula} phản ứng rất chậm trong CH₃COOH băng nguội, nhanh hơn rõ rệt khi đun nóng hoặc pha nước.`, `${SPECIES[mId].formula} reacts slowly in cold glacial CH₃COOH and rapidly when heated or diluted.`, dMAc, true);
+          }
+        }
+      }
+    }
+
+    // 2c. Carbonates (CaCO3 / Na2CO3 / NaHCO3) & CaC2: slow dry cold -> rapid warm/aq
+    for (const [cId, stA, catId, catSt, wMake] of [
+      ['CaCO3_s', 2, 'Ca2_aq', 1, 1],
+      ['Na2CO3_s', 2, 'Na_aq', 2, 1],
+      ['NaHCO3_s', 1, 'Na_aq', 1, 1],
+    ]) {
+      const nCarb = moles[cId] || 0;
+      if (nCarb > 1e-10 && (moles.CH3COOH_l || 0) > 1e-10) {
+        const kCarb = !isGlacialDry || T >= 323.15 ? 1.4 : 0.015;
+        const dC = Math.min(nCarb, moles.CH3COOH_l / stA) * (1 - Math.exp(-kCarb * dt));
+        if (dC > 1e-11) {
+          consumeSpecies(cId, dC);
+          consumeSpecies('CH3COOH_l', stA * dC);
+          moles[catId] = (moles[catId] || 0) + catSt * dC;
+          moles.CH3COO_aq = (moles.CH3COO_aq || 0) + stA * dC;
+          moles.H2O_l = (moles.H2O_l || 0) + wMake * dC;
+          gasProduced.CO2_g = (gasProduced.CO2_g || 0) + dC;
+          heatJ += dC * 18000;
+          pushRxn(`acoh_${cId}`, `${stA > 1 ? stA : ''}CH₃COOH + ${SPECIES[cId].formula} → acetate + CO₂(g)↑ + H₂O`, `Acetic acid đẩy khí CO₂ khỏi muối ${SPECIES[cId].formula}`, `Acetic acid liberates CO₂↑ from ${SPECIES[cId].formula}`, 'Trong CH₃COOH băng khan ở 25 °C phản ứng chậm; thêm nước hoặc đun nóng sủi bọt CO₂ mạnh.', 'Slow in anhydrous glacial acid at 25 °C; vigorous CO₂ effervescence when warmed or diluted.', dC, true);
+        }
+      }
+    }
+    if ((moles.CaC2_s || 0) > 1e-10 && (moles.CH3COOH_l || 0) > 1e-10 && (T >= 353.15 || !isGlacialDry)) {
+      const dCa2A = Math.min(moles.CaC2_s, moles.CH3COOH_l / 2) * (1 - Math.exp(-(T >= 353.15 ? 0.95 : 0.35) * dt));
+      if (dCa2A > 1e-11) {
+        consumeSpecies('CaC2_s', dCa2A);
+        consumeSpecies('CH3COOH_l', 2 * dCa2A);
+        moles.Ca2_aq = (moles.Ca2_aq || 0) + dCa2A;
+        moles.CH3COO_aq = (moles.CH3COO_aq || 0) + 2 * dCa2A;
+        gasProduced.C2H2_g = (gasProduced.C2H2_g || 0) + dCa2A;
+        heatJ += dCa2A * 95000;
+        pushRxn('acoh_cac2', '2CH₃COOH + CaC₂ —(80–118 °C)→ (CH₃COO)₂Ca + C₂H₂(g)↑', 'Acetic acid đun nóng phân hủy CaC₂ giải phóng khí Ethyne C₂H₂', 'Hot Acetic acid + CaC₂ → Calcium acetate + C₂H₂↑', 'Khi đun nóng (80–118 °C), CH₃COOH phản ứng với CaC₂ tạo khí C₂H₂.', 'When heated (80–118 °C), CH₃COOH decomposes CaC₂ evolving Ethyne gas.', dCa2A, true);
+      }
+    }
+
+    // 2d. Fischer Esterification: CH3COOH + C2H5OH ⇄ CH3COOC2H5 + H2O (conc H2SO4 cat, 60-80 C = >= 333.15 K)
+    const hasAcidCat = (moles.H2SO4_l || 0) > 1e-5 || ((moles.H_aq || 0) / Math.max(1e-6, liquidVolL) >= 0.4 && ((moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0)) > 1e-5);
+    if ((moles.CH3COOH_l || 0) > 1e-9 && (moles.C2H5OH_l || 0) > 1e-9 && hasAcidCat && T >= 333.15) {
+      const dEst = Math.min(moles.CH3COOH_l, moles.C2H5OH_l) * (1 - Math.exp(-0.55 * dt));
+      if (dEst > 1e-11) {
+        consumeSpecies('CH3COOH_l', dEst);
+        consumeSpecies('C2H5OH_l', dEst);
+        moles.CH3COOC2H5_l = (moles.CH3COOC2H5_l || 0) + dEst;
+        moles.H2O_l = (moles.H2O_l || 0) + dEst;
+        pushRxn('fischer_esterification', 'CH₃COOH + C₂H₅OH ⇌(H₂SO₄ đặc, 60–80 °C) CH₃COOC₂H₅ + H₂O', 'Phản ứng Ester hóa: Tạo Ethyl acetate (mùi dầu chuối thơm)', 'Fischer Esterification: Acetic acid + Ethanol → Ethyl acetate', 'Đun nóng 60–80 °C có H₂SO₄ đặc xúc tác tạo ester Ethyl acetate có mùi thơm hoa quả đặc trưng.', 'Heating at 60–80 °C with conc. H₂SO₄ yields fruity-smelling Ethyl acetate ester.', dEst);
+      }
+    }
+
+    // 2e. Peracetic acid (CH3COOH + H2O2 with H2SO4 cat) & prolonged boiling KMnO4/H2SO4 -> CO2↑
+    if ((moles.CH3COOH_l || 0) > 1e-9 && (moles.H2O2_aq || 0) > 1e-7 && hasAcidCat && T >= 295.0) {
+      const dPaa = Math.min(moles.CH3COOH_l, moles.H2O2_aq) * (1 - Math.exp(-0.45 * dt));
+      if (dPaa > 1e-11) {
+        consumeSpecies('CH3COOH_l', dPaa);
+        consumeSpecies('H2O2_aq', dPaa);
+        moles.CH3COOOH_aq = (moles.CH3COOOH_aq || 0) + dPaa;
+        moles.H2O_l = (moles.H2O_l || 0) + dPaa;
+        pushRxn('acoh_h2o2_peracetic', 'CH₃COOH + H₂O₂ ⇌(H₂SO₄) CH₃COOOH + H₂O', 'Tạo Peracetic acid (CH₃COOOH) từ Acetic acid + H₂O₂', 'Peracetic acid synthesis: CH₃COOH + H₂O₂ (H₂SO₄ cat)', 'Trong môi trường H₂SO₄, CH₃COOH và H₂O₂ tạo cân bằng sinh Peracetic acid khử trùng mạnh.', 'Acetic acid reacts with H₂O₂ under H₂SO₄ catalysis forming Peracetic acid.', dPaa);
+      }
+    }
+    if ((moles.CH3COOH_l || 0) > 1e-9 && (moles.MnO4_aq || 0) > 1e-8 && (moles.H_aq || 0) >= 0.05 && T >= 363.15) {
+      const dKAc = Math.min(moles.CH3COOH_l / 5, moles.MnO4_aq / 8, moles.H_aq / 24) * (1 - Math.exp(-0.08 * dt));
+      if (dKAc > 1e-11) {
+        consumeSpecies('CH3COOH_l', 5 * dKAc);
+        consumeSpecies('MnO4_aq', 8 * dKAc);
+        consumeSpecies('H_aq', 24 * dKAc);
+        moles.Mn2_aq = (moles.Mn2_aq || 0) + 8 * dKAc;
+        moles.H2O_l = (moles.H2O_l || 0) + 22 * dKAc;
+        gasProduced.CO2_g = (gasProduced.CO2_g || 0) + 10 * dKAc;
+        heatJ += dKAc * 950000;
+        pushRxn('acoh_kmno4_boil', '5CH₃COOH + 8MnO₄⁻ + 24H⁺ —(đun sôi kéo dài)→ 10CO₂↑ + 8Mn²⁺ + 22H₂O', 'KMnO₄/H₂SO₄ đun sôi mạnh kéo dài mới oxi hóa chậm CH₃COOH thành CO₂', 'Prolonged boiling KMnO₄/H⁺ slowly oxidizes Acetic acid → CO₂↑', 'CH₃COOH bền ở nhiệt độ thường; chỉ đun sôi kéo dài với KMnO₄/H⁺ đặc mới mất màu tím sinh CO₂.', 'CH₃COOH resists ambient KMnO₄; only prolonged boiling in strong acid slowly yields CO₂.', dKAc);
+      }
+    }
+  }
+
+  return heatJ;
+}
+
+/**
  * Declarative complex dissociations & ion salt pairings enforced at zero-liquid dry phase boundaries.
  * Adding a new aqueous ion or complex to SPECIES should include its dry fate here.
  */
@@ -5091,6 +5432,7 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   H3PO3_aq: { P4O6_s: 0.25, H2O_g: 1.5 },
   H3PO2_aq: { H2O_g: 1.5, P_red_s: 0.5 },
   CrO5_aq: { Cr2O3_s: 0.5, O2_g: 1.75 },
+  CH3COOOH_aq: { CH3COOH_s: 1, O2_g: 0.5 },
 };
 
 export const DRY_SALT_PAIRINGS = [
@@ -5257,6 +5599,17 @@ export const DRY_SALT_PAIRINGS = [
   ['Na_aq', 2, 'CrO4_2_aq', 1, 'Na2CrO4_s', 1, false],
   ['NH4_aq', 2, 'CrO4_2_aq', 1, 'NH4_2_CrO4_s', 1, false],
   ['H_aq', 2, 'CrO4_2_aq', 1, 'CrO3_s', 1, false],
+  ['Na_aq', 1, 'CH3COO_aq', 1, 'CH3COONa_s', 1, false],
+  ['K_aq', 1, 'CH3COO_aq', 1, 'CH3COOK_s', 1, false],
+  ['NH4_aq', 1, 'CH3COO_aq', 1, 'CH3COONH4_s', 1, false],
+  ['Mg2_aq', 1, 'CH3COO_aq', 2, 'MgCH3COO_2_s', 1, false],
+  ['Zn2_aq', 1, 'CH3COO_aq', 2, 'ZnCH3COO_2_s', 1, false],
+  ['Ca2_aq', 1, 'CH3COO_aq', 2, 'CaCH3COO_2_s', 1, false],
+  ['Fe2_aq', 1, 'CH3COO_aq', 2, 'FeCH3COO_2_s', 1, false],
+  ['H_aq', 1, 'CH3COO_aq', 1, 'CH3COOH_s', 1, false],
+  ['Na_aq', 1, 'HCOO_aq', 1, 'HCOONa_s', 1, false],
+  ['K_aq', 1, 'HCOO_aq', 1, 'HCOOK_s', 1, false],
+  ['H_aq', 1, 'HCOO_aq', 1, 'CO_g', 1, true],
 ];
 
 /**
@@ -5270,6 +5623,9 @@ export function enforceDryPhaseBoundary(vessel) {
   if (
     (moles.H2O_l || 0) > 1e-7 ||
     (moles.C2H5OH_l || 0) > 1e-7 ||
+    (moles.CH3COOH_l || 0) > 1e-7 ||
+    (moles.C2H5OC2H5_l || 0) > 1e-7 ||
+    (moles.CH3COOC2H5_l || 0) > 1e-7 ||
     (moles.HNO3_l || 0) > 1e-7 ||
     (moles.H2SO4_l || 0) > 1e-7 ||
     (moles.H2O_s || 0) > 1e-7
@@ -5282,8 +5638,8 @@ export function enforceDryPhaseBoundary(vessel) {
     gasProduced.H2O_g += moles.H2O_l;
     delete moles.H2O_l;
   }
-  if ((moles.C2H5OH_l || 0) > 0) {
-    delete moles.C2H5OH_l;
+  for (const subOrg of ['C2H5OH_l', 'CH3COOH_l', 'C2H5OC2H5_l', 'CH3COOC2H5_l']) {
+    if ((moles[subOrg] || 0) > 0) delete moles[subOrg];
   }
 
   // Dissociate complex ions cleanly before salt pairing
@@ -6468,15 +6824,17 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     reactionHeatJ += stepCarbideAndCarbonChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
     reactionHeatJ += stepPhosphorusChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
     reactionHeatJ += stepSiliconAndChromiumChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
+    reactionHeatJ += stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
     stepLiquidLiquidPartition(vessel, strat, dt);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
   } else {
-    // Only allow dry chemisorption & dry halogen/sulfur/carbon/phosphorus/silicon/chromium reactions when no aqueous transport exists
+    // Only allow dry chemisorption & dry halogen/sulfur/carbon/phosphorus/silicon/chromium/organic reactions when no aqueous transport exists
     reactionHeatJ += stepHalogenRedoxAndAlkali(vessel, 0, dt, activeReactions, gasProduced, strat, 0);
     reactionHeatJ += stepSulfurChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
     reactionHeatJ += stepCarbideAndCarbonChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
     reactionHeatJ += stepPhosphorusChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
     reactionHeatJ += stepSiliconAndChromiumChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
+    reactionHeatJ += stepOrganicChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, 0, dt, activeReactions);
   }
 

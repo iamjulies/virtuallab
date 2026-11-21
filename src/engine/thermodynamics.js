@@ -805,6 +805,29 @@ export function stepVesselThermodynamics(
     }
   }
 
+  // Glacial Acetic Acid freeze / melt transition at 16.6 C (289.75 K, depressed by water content)
+  const acLiqFreeze = vessel.moles.CH3COOH_l || 0;
+  const acSolMelt = vessel.moles.CH3COOH_s || 0;
+  const xWaterAc = (vessel.moles.H2O_l || 0) / Math.max(1e-9, (vessel.moles.H2O_l || 0) + acLiqFreeze + acSolMelt);
+  const tfAcK = Math.max(246.0, 289.75 - 125.0 * xWaterAc);
+  if (newTempK < tfAcK && acLiqFreeze > 1e-9) {
+    const freezeMolAc = Math.min(acLiqFreeze, ((tfAcK - newTempK) * cTotal) / 11730);
+    if (freezeMolAc > 1e-12) {
+      vessel.moles.CH3COOH_l = Math.max(0, acLiqFreeze - freezeMolAc);
+      if (vessel.moles.CH3COOH_l < 1e-13) delete vessel.moles.CH3COOH_l;
+      vessel.moles.CH3COOH_s = acSolMelt + freezeMolAc;
+      newTempK += (freezeMolAc * 11730) / cTotal;
+    }
+  } else if (newTempK > tfAcK && acSolMelt > 1e-9) {
+    const meltMolAc = Math.min(acSolMelt, ((newTempK - tfAcK) * cTotal) / 11730);
+    if (meltMolAc > 1e-12) {
+      vessel.moles.CH3COOH_s = Math.max(0, acSolMelt - meltMolAc);
+      if (vessel.moles.CH3COOH_s < 1e-13) delete vessel.moles.CH3COOH_s;
+      vessel.moles.CH3COOH_l = acLiqFreeze + meltMolAc;
+      newTempK -= (meltMolAc * 11730) / cTotal;
+    }
+  }
+
   // Regime 3: Freezing / melting solid-liquid phase clamp with cryoscopy & latent heat
   const phaseRes = updateFreezeMeltPhase(vessel, dt, newTempK, cTotal);
   newTempK = phaseRes.updatedTempK;
@@ -813,6 +836,9 @@ export function stepVesselThermodynamics(
   const hasAnyLiquid =
     (vessel.moles.H2O_l || 0) > 1e-7 ||
     (vessel.moles.C2H5OH_l || 0) > 1e-7 ||
+    (vessel.moles.CH3COOH_l || 0) > 1e-7 ||
+    (vessel.moles.C2H5OC2H5_l || 0) > 1e-7 ||
+    (vessel.moles.CH3COOC2H5_l || 0) > 1e-7 ||
     (vessel.moles.HNO3_l || 0) > 1e-7 ||
     (vessel.moles.H2SO4_l || 0) > 1e-7 ||
     (vessel.moles.Br2_l || 0) > 1e-7;

@@ -2789,6 +2789,8 @@ export class LabWorkbenchCanvas {
         PH3_g: { rgba: 'rgba(234, 179, 8, 0.30)', core: 'rgba(254, 240, 138, 0.68)', stroke: '#eab308', formula: 'PH₃ (M=34 ↓)' },
         P4_g: { rgba: 'rgba(245, 158, 11, 0.28)', core: 'rgba(254, 243, 199, 0.68)', stroke: '#f59e0b', formula: 'P₄(g) (M=124 ↓)' },
         CrO2Cl2_g: { rgba: 'rgba(185, 28, 28, 0.42)', core: 'rgba(220, 38, 38, 0.78)', stroke: '#dc2626', formula: 'CrO₂Cl₂ (M=155 ↓)' },
+        C2H4_g: { rgba: 'rgba(56, 189, 248, 0.26)', core: 'rgba(186, 230, 253, 0.62)', stroke: '#38bdf8', formula: 'C₂H₄ (M=28 ↓)' },
+        CH3COOH_g: { rgba: 'rgba(148, 163, 184, 0.28)', core: 'rgba(241, 245, 249, 0.64)', stroke: '#cbd5e1', formula: 'CH₃COOH (M=60 ↓)' },
       };
       const getGasPal = (spId) => {
         if (GAS_PAL[spId]) return GAS_PAL[spId];

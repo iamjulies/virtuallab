@@ -96,7 +96,7 @@
     import { LabManager } from '../src/engine/labManager.js';
     import { LabSimulation } from '../src/engine/simulation.js';
     import { checkThermometerInteractions, computeWashBottleStreamArc, syncDockedToolPositions } from '../src/engine/apparatusTools.js';
-    import { calcEvaporationRateMol, computeSteamOpacity } from '../src/engine/thermodynamics.js';
+    import { calcEvaporationRateMol, computeSteamOpacity, stepVesselThermodynamics } from '../src/engine/thermodynamics.js';
     import {
       computeAqueousVolumeL,
       computeContentsMassG,
@@ -1896,7 +1896,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 28 &&
+          STARTER_REAGENTS.length === 30 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.19';
+      const expectedBuild = 'virlab_beta_v4+build.20';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2509,6 +2509,8 @@
         Boolean(I18N.vi.reg_p_red && I18N.en.reg_p_red) &&
         Boolean(I18N.vi.reg_sio2 && I18N.en.reg_sio2) &&
         Boolean(I18N.vi.reg_k2cr2o7 && I18N.en.reg_k2cr2o7) &&
+        Boolean(I18N.vi.reg_etoh && I18N.en.reg_etoh) &&
+        Boolean(I18N.vi.reg_ch3cooh && I18N.en.reg_ch3cooh) &&
         Boolean(I18N.vi.regCatOxide && I18N.en.regCatOxide) &&
         Boolean(I18N.vi.eq_iron_spoon && I18N.en.eq_iron_spoon) &&
         Boolean(I18N.vi.alertGlassSoftenMelt && I18N.en.alertGlassSoftenMelt) &&
@@ -2516,9 +2518,9 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.19 parity: All 39 apparatus & 28 starter reagents translated in VI/EN, Oxide category + SiO2/K2Cr2O7 keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.20 parity: All 39 apparatus & 30 starter reagents translated in VI/EN, Ethanol & Acetic acid keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 39 &&
-          STARTER_REAGENTS.length === 28 &&
+          STARTER_REAGENTS.length === 30 &&
           !APPARATUS.clay_triangle &&
           !APPARATUS.crucible_tongs &&
           allTranslated &&
@@ -2770,7 +2772,7 @@
       assert(
         'Reagent filters work, Clean Bench clears 0 items, Quick Presets populate cleanly, and Zn + 0.125M NaOH evolves H2 & [Zn(OH)4]2-',
         REAGENT_CATEGORIES.length >= 5 &&
-          acidCount === 3 &&
+          acidCount === 4 &&
           cleanCount === 0 &&
           daniellCount >= 5 &&
           diffCount === 1 &&
@@ -7382,7 +7384,7 @@
       const mno2AcidOk = Math.abs((bMnColdAcid.moles.MnO2_s || 0) - 0.01) < 1e-6 && cl2HotTot > 0.002 && (bMnHotHCl.moles.Mn2_aq || 0) > 0.002;
 
       const iupacKmno4Ok =
-        STARTER_REAGENTS.length === 28 &&
+        STARTER_REAGENTS.length === 30 &&
         STARTER_REAGENTS.some((r) => r.id === 'kmno4') &&
         !/\b(kali|mangan|axit|clo|oxi(?! hóa))\b/i.test(`${I18N.vi.reg_kmno4} ${I18N.vi.reg_kmno4_desc} ${I18N.vi.alertMn2O7Hazard}`);
 
@@ -7496,7 +7498,7 @@
         (vIRoom.moles.IO3_aq || 0) > (vIRoom.moles.IO_aq || 0) * 4;
 
       const iupacHalOk =
-        STARTER_REAGENTS.length === 28 &&
+        STARTER_REAGENTS.length === 30 &&
         STARTER_REAGENTS.some((r) => r.id === 'br2') &&
         STARTER_REAGENTS.some((r) => r.id === 'i2') &&
         !/\b(brom|iot|clo|kali|natri|nhôm|sắt|axit)\b/i.test(`${I18N.vi.reg_br2} ${I18N.vi.reg_br2_desc} ${I18N.vi.reg_i2} ${I18N.vi.reg_i2_desc}`);
@@ -7612,7 +7614,7 @@
         (bSHNO3.moles.SO4_2_aq || 0) > 0.001;
 
       const iupacSulfOk =
-        STARTER_REAGENTS.length === 28 &&
+        STARTER_REAGENTS.length === 30 &&
         STARTER_REAGENTS.some((r) => r.id === 's') &&
         !/\b(lưu huỳnh|sunfua|hiđro|axit|oxi(?! hóa)|etanol)\b/i.test(`${I18N.vi.reg_s} ${I18N.vi.reg_s_desc}`);
 
@@ -8692,7 +8694,7 @@
       const regCr = STARTER_REAGENTS.find((r) => r.id === 'k2cr2o7');
       const regSi = STARTER_REAGENTS.find((r) => r.id === 'sio2');
       const catOk =
-        STARTER_REAGENTS.length === 28 &&
+        STARTER_REAGENTS.length === 30 &&
         oxides.length === 1 &&
         oxides[0].id === 'sio2' &&
         REAGENT_CATEGORIES.some((c) => c.id === 'oxide' && c.i18nKey === 'regCatOxide') &&
@@ -8857,6 +8859,151 @@
         'Prompt 53 invariants: Oxide category filter, SiO2 reactivity/inertness (NaOH/Mg/CaCO3/C-arc & acid-inert), & K2Cr2O7 solubility/pH/thermal/CrO4-switch/HCl/H2SO4/H2O2-CrO5/Ba-Ag/redox/mortar flash',
         catOk && sio2Ok && solCrOk && crAcidOk && turnedYellow && backOrange && sawIndigoCrO5 && perDecompGreen && pptCrOk && redoxAndInertOk,
         `cat=${catOk}, SiO2=${sio2Ok}, K2Cr2O7=(sol:${solCrOk}[pH:${phCr?.toFixed(2)}],acid:${crAcidOk},sw:${turnedYellow}/${backOrange},per:${sawIndigoCrO5}/${perDecompGreen},ppt:${pptCrOk},redox:${redoxAndInertOk}[zn=${(vCrZn.moles.Cr3_aq||0).toFixed(4)},dry=${(vCrDryMix.moles.Cr2O3_s||0).toFixed(4)}/${crGasDry.toFixed(4)},mrt=${crMortarOk},inert=${(vCrInert.moles.Cr2O7_2_aq||0).toFixed(4)},dryAll=${dryCrSiOk}])`
+      );
+    }
+
+    // TEST 172: Prompt 54 (virlab_beta_v4+build.20) — P+O2 Canvas Render Crash Fix, Absolute Ethanol (C2H5OH) & Glacial Acetic Acid (CH3COOH) Full Matrix
+    {
+      // 1) Regression test: P_red_s + O2 combustion flame rendering inside renderVesselSolids never throws ReferenceError!
+      const cP = document.createElement('canvas');
+      cP.width = 120;
+      cP.height = 160;
+      const ctxP = cP.getContext('2d');
+      let pFlameRenderOk = true;
+      try {
+        renderVesselSolids(
+          ctxP,
+          { moles: { P_red_s: 0.01, P4O10_s: 0.005 }, phosphorusFlameTimer: 1.0, phosphorusFlameColor: 'p_white_yellow', tempK: 600, precipitateSettle: {} },
+          { left: 10, right: 110, bottom: 150, top: 10, width: 100 },
+          false,
+          150
+        );
+      } catch {
+        pFlameRenderOk = false;
+      }
+
+      const regE = STARTER_REAGENTS.find((r) => r.id === 'etoh');
+      const regA = STARTER_REAGENTS.find((r) => r.id === 'ch3cooh');
+      const acids4 = STARTER_REAGENTS.filter((r) => r.category === 'acid');
+      const regOrgOk =
+        STARTER_REAGENTS.length === 30 &&
+        acids4.length === 4 &&
+        Boolean(regE && regE.category === 'solvent_other' && regE.perMl?.C2H5OH_l > 0.017) &&
+        Boolean(regA && regA.category === 'acid' && regA.perMl?.CH3COOH_l > 0.017) &&
+        SPECIES.C2H5OH_l.meltTempK === 159.01 &&
+        SPECIES.CH3COOH_l.meltTempK === 289.75 &&
+        !/\b(etanol|axit|axetic|etyl|natri|kali)\b/i.test(`${I18N.vi.reg_etoh} ${I18N.vi.reg_ch3cooh}`);
+
+      // 2) Ethanol chemistry
+      const simE = new LabSimulation();
+      const vEMgCold = simE.createApparatus('beaker_250', 140, 427);
+      vEMgCold.moles = { C2H5OH_l: 0.5, Mg_s: 0.02, I2_s: 0.001 };
+      const vEMgReflux = simE.createApparatus('beaker_250', 220, 427);
+      vEMgReflux.moles = { C2H5OH_l: 0.5, Mg_s: 0.02, I2_s: 0.001 };
+      const vECr = simE.createApparatus('beaker_250', 300, 427);
+      vECr.moles = { C2H5OH_l: 0.1, H2O_l: 1.5, Cr2O7_2_aq: 0.02, H_aq: 0.25 };
+      const vEDeh140 = simE.createApparatus('round_flask_250', 380, 427);
+      vEDeh140.moles = { C2H5OH_l: 0.2, H2SO4_l: 0.1 };
+      const vEDeh175 = simE.createApparatus('round_flask_250', 460, 427);
+      vEDeh175.moles = { C2H5OH_l: 0.2, H2SO4_l: 0.2 };
+      const vEIodo = simE.createApparatus('beaker_250', 540, 427);
+      vEIodo.moles = { C2H5OH_l: 0.1, H2O_l: 1.0, I2_s: 0.04, Na_aq: 0.1, OH_aq: 0.1 };
+      const vEBr = simE.createApparatus('beaker_250', 620, 427);
+      vEBr.moles = { C2H5OH_l: 0.2, Br2_l: 0.02 };
+      const vEFenton = simE.createApparatus('beaker_250', 700, 427);
+      vEFenton.moles = { C2H5OH_l: 0.1, H2O_l: 1.0, H2O2_aq: 0.05, Fe2_aq: 0.005 };
+      const vEInert = simE.createApparatus('beaker_250', 780, 427);
+      vEInert.moles = { C2H5OH_l: 0.5, Fe_s: 0.02, Zn_s: 0.02, Al_s: 0.02 };
+
+      let c2h4Made = 0, mgH2 = 0;
+      for (let i = 0; i < 30; i++) {
+        stepVesselChemistry(vEMgCold, 0.1, { environment: simE.environment });
+        vEMgReflux.tempK = 350;
+        mgH2 += stepVesselChemistry(vEMgReflux, 0.1, { environment: simE.environment }).gasProduced?.H2_g || 0;
+        stepVesselChemistry(vECr, 0.1, { environment: simE.environment });
+        vEDeh140.tempK = 413;
+        stepVesselChemistry(vEDeh140, 0.1, { environment: simE.environment });
+        vEDeh175.tempK = 448;
+        c2h4Made += stepVesselChemistry(vEDeh175, 0.1, { environment: simE.environment }).gasProduced?.C2H4_g || 0;
+        vEIodo.tempK = 330;
+        stepVesselChemistry(vEIodo, 0.1, { environment: simE.environment });
+        vEBr.tempK = 330;
+        stepVesselChemistry(vEBr, 0.1, { environment: simE.environment });
+        stepVesselChemistry(vEFenton, 0.1, { environment: simE.environment });
+        stepVesselChemistry(vEInert, 0.1, { environment: simE.environment });
+      }
+      const etohOk =
+        Math.abs((vEMgCold.moles.Mg_s || 0) - 0.02) < 1e-9 &&
+        (vEMgReflux.moles.MgC2H5O_2_s || 0) > 0.003 &&
+        mgH2 > 0.003 &&
+        (vECr.moles.Cr3_aq || 0) > 0.01 &&
+        (vEDeh140.moles.C2H5OC2H5_l || 0) > 0.02 &&
+        c2h4Made > 0.04 &&
+        (vEIodo.moles.CHI3_s || 0) > 0.002 &&
+        (vEBr.moles.CH3COOC2H5_l || 0) > 0.002 &&
+        (vEFenton.moles.CH3COOH_l || 0) > 0.005 &&
+        Math.abs((vEInert.moles.Fe_s || 0) - 0.02) < 1e-9;
+
+      // 3) Glacial Acetic Acid physical + chemical matrix
+      const simA = new LabSimulation();
+      // 3a. Glacial freeze < 16.6 C vs aq freezing depression + weak-acid pKa 4.76
+      const vAGlac = simA.createApparatus('beaker_250', 120, 427);
+      vAGlac.moles = { CH3COOH_l: 0.5 };
+      vAGlac.tempK = 285.15; // 12 C < 16.6 C (4.6 K supercooling freezes ~0.043 mol, latent heat warms back to 16.6 C)
+      for (let i = 0; i < 40; i++) {
+        stepVesselThermodynamics(vAGlac, 0.5, { ...simA.environment, tempK: 273.15 }, 0, 0);
+      }
+      const frozeBelow16 = (vAGlac.moles.CH3COOH_s || 0) > 0.05;
+
+      const phAc01 = computePH({ H2O_l: 5.55, CH3COOH_l: 0.01 }, 0.1, 298.15); // 0.1 M -> pH ~2.88
+      const phBuf = computePH({ H2O_l: 5.55, CH3COOH_l: 0.02, Na_aq: 0.02, CH3COO_aq: 0.02 }, 0.1, 298.15); // 1:1 buffer -> ~4.76
+
+      const vANa = simA.createApparatus('beaker_250', 220, 427);
+      vANa.moles = { CH3COOH_l: 0.3, Na_s: 0.04 };
+      const vAMg = simA.createApparatus('beaker_250', 300, 427);
+      vAMg.moles = { CH3COOH_l: 0.3, H2O_l: 1.0, Mg_s: 0.03 };
+      const vAEster = simA.createApparatus('round_flask_250', 380, 427);
+      vAEster.moles = { CH3COOH_l: 0.2, C2H5OH_l: 0.2, H2SO4_l: 0.02 };
+      const vAPer = simA.createApparatus('beaker_250', 460, 427);
+      vAPer.moles = { CH3COOH_l: 0.2, H2O2_aq: 0.05, H2SO4_l: 0.02 };
+      const vACaC2 = simA.createApparatus('beaker_250', 540, 427);
+      vACaC2.moles = { CH3COOH_l: 0.3, CaC2_s: 0.02 };
+      const vAInert = simA.createApparatus('beaker_250', 620, 427);
+      vAInert.moles = { CH3COOH_l: 0.3, Al_s: 0.02, NaCl_s: 0.02, P_red_s: 0.01, Cr2O7_2_aq: 0.01 };
+
+      let naH2A = 0, mgH2A = 0, c2h2A = 0;
+      for (let i = 0; i < 30; i++) {
+        naH2A += stepVesselChemistry(vANa, 0.1, { environment: simA.environment }).gasProduced?.H2_g || 0;
+        vAMg.tempK = 340;
+        mgH2A += stepVesselChemistry(vAMg, 0.1, { environment: simA.environment }).gasProduced?.H2_g || 0;
+        vAEster.tempK = 348;
+        stepVesselChemistry(vAEster, 0.1, { environment: simA.environment });
+        stepVesselChemistry(vAPer, 0.1, { environment: simA.environment });
+        vACaC2.tempK = 365;
+        c2h2A += stepVesselChemistry(vACaC2, 0.1, { environment: simA.environment }).gasProduced?.C2H2_g || 0;
+        stepVesselChemistry(vAInert, 0.1, { environment: simA.environment });
+      }
+      const vDryAc = simA.createApparatus('porcelain_dish', 700, 450);
+      vDryAc.moles = { Na_aq: 0.02, Mg2_aq: 0.01, CH3COO_aq: 0.04, HCOO_aq: 0.01, H_aq: 0.01, CH3COOOH_aq: 0.01 };
+      enforceDryPhaseBoundary(vDryAc);
+      const dryAcOk = Object.keys(vDryAc.moles).every((k) => !k.endsWith('_aq')) && (vDryAc.moles.CH3COONa_s || 0) > 0.015;
+
+      const acohOk =
+        frozeBelow16 &&
+        phAc01 >= 2.75 && phAc01 <= 3.05 &&
+        phBuf >= 4.60 && phBuf <= 4.92 &&
+        naH2A > 0.01 &&
+        mgH2A > 0.008 &&
+        (vAEster.moles.CH3COOC2H5_l || 0) > 0.04 &&
+        (vAPer.moles.CH3COOOH_aq || 0) > 0.01 &&
+        c2h2A > 0.005 &&
+        Math.abs((vAInert.moles.Al_s || 0) - 0.02) < 1e-9 &&
+        dryAcOk;
+
+      assert(
+        'Prompt 54 invariants: P+O2 render crash fixed, Absolute Ethanol & Glacial Acetic Acid full reactivity + physical constants',
+        pFlameRenderOk && regOrgOk && etohOk && acohOk,
+        `pRender=${pFlameRenderOk}, reg=${regOrgOk}, EtOH=${etohOk}, AcOH=${acohOk}(frz=${frozeBelow16},pH=${phAc01?.toFixed(2)}/${phBuf?.toFixed(2)},est=${(vAEster.moles.CH3COOC2H5_l||0).toFixed(3)})`
       );
     }
 
