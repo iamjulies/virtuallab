@@ -536,13 +536,6 @@ export class LabSimulation {
         flameTestColor: null,
         flameTestIon: null,
       });
-    } else if (spec.kind === 'tongs') {
-      Object.assign(base, {
-        grippedVesselId: null,
-        heldSample: null, // { speciesId, moles, tempK }
-        heldBurnTimer: 0,
-        heldFlameColor: null,
-      });
     } else if (spec.kind === 'filter_funnel') {
       Object.assign(base, {
         moles: {},
@@ -851,7 +844,6 @@ export class LabSimulation {
       if (other.negElectrodeId === id) other.negElectrodeId = null;
       if (other.vesselAId === id) other.vesselAId = null;
       if (other.vesselBId === id) other.vesselBId = null;
-      if (other.grippedVesselId === id) other.grippedVesselId = null;
       if (other.restingOnId === id) {
         other.restingOnId = null;
         if (!other.clampedToId) other.fallStartY = other.y;
@@ -860,9 +852,6 @@ export class LabSimulation {
         other.clampedToId = null;
         other.fallStartY = other.y;
       }
-    }
-    if (item.kind === 'tongs') {
-      item.grippedVesselId = null;
     }
     if (item.kind === 'vessel') {
       item.hasStirBar = false;
@@ -1290,7 +1279,6 @@ export class LabSimulation {
       item.kind === 'flame_loop' ||
       item.kind === 'indicator_strip' ||
       item.kind === 'thermometer' ||
-      item.kind === 'tongs' ||
       item.kind === 'salt_bridge'
     ) {
       return { centerY: floorCenterY, support: null };
@@ -1347,8 +1335,7 @@ export class LabSimulation {
       if (
         it.kind === 'scale' ||
         it.kind === 'burner' ||
-        it.kind === 'stand' ||
-        it.kind === 'tongs'
+        it.kind === 'stand'
       )
         continue;
       if (it.dockedVesselId || it.inVesselId || it.mountedOverElectrodeId) {
@@ -1533,54 +1520,6 @@ export class LabSimulation {
     return true;
   }
 
-  tongsPickSampleFromVessel(tongsId, vesselId) {
-    const tongs = this.getItem(tongsId);
-    const v = this.getItem(vesselId);
-    if (!tongs || tongs.kind !== 'tongs' || !v || v.kind !== 'vessel' || v.isShattered) return false;
-    for (const spId of ['Zn_s', 'Mg_s', 'Al_s', 'Na_s', 'K_s', 'Fe_s', 'Cu_s']) {
-      const avail = v.moles?.[spId] || 0;
-      if (avail > 1e-6) {
-        const take = Math.min(avail, spId === 'Na_s' || spId === 'K_s' ? 0.015 : 0.02);
-        v.moles[spId] = avail - take;
-        if (v.moles[spId] < 1e-12) delete v.moles[spId];
-        tongs.heldSample = { speciesId: spId, moles: take, tempK: v.tempK || this.environment.tempK };
-        this.recomputeScaleReadings();
-        this.emitChange();
-        return true;
-      }
-    }
-    return false;
-  }
-
-  tongsToggleGripVessel(tongsId, vesselId = null) {
-    const tongs = this.getItem(tongsId);
-    if (!tongs || tongs.kind !== 'tongs') return false;
-    if (tongs.grippedVesselId) {
-      tongs.grippedVesselId = null;
-      this.updateSupportAttachments();
-      this.emitChange();
-      return true;
-    }
-    if (!vesselId) return false;
-    const v = this.getItem(vesselId);
-    if (!v || v.kind !== 'vessel' || v.isShattered) return false;
-    tongs.grippedVesselId = v.id;
-    tongs.x = v.x;
-    tongs.y = v.y;
-    this.emitChange();
-    return true;
-  }
-
-  tongsReleaseAll(tongsId) {
-    const tongs = this.getItem(tongsId);
-    if (!tongs || tongs.kind !== 'tongs') return false;
-    tongs.grippedVesselId = null;
-    tongs.heldSample = null;
-    this.updateSupportAttachments();
-    this.emitChange();
-    return true;
-  }
-
   spoonScoopFromVessel(spoonId, vesselId, maxGrams = 1.6) {
     const spoon = this.getItem(spoonId);
     const v = this.getItem(vesselId);
@@ -1678,71 +1617,6 @@ export class LabSimulation {
     spoon.burnTimer = 0;
     spoon.flameColor = null;
     spoon.tempK = this.environment.tempK;
-    this.emitChange();
-    return true;
-  }
-
-  tongsDropSampleIntoVessel(tongsId, vesselId) {
-    const tongs = this.getItem(tongsId);
-    const v = this.getItem(vesselId);
-    if (!tongs || tongs.kind !== 'tongs' || !v || v.kind !== 'vessel' || v.isShattered || v.isStoppered) {
-      return false;
-    }
-    const sample = tongs.heldSample;
-    if (!sample || !(sample.moles > 1e-9)) return false;
-    const spId = sample.speciesId;
-    v.moles[spId] = (v.moles[spId] || 0) + sample.moles;
-    v.particleCounts = v.particleCounts || {};
-    v.particleCounts[spId] = Math.max(v.particleCounts[spId] || 0, 1);
-    if (spId === 'Na_s' && (sample.tempK || 298) > 370) {
-      v.naTempK = Math.max(v.naTempK || v.tempK, sample.tempK);
-    }
-    if (spId === 'K_s' && (sample.tempK || 298) > 335) {
-      v.kTempK = Math.max(v.kTempK || v.tempK, sample.tempK);
-    }
-    tongs.heldSample = null;
-    tongs.heldBurnTimer = 0;
-    tongs.heldFlameColor = null;
-    if (this.visualHooks.onAlert) {
-      const vSpec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
-      this.visualHooks.onAlert('spoon_pour', v, {
-        color: SPECIES[spId]?.color || '#cbd5e1',
-        fromX: v.x,
-        fromY: v.y - vSpec.height / 2 - 12,
-        toY: v.y,
-      });
-    }
-    this.recomputeScaleReadings();
-    this.recordHistorySnapshot(v, true);
-    this.emitChange();
-    return true;
-  }
-
-  tongsGripVessel(tongsId, vesselId) {
-    const tongs = this.getItem(tongsId);
-    const v = this.getItem(vesselId);
-    if (!tongs || tongs.kind !== 'tongs' || !v || v.kind !== 'vessel' || v.isShattered) return false;
-    if (v.typeId !== 'crucible_porcelain' && v.typeId !== 'porcelain_dish') return false;
-    tongs.grippedVesselId = v.id;
-    v.restingOnId = null;
-    v.vy = 0;
-    v.fallStartY = v.y;
-    const dir = tongs.flippedX ? 1 : -1;
-    tongs.x = v.x - dir * 58;
-    tongs.y = v.y;
-    tongs.vy = 0;
-    tongs.fallStartY = null;
-    this.emitChange();
-    return true;
-  }
-
-  tongsReleaseCrucible(tongsId) {
-    const tongs = this.getItem(tongsId);
-    if (!tongs || tongs.kind !== 'tongs' || !tongs.grippedVesselId) return false;
-    const gv = this.getItem(tongs.grippedVesselId);
-    tongs.grippedVesselId = null;
-    if (gv) gv.fallStartY = gv.y;
-    this.updateSupportAttachments();
     this.emitChange();
     return true;
   }

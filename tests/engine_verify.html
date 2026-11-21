@@ -1896,7 +1896,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 25 &&
+          STARTER_REAGENTS.length === 26 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.17';
+      const expectedBuild = 'virlab_beta_v4+build.18';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2506,19 +2506,18 @@
         Boolean(I18N.vi.eq_quartz_u_tube && I18N.en.eq_quartz_u_tube) &&
         Boolean(I18N.vi.eq_rubber_stopper && I18N.en.eq_rubber_stopper) &&
         Boolean(I18N.vi.eq_phen_cotton && I18N.en.eq_phen_cotton) &&
-        Boolean(I18N.vi.eq_crucible_tongs && I18N.en.eq_crucible_tongs) &&
-        Boolean(I18N.vi.tongsDropSampleBtn && I18N.en.tongsDropSampleBtn) &&
-        Boolean(I18N.vi.tongsReleaseCrucibleBtn && I18N.en.tongsReleaseCrucibleBtn) &&
+        Boolean(I18N.vi.reg_p_red && I18N.en.reg_p_red) &&
         Boolean(I18N.vi.eq_iron_spoon && I18N.en.eq_iron_spoon) &&
         Boolean(I18N.vi.alertGlassSoftenMelt && I18N.en.alertGlassSoftenMelt) &&
         Boolean(I18N.vi.alertCo2Extinguish && I18N.en.alertCo2Extinguish) &&
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.17 parity: All apparatus & 25 starter reagents translated in VI/EN, Prompt 40-51 keys present, IUPAC spellings enforced',
-        APPARATUS_ORDER.length === 40 &&
-          STARTER_REAGENTS.length === 25 &&
+        'Build virlab_beta_v4+build.18 parity: All 39 apparatus & 26 starter reagents translated in VI/EN, Prompt 40-52 keys present, crucible_tongs removed, IUPAC spellings enforced',
+        APPARATUS_ORDER.length === 39 &&
+          STARTER_REAGENTS.length === 26 &&
           !APPARATUS.clay_triangle &&
+          !APPARATUS.crucible_tongs &&
           allTranslated &&
           newKeysPresent &&
           I18N.vi.appSubtitle.includes(expectedBuild) &&
@@ -5091,27 +5090,16 @@
       );
     }
 
-    // TEST 108: Target-Pick Tools — Crucible Tongs (Sample Drop & Crucible Grip/Release) + Iron Spoon Animated Scoop/Pour
+    // TEST 108: Target-Pick Tools — Crucible Tongs Removed & Iron Spoon Animated Scoop/Pour
     {
       const simT = new LabSimulation();
       const b1 = simT.createApparatus('beaker_250', 220, 427);
       simT.addReagentToVessel(b1.id, 'zn', 4.0, { silentAnim: true, silentEmit: true });
       const b2 = simT.createApparatus('beaker_250', 440, 427);
-      const cruc = simT.createApparatus('crucible_porcelain', 620, 455);
-      const tongs = simT.createApparatus('crucible_tongs', 760, 440);
+      const tongsGone = !APPARATUS.crucible_tongs && !simT.createApparatus('crucible_tongs', 760, 440);
       const spoon = simT.createApparatus('iron_spoon', 120, 450);
 
-      // 1) Tongs pick sample -> drop into chosen beaker b2; grip crucible -> release crucible
-      const pickedS = simT.tongsPickSampleFromVessel(tongs.id, b1.id);
-      const heldMol0 = tongs.heldSample?.moles || 0;
-      const droppedS = simT.tongsDropSampleIntoVessel(tongs.id, b2.id);
-      const znInB2 = b2.moles.Zn_s || 0;
-      const grippedC = simT.tongsGripVessel(tongs.id, cruc.id);
-      const isGripped = tongs.grippedVesselId === cruc.id;
-      const releasedC = simT.tongsReleaseCrucible(tongs.id);
-      const releasedOk = tongs.grippedVesselId === null;
-
-      // 2) Iron Spoon animated scoop from b1 and animated pour into b2
+      // Iron Spoon animated scoop from b1 and animated pour into b2
       const startedScoop = simT.startSpoonAction(spoon.id, 'scoop', b1.id, 1.0);
       stepSeconds(simT, 0.38, 0.05);
       const midScoopTilt = Math.abs(spoon.tiltAngle || 0) > 0.01 && Boolean(spoon.spoonAnim);
@@ -5127,15 +5115,8 @@
       const pourAnimDone = spoon.spoonAnim === null && (spoon.moles.Zn_s || 0) < 1e-9;
 
       assert(
-        'Tongs pick/drop sample & grip/release crucible reliably; Iron Spoon animates scoop/pour hover-and-tilt cleanly transferring solid to chosen vessel',
-        pickedS &&
-          heldMol0 > 0.01 &&
-          droppedS &&
-          Math.abs(znInB2 - heldMol0) < 1e-6 &&
-          grippedC &&
-          isGripped &&
-          releasedC &&
-          releasedOk &&
+        'Crucible Tongs removed cleanly; Iron Spoon animates scoop/pour hover-and-tilt cleanly transferring solid to chosen vessel',
+        tongsGone &&
           startedScoop &&
           midScoopTilt &&
           scoopAnimDone &&
@@ -5143,8 +5124,8 @@
           startedPour &&
           midPourTilt &&
           pourAnimDone &&
-          finalZnB2 > znInB2 + scoopedMol * 0.99,
-        `drop=${droppedS}, grip/rel=${isGripped}/${releasedOk}, scoop=${startedScoop}(tilt=${midScoopTilt}, ${(scoopedMol*1000).toFixed(1)}mmol), pour=${startedPour}(tilt=${midPourTilt}, finalZn=${(finalZnB2*1000).toFixed(1)}mmol)`
+          finalZnB2 > scoopedMol * 0.99,
+        `tongsGone=${tongsGone}, scoop=${startedScoop}(tilt=${midScoopTilt}, ${(scoopedMol*1000).toFixed(1)}mmol), pour=${startedPour}(tilt=${midPourTilt}, finalZn=${(finalZnB2*1000).toFixed(1)}mmol)`
       );
     }
 
@@ -5380,15 +5361,14 @@
       stepSeconds(simF, 15.0, 0.1);
       const airOxFeOH3 = bAirOx.moles.FeOH3_s || 0;
 
-      // 4) Red-hot Fe on Tongs burning in O2 jar -> Fe3O4(s) + sparks_fe
+      // 4) Red-hot Fe on Iron Spoon burning in O2 jar -> Fe3O4(s) + sparks_fe
       const bO2 = simF.createApparatus('erlenmeyer_250', 780, 405);
       bO2.headspaceGasMoles.O2_g = 0.03;
-      const tongs = simF.createApparatus('crucible_tongs', 850, 380);
-      tongs.heldSample = { speciesId: 'Fe_s', moles: 0.012, tempK: 920 };
-      tongs.x = bO2.x + 64; // tipX is tongs.x - 64 -> inside bO2 headspace!
-      tongs.y = bO2.y - 25;
+      const spoonFe = simF.createApparatus('iron_spoon', bO2.x, bO2.y - 68);
+      spoonFe.moles = { Fe_s: 0.012 };
+      spoonFe.tempK = 920;
       stepSeconds(simF, 3.0, 0.05);
-      const tongsBurnedFe = (bO2.moles.Fe3O4_s || 0) > 0.001 && tongs.heldFlameColor === 'sparks_fe';
+      const spoonBurnedFe = (spoonFe.moles.Fe3O4_s || 0) > 0.001 && spoonFe.flameColor === 'sparks_fe';
 
       assert(
         'Iron Nail (<=4) vs Fine Powder (>=30), faster powder+acid H2, Fe+Cu2+->Cu+Fe2+, Fe2+->Fe3+ (H2O2) & Fe(OH)2->Fe(OH)3 (air) & O2 spark combustion -> Fe3O4 pass',
@@ -5399,8 +5379,8 @@
           cuDisplaced &&
           fe3FromPeroxide > 0.005 &&
           airOxFeOH3 > 0.002 &&
-          tongsBurnedFe,
-        `nail=${nailCnt}, powd=${powdCnt}, faster=${powderFaster}, cuDisp=${cuDisplaced}, Fe3=${(fe3FromPeroxide*1000).toFixed(1)}mmol, airFeOH3=${(airOxFeOH3*1000).toFixed(1)}mmol, o2Burn=${tongsBurnedFe}`
+          spoonBurnedFe,
+        `nail=${nailCnt}, powd=${powdCnt}, faster=${powderFaster}, cuDisp=${cuDisplaced}, Fe3=${(fe3FromPeroxide*1000).toFixed(1)}mmol, airFeOH3=${(airOxFeOH3*1000).toFixed(1)}mmol, o2Burn=${spoonBurnedFe}`
       );
     }
 
@@ -7399,7 +7379,7 @@
       const mno2AcidOk = Math.abs((bMnColdAcid.moles.MnO2_s || 0) - 0.01) < 1e-6 && cl2HotTot > 0.002 && (bMnHotHCl.moles.Mn2_aq || 0) > 0.002;
 
       const iupacKmno4Ok =
-        STARTER_REAGENTS.length === 25 &&
+        STARTER_REAGENTS.length === 26 &&
         STARTER_REAGENTS.some((r) => r.id === 'kmno4') &&
         !/\b(kali|mangan|axit|clo|oxi(?! hóa))\b/i.test(`${I18N.vi.reg_kmno4} ${I18N.vi.reg_kmno4_desc} ${I18N.vi.alertMn2O7Hazard}`);
 
@@ -7513,7 +7493,7 @@
         (vIRoom.moles.IO3_aq || 0) > (vIRoom.moles.IO_aq || 0) * 4;
 
       const iupacHalOk =
-        STARTER_REAGENTS.length === 25 &&
+        STARTER_REAGENTS.length === 26 &&
         STARTER_REAGENTS.some((r) => r.id === 'br2') &&
         STARTER_REAGENTS.some((r) => r.id === 'i2') &&
         !/\b(brom|iot|clo|kali|natri|nhôm|sắt|axit)\b/i.test(`${I18N.vi.reg_br2} ${I18N.vi.reg_br2_desc} ${I18N.vi.reg_i2} ${I18N.vi.reg_i2_desc}`);
@@ -7629,7 +7609,7 @@
         (bSHNO3.moles.SO4_2_aq || 0) > 0.001;
 
       const iupacSulfOk =
-        STARTER_REAGENTS.length === 25 &&
+        STARTER_REAGENTS.length === 26 &&
         STARTER_REAGENTS.some((r) => r.id === 's') &&
         !/\b(lưu huỳnh|sunfua|hiđro|axit|oxi(?! hóa)|etanol)\b/i.test(`${I18N.vi.reg_s} ${I18N.vi.reg_s_desc}`);
 
@@ -7644,11 +7624,12 @@
     {
       const nonmetals = STARTER_REAGENTS.filter((r) => r.category === 'nonmetal').map((r) => r.id).sort();
       const filterOk =
-        nonmetals.length === 4 &&
+        nonmetals.length === 5 &&
         nonmetals[0] === 'br2' &&
         nonmetals[1] === 'c' &&
         nonmetals[2] === 'i2' &&
-        nonmetals[3] === 's' &&
+        nonmetals[3] === 'p_red' &&
+        nonmetals[4] === 's' &&
         I18N.vi.regCatNonmetal === 'Phi kim' &&
         I18N.en.regCatNonmetal === 'Nonmetals';
 
@@ -8448,6 +8429,257 @@
         'Prompt 51 invariants: Metal+C carbides (KC8/Na2C2/MgC2/Mg2C3/Fe3C, Zn none), Mg+S flash & MgS cold hydrolysis, KI+I3- & I2+HNO3->HIO3, 100% H2SO4 properties, Vacuum decomps (NaOH/CuSO4.5H2O/KMnO4), Dat den thermal air vs inert, Dat den label & 10-metal mp/bp at 1500 C',
         cSynthOk && carbHydOk && mgsMade && mgsHydOk && kiAndAcidOk && h2so4AnhydOk && vacOk && datDenThermOk && renameOk && met1500Ok,
         `cSynth=${cSynthOk}, carbHyd=${carbHydOk}, MgS=(${mgsMade},${mgsHydOk}), KI/I2=${kiAndAcidOk}, H2SO4_100=${h2so4AnhydOk}, vac=${vacOk}, datDen=${datDenThermOk}, rename=${renameOk}, met1500=${met1500Ok}`
+      );
+    }
+
+    // TEST 170: Prompt 52 (virlab_beta_v4+build.18) — Remove crucible_tongs, Add Red Phosphorus (p_red / P_red_s) + Complete 5-Category Inorganic Reactivity Matrix
+    {
+      const totGasP = (v, g) => (v.headspaceGasMoles?.[g] || 0) + (v.escapedGasMoles?.[g] || 0);
+      const regP = STARTER_REAGENTS.find((r) => r.id === 'p_red');
+      const registryOk =
+        !APPARATUS.crucible_tongs &&
+        !APPARATUS_ORDER.includes('crucible_tongs') &&
+        APPARATUS_ORDER.length === 39 &&
+        Boolean(regP) &&
+        regP.category === 'nonmetal' &&
+        regP.speciesId === 'P_red_s' &&
+        SPECIES.P_red_s.density === 2.34 &&
+        !/\b(photpho|phốt pho|kali|natri|bạc)\b/i.test(`${I18N.vi.reg_p_red} ${I18N.vi.reg_p_red_desc}`);
+
+      // a) P_red + Metals in inert / sealed atmosphere (K, Na, Mg, Ca, Ba, Al [+I2 cat], Zn, Fe, Cu, and Ag ONLY sealed!)
+      const simM = new LabSimulation();
+      simM.environment.atmosphereMode = 'inert';
+      const runMetalP = (mId, tC, opt = {}) => {
+        const v = simM.createApparatus(opt.vessel || 'crucible_porcelain', 220, 440);
+        v.moles = { [mId]: 0.03, P_red_s: 0.03, ...(opt.extra || {}) };
+        if (opt.sealed) v.isStoppered = true;
+        else v.lidState = 'open';
+        v.tempK = tC + 273.15;
+        for (let i = 0; i < (opt.steps || 25); i++) {
+          v.tempK = tC + 273.15;
+          stepVesselChemistry(v, 0.1, { environment: simM.environment });
+        }
+        return v;
+      };
+      const vPK = runMetalP('K_s', 180);
+      const vPNa = runMetalP('Na_s', 230);
+      const vPMg = runMetalP('Mg_s', 560);
+      const vPCa = runMetalP('Ca_s', 560);
+      const vPBa = runMetalP('Ba_s', 580);
+      const vPAlNoCat = runMetalP('Al_s', 340);
+      const vPAlCat = runMetalP('Al_s', 340, { extra: { I2_s: 0.002 } });
+      const vPZn = runMetalP('Zn_s', 560);
+      const vPFe = runMetalP('Fe_s', 880, { vessel: 'quartz_tube', steps: 40 });
+      const vPCu = runMetalP('Cu_s', 520);
+      const vPAgOpen = runMetalP('Ag_s', 580, { sealed: false });
+      const vPAgSeal = runMetalP('Ag_s', 580, { vessel: 'quartz_tube', sealed: true });
+      const agMadeSeal = (vPAgSeal.moles.AgP2_s || 0) > 0.002;
+      vPAgSeal.isStoppered = false;
+      for (let i = 0; i < 30; i++) {
+        vPAgSeal.tempK = 580 + 273.15;
+        stepVesselChemistry(vPAgSeal, 0.1, { environment: simM.environment });
+      }
+      const metalsOk =
+        (vPK.moles.K3P_s || 0) > 0.003 &&
+        (vPNa.moles.Na3P_s || 0) > 0.003 &&
+        (vPMg.moles.Mg3P2_s || 0) > 0.002 &&
+        (vPCa.moles.Ca3P2_s || 0) > 0.002 &&
+        (vPBa.moles.Ba3P2_s || 0) > 0.002 &&
+        (vPAlNoCat.moles.AlP_s || 0) === 0 &&
+        (vPAlCat.moles.AlP_s || 0) > 0.002 &&
+        (vPZn.moles.Zn3P2_s || 0) > 0.002 &&
+        (vPFe.moles.Fe3P_s || 0) > 0.001 &&
+        (vPCu.moles.Cu3P_s || 0) > 0.002 &&
+        (vPAgOpen.moles.AgP2_s || 0) === 0 &&
+        agMadeSeal &&
+        (vPAgSeal.moles.Ag_s || 0) > 0.001;
+
+      // Phosphide hydrolyses: K3P + H2O -> PH3↑; Zn3P2 neutral H2O inert vs acid HCl -> PH3↑
+      const simPH = new LabSimulation();
+      const vK3PHyd = simPH.createApparatus('beaker_250', 220, 427);
+      vK3PHyd.moles = { K3P_s: 0.01, H2O_l: 2.0 };
+      stepSeconds(simPH, 1.5, 0.05);
+      const vZnPNeut = simPH.createApparatus('beaker_250', 360, 427);
+      vZnPNeut.moles = { Zn3P2_s: 0.01, H2O_l: 2.0 };
+      const vZnPAcid = simPH.createApparatus('beaker_250', 500, 427);
+      vZnPAcid.moles = { Zn3P2_s: 0.01, H2O_l: 2.0, H_aq: 0.1, Cl_aq: 0.1 };
+      stepSeconds(simPH, 1.5, 0.05);
+      const phosphideHydOk =
+        totGasP(vK3PHyd, 'PH3_g') > 0.005 &&
+        totGasP(vZnPNeut, 'PH3_g') === 0 &&
+        totGasP(vZnPAcid, 'PH3_g') > 0.005;
+
+      // b) P_red + Nonmetals (Cl2 -> PCl3/PCl5 -> >160C PCl3+Cl2, Br2 -> PBr3/PBr5, I2 -> PI3/P2I4, O2 -> P4O10/P4O6, S -> P4S3, H2 & C inert, >416C P4 sublimation)
+      const simNM = new LabSimulation();
+      const vPCl = simNM.createApparatus('erlenmeyer_1000', 180, 420);
+      vPCl.isStoppered = true;
+      vPCl.moles = { P_red_s: 0.01 };
+      vPCl.headspaceGasMoles.Cl2_g = 0.04;
+      stepSeconds(simNM, 2.0, 0.05);
+      const pcl5Made = (vPCl.moles.PCl5_s || 0) > 0.004;
+      for (let i = 0; i < 30; i++) {
+        vPCl.tempK = 470;
+        const rC = stepVesselChemistry(vPCl, 0.1, { environment: simNM.environment });
+        if (rC.gasProduced?.Cl2_g) vPCl.headspaceGasMoles.Cl2_g = (vPCl.headspaceGasMoles.Cl2_g || 0) + rC.gasProduced.Cl2_g;
+      }
+      const pcl5DissocOk = (vPCl.moles.PCl3_l || 0) > 0.004 && (vPCl.headspaceGasMoles.Cl2_g || 0) > 0.004;
+
+      const vPBr = simNM.createApparatus('erlenmeyer_250', 300, 420);
+      vPBr.moles = { P_red_s: 0.01, Br2_l: 0.04 };
+      stepSeconds(simNM, 2.0, 0.05);
+      const pbrOk = ((vPBr.moles.PBr3_l || 0) + (vPBr.moles.PBr5_s || 0)) > 0.004;
+
+      const vPI = simNM.createApparatus('crucible_porcelain', 420, 450);
+      vPI.moles = { P_red_s: 0.01, I2_s: 0.03 };
+      for (let i = 0; i < 20; i++) { vPI.tempK = 365; stepVesselChemistry(vPI, 0.1, { environment: simNM.environment }); }
+      const piOk = (vPI.moles.PI3_s || 0) > 0.003;
+
+      const vPOAir25 = simNM.createApparatus('crucible_porcelain', 540, 450);
+      vPOAir25.moles = { P_red_s: 0.02 };
+      const vPOBurn = simNM.createApparatus('crucible_porcelain', 620, 450);
+      vPOBurn.moles = { P_red_s: 0.02 };
+      vPOBurn.tempK = 580;
+      const vPOLean = simNM.createApparatus('erlenmeyer_250', 700, 420);
+      vPOLean.isStoppered = true;
+      vPOLean.moles = { P_red_s: 0.04 };
+      vPOLean.headspaceGasMoles.O2_g = 0.01;
+      vPOLean.tempK = 540;
+      for (let i = 0; i < 25; i++) {
+        stepVesselChemistry(vPOAir25, 0.1, { environment: simNM.environment });
+        vPOBurn.tempK = 580;
+        stepVesselChemistry(vPOBurn, 0.1, { environment: simNM.environment });
+        vPOLean.tempK = 540;
+        stepVesselChemistry(vPOLean, 0.1, { environment: simNM.environment });
+      }
+      const pBurnOk = (vPOAir25.moles.P_red_s || 0) > 0.019 && (vPOBurn.moles.P4O10_s || 0) > 0.003 && (vPOLean.moles.P4O6_s || 0) > 0.001;
+
+      // Sulfur, H2, C & P4 sublimation
+      const simSC = new LabSimulation();
+      simSC.environment.atmosphereMode = 'inert';
+      const vPS25 = simSC.createApparatus('crucible_porcelain', 180, 450);
+      vPS25.moles = { P_red_s: 0.02, S_s: 0.015 };
+      const vPSHot = simSC.createApparatus('crucible_porcelain', 260, 450);
+      vPSHot.moles = { P_red_s: 0.04, S_s: 0.015 };
+      const vPInertHC = simSC.createApparatus('quartz_tube', 360, 430);
+      vPInertHC.moles = { P_red_s: 0.01, C_s: 0.02 };
+      vPInertHC.headspaceGasMoles.H2_g = 0.03;
+      for (let i = 0; i < 25; i++) {
+        stepVesselChemistry(vPS25, 0.1, { environment: simSC.environment });
+        vPSHot.tempK = 520;
+        stepVesselChemistry(vPSHot, 0.1, { environment: simSC.environment });
+        vPInertHC.tempK = 720;
+        const rHC = stepVesselChemistry(vPInertHC, 0.1, { environment: simSC.environment });
+        if (rHC.gasProduced?.P4_g) vPInertHC.headspaceGasMoles.P4_g = (vPInertHC.headspaceGasMoles.P4_g || 0) + rHC.gasProduced.P4_g;
+      }
+      const psAndSublOk =
+        (vPS25.moles.P4S3_s || 0) === 0 &&
+        (vPSHot.moles.P4S3_s || 0) > 0.002 &&
+        Math.abs((vPInertHC.moles.C_s || 0) - 0.02) < 1e-9 &&
+        Math.abs((vPInertHC.headspaceGasMoles.H2_g || 0) - 0.03) < 1e-6 &&
+        (vPInertHC.headspaceGasMoles.P4_g || 0) > 0.001;
+
+      // c) Acids: HCl & dil H2SO4 inert; HNO3 dil hot -> NO, HNO3 conc -> NO2, H2SO4 conc cold inert vs >=150C -> SO2
+      const simA = new LabSimulation();
+      const vPHCl = simA.createApparatus('beaker_250', 140, 427);
+      vPHCl.moles = { P_red_s: 0.01, H2O_l: 1.5, H_aq: 0.4, Cl_aq: 0.4 };
+      vPHCl.tempK = 365;
+      const vPH2SO4Cold = simA.createApparatus('beaker_250', 220, 427);
+      vPH2SO4Cold.moles = { P_red_s: 0.01, H2SO4_l: 0.3, H2O_l: 0.03 };
+      const vPH2SO4Hot = simA.createApparatus('beaker_250', 300, 427);
+      vPH2SO4Hot.moles = { P_red_s: 0.01, H2SO4_l: 0.3, H2O_l: 0.03 };
+      const vPHNO3Dil = simA.createApparatus('beaker_250', 380, 427);
+      vPHNO3Dil.moles = { P_red_s: 0.01, H2O_l: 2.0, H_aq: 0.15, NO3_aq: 0.15 };
+      const vPHNO3Conc = simA.createApparatus('beaker_250', 460, 427);
+      vPHNO3Conc.moles = { P_red_s: 0.01, H2O_l: 0.35, H_aq: 0.45, NO3_aq: 0.45 };
+      let so2P = 0, noP = 0, no2P = 0;
+      for (let i = 0; i < 30; i++) {
+        vPHCl.tempK = 365;
+        stepVesselChemistry(vPHCl, 0.1, { environment: simA.environment });
+        stepVesselChemistry(vPH2SO4Cold, 0.1, { environment: simA.environment });
+        vPH2SO4Hot.tempK = 460;
+        so2P += stepVesselChemistry(vPH2SO4Hot, 0.1, { environment: simA.environment }).gasProduced?.SO2_g || 0;
+        vPHNO3Dil.tempK = 355;
+        noP += stepVesselChemistry(vPHNO3Dil, 0.1, { environment: simA.environment }).gasProduced?.NO_g || 0;
+        vPHNO3Conc.tempK = 325;
+        no2P += stepVesselChemistry(vPHNO3Conc, 0.1, { environment: simA.environment }).gasProduced?.NO2_g || 0;
+      }
+      const acidsOk =
+        Math.abs((vPHCl.moles.P_red_s || 0) - 0.01) < 1e-9 &&
+        Math.abs((vPH2SO4Cold.moles.P_red_s || 0) - 0.01) < 1e-9 &&
+        so2P > 0.002 &&
+        (vPH2SO4Hot.moles.H3PO4_aq || 0) > 0.001 &&
+        noP > 0.002 &&
+        no2P > 0.005 &&
+        (vPHNO3Conc.moles.H3PO4_aq || 0) > 0.001;
+
+      // d) Bases: Dil NaOH & NH3 inert; conc NaOH boiling -> PH3 + H2PO2-
+      const simB = new LabSimulation();
+      const vPNaDil = simB.createApparatus('beaker_250', 180, 427);
+      vPNaDil.moles = { P_red_s: 0.02, H2O_l: 5.5, Na_aq: 0.1, OH_aq: 0.1 }; // ~1 M < 4 M
+      const vPNH3 = simB.createApparatus('beaker_250', 260, 427);
+      vPNH3.moles = { P_red_s: 0.02, H2O_l: 4.0, NH3_aq: 0.5 };
+      const vPNaConc = simB.createApparatus('beaker_250', 340, 427);
+      vPNaConc.moles = { P_red_s: 0.02, H2O_l: 1.5, Na_aq: 0.35, OH_aq: 0.35 }; // > 10 M
+      let ph3Base = 0;
+      for (let i = 0; i < 30; i++) {
+        vPNaDil.tempK = 373;
+        stepVesselChemistry(vPNaDil, 0.1, { environment: simB.environment });
+        vPNH3.tempK = 350;
+        stepVesselChemistry(vPNH3, 0.1, { environment: simB.environment });
+        vPNaConc.tempK = 385;
+        ph3Base += stepVesselChemistry(vPNaConc, 0.1, { environment: simB.environment }).gasProduced?.PH3_g || 0;
+      }
+      const basesOk =
+        Math.abs((vPNaDil.moles.P_red_s || 0) - 0.02) < 1e-9 &&
+        Math.abs((vPNH3.moles.P_red_s || 0) - 0.02) < 1e-9 &&
+        ph3Base > 0.001 &&
+        (vPNaConc.moles.H2PO2_aq || 0) > 0.003;
+
+      // e) Salts: KMnO4 mortar flash + aq warm MnO2, AgNO3 aq & molten, CuSO4 hot aq; NaCl/CaCO3/BaCl2 inert + dry conservation
+      const simS = new LabSimulation();
+      const mortarPK = simS.createApparatus('mortar_pestle', 200, 450);
+      mortarPK.moles = { P_red_s: 0.009, KMnO4_s: 0.015 };
+      const groundFlash = simS.grindMortar(mortarPK.id);
+      const flashOk = groundFlash && (mortarPK.moles.K3PO4_s || 0) > 0.003 && (mortarPK.moles.MnO2_s || 0) > 0.01 && mortarPK.tempK > 315 && mortarPK.phosphorusFlameTimer > 0.5;
+
+      const vAgAq = simS.createApparatus('beaker_250', 360, 427);
+      vAgAq.moles = { P_red_s: 0.005, H2O_l: 2.0, Ag_aq: 0.03, NO3_aq: 0.03 };
+      const vAgMelt = simS.createApparatus('crucible_porcelain', 440, 450);
+      vAgMelt.moles = { P_red_s: 0.004, AgNO3_s: 0.02 };
+      const vCuAq = simS.createApparatus('beaker_250', 520, 427);
+      vCuAq.moles = { P_red_s: 0.01, H2O_l: 2.0, Cu2_aq: 0.04, SO4_2_aq: 0.04 };
+      const vInertSalts = simS.createApparatus('crucible_porcelain', 600, 450);
+      vInertSalts.moles = { P_red_s: 0.01, NaCl_s: 0.02, BaCl2_s: 0.02, CaCO3_s: 0.02 };
+      let no2AgM = 0;
+      for (let i = 0; i < 30; i++) {
+        vAgAq.tempK = 335;
+        stepVesselChemistry(vAgAq, 0.1, { environment: simS.environment });
+        vAgMelt.tempK = 515;
+        no2AgM += stepVesselChemistry(vAgMelt, 0.1, { environment: simS.environment }).gasProduced?.NO2_g || 0;
+        vCuAq.tempK = 365;
+        stepVesselChemistry(vCuAq, 0.1, { environment: simS.environment });
+        vInertSalts.tempK = 520;
+        stepVesselChemistry(vInertSalts, 0.1, { environment: simS.environment });
+      }
+      // Check enforceDryPhaseBoundary leaves zero (aq) ions for phosphate / hypophosphite solutions
+      const vDryP = simS.createApparatus('porcelain_dish', 700, 450);
+      vDryP.moles = { H3PO4_aq: 0.02, Na_aq: 0.05, H2PO2_aq: 0.02, PO4_3_aq: 0.01 };
+      enforceDryPhaseBoundary(vDryP);
+      const dryPOk = Object.keys(vDryP.moles).every((k) => !k.endsWith('_aq')) && (vDryP.moles.H3PO4_s || 0) > 0.019 && (vDryP.moles.NaH2PO2_s || 0) > 0.019;
+
+      const saltsOk =
+        flashOk &&
+        (vAgAq.moles.Ag_s || 0) > 0.01 &&
+        (vAgMelt.moles.Ag3PO4_s || 0) > 0.001 &&
+        no2AgM > 0.005 &&
+        (vCuAq.moles.Cu_s || 0) > 0.005 &&
+        Math.abs((vInertSalts.moles.P_red_s || 0) - 0.01) < 1e-9 &&
+        dryPOk;
+
+      assert(
+        'Prompt 52 invariants: crucible_tongs removed, p_red reagent & Red P full 5-category chemistry (Metals, Cl2/Br2/I2/O2/S/subl, HNO3/H2SO4 conc selectivity, conc NaOH->PH3, KMnO4 mortar flash & AgNO3/CuSO4)',
+        registryOk && metalsOk && phosphideHydOk && pcl5Made && pcl5DissocOk && pbrOk && piOk && pBurnOk && psAndSublOk && acidsOk && basesOk && saltsOk,
+        `reg=${registryOk}, met=${metalsOk}, hyd=${phosphideHydOk}, hal=(${pcl5Made}/${pcl5DissocOk}/${pbrOk}/${piOk}), ox=${pBurnOk}, S_subl=${psAndSublOk}, acid=${acidsOk}, base=${basesOk}, salt=${saltsOk}`
       );
     }
 

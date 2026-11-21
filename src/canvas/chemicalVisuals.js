@@ -185,6 +185,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       isGroundPowder ||
       vType === 'white_powder' ||
       vType === 'yellow_powder' ||
+      vType === 'red_powder' ||
       vType === 'brown_powder' ||
       vType === 'black_powder' ||
       vType === 'gray_white_powder' ||
@@ -248,7 +249,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       ctx.stroke();
 
       // Fine crystalline micro-powder / metallic filings / porous quicklime pores overlay for zoomed detail!
-      if (isGroundPowder || vType === 'porous_lime' || vType === 'yellow_powder') {
+      if (isGroundPowder || vType === 'porous_lime' || vType === 'yellow_powder' || vType === 'red_powder') {
         const speckCount = Math.min(140, Math.max(24, Math.round(20 + scaledPileH * 1.4 + massG * 4)));
         const spanW = Math.max(10, width - 12);
         const effPeakH = Math.max(3, bottom - peakY);
@@ -270,6 +271,10 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
               ? k % 2 === 0
                 ? '#fde047'
                 : '#fef9c3'
+              : vType === 'red_powder'
+              ? k % 2 === 0
+                ? '#9f1239'
+                : '#b91c1c'
               : k % 3 === 0
               ? strokeCol
               : 'rgba(255, 255, 255, 0.58)';
@@ -664,6 +669,35 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     ctx.beginPath();
     ctx.arc(cx, cy - flR * 0.35, flR, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  }
+
+  // 2b-bis. Bright yellow-white Phosphorus combustion flame + dense white P4O10 smoke
+  if ((vessel.phosphorusFlameTimer || 0) > 0.02) {
+    const flIntensity = Math.min(1, vessel.phosphorusFlameTimer);
+    const flR = Math.min(28, 12 + width * 0.28);
+    const cx = left + width * 0.5;
+    const cy = bottom - 6;
+    ctx.save();
+    const isCl = vessel.phosphorusFlameColor === 'cl2_green';
+    const pGrad = ctx.createRadialGradient(cx, cy - flR * 0.4, flR * 0.1, cx, cy - flR * 0.4, flR);
+    pGrad.addColorStop(0, isCl ? `rgba(236, 253, 245, ${0.9 * flIntensity})` : `rgba(255, 255, 255, ${0.98 * flIntensity})`);
+    pGrad.addColorStop(0.45, isCl ? `rgba(163, 230, 53, ${0.65 * flIntensity})` : `rgba(253, 224, 71, ${0.85 * flIntensity})`);
+    pGrad.addColorStop(1, 'rgba(254, 240, 138, 0)');
+    ctx.fillStyle = pGrad;
+    ctx.beginPath();
+    ctx.arc(cx, cy - flR * 0.4, flR, 0, Math.PI * 2);
+    ctx.fill();
+    if (!isCl) {
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.52 * flIntensity})`;
+      for (let i = 0; i < 6; i++) {
+        const sx = cx + Math.sin(timeNow * 4 + i * 1.1) * flR * 0.55;
+        const sy = cy - flR * (0.7 + ((timeNow * 1.8 + i * 0.23) % 1) * 1.1);
+        ctx.beginPath();
+        ctx.arc(sx, sy, 4.5 + (i % 3) * 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
     ctx.restore();
   }
 

@@ -46,7 +46,6 @@ import {
 } from './vesselRenderer.js';
 import {
   renderBurette,
-  renderCrucibleTongs,
   renderDcPowerAndWires,
   renderDiffusionTube,
   renderElectrodeCollectorTubes,
@@ -379,7 +378,6 @@ export class LabWorkbenchCanvas {
       it.kind === 'splint' ||
       it.kind === 'flame_loop' ||
       it.kind === 'indicator_strip' ||
-      it.kind === 'tongs' ||
       it.kind === 'spoon' ||
       it.kind === 'burette' ||
       it.kind === 'condenser' ||
@@ -1224,7 +1222,6 @@ export class LabWorkbenchCanvas {
           hit.kind === 'splint' ||
           hit.kind === 'flame_loop' ||
           hit.kind === 'indicator_strip' ||
-          hit.kind === 'tongs' ||
           hit.kind === 'spoon' ||
           hit.kind === 'stir_bar' ||
           hit.kind === 'electrode' ||
@@ -1289,9 +1286,6 @@ export class LabWorkbenchCanvas {
       } else if (hit && hit.typeId === 'bunsen_burner') {
         soundEngine.playFlameWhoosh(!hit.airHoleOpen);
         this.sim.toggleBurnerAirHole(hit.id);
-      } else if (hit && hit.kind === 'tongs') {
-        soundEngine.playClampClick();
-        this.sim.tongsToggleGripVessel(hit.id);
       } else if (hit && hit.kind === 'vessel' && hit.hasStirBar) {
         soundEngine.playUiClick();
         this.sim.toggleMagneticStir(hit.id);
@@ -1597,21 +1591,6 @@ export class LabWorkbenchCanvas {
       } else if (item.kind === 'phen_cotton' && !item.attachedToId) {
         const mTgt = this.findMouthTargetAt(item.x, item.y, 'cotton');
         this.dropTargetVesselId = mTgt ? mTgt.vessel.id : null;
-      } else if (item.kind === 'tongs') {
-        const tip = getProbeTipPos(item);
-        if (item.grippedVesselId) {
-          const gv = this.sim.getItem(item.grippedVesselId);
-          if (gv && !gv.isShattered) {
-            gv.x = tip.x;
-            gv.y = tip.y;
-            gv.vy = 0;
-            gv.restingOnId = null;
-          }
-          this.dropTargetVesselId = null;
-        } else {
-          const tgt = this.findVesselAt(tip.x, tip.y, null, false);
-          this.dropTargetVesselId = tgt && !tgt.isShattered ? tgt.id : null;
-        }
       } else if (item.kind === 'spoon') {
         const tip = getProbeTipPos(item);
         const tgt = this.findVesselAt(tip.x, tip.y + 10, null, false);
@@ -2406,7 +2385,7 @@ export class LabWorkbenchCanvas {
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
       ...this.sim.items.filter((i) => i.kind === 'rubber_stopper' || i.kind === 'phen_cotton'),
       ...this.sim.items.filter((i) => i.kind === 'filter_funnel' || i.kind === 'electrode' || i.kind === 'salt_bridge' || i.kind === 'stir_bar'),
-      ...this.sim.items.filter((i) => i.kind === 'pipette' || i.kind === 'wash_bottle' || i.kind === 'splint' || i.kind === 'flame_loop' || i.kind === 'indicator_strip' || i.kind === 'tongs' || i.kind === 'spoon' || i.kind === 'thermometer'),
+      ...this.sim.items.filter((i) => i.kind === 'pipette' || i.kind === 'wash_bottle' || i.kind === 'splint' || i.kind === 'flame_loop' || i.kind === 'indicator_strip' || i.kind === 'spoon' || i.kind === 'thermometer'),
     ];
 
     renderDcPowerAndWires(ctx, this.sim.items, this.sim.selectedId, this.isDark);
@@ -2458,8 +2437,6 @@ export class LabWorkbenchCanvas {
         renderFlameLoop(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'indicator_strip') {
         renderIndicatorStrip(ctx, item, isSelected, this.isDark, this.langCode);
-      } else if (item.kind === 'tongs') {
-        renderCrucibleTongs(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'spoon') {
         renderIronSpoon(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'stir_bar') {
@@ -2810,6 +2787,7 @@ export class LabWorkbenchCanvas {
         C2H2_g: { rgba: 'rgba(56, 189, 248, 0.30)', core: 'rgba(186, 230, 253, 0.68)', stroke: '#38bdf8', formula: 'C₂H₂ (M=26 ↑)' },
         CH4_g: { rgba: 'rgba(16, 185, 129, 0.28)', core: 'rgba(110, 231, 183, 0.68)', stroke: '#34d399', formula: 'CH₄ (M=16 ↑)' },
         PH3_g: { rgba: 'rgba(234, 179, 8, 0.30)', core: 'rgba(254, 240, 138, 0.68)', stroke: '#eab308', formula: 'PH₃ (M=34 ↓)' },
+        P4_g: { rgba: 'rgba(245, 158, 11, 0.28)', core: 'rgba(254, 243, 199, 0.68)', stroke: '#f59e0b', formula: 'P₄(g) (M=124 ↓)' },
       };
       const getGasPal = (spId) => {
         if (GAS_PAL[spId]) return GAS_PAL[spId];

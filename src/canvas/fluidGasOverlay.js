@@ -221,6 +221,7 @@ const GAS_COLOR_MAP = {
   C2H2_g: [0.86, 0.92, 0.98],
   CH4_g: [0.80, 0.94, 0.98],
   PH3_g: [0.88, 0.88, 0.72],
+  P4_g: [0.95, 0.92, 0.78],
 };
 
 function compileShader(gl, type, src) {

@@ -262,7 +262,6 @@ export class LabSoundEngine {
     const isMetal =
       spec?.kind === 'stand' ||
       spec?.kind === 'burner' ||
-      spec?.kind === 'tongs' ||
       spec?.kind === 'spoon' ||
       spec?.kind === 'scale';
     const isLarge = (spec?.maxVolumeMl || 250) >= 900;

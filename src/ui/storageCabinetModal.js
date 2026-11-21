@@ -13,7 +13,6 @@ import {
 } from '../canvas/vesselRenderer.js';
 import {
   renderBurette,
-  renderCrucibleTongs,
   renderDcPowerAndWires,
   renderDiffusionTube,
   renderElectrodeRod,
@@ -104,7 +103,6 @@ function drawCubbyThumbnail(canvas, entry) {
     else if (clone.kind === 'splint') renderSplint(ctx, clone, false, isDark, 0);
     else if (clone.kind === 'flame_loop') renderFlameLoop(ctx, clone, false, isDark, 0);
     else if (clone.kind === 'indicator_strip') renderIndicatorStrip(ctx, clone, false, isDark, 'vi');
-    else if (clone.kind === 'tongs') renderCrucibleTongs(ctx, clone, false, isDark, 0);
     else if (clone.kind === 'stir_bar') renderStirBar(ctx, clone, false, isDark);
     else if (clone.kind === 'electrode') renderElectrodeRod(ctx, clone, false, isDark, 0);
     else if (clone.kind === 'salt_bridge') renderSaltBridge(ctx, clone, [clone], false, isDark, 0, 'vi');

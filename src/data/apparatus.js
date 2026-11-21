@@ -555,20 +555,6 @@ export const APPARATUS = {
       [10.8, 1.72],
     ]),
   },
-  crucible_tongs: {
-    id: 'crucible_tongs',
-    kind: 'tongs',
-    category: 'thermal',
-    flippable: true,
-    breakable: false,
-    i18nKey: 'eq_crucible_tongs',
-    isoStandard: 'DIN 12890 · Bow-Grip Crucible Tongs (200 mm)',
-    materialSpec: 'Stainless Steel',
-    tareMassG: 72.0,
-    width: 146,
-    height: 44,
-    fragilityDropPx: Infinity,
-  },
   iron_spoon: {
     id: 'iron_spoon',
     kind: 'spoon',
@@ -1139,7 +1125,6 @@ export const APPARATUS_ORDER = [
   'burner',
   'bunsen_burner',
   'ice_bath',
-  'crucible_tongs',
   'iron_spoon',
   'thermometer',
   'gas_syringe',
@@ -1268,9 +1253,6 @@ export function getProbeTipPos(item) {
   }
   if (item.kind === 'indicator_strip') {
     return { x: item.x + dir * 24, y: item.y, dir };
-  }
-  if (item.kind === 'tongs') {
-    return { x: item.x + dir * 64, y: item.y, dir };
   }
   if (item.kind === 'spoon') {
     const tip = rotatePointAround(item.x + dir * 2, item.y + 46, item.x, item.y, item.tiltAngle || 0);

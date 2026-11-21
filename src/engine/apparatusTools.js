@@ -1123,8 +1123,6 @@ export function stepApparatusTools(sim, dt, realDeltaSec) {
       checkIndicatorStripInteractions(sim, it);
     } else if (it.kind === 'phen_cotton') {
       checkPhenCottonInteractions(sim, it, realDeltaSec);
-    } else if (it.kind === 'tongs') {
-      stepCrucibleTongs(sim, it, dt);
     } else if (it.kind === 'spoon') {
       stepIronSpoon(sim, it, dt);
     } else if (it.kind === 'thermometer') {
@@ -1306,6 +1304,38 @@ export function grindMortarSolids(sim, mortarId) {
     }
   }
 
+  // Mechanochemical Red Phosphorus + Potassium permanganate friction flash/explosion: 9P + 15KMnO4 -> 5K3PO4 + P4O10 + 15MnO2
+  const nPRed = m.moles.P_red_s || 0;
+  const nKMn = m.moles.KMnO4_s || 0;
+  if (nPRed > 1e-7 && nKMn > 1e-7) {
+    const dPKM = Math.min(nPRed / 9, nKMn / 15) * 0.96;
+    if (dPKM > 1e-9) {
+      const cTot = computeHeatCapacityJK(m);
+      m.moles.P_red_s = nPRed - 9 * dPKM;
+      if (m.moles.P_red_s < 1e-12) delete m.moles.P_red_s;
+      m.moles.KMnO4_s = nKMn - 15 * dPKM;
+      if (m.moles.KMnO4_s < 1e-12) delete m.moles.KMnO4_s;
+      m.moles.K3PO4_s = (m.moles.K3PO4_s || 0) + 5 * dPKM;
+      m.moles.P4O10_s = (m.moles.P4O10_s || 0) + dPKM;
+      m.moles.MnO2_s = (m.moles.MnO2_s || 0) + 15 * dPKM;
+      m.particleCounts.K3PO4_s = 800;
+      m.particleCounts.MnO2_s = 1200;
+      m.phosphorusFlameTimer = 1.1;
+      m.phosphorusFlameColor = 'p_white_yellow';
+      m.tempK = Math.min(1450, m.tempK + (dPKM * 6200000) / Math.max(40, cTot));
+      groundAny = true;
+      sim.addLog({
+        type: 'reaction',
+        equation: '9P(đỏ) + 15KMnO₄(s) —(Ma sát / Nghiền)→ 5K₃PO₄(s) + P₄O₁₀(khói) + 15MnO₂(s)',
+        nameVi: '⚠️ Cháy nổ dữ dội khi nghiền Phosphorus đỏ với KMnO₄!',
+        nameEn: '⚠️ Violent friction flash reaction: grinding Red Phosphorus + KMnO₄!',
+        descVi: 'Ma sát khi nghiền P đỏ và chất oxi hóa mạnh KMnO₄ kích hoạt phản ứng cháy nổ tức thì tạo khói trắng P₄O₁₀, K₃PO₄ và MnO₂!',
+        descEn: 'Mechanical friction between Red Phosphorus and strong oxidizer KMnO₄ triggers immediate flash combustion!',
+        vesselLabel: m.label,
+      });
+    }
+  }
+
   // Mechanochemical Alkali Metal + Sulfur reaction on grinding in mortar: 2M + S -> M2S
   for (const [mKey, sProd, eqS, heatJ] of [
     ['Na_s', 'Na2S_s', '2Na(s) + S(s) —(Nghiền)→ Na₂S(s)', 365000],
@@ -1372,184 +1402,6 @@ export function grindMortarSolids(sim, mortarId) {
     sim.emitChange();
   }
   return groundAny;
-}
-
-/**
- * Step metallic Crucible Tongs holding either a hot crucible/dish OR a gripped metal strip over flame.
- */
-function stepCrucibleTongs(sim, tongs, dt) {
-  if (!tongs || tongs.kind !== 'tongs') return;
-  const { x: tipX, y: tipY } = getProbeTipPos(tongs);
-
-  if (tongs.grippedVesselId) {
-    const gv = sim.getItem(tongs.grippedVesselId);
-    if (!gv || gv.isShattered) {
-      tongs.grippedVesselId = null;
-    } else {
-      gv.x = tipX;
-      gv.y = tipY;
-      gv.restingOnId = null;
-      gv.vy = 0;
-    }
-  }
-
-  const sample = tongs.heldSample;
-  if (!sample || (sample.moles || 0) <= 1e-8) {
-    tongs.heldBurnTimer = Math.max(0, (tongs.heldBurnTimer || 0) - dt);
-    if (!sample) return;
-  }
-
-  // Thermal exchange with nearest active burner plume (alcohol OR roaring Bunsen)
-  let flameTargetK = sim.environment.tempK || CONSTANTS.T_STD_K;
-  let kHeat = 0.08;
-  for (const b of sim.items) {
-    if (b.kind !== 'burner' || (b.powerW || 0) <= 0) continue;
-    const bSpec = APPARATUS[b.typeId] || APPARATUS.burner;
-    const nozzleY = b.typeId === 'bunsen_burner' ? b.y + bSpec.height / 2 - 68 : b.y + bSpec.height / 2 - 46;
-    const dx = Math.abs(tipX - b.x);
-    if (dx <= 42 && tipY <= nozzleY + 12 && tipY >= nozzleY - 88) {
-      const fl = Math.round(b.flameLevel || 3);
-      const isBunsen = b.typeId === 'bunsen_burner';
-      const airOpen = b.airHoleOpen !== false;
-      const peakK = isBunsen
-        ? (airOpen ? bSpec.effectiveFlameK[fl] || 1520 : bSpec.yellowFlameK[fl] || 950)
-        : (bSpec.effectiveFlameK[fl] || 696);
-      flameTargetK = Math.max(flameTargetK, peakK);
-      kHeat = isBunsen && airOpen ? 1.45 : 0.72;
-    }
-  }
-
-  if (sample && sample.moles > 1e-8) {
-    sample.tempK = (sample.tempK ?? 298.15) + (flameTargetK - (sample.tempK ?? 298.15)) * Math.min(1, kHeat * dt);
-    const atmMode = sim.environment.atmosphereMode || 'air';
-    let o2Jar = null;
-    for (const v of sim.items) {
-      if (v.kind !== 'vessel' || v.isShattered || v.isStoppered || (v.headspaceGasMoles?.O2_g || 0) <= 1e-4) continue;
-      const vSpec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
-      if (
-        Math.abs(tipX - v.x) <= vSpec.width * 0.48 &&
-        tipY >= v.y - vSpec.height * 0.56 &&
-        tipY <= v.y + vSpec.height * 0.46
-      ) {
-        o2Jar = v;
-        break;
-      }
-    }
-    const isFeSampleFine = Boolean(sample.groundPowder || (sample.particleCount || 0) >= 18);
-    if (
-      sample.speciesId === 'Fe_s' &&
-      ((o2Jar && sample.tempK >= 760.0) || (atmMode === 'air' && isFeSampleFine && sample.tempK >= 1033.15))
-    ) {
-      const availO2 = o2Jar ? o2Jar.headspaceGasMoles.O2_g || 0 : sample.moles;
-      const dFe = Math.min(sample.moles, availO2 * 1.5, Math.max(2e-5, sample.moles * 0.95 * dt));
-      if (dFe > 1e-8) {
-        sample.moles -= dFe;
-        if (o2Jar?.headspaceGasMoles) {
-          o2Jar.headspaceGasMoles.O2_g = Math.max(0, (o2Jar.headspaceGasMoles.O2_g || 0) - (2 / 3) * dFe);
-          o2Jar.moles.Fe3O4_s = (o2Jar.moles.Fe3O4_s || 0) + dFe / 3;
-          o2Jar.tempK = Math.min(1900, (o2Jar.tempK || 298.15) + (dFe / 3) * 1800);
-        }
-        tongs.heldBurnTimer = 1.0;
-        tongs.heldFlameColor = 'sparks_fe';
-        sample.tempK = Math.max(sample.tempK, 1480);
-        if ((sim.timeSec - (tongs.seenReactions?.fe_tongs_o2 ?? -99)) > 4.0) {
-          tongs.seenReactions = tongs.seenReactions || {};
-          tongs.seenReactions.fe_tongs_o2 = sim.timeSec;
-          sim.addLog({
-            type: 'reaction',
-            equation: o2Jar ? '3Fe(s) + 2O₂(g) —(t°)→ Fe₃O₄(s) (bắn tia lửa sáng)' : '8Fe(bột) + 5.5O₂(kk) —(≥ 760 °C)→ 2Fe₃O₄(s) + Fe₂O₃(s)',
-            nameVi: o2Jar ? 'Đốt dây Iron nóng đỏ trong Oxygen (bắn tia lửa sáng → Fe₃O₄)' : 'Đốt cháy bột Iron mịn ngoài không khí (tia lửa vàng-cam)',
-            nameEn: o2Jar ? 'Combustion of red-hot Iron on tongs in O₂ (golden sparks → Fe₃O₄)' : 'Fine Iron powder ignition in air (golden-orange sparks)',
-            descVi: o2Jar ? 'Iron nung đỏ đưa vào bình O₂ cháy sáng chói, bắn ra nhiều tia lửa và tạo hạt rắn nâu đen Fe₃O₄.' : 'Bột Iron mịn tự bốc cháy bắn tia lửa vàng-cam tạo Fe₃O₄ (~75% Fe) và Fe₂O₃ (~25% Fe).',
-            descEn: o2Jar ? 'Red-hot Iron glows intensely inside O₂ gas emitting brilliant golden sparks and molten Fe₃O₄ droplets.' : 'Fine Iron powder sparks in air yielding mainly Fe₃O₄ and thin Fe₂O₃.',
-            vesselLabel: o2Jar?.label || tongs.label,
-          });
-        }
-        if (sample.moles < 1e-7) {
-          if (o2Jar) {
-            tongs.heldSample = null;
-          } else {
-            sample.speciesId = 'Fe3O4_s';
-            sample.moles = dFe * 0.25;
-          }
-        }
-      }
-    } else if (atmMode === 'air') {
-      if (sample.speciesId === 'Na_s' && sample.tempK >= 393.15) {
-        const dBurn = Math.min(sample.moles, Math.max(1e-5, sample.moles * 1.4 * dt));
-        sample.moles -= dBurn;
-        tongs.heldBurnTimer = 0.9;
-        tongs.heldFlameColor = 'yellow_na';
-        if (sample.moles < 1e-7) {
-          sample.speciesId = 'Na2O2_s';
-          sample.moles = dBurn * 0.48;
-          sim.addLog({
-            type: 'reaction',
-            equation: '2Na(s/l) + O₂(g) → Na₂O₂(s) (cháy ngọn lửa vàng 589 nm)',
-            nameVi: 'Đốt cháy Sodium trên kẹp kim loại (ngọn lửa vàng → Na₂O₂)',
-            nameEn: 'Sodium combustion held on crucible tongs (yellow flame → Na₂O₂)',
-            descVi: 'Sodium bốc cháy ở ~120 °C với ngọn lửa vàng rực tạo Sodium peroxide vàng nhạt.',
-            descEn: 'Tongs-held Sodium ignites around 120 °C with bright yellow 589 nm flame yielding Na₂O₂.',
-            vesselLabel: tongs.label,
-          });
-        }
-      } else if (sample.speciesId === 'Zn_s' && sample.tempK >= 1173.15) {
-        const dBurn = Math.min(sample.moles, Math.max(1e-5, sample.moles * 0.9 * dt));
-        sample.moles -= dBurn;
-        tongs.heldBurnTimer = 1.0;
-        tongs.heldFlameColor = 'cyan_zn';
-        if (sample.moles < 1e-7) {
-          sample.speciesId = 'ZnO_s';
-          sample.moles = dBurn;
-          sim.addLog({
-            type: 'reaction',
-            equation: '2Zn(hơi) + O₂(g) —(≥ 907 °C)→ 2ZnO(s) (lửa xanh lam & khói trắng)',
-            nameVi: 'Đốt cháy Zinc trên kẹp kim loại (ngọn lửa xanh lam & khói trắng ZnO)',
-            nameEn: 'Zinc combustion on crucible tongs (cyan-blue flame & white ZnO smoke)',
-            descVi: 'Hơi Zinc bốc cháy với ngọn lửa xanh lam nhạt đặc trưng sinh khói trắng dày đặc ZnO.',
-            descEn: 'Zinc vapor burns with a pale bluish-cyan flame producing dense white ZnO smoke.',
-            vesselLabel: tongs.label,
-          });
-        }
-      } else if (sample.speciesId === 'Mg_s' && sample.tempK >= 723.15) {
-        const dBurn = Math.min(sample.moles, Math.max(1e-5, sample.moles * 1.5 * dt));
-        sample.moles -= dBurn;
-        tongs.heldBurnTimer = 1.1;
-        tongs.heldFlameColor = 'white_mg';
-        if (sample.moles < 1e-7) {
-          sample.speciesId = 'MgO_s';
-          sample.moles = dBurn;
-          sim.addLog({
-            type: 'reaction',
-            equation: '2Mg(s) + O₂(g) → 2MgO(s) (sáng chói)',
-            nameVi: 'Đốt cháy Magnesium trên kẹp kim loại (ánh sáng trắng chói → MgO)',
-            nameEn: 'Magnesium ribbon combustion on crucible tongs (brilliant white flash → MgO)',
-            descVi: 'Magnesium cháy sáng chói tỏa nhiệt mạnh tạo bột trắng MgO (kèm một ít Mg₃N₂ trong không khí).',
-            descEn: 'Magnesium ribbon burns with blinding white brilliance forming white MgO ash.',
-            vesselLabel: tongs.label,
-          });
-        }
-      } else if (sample.speciesId === 'K_s' && sample.tempK >= 336.0) {
-        const dBurn = Math.min(sample.moles, Math.max(1e-5, sample.moles * 1.6 * dt));
-        sample.moles -= dBurn;
-        tongs.heldBurnTimer = 0.95;
-        tongs.heldFlameColor = 'violet_k';
-        if (sample.moles < 1e-7) {
-          sample.speciesId = 'KO2_s';
-          sample.moles = dBurn;
-          sim.addLog({
-            type: 'reaction',
-            equation: 'K(s/l) + O₂(g) → KO₂(s) (ngọn lửa tím 766 nm)',
-            nameVi: 'Đốt cháy Potassium trên kẹp kim loại (ngọn lửa tím hoa cà → KO₂)',
-            nameEn: 'Potassium combustion on crucible tongs (lilac flame → KO₂)',
-            descVi: 'Potassium bốc cháy với ngọn lửa tím đặc trưng tạo KO₂ vàng cam.',
-            descEn: 'Potassium burns with a characteristic lilac flame yielding yellow-orange KO₂.',
-            vesselLabel: tongs.label,
-          });
-        }
-      }
-    }
-  }
 }
 
 /**
@@ -1696,6 +1548,8 @@ function stepIronSpoon(sim, spoon, dt) {
       ? { color: 'cyan_zn', floorK: 1180, flags: { znBurning: true, heatRate: 800 }, dur: 0.95 }
       : (spoon.sulfurFlameTimer || 0) > 0.02
       ? { color: spoon.sulfurO2Flame ? 'sulfur_violet' : 'sulfur_blue', floorK: 820, flags: { sulfurBurning: true }, dur: 0.85 }
+      : (spoon.phosphorusFlameTimer || 0) > 0.02
+      ? { color: 'white_mg', floorK: 960, flags: { pBurning: true }, dur: 0.95 }
       : activeIds.has('cu_o2_ox') && inBurnerFlame && spoon.tempK >= 820
       ? { color: 'emerald_cu', floorK: 0, flags: {}, dur: 0.35 }
       : null;
