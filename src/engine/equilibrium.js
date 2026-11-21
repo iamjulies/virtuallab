@@ -516,12 +516,14 @@ export function calcSolidPourDischargeRate({
   hasLiquid = false,
   suspensionFactor = 0,
   isPowder = false,
+  holdVolumeMl = null,
+  totalContentsMl = null,
 }) {
   if (!sp || sp.phase !== 's') return { ratioStep: 0, ratePerSec: 0, onsetDeg: 48 };
   const sDens = sp.density || 2.5;
   const vShape = spec?.shape || spec?.typeId || kind || 'beaker';
 
-  // Hydrodynamic entrainment during active liquid overflow (can occur at gentle 20–45° tilts!)
+  // Hydrodynamic entrainment ONLY when liquid actually reaches & pours over the lip (liquidFlowFrac > 0)
   let entrainedStep = 0;
   if (liquidFlowFrac > 0 && hasLiquid) {
     if (sDens < liquidDensity) {
@@ -529,13 +531,16 @@ export function calcSolidPourDischargeRate({
       entrainedStep = Math.min(1, liquidFlowFrac * tiltBoost);
     } else if (suspensionFactor > 0.01) {
       entrainedStep = Math.min(1, liquidFlowFrac * Math.max(0, Math.min(1, suspensionFactor)));
-    } else if (vShape !== 'erlenmeyer' && vShape !== 'round_flask' && (tiltDeg || 0) >= 52 && liquidFlowFrac > 0.02) {
-      // Gentle bottom scour when heavy liquid washes near-empty beaker rim
-      entrainedStep = Math.min(0.18, liquidFlowFrac * 0.08 * Math.min(1, ((tiltDeg || 52) - 45) / 45));
+    } else if (vShape !== 'erlenmeyer' && vShape !== 'round_flask' && (tiltDeg || 0) >= 68 && liquidFlowFrac > 0.14) {
+      // Bottom scour only during rapid high-angle decanting
+      entrainedStep = Math.min(0.16, liquidFlowFrac * 0.07 * Math.min(1, ((tiltDeg || 68) - 64) / 35));
     }
   }
 
-  // Geometry profile for dry/steep solid discharge
+  // Geometry profile for dry/steep solid discharge:
+  // When geometric holdVolumeMl & totalContentsMl are supplied, settled solids below the tilted spout rim
+  // cannot spill prematurely at 40-55 deg unless tilted past steep wall-slide angle (74-84 deg for tall vessels)!
+  const belowRimByGeo = holdVolumeMl != null && totalContentsMl != null && totalContentsMl <= holdVolumeMl + 0.05;
   let onsetDeg = 46;
   let neckFactor = 1.0;
   if (kind === 'spoon') {
@@ -545,23 +550,23 @@ export function calcSolidPourDischargeRate({
     onsetDeg = 24;
     neckFactor = 1.75;
   } else if (vShape === 'erlenmeyer' || vShape === 'round_flask' || vShape === 'distillation_flask') {
-    onsetDeg = isPowder || sp.isPrecipitate ? 62 : 70;
+    onsetDeg = belowRimByGeo ? (isPowder || sp.isPrecipitate ? 78 : 84) : (isPowder || sp.isPrecipitate ? 62 : 70);
     neckFactor = 0.36;
   } else if (vShape === 'test_tube' || vShape === 'bottle') {
-    onsetDeg = isPowder || sp.isPrecipitate ? 52 : 60;
+    onsetDeg = belowRimByGeo ? (isPowder || sp.isPrecipitate ? 74 : 80) : (isPowder || sp.isPrecipitate ? 52 : 60);
     neckFactor = 0.52;
   } else if (vShape === 'dish' || vShape === 'crucible' || spec?.isPorcelain || spec?.isMortar || spec?.typeId === 'petri_dish') {
-    onsetDeg = isPowder || sp.isPrecipitate ? 30 : 36;
+    onsetDeg = belowRimByGeo ? (isPowder || sp.isPrecipitate ? 38 : 44) : (isPowder || sp.isPrecipitate ? 30 : 36);
     neckFactor = 1.45;
   } else {
-    // Standard cylindrical beaker
-    onsetDeg = isPowder || sp.isPrecipitate ? 41 : 48;
+    // Standard cylindrical beaker / cylinder: bottom-settled solids stay put at 40-70 deg if below tilted rim height
+    onsetDeg = belowRimByGeo ? (isPowder || sp.isPrecipitate ? 74 : 80) : (isPowder || sp.isPrecipitate ? 41 : 48);
     neckFactor = 1.0;
   }
 
   // Wet settled precipitate clings via capillary cohesion until steeped further or resuspended
   const isWetCling = hasLiquid && sp.isPrecipitate && suspensionFactor < 0.25 && kind === 'vessel';
-  const effOnsetDeg = isWetCling ? onsetDeg + 9 : onsetDeg;
+  const effOnsetDeg = isWetCling ? onsetDeg + 6 : onsetDeg;
   const wetDrag = isWetCling ? 0.52 : 1.0;
   const morphFactor = isPowder ? 1.32 : sp.isPrecipitate ? 1.08 : sDens >= 5.0 ? 1.15 : 0.92;
 

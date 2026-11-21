@@ -839,6 +839,11 @@ export function stepVesselThermodynamics(
     (vessel.moles.CH3COOH_l || 0) > 1e-7 ||
     (vessel.moles.C2H5OC2H5_l || 0) > 1e-7 ||
     (vessel.moles.CH3COOC2H5_l || 0) > 1e-7 ||
+    (vessel.moles.C2H5Br_l || 0) > 1e-7 ||
+    (vessel.moles.CH3CHO_l || 0) > 1e-7 ||
+    (vessel.moles.CH3COCl_l || 0) > 1e-7 ||
+    (vessel.moles.CH3CO_2O_l || 0) > 1e-7 ||
+    (vessel.moles.CH3COCH3_l || 0) > 1e-7 ||
     (vessel.moles.HNO3_l || 0) > 1e-7 ||
     (vessel.moles.H2SO4_l || 0) > 1e-7 ||
     (vessel.moles.Br2_l || 0) > 1e-7;

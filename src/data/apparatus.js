@@ -1374,10 +1374,12 @@ export function getTubeDestTipPos(sourceItem, targetVessel) {
   }
   const tSpec = APPARATUS[targetVessel.typeId] || APPARATUS.beaker_250;
   const effTilt = (targetVessel.tiltAngle || 0) + (targetVessel.landingTilt || 0);
-  if (targetVessel.isInverted) {
-    return rotatePointAround(targetVessel.x, targetVessel.y + tSpec.height / 2 - 4, targetVessel.x, targetVessel.y, effTilt);
-  }
   const subRatio = Math.max(0, Math.min(1, sourceItem?.tubeSubmersionRatio ?? 0.72));
+  if (targetVessel.isInverted) {
+    const invMouthY = targetVessel.y + tSpec.height / 2 - 2;
+    const invTipY = invMouthY - subRatio * Math.max(16, tSpec.height - 10);
+    return rotatePointAround(targetVessel.x, invTipY, targetVessel.x, targetVessel.y, effTilt);
+  }
   const uprightMouthY = targetVessel.y - tSpec.height / 2 + 2;
   const uprightTipY = uprightMouthY + subRatio * Math.max(16, tSpec.height - 10);
   const finalRawY = targetVessel.isStoppered && subRatio < 0.08 ? uprightMouthY - 10 : uprightTipY;

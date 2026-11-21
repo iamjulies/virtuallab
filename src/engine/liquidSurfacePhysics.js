@@ -195,7 +195,7 @@ export function stepVesselSolidBodies(vessel, hasLiquid, surfaceRatioFromBottom,
   // Gravity projected into tilted vessel local frame
   const dir = vessel.tiltDir < 0 ? -1 : 1;
   const effTilt = ((dir * (vessel.tiltDeg || 0) * Math.PI) / 180) + (vessel.landingTilt || 0);
-  const gBase = 240; // px/s^2 scaled to local vessel coords
+  const gBase = 480; // px/s^2 scaled to local vessel coords
   const gx = Math.sin(effTilt) * gBase * (vessel.isInverted ? -1 : 1);
   const gyBase = Math.cos(effTilt) * gBase * (vessel.isInverted ? -1 : 1);
 
@@ -227,8 +227,9 @@ export function stepVesselSolidBodies(vessel, hasLiquid, surfaceRatioFromBottom,
     const friction = b.behavior.sticky ? 0.55 : 0.88;
     const bounce = b.behavior.sticky ? 0.05 : 0.25;
     const neckHalfW = Math.max(9, (spec.neckRadius || spec.width * 0.24) * 0.92);
+    const isBottomAtMouth = vessel.isInverted || Math.cos(effTilt) < -0.1;
     const localMaxW =
-      vessel.isInverted && b.y < 0
+      isBottomAtMouth && b.y < 0
         ? neckHalfW + (halfInnerW - neckHalfW) * Math.max(0, 1 + b.y / Math.max(12, halfInnerH * 0.65))
         : halfInnerW;
     if (b.x < -localMaxW + b.r) {

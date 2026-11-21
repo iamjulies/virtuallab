@@ -5141,7 +5141,19 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
 
   // ==================== PART 1: ABSOLUTE ETHANOL (C2H5OH_l) ====================
   if ((moles.C2H5OH_l || 0) > 1e-10 && orgMob > 0) {
-    // 1a. Mg + I2 initiator at reflux >= 70 C (343.15 K) -> (C2H5O)2Mg↓ + H2↑ (cold Mg, Al, Zn, Fe inert!)
+    // 1a-ext. Calcium (Ca) reacts with anhydrous Ethanol -> (C2H5O)2Ca↓ + H2↑; Mg + I2 initiator at reflux >= 70 C
+    if ((moles.Ca_s || 0) > 1e-9 && (moles.H2O_l || 0) < 0.015) {
+      const kCaE = T >= 313.15 ? 0.72 : 0.25;
+      const dCaE = Math.min(moles.Ca_s, moles.C2H5OH_l / 2) * (1 - Math.exp(-kCaE * dt));
+      if (dCaE > 1e-11) {
+        consumeSpecies('Ca_s', dCaE);
+        consumeSpecies('C2H5OH_l', 2 * dCaE);
+        moles.CaC2H5O_2_s = (moles.CaC2H5O_2_s || 0) + dCaE;
+        gasProduced.H2_g = (gasProduced.H2_g || 0) + dCaE;
+        heatJ += dCaE * 165000;
+        pushRxn('etoh_ca', '2C₂H₅OH + Ca → (C₂H₅O)₂Ca↓ + H₂(g)↑', 'Calcium khử nhóm –OH của Ethanol tạo Calcium ethoxide & H₂', 'Calcium reacts with Ethanol → (C₂H₅O)₂Ca + H₂↑', 'Kim loại Ca tác dụng với Ethanol giải phóng khí H₂ tạo kết tủa trắng Calcium ethoxide.', 'Ca displaces H from Ethanol forming white Calcium ethoxide and H₂ gas.', dCaE, true);
+      }
+    }
     if ((moles.Mg_s || 0) > 1e-9 && ((moles.I2_s || 0) + (moles.I2_aq || 0)) > 1e-8 && T >= 343.15) {
       const dMgE = Math.min(moles.Mg_s, moles.C2H5OH_l / 2) * (1 - Math.exp(-0.55 * dt));
       if (dMgE > 1e-11) {
@@ -5151,6 +5163,21 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
         gasProduced.H2_g = (gasProduced.H2_g || 0) + dMgE;
         heatJ += dMgE * 145000;
         pushRxn('etoh_mg_i2', '2C₂H₅OH + Mg —(I₂, 78 °C)→ (C₂H₅O)₂Mg↓ + H₂↑', 'Magnesium phản ứng với Ethanol đun sôi có I₂ khơi mào', 'Mg reacts with boiling Ethanol (I₂ initiator) → (C₂H₅O)₂Mg↓ + H₂↑', 'Khi đun hồi lưu ~78 °C có tinh thể I₂ khơi mào, Mg tạo kết tủa trắng Magnesium ethoxide và H₂.', 'Refluxing Ethanol with clean Mg + I₂ initiator yields white (C₂H₅O)₂Mg and H₂.', dMgE, true);
+      }
+    }
+
+    // 1b-pre. Anhydrous CrO3(s) + Ethanol -> rapid oxidation/ignition to CH3COOH + green Cr2O3(s)
+    if ((moles.CrO3_s || 0) > 1e-9 && (moles.H2O_l || 0) < 0.025) {
+      const dCr3E = Math.min(moles.C2H5OH_l / 3, moles.CrO3_s / 4) * (1 - Math.exp(-3.2 * dt));
+      if (dCr3E > 1e-11) {
+        consumeSpecies('C2H5OH_l', 3 * dCr3E);
+        consumeSpecies('CrO3_s', 4 * dCr3E);
+        moles.CH3COOH_l = (moles.CH3COOH_l || 0) + 3 * dCr3E;
+        moles.Cr2O3_s = (moles.Cr2O3_s || 0) + 2 * dCr3E;
+        moles.H2O_l = (moles.H2O_l || 0) + 3 * dCr3E;
+        heatJ += dCr3E * 1120000;
+        vessel.naDryBurnTimer = Math.max(vessel.naDryBurnTimer || 0, 0.75);
+        pushRxn('etoh_cro3_dry', '3C₂H₅OH + 4CrO₃(s) → 3CH₃COOH + 2Cr₂O₃(lục thẫm) + 3H₂O (Tỏa nhiệt mạnh!)', 'CrO₃ khan oxi hóa mãnh liệt Ethanol thành Acetic acid & Cr₂O₃ lục thẫm', 'Anhydrous CrO₃ vigorously oxidizes Ethanol → CH₃COOH + green Cr₂O₃', 'Nhỏ Ethanol lên tinh thể CrO₃ khan gây phản ứng tỏa nhiệt bùng cháy, khử Cr(VI) đỏ thẫm về Cr₂O₃ lục thẫm.', 'Pure Ethanol triggers violent exothermic oxidation on CrO₃ crystals leaving green Cr₂O₃.', dCr3E);
       }
     }
 
@@ -5267,6 +5294,114 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
           heatJ -= dC2H4 * 45500;
           pushRxn('etoh_ethene_170', 'C₂H₅OH —(H₂SO₄ đặc, 170–180 °C)→ C₂H₄(g)↑ + H₂O', 'Tách nước nội phân tử Ethanol ở 170 °C điều chế khí Ethylene (C₂H₄)', 'Intramolecular Ethanol dehydration (170 °C) → Ethylene C₂H₄↑', 'Ở 170–180 °C có H₂SO₄ đặc, Ethanol tách nước nội phân tử giải phóng khí Ethene (C₂H₄).', 'At 170–180 °C with conc. H₂SO₄, Ethanol dehydrates cleanly to Ethylene gas.', dC2H4, true);
         }
+      }
+    }
+
+    // 1f-2. Catalytic Al2O3 dehydration & Lebedev reaction (Al2O3 + ZnO, 400-450 C -> Buta-1,3-diene)
+    if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.Al2O3_s || 0) > 1e-7 && T >= 513.15) {
+      if ((moles.ZnO_s || 0) > 1e-7 && T >= 653.15) {
+        // Lebedev synthesis: 2C2H5OH -> CH2=CH-CH=CH2(g) + 2H2O + H2(g)
+        const dLeb = (moles.C2H5OH_l / 2) * (1 - Math.exp(-0.85 * dt));
+        if (dLeb > 1e-11) {
+          consumeSpecies('C2H5OH_l', 2 * dLeb);
+          moles.H2O_l = (moles.H2O_l || 0) + 2 * dLeb;
+          gasProduced.C4H6_g = (gasProduced.C4H6_g || 0) + dLeb;
+          gasProduced.H2_g = (gasProduced.H2_g || 0) + dLeb;
+          heatJ -= dLeb * 102000;
+          pushRxn('etoh_lebedev', '2C₂H₅OH —(Al₂O₃ + ZnO, 400–450 °C)→ CH₂=CH–CH=CH₂(g)↑ + 2H₂O + H₂↑', 'Phản ứng Lebedev tổng hợp Buta-1,3-diene từ Ethanol', 'Lebedev synthesis: Ethanol —(Al₂O₃/ZnO, 450 °C)→ Buta-1,3-diene↑', 'Trên hệ xúc tác Al₂O₃ + ZnO ở 400–450 °C, Ethanol đóng mạch tách nước và H₂ tạo khí Buta-1,3-diene.', 'Over mixed Al₂O₃ + ZnO catalyst at 400–450 °C, Ethanol yields Buta-1,3-diene and H₂.', dLeb, true);
+        }
+      } else if (T < 603.15) {
+        const dAlEth = (moles.C2H5OH_l / 2) * (1 - Math.exp(-0.65 * dt));
+        if (dAlEth > 1e-11) {
+          consumeSpecies('C2H5OH_l', 2 * dAlEth);
+          moles.C2H5OC2H5_l = (moles.C2H5OC2H5_l || 0) + dAlEth;
+          moles.H2O_l = (moles.H2O_l || 0) + dAlEth;
+          heatJ -= dAlEth * 24000;
+          pushRxn('etoh_al2o3_ether', '2C₂H₅OH —(Al₂O₃, 240–260 °C)→ C₂H₅OC₂H₅ + H₂O', 'Tách nước dị thể qua xúc tác Al₂O₃ (240–260 °C) tạo Diethyl ether', 'Al₂O₃-catalyzed Ethanol dehydration (250 °C) → Diethyl ether', 'Xúc tác Al₂O₃ ở 240–260 °C tách nước liên phân tử Ethanol tạo Diethyl ether.', 'Al₂O₃ catalyst at 240–260 °C dehydrates Ethanol to Diethyl ether.', dAlEth);
+        }
+      } else {
+        const dAlC2H4 = moles.C2H5OH_l * (1 - Math.exp(-0.95 * dt));
+        if (dAlC2H4 > 1e-11) {
+          consumeSpecies('C2H5OH_l', dAlC2H4);
+          moles.H2O_l = (moles.H2O_l || 0) + dAlC2H4;
+          gasProduced.C2H4_g = (gasProduced.C2H4_g || 0) + dAlC2H4;
+          heatJ -= dAlC2H4 * 45500;
+          pushRxn('etoh_al2o3_ethene', 'C₂H₅OH —(Al₂O₃, 350–400 °C)→ C₂H₄(g)↑ + H₂O', 'Tách nước qua Al₂O₃ (350–400 °C) tạo Ethylene C₂H₄↑', 'Al₂O₃ dehydration of Ethanol (350–400 °C) → Ethylene C₂H₄↑', 'Ở 350–400 °C trên Al₂O₃, Ethanol tách nước nội phân tử sinh khí Ethene.', 'Over Al₂O₃ at 350–400 °C, Ethanol dehydrates to Ethylene gas.', dAlC2H4, true);
+        }
+      }
+    }
+
+    // 1f-3. –OH Nucleophilic substitution: HBr/H2SO4 (80-110 C), PBr3, PCl3; + Hot CuO (250-300 C) -> CH3CHO + Cu(red)
+    if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.Br_aq || 0) > 1e-6 && (moles.H_aq || 0) > 1e-4 && T >= 353.15) {
+      const dHBrSub = Math.min(moles.C2H5OH_l, moles.Br_aq, moles.H_aq) * (1 - Math.exp(-0.52 * dt));
+      if (dHBrSub > 1e-11) {
+        consumeSpecies('C2H5OH_l', dHBrSub);
+        consumeSpecies('Br_aq', dHBrSub);
+        consumeSpecies('H_aq', dHBrSub);
+        moles.C2H5Br_l = (moles.C2H5Br_l || 0) + dHBrSub;
+        moles.H2O_l = (moles.H2O_l || 0) + dHBrSub;
+        heatJ += dHBrSub * 14000;
+        pushRxn('etoh_hbr_sub', 'C₂H₅OH + HBr —(H₂SO₄ đặc, 80–100 °C)→ C₂H₅Br(l) + H₂O', 'Thế nhóm –OH Ethanol bằng HBr đun nóng tạo Bromoethane C₂H₅Br', 'Nucleophilic substitution: Ethanol + HBr (80–100 °C) → Bromoethane', 'Đun Ethanol với HBr (hoặc NaBr + H₂SO₄ đặc) thế nhóm –OH thành dẫn xuất halogen Bromoethane.', 'Heating Ethanol with HBr substitutes –OH forming Bromoethane (C₂H₅Br).', dHBrSub);
+      }
+    }
+    if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.PBr3_l || 0) > 1e-9 && (moles.H2O_l || 0) < 0.04) {
+      const dPBrE = Math.min(moles.C2H5OH_l / 3, moles.PBr3_l) * (1 - Math.exp(-(T >= 313.15 ? 2.4 : 0.9) * dt));
+      if (dPBrE > 1e-11) {
+        consumeSpecies('C2H5OH_l', 3 * dPBrE);
+        consumeSpecies('PBr3_l', dPBrE);
+        moles.C2H5Br_l = (moles.C2H5Br_l || 0) + 3 * dPBrE;
+        moles.H3PO3_aq = (moles.H3PO3_aq || 0) + dPBrE;
+        heatJ += dPBrE * 145000;
+        pushRxn('etoh_pbr3', '3C₂H₅OH + PBr₃(l) —(25–60 °C)→ 3C₂H₅Br + H₃PO₃', 'Thế –OH Ethanol bằng PBr₃ điều chế Bromoethane C₂H₅Br', 'Ethanol + PBr₃ → 3C₂H₅Br + H₃PO₃', 'PBr₃ thay thế trực tiếp nhóm –OH trong Ethanol tạo Bromoethane hiệu suất cao.', 'PBr₃ cleanly converts Ethanol to Bromoethane and phosphorous acid.', dPBrE);
+      }
+    }
+    if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.PCl3_l || 0) > 1e-9 && (moles.H2O_l || 0) < 0.04) {
+      const dPClE = Math.min(moles.C2H5OH_l / 3, moles.PCl3_l) * (1 - Math.exp(-(T >= 313.15 ? 2.2 : 0.85) * dt));
+      if (dPClE > 1e-11) {
+        consumeSpecies('C2H5OH_l', 3 * dPClE);
+        consumeSpecies('PCl3_l', dPClE);
+        gasProduced.C2H5Cl_g = (gasProduced.C2H5Cl_g || 0) + 3 * dPClE;
+        moles.H3PO3_aq = (moles.H3PO3_aq || 0) + dPClE;
+        heatJ += dPClE * 135000;
+        pushRxn('etoh_pcl3', '3C₂H₅OH + PCl₃(l) —(25–60 °C)→ 3C₂H₅Cl↑ + H₃PO₃', 'Thế –OH Ethanol bằng PCl₃ tạo khí Ethyl chloride C₂H₅Cl↑', 'Ethanol + PCl₃ → 3C₂H₅Cl↑ + H₃PO₃', 'PCl₃ thế nhóm –OH của Ethanol tạo Ethyl chloride bay hơi và H₃PO₃.', 'PCl₃ converts Ethanol to gaseous Chloroethane and H₃PO₃.', dPClE, true);
+      }
+    }
+    if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.CuO_s || 0) > 1e-9 && T >= 513.15) {
+      const dCuOE = Math.min(moles.C2H5OH_l, moles.CuO_s) * (1 - Math.exp(-0.95 * dt));
+      if (dCuOE > 1e-11) {
+        consumeSpecies('C2H5OH_l', dCuOE);
+        consumeSpecies('CuO_s', dCuOE);
+        moles.Cu_s = (moles.Cu_s || 0) + dCuOE;
+        moles.H2O_l = (moles.H2O_l || 0) + dCuOE;
+        if (T >= 295.0) {
+          gasProduced.CH3CHO_g = (gasProduced.CH3CHO_g || 0) + dCuOE;
+        } else {
+          moles.CH3CHO_l = (moles.CH3CHO_l || 0) + dCuOE;
+        }
+        heatJ -= dCuOE * 8200;
+        pushRxn('etoh_cuo_ald', 'C₂H₅OH + CuO(đen) —(250–300 °C)→ CH₃CHO(g)↑ + Cu(đỏ)↓ + H₂O', 'Oxi hóa không hoàn toàn Ethanol bằng CuO đun nóng → Acetaldehyde CH₃CHO + Cu đỏ', 'Mild Ethanol oxidation by hot CuO (250–300 °C) → CH₃CHO + Cu(red)', 'Bột CuO đen oxi hóa ancol bậc I Ethanol thành Acetaldehyde CH₃CHO mùi táo xanh và khử về Cu đỏ.', 'Hot black CuO oxidizes primary Ethanol selectively to Acetaldehyde (green-apple odor) and red Cu.', dCuOE, true);
+      }
+    }
+    if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.CH3CO_2O_l || 0) > 1e-9) {
+      const dAnhE = Math.min(moles.C2H5OH_l, moles.CH3CO_2O_l) * (1 - Math.exp(-(T >= 323.15 ? 2.4 : 0.75) * dt));
+      if (dAnhE > 1e-11) {
+        consumeSpecies('C2H5OH_l', dAnhE);
+        consumeSpecies('CH3CO_2O_l', dAnhE);
+        moles.CH3COOC2H5_l = (moles.CH3COOC2H5_l || 0) + dAnhE;
+        moles.CH3COOH_l = (moles.CH3COOH_l || 0) + dAnhE;
+        heatJ += dAnhE * 62000;
+        pushRxn('etoh_anhydride', 'C₂H₅OH + (CH₃CO)₂O → CH₃COOC₂H₅ + CH₃COOH', 'Acyl hóa Ethanol bằng Acetic anhydride tạo Ethyl acetate hiệu suất ~100%', 'Acetic anhydride esterifies Ethanol cleanly → Ethyl acetate + CH₃COOH', 'Phản ứng một chiều hoàn toàn, không cần tách nước như ester hóa Fischer.', 'Irreversible acylation with Acetic anhydride gives nearly quantitative Ethyl acetate.', dAnhE);
+      }
+    }
+    if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.CH3COCl_l || 0) > 1e-9) {
+      const dAcClE = Math.min(moles.C2H5OH_l, moles.CH3COCl_l) * (1 - Math.exp(-4.5 * dt));
+      if (dAcClE > 1e-11) {
+        consumeSpecies('C2H5OH_l', dAcClE);
+        consumeSpecies('CH3COCl_l', dAcClE);
+        moles.CH3COOC2H5_l = (moles.CH3COOC2H5_l || 0) + dAcClE;
+        gasProduced.HCl_g = (gasProduced.HCl_g || 0) + dAcClE;
+        heatJ += dAcClE * 68000;
+        pushRxn('etoh_ch3cocl', 'C₂H₅OH + CH₃COCl → CH₃COOC₂H₅ + HCl(g)↑', 'Ethanol phản ứng mãnh liệt với Acetyl chloride tạo Ethyl acetate + HCl↑', 'Ethanol + Acetyl chloride → Ethyl acetate + HCl↑', 'CH₃COCl phản ứng tức thì ngay nhiệt độ thường với Ethanol giải phóng khí HCl.', 'Acetyl chloride reacts rapidly at room temperature with Ethanol evolving HCl↑.', dAcClE, true);
       }
     }
 
@@ -5496,6 +5631,235 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
         pushRxn('acoh_kmno4_boil', '5CH₃COOH + 8MnO₄⁻ + 24H⁺ —(đun sôi kéo dài)→ 10CO₂↑ + 8Mn²⁺ + 22H₂O', 'KMnO₄/H₂SO₄ đun sôi mạnh kéo dài mới oxi hóa chậm CH₃COOH thành CO₂', 'Prolonged boiling KMnO₄/H⁺ slowly oxidizes Acetic acid → CO₂↑', 'CH₃COOH bền ở nhiệt độ thường; chỉ đun sôi kéo dài với KMnO₄/H⁺ đặc mới mất màu tím sinh CO₂.', 'CH₃COOH resists ambient KMnO₄; only prolonged boiling in strong acid slowly yields CO₂.', dKAc);
       }
     }
+
+    // 2f. Basic oxides & hydroxides: CuO(t° >= 55 C), Cu(OH)2, ZnO, CaO, Ca(OH)2
+    if ((moles.CuO_s || 0) > 1e-9 && T >= 323.15) {
+      const dCuOAc = Math.min(moles.CuO_s, moles.CH3COOH_l / 2) * (1 - Math.exp(-0.85 * dt));
+      if (dCuOAc > 1e-11) {
+        consumeSpecies('CuO_s', dCuOAc);
+        consumeSpecies('CH3COOH_l', 2 * dCuOAc);
+        moles.Cu2_aq = (moles.Cu2_aq || 0) + dCuOAc;
+        moles.CH3COO_aq = (moles.CH3COO_aq || 0) + 2 * dCuOAc;
+        moles.H2O_l = (moles.H2O_l || 0) + dCuOAc;
+        heatJ += dCuOAc * 42000;
+        pushRxn('acoh_cuo', 'CuO(đen) + 2CH₃COOH —(60–90 °C)→ (CH₃COO)₂Cu(xanh lam) + H₂O', 'CuO tan trong Acetic acid đun nóng tạo dung dịch Copper(II) acetate xanh lam', 'Hot Acetic acid dissolves black CuO → blue Copper(II) acetate', 'Bột CuO đen tan dần khi đun nóng trong CH₃COOH cho dung dịch xanh ngọc lam đặc trưng.', 'Black CuO dissolves in warm Acetic acid giving characteristic blue-teal Copper(II) acetate.', dCuOAc);
+      }
+    }
+    for (const [oxId, catId, wSt, kOx, labelVi, labelEn] of [
+      ['CuOH2_s', 'Cu2_aq', 2, 1.8, 'Cu(OH)₂ xanh lam tan trong Acetic acid', 'Blue Cu(OH)₂ dissolves in Acetic acid'],
+      ['ZnO_s', 'Zn2_aq', 1, 1.4, 'ZnO tan trong Acetic acid tạo (CH₃COO)₂Zn', 'ZnO dissolves in Acetic acid → Zinc acetate'],
+      ['CaO_s', 'Ca2_aq', 1, 2.2, 'CaO tác dụng với Acetic acid tạo (CH₃COO)₂Ca', 'CaO + CH₃COOH → Calcium acetate'],
+      ['CaOH2_s', 'Ca2_aq', 2, 2.8, 'Ca(OH)₂ trung hòa Acetic acid tạo (CH₃COO)₂Ca', 'Ca(OH)₂ neutralizes CH₃COOH → Calcium acetate'],
+    ]) {
+      const nOx = moles[oxId] || 0;
+      if (nOx > 1e-9 && (moles.CH3COOH_l || 0) > 1e-10) {
+        const dOx = Math.min(nOx, moles.CH3COOH_l / 2) * (1 - Math.exp(-kOx * dt));
+        if (dOx > 1e-11) {
+          consumeSpecies(oxId, dOx);
+          consumeSpecies('CH3COOH_l', 2 * dOx);
+          moles[catId] = (moles[catId] || 0) + dOx;
+          moles.CH3COO_aq = (moles.CH3COO_aq || 0) + 2 * dOx;
+          moles.H2O_l = (moles.H2O_l || 0) + wSt * dOx;
+          heatJ += dOx * 52000;
+          pushRxn(`acoh_${oxId}`, `${SPECIES[oxId].formula} + 2CH₃COOH → (CH₃COO)₂M + ${wSt > 1 ? wSt : ''}H₂O`, labelVi, labelEn, labelVi, labelEn, dOx);
+        }
+      }
+    }
+
+    // 2g. Carboxylic Acid Derivatives: PCl3 -> CH3COCl, P4O10 -> Acetic anhydride (CH3CO)2O
+    if ((moles.PCl3_l || 0) > 1e-9 && (moles.H2O_l || 0) < 0.04) {
+      const dAcCl = Math.min(moles.CH3COOH_l / 3, moles.PCl3_l) * (1 - Math.exp(-(T >= 313.15 ? 1.8 : 0.45) * dt));
+      if (dAcCl > 1e-11) {
+        consumeSpecies('CH3COOH_l', 3 * dAcCl);
+        consumeSpecies('PCl3_l', dAcCl);
+        moles.CH3COCl_l = (moles.CH3COCl_l || 0) + 3 * dAcCl;
+        moles.H3PO3_aq = (moles.H3PO3_aq || 0) + dAcCl;
+        heatJ += dAcCl * 85000;
+        pushRxn('acoh_pcl3', '3CH₃COOH + PCl₃(l) —(50 °C)→ 3CH₃COCl(l) + H₃PO₃', 'Tổng hợp Acetyl chloride từ Acetic acid + PCl₃', 'Acetyl chloride synthesis: 3CH₃COOH + PCl₃ → 3CH₃COCl + H₃PO₃', 'PCl₃ thế nhóm –OH trong nhóm carboxyl tạo Acetyl chloride (CH₃COCl).', 'PCl₃ converts Acetic acid into Acetyl chloride (CH₃COCl).', dAcCl);
+      }
+    }
+    if ((moles.P4O10_s || 0) > 1e-9 && (moles.H2O_l || 0) < 0.05 && T >= 333.15) {
+      const dAnh = Math.min(moles.CH3COOH_l / 12, moles.P4O10_s) * (1 - Math.exp(-0.95 * dt));
+      if (dAnh > 1e-11) {
+        consumeSpecies('CH3COOH_l', 12 * dAnh);
+        consumeSpecies('P4O10_s', dAnh);
+        moles.CH3CO_2O_l = (moles.CH3CO_2O_l || 0) + 6 * dAnh;
+        moles.H3PO4_aq = (moles.H3PO4_aq || 0) + 4 * dAnh;
+        heatJ += dAnh * 165000;
+        pushRxn('acoh_p4o10_anhydride', '12CH₃COOH + P₄O₁₀ —(t°)→ 6(CH₃CO)₂O(l) + 4H₃PO₄', 'Tách nước Acetic acid bằng P₄O₁₀ điều chế Acetic anhydride (CH₃CO)₂O', 'P₄O₁₀ dehydrates Acetic acid → Acetic anhydride (CH₃CO)₂O', 'P₄O₁₀ hút nước mạnh giúp hai phân tử CH₃COOH tách 1 H₂O tạo Acetic anhydride.', 'Strong dehydrating agent P₄O₁₀ condenses Acetic acid into Acetic anhydride.', dAnh);
+      }
+    }
+
+    // 2h. Alpha-C Hell-Volhard-Zelinsky (HVZ) halogenation: CH3COOH + Cl2/Br2 —(P_red or UV, 80-100 C)→ haloacetic acid
+    const hasHVZCat = (moles.P_red_s || 0) > 1e-8 || Boolean(options?.uvLight);
+    if (hasHVZCat && T >= 348.15) {
+      const head = vessel.headspaceGasMoles || {};
+      const nClHVZ = (head.Cl2_g || 0) + (moles.Cl2_aq || 0);
+      if (nClHVZ > 1e-8) {
+        const dHClV = Math.min(moles.CH3COOH_l, nClHVZ) * (1 - Math.exp(-0.75 * dt));
+        if (dHClV > 1e-11) {
+          consumeSpecies('CH3COOH_l', dHClV);
+          let needC = dHClV;
+          const tkCg = Math.min(head.Cl2_g || 0, needC);
+          if (tkCg > 0) { head.Cl2_g -= tkCg; if (head.Cl2_g < 1e-13) delete head.Cl2_g; needC -= tkCg; }
+          if (needC > 0 && (moles.Cl2_aq || 0) > 0) consumeSpecies('Cl2_aq', Math.min(moles.Cl2_aq, needC));
+          moles.ClCH2COOH_s = (moles.ClCH2COOH_s || 0) + dHClV;
+          gasProduced.HCl_g = (gasProduced.HCl_g || 0) + dHClV;
+          heatJ += dHClV * 95000;
+          pushRxn('acoh_hvz_cl', 'CH₃COOH + Cl₂ —(P đỏ / UV, 80–100 °C)→ ClCH₂COOH + HCl(g)↑', 'Phản ứng thế gốc –CH₃ (HVZ): Tạo Chloroacetic acid & HCl↑', 'Alpha-C halogenation: CH₃COOH + Cl₂ (P_red / UV) → ClCH₂COOH + HCl↑', 'Có xúc tác P đỏ (hoặc UV) ở 80–100 °C, Cl₂ thế H ở vị trí alpha tạo Chloroacetic acid.', 'With red P catalyst or UV at 80–100 °C, Cl₂ substitutes alpha-H forming Chloroacetic acid.', dHClV, true);
+        }
+      }
+      const nBrHVZ = (moles.Br2_l || 0) + (moles.Br2_aq || 0);
+      if (nBrHVZ > 1e-8) {
+        const dHBrV = Math.min(moles.CH3COOH_l, nBrHVZ) * (1 - Math.exp(-0.68 * dt));
+        if (dHBrV > 1e-11) {
+          consumeSpecies('CH3COOH_l', dHBrV);
+          let needB = dHBrV;
+          const tkBl = Math.min(moles.Br2_l || 0, needB);
+          if (tkBl > 0) { consumeSpecies('Br2_l', tkBl); needB -= tkBl; }
+          if (needB > 0 && (moles.Br2_aq || 0) > 0) consumeSpecies('Br2_aq', Math.min(moles.Br2_aq, needB));
+          moles.BrCH2COOH_s = (moles.BrCH2COOH_s || 0) + dHBrV;
+          gasProduced.HBr_g = (gasProduced.HBr_g || 0) + dHBrV;
+          heatJ += dHBrV * 82000;
+          pushRxn('acoh_hvz_br', 'CH₃COOH + Br₂ —(P đỏ, 80–100 °C)→ BrCH₂COOH + HBr(g)↑', 'Phản ứng Hell–Volhard–Zelinsky: CH₃COOH + Br₂ (P đỏ) → Bromoacetic acid + HBr↑', 'Hell–Volhard–Zelinsky: CH₃COOH + Br₂ (P_red) → BrCH₂COOH + HBr↑', 'Phản ứng Hell–Volhard–Zelinsky (xúc tác P đỏ) thế Br vào carbon alpha nhóm CH₃ tạo BrCH₂COOH.', 'Hell–Volhard–Zelinsky alpha-bromination with red P yields Bromoacetic acid and HBr↑.', dHBrV, true);
+        }
+      }
+    }
+  }
+
+  // ==================== PART 3: ORGANIC DERIVATIVES, ACETATE PYROLYSIS & SODA-LIME ====================
+  // 3a. Hydrolysis of (C2H5O)2Ca, CH3COCl, (CH3CO)2O in aqueous water
+  if ((moles.CaC2H5O_2_s || 0) > 1e-9 && (moles.H2O_l || 0) > 1e-7 && orgMob > 0) {
+    const dHydCaE = Math.min(moles.CaC2H5O_2_s, moles.H2O_l / 2) * (1 - Math.exp(-4.5 * dt));
+    if (dHydCaE > 1e-11) {
+      consumeSpecies('CaC2H5O_2_s', dHydCaE);
+      consumeSpecies('H2O_l', 2 * dHydCaE);
+      moles.CaOH2_s = (moles.CaOH2_s || 0) + dHydCaE;
+      moles.C2H5OH_l = (moles.C2H5OH_l || 0) + 2 * dHydCaE;
+      heatJ += dHydCaE * 78000;
+      pushRxn('cac2h5o2_hyd', '(C₂H₅O)₂Ca + 2H₂O → Ca(OH)₂ + 2C₂H₅OH', 'Thủy phân Calcium ethoxide trong nước', 'Hydrolysis of Calcium ethoxide', 'Ethoxide kim loại bị thủy phân hoàn toàn trong nước tái tạo Ethanol.', 'Calcium ethoxide hydrolyzes cleanly to Ca(OH)₂ and Ethanol.', dHydCaE);
+    }
+  }
+  if ((moles.CH3COCl_l || 0) > 1e-9 && (moles.H2O_l || 0) > 1e-7 && orgMob > 0) {
+    const dHydAcCl = Math.min(moles.CH3COCl_l, moles.H2O_l) * (1 - Math.exp(-6.5 * dt));
+    if (dHydAcCl > 1e-11) {
+      consumeSpecies('CH3COCl_l', dHydAcCl);
+      consumeSpecies('H2O_l', dHydAcCl);
+      moles.CH3COOH_l = (moles.CH3COOH_l || 0) + dHydAcCl;
+      moles.H_aq = (moles.H_aq || 0) + dHydAcCl;
+      moles.Cl_aq = (moles.Cl_aq || 0) + dHydAcCl;
+      heatJ += dHydAcCl * 92000;
+      pushRxn('ch3cocl_hyd', 'CH₃COCl + H₂O → CH₃COOH + HCl(aq)', 'Thủy phân mãnh liệt Acetyl chloride', 'Vigorous Acetyl chloride hydrolysis', 'CH₃COCl thủy phân ngay trong nước tạo Acetic acid và HCl.', 'Acetyl chloride hydrolyzes briskly forming CH₃COOH and HCl.', dHydAcCl);
+    }
+  }
+  if ((moles.CH3CO_2O_l || 0) > 1e-9 && (moles.H2O_l || 0) > 1e-7 && orgMob > 0) {
+    const kHA = T >= 323.15 ? 2.4 : 0.35;
+    const dHydAnh = Math.min(moles.CH3CO_2O_l, moles.H2O_l) * (1 - Math.exp(-kHA * dt));
+    if (dHydAnh > 1e-11) {
+      consumeSpecies('CH3CO_2O_l', dHydAnh);
+      consumeSpecies('H2O_l', dHydAnh);
+      moles.CH3COOH_l = (moles.CH3COOH_l || 0) + 2 * dHydAnh;
+      heatJ += dHydAnh * 58000;
+      pushRxn('anhydride_hyd', '(CH₃CO)₂O + H₂O → 2CH₃COOH', 'Thủy phân Acetic anhydride thành Acetic acid', 'Acetic anhydride hydrolysis → 2CH₃COOH', 'Acetic anhydride thủy phân tạo 2 phân tử Acetic acid.', 'Acetic anhydride hydrolyzes yielding two equivalents of Acetic acid.', dHydAnh);
+    }
+  }
+
+  // 3b. Acetamide dehydration: CH3COONH4 —(150–200 °C)→ CH3CONH2 + H2O↑
+  if ((moles.CH3COONH4_s || 0) > 1e-9 && T >= 423.15) {
+    const dAmide = moles.CH3COONH4_s * (1 - Math.exp(-0.55 * dt));
+    if (dAmide > 1e-11) {
+      consumeSpecies('CH3COONH4_s', dAmide);
+      moles.CH3CONH2_s = (moles.CH3CONH2_s || 0) + dAmide;
+      gasProduced.H2O_g = (gasProduced.H2O_g || 0) + dAmide;
+      heatJ -= dAmide * 48000;
+      pushRxn('ch3coonh4_acetamide', 'CH₃COONH₄(s) —(150–200 °C)→ CH₃CONH₂(s) + H₂O(g)↑', 'Nhiệt phân tách nước Ammonium acetate tạo Acetamide CH₃CONH₂', 'Ammonium acetate dehydration (150–200 °C) → Acetamide + H₂O↑', 'Đun nóng muối CH₃COONH₄ ở 150–200 °C tách nước tạo Acetamide (CH₃CONH₂).', 'Heating solid Ammonium acetate (150–200 °C) dehydrates to crystalline Acetamide.', dAmide);
+    }
+  }
+
+  // 3c. Soda-lime decarboxylation: CH3COONa(s) + NaOH(s) —(CaO, 300–400 °C)→ CH4(g)↑ + Na2CO3(s)
+  if ((moles.CH3COONa_s || 0) > 1e-9 && (moles.NaOH_s || 0) > 1e-9 && T >= 573.15 && (moles.H2O_l || 0) < 0.01) {
+    const hasCaOCat = (moles.CaO_s || 0) > 1e-9;
+    if (hasCaOCat || T >= 623.15) {
+      const kDec = hasCaOCat ? 1.15 : 0.45;
+      const dCH4 = Math.min(moles.CH3COONa_s, moles.NaOH_s) * (1 - Math.exp(-kDec * dt));
+      if (dCH4 > 1e-11) {
+        consumeSpecies('CH3COONa_s', dCH4);
+        consumeSpecies('NaOH_s', dCH4);
+        moles.Na2CO3_s = (moles.Na2CO3_s || 0) + dCH4;
+        gasProduced.CH4_g = (gasProduced.CH4_g || 0) + dCH4;
+        heatJ -= dCH4 * 18000;
+        pushRxn('sodalime_ch4', 'CH₃COONa + NaOH —(CaO, 300–400 °C)→ CH₄(g)↑ + Na₂CO₃', 'Phản ứng vôi tôi xút (Soda-lime) điều chế khí Methane CH₄↑', 'Soda-lime decarboxylation: CH₃COONa + NaOH (CaO, 350 °C) → CH₄↑ + Na₂CO₃', 'Nung khan CH₃COONa với NaOH và vôi sống CaO ở 300–400 °C giải phóng khí Methane tinh khiết.', 'Heating dry Sodium acetate with NaOH/CaO soda-lime (300–400 °C) liberates Methane CH₄↑.', dCH4, true);
+      }
+    }
+  }
+
+  // 3d. Dry distillation of Calcium acetate: (CH3COO)2Ca(s) —(400–500 °C)→ CH3COCH3(Acetone) + CaCO3(s)
+  if ((moles.CaCH3COO_2_s || 0) > 1e-9 && T >= 653.15 && (moles.H2O_l || 0) < 0.01) {
+    const dAcet = moles.CaCH3COO_2_s * (1 - Math.exp(-0.82 * dt));
+    if (dAcet > 1e-11) {
+      consumeSpecies('CaCH3COO_2_s', dAcet);
+      moles.CaCO3_s = (moles.CaCO3_s || 0) + dAcet;
+      if (T >= 329.20) {
+        gasProduced.CH3COCH3_g = (gasProduced.CH3COCH3_g || 0) + dAcet;
+      } else {
+        moles.CH3COCH3_l = (moles.CH3COCH3_l || 0) + dAcet;
+      }
+      heatJ -= dAcet * 42000;
+      pushRxn('ca_acetate_pyrolysis', '(CH₃COO)₂Ca(s) —(400–500 °C)→ CH₃COCH₃(Acetone)↑ + CaCO₃(s)', 'Chưng khô Calcium acetate điều chế Acetone CH₃COCH₃', 'Calcium acetate dry distillation (400–500 °C) → Acetone + CaCO₃', 'Nhiệt phân muối (CH₃COO)₂Ca khan ở 400–500 °C tạo hơi Acetone và cặn CaCO₃.', 'Pyrolyzing anhydrous Calcium acetate at 400–500 °C distills Acetone leaving CaCO₃.', dAcet, true);
+    }
+  }
+
+  // 3e. Acetaldehyde mild oxidations (Cu(OH)2 warm -> Cu2O đỏ gạch; Ag+ / NH3 Tollens silver mirror!) & Acetone Iodoform
+  if ((moles.CH3CHO_l || 0) > 1e-9 && (moles.CuOH2_s || 0) > 1e-9 && (moles.OH_aq || 0) > 1e-5 && T >= 333.15 && orgMob > 0) {
+    const dCu2O = Math.min(moles.CH3CHO_l, moles.CuOH2_s / 2, moles.OH_aq) * (1 - Math.exp(-1.1 * dt));
+    if (dCu2O > 1e-11) {
+      consumeSpecies('CH3CHO_l', dCu2O);
+      consumeSpecies('CuOH2_s', 2 * dCu2O);
+      consumeSpecies('OH_aq', dCu2O);
+      moles.CH3COO_aq = (moles.CH3COO_aq || 0) + dCu2O;
+      moles.Cu2O_s = (moles.Cu2O_s || 0) + dCu2O;
+      moles.H2O_l = (moles.H2O_l || 0) + 3 * dCu2O;
+      heatJ += dCu2O * 140000;
+      pushRxn('ch3cho_fehling', 'CH₃CHO + 2Cu(OH)₂ + OH⁻ —(t°)→ CH₃COO⁻ + Cu₂O↓ (đỏ gạch) + 3H₂O', 'Acetaldehyde khử Cu(OH)₂/OH⁻ đun nóng tạo kết tủa đỏ gạch Cu₂O↓', 'Acetaldehyde reduces Cu(OH)₂/OH⁻ (heat) → brick-red Cu₂O↓', 'Phản ứng đặc trưng nhóm –CHO tạo kết tủa đỏ gạch Cu₂O.', 'Aldehyde –CHO reduces alkaline Cu(OH)₂ on heating forming brick-red Cu₂O↓.', dCu2O);
+    }
+  }
+  if ((moles.CH3CHO_l || 0) > 1e-9 && (moles.AgNH3_2_aq || 0) > 1e-7 && T >= 313.15 && orgMob > 0) {
+    const dSilv = Math.min(moles.CH3CHO_l, moles.AgNH3_2_aq / 2) * (1 - Math.exp(-0.95 * dt));
+    if (dSilv > 1e-11) {
+      consumeSpecies('CH3CHO_l', dSilv);
+      consumeSpecies('AgNH3_2_aq', 2 * dSilv);
+      moles.CH3COO_aq = (moles.CH3COO_aq || 0) + dSilv;
+      moles.NH4_aq = (moles.NH4_aq || 0) + dSilv;
+      moles.NH3_aq = (moles.NH3_aq || 0) + 3 * dSilv;
+      moles.Ag_s = (moles.Ag_s || 0) + 2 * dSilv;
+      vessel.silverMirrorFrac = Math.min(1, (vessel.silverMirrorFrac || 0) + 0.65);
+      vessel.silverMirrorLevel = Math.min(1, (vessel.silverMirrorLevel || 0) + 0.65);
+      heatJ += dSilv * 185000;
+      pushRxn('ch3cho_tollens', 'CH₃CHO + 2[Ag(NH₃)₂]⁺ + OH⁻ —(t°)→ CH₃COO⁻ + 2Ag↓ (tráng gương) + 3NH₃ + H₂O', 'Phản ứng tráng bạc Tollens: Acetaldehyde tạo lớp gương Ag↓', 'Tollens silver mirror test: CH₃CHO + [Ag(NH₃)₂]⁺ → 2Ag↓', 'Acetaldehyde khử phức bạc amoniac tạo lớp bạc sáng bóng bám thành bình.', 'Acetaldehyde reduces Tollens reagent depositing a bright metallic silver mirror.', dSilv);
+    }
+  }
+  const availI2Ac = (moles.I2_s || 0) + (moles.I2_aq || 0) + (moles.I3_aq || 0);
+  if ((moles.CH3COCH3_l || 0) > 1e-9 && availI2Ac > 1e-7 && (moles.OH_aq || 0) > 1e-6 && orgMob > 0) {
+    const dIodoAc = Math.min(moles.CH3COCH3_l, availI2Ac / 3, moles.OH_aq / 4) * (1 - Math.exp(-1.4 * dt));
+    if (dIodoAc > 1e-11) {
+      consumeSpecies('CH3COCH3_l', dIodoAc);
+      let needIAc = 3 * dIodoAc;
+      for (const ik of ['I2_s', 'I2_aq', 'I3_aq']) {
+        const tk = Math.min(moles[ik] || 0, needIAc);
+        if (tk > 0) {
+          consumeSpecies(ik, tk);
+          if (ik === 'I3_aq') moles.I_aq = (moles.I_aq || 0) + tk;
+          needIAc -= tk;
+        }
+      }
+      consumeSpecies('OH_aq', 4 * dIodoAc);
+      moles.CHI3_s = (moles.CHI3_s || 0) + dIodoAc;
+      moles.CH3COO_aq = (moles.CH3COO_aq || 0) + dIodoAc;
+      moles.I_aq = (moles.I_aq || 0) + 3 * dIodoAc;
+      moles.H2O_l = (moles.H2O_l || 0) + 3 * dIodoAc;
+      heatJ += dIodoAc * 125000;
+      pushRxn('acetone_iodoform', 'CH₃COCH₃ + 3I₂ + 4OH⁻ → CHI₃↓ (vàng tươi) + CH₃COO⁻ + 3I⁻ + 3H₂O', 'Phản ứng Iodoform của Acetone tạo kết tủa vàng CHI₃↓', 'Acetone Iodoform test → bright yellow CHI₃↓', 'Nhóm methyl ketone CH₃CO– trong Acetone tạo ngay kết tủa vàng CHI₃↓ với I₂/NaOH.', 'Acetone rapidly yields bright yellow CHI₃ precipitate with I₂/NaOH.', dIodoAc);
+    }
   }
 
   return heatJ;
@@ -5705,6 +6069,7 @@ export const DRY_SALT_PAIRINGS = [
   ['Mg2_aq', 1, 'CH3COO_aq', 2, 'MgCH3COO_2_s', 1, false],
   ['Zn2_aq', 1, 'CH3COO_aq', 2, 'ZnCH3COO_2_s', 1, false],
   ['Ca2_aq', 1, 'CH3COO_aq', 2, 'CaCH3COO_2_s', 1, false],
+  ['Cu2_aq', 1, 'CH3COO_aq', 2, 'CuCH3COO_2_s', 1, false],
   ['Fe2_aq', 1, 'CH3COO_aq', 2, 'FeCH3COO_2_s', 1, false],
   ['H_aq', 1, 'CH3COO_aq', 1, 'CH3COOH_s', 1, false],
   ['Na_aq', 1, 'HCOO_aq', 1, 'HCOONa_s', 1, false],

@@ -28,6 +28,7 @@
       getProbeTipPos,
       getStandGeometry,
       getSyringeGeometry,
+      getTubeDestTipPos,
       getVesselEndPorts,
       getVesselTubingPort,
     } from '../src/data/apparatus.js';
@@ -137,6 +138,7 @@
       isTubeTipSubmerged,
     } from '../src/engine/gasNetwork.js';
     import { checkFlameLoopInteractions } from '../src/engine/apparatusTools.js';
+    import { stepVesselSolidBodies } from '../src/engine/liquidSurfacePhysics.js';
 
     const results = [];
     const details = [];
@@ -2474,7 +2476,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.22';
+      const expectedBuild = 'virlab_beta_v4+build.23';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2532,7 +2534,7 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.22 parity: All 39 apparatus & 30 starter reagents translated in VI/EN, Prompt 55 Inspector/Telemetry keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.23 parity: All 39 apparatus & 30 starter reagents translated in VI/EN, Prompt 57 Ethanol/Acetic/Pouring/TubeDepth/Gravity keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 39 &&
           STARTER_REAGENTS.length === 30 &&
           !APPARATUS.clay_triangle &&
@@ -9066,9 +9068,9 @@
       fnlMounted.mountedOnVesselId = bRecv.id;
       bSrcMix.x = 265;
       bSrcMix.y = 265;
-      bSrcMix.moles = { H2O_l: 4.0, Na_aq: 0.02, Cl_aq: 0.02, AgCl_s: 0.015 };
+      bSrcMix.moles = { H2O_l: 6.0, Na_aq: 0.02, Cl_aq: 0.02, AgCl_s: 0.015 };
       simPour.stirVessel(bSrcMix.id);
-      simPour.setVesselTiltDeg(bSrcMix.id, 42, 1);
+      simPour.setVesselTiltDeg(bSrcMix.id, 62, 1);
       for (let i = 0; i < 20; i++) simPour.stepVesselTiltPouring(bSrcMix, 0.08);
       const pourPhysOk =
         rErl45.ratePerSec === 0 &&
@@ -9290,6 +9292,160 @@
         'Prompt 56 invariants: K2Cr2O7 1500C Air vs Vacuum thermal stages, reversible Esterification Kc=4 (66.7%/84.5%) & analytical kinetics + 70.2C ternary azeotrope, .chem-arrow log cards',
         specMetaOk && vacOk && airCrOk && estOk && logDomOk,
         `meta=${specMetaOk}, vac=${vacOk}(K=${vacKGas.toFixed(3)}), air=${airCrOk}(cr=${(vAirHi.moles.Cr2O3_s||0).toFixed(3)}), est=${estOk}(Y11=${estY11.toFixed(1)}%,Y12=${estY12.toFixed(1)}%,az=${azBpC.toFixed(1)}C), logUI=${logDomOk}(${l1}/${l2}/${l3}/${l4}/${l5}/${l6})`
+      );
+    }
+
+    // TEST 175: Prompt 57 (virlab_beta_v4+build.23) — Realistic Geometric Solid Pouring, Complete Ethanol & Acetic Acid Chemistry, Inverted Tube Depth Slider/Geometry & Upside-Down Gravity Parity
+    {
+      // 1) Realistic solid pouring: 15 mL liquid + 0.05 mol (~5 g) CaCO3(s) at 45 deg in 250 mL beaker is far below spout rim -> zero premature solid spill!
+      const rGeo45 = calcSolidPourDischargeRate({
+        spec: APPARATUS.beaker_250,
+        kind: 'vessel',
+        spId: 'CaCO3_s',
+        sp: SPECIES.CaCO3_s,
+        tiltDeg: 45,
+        isPowder: true,
+        holdVolumeMl: 95,
+        totalContentsMl: 17,
+      });
+      const rGeo84 = calcSolidPourDischargeRate({
+        spec: APPARATUS.beaker_250,
+        kind: 'vessel',
+        spId: 'CaCO3_s',
+        sp: SPECIES.CaCO3_s,
+        tiltDeg: 84,
+        isPowder: true,
+        holdVolumeMl: 1,
+        totalContentsMl: 17,
+      });
+      const simP57 = new LabSimulation();
+      const vGeo = simP57.createApparatus('beaker_250', 220, 350);
+      vGeo.moles = { H2O_l: 0.83, CaCO3_s: 0.05 };
+      simP57.setVesselTiltDeg(vGeo.id, 45, 1);
+      for (let i = 0; i < 15; i++) simP57.stepVesselTiltPouring(vGeo, 0.05);
+      const pourGeoOk = rGeo45.ratePerSec === 0 && rGeo84.ratePerSec > 0 && Math.abs((vGeo.moles.CaCO3_s || 0) - 0.05) < 1e-6;
+
+      // 2) Complete Ethanol chemistry matrix: Ca, PBr3, CuO(260C)->CH3CHO+Cu, Al2O3(250C ether / 380C ethene), Al2O3+ZnO(Lebedev 420C -> C4H6+H2), CrO3
+      const vEtCa = simP57.createApparatus('erlenmeyer_250', 100, 400);
+      vEtCa.moles = { C2H5OH_l: 0.2, Ca_s: 0.02 };
+      for (let i = 0; i < 6; i++) stepVesselChemistry(vEtCa, 0.2, {});
+      const etCaOk = (vEtCa.moles.CaC2H5O_2_s || 0) > 0.005;
+
+      const vEtPBr = simP57.createApparatus('erlenmeyer_250', 150, 400);
+      vEtPBr.moles = { C2H5OH_l: 0.3, PBr3_l: 0.05 };
+      for (let i = 0; i < 6; i++) stepVesselChemistry(vEtPBr, 0.2, {});
+      const etPBrOk = (vEtPBr.moles.C2H5Br_l || 0) > 0.05 && (vEtPBr.moles.H3PO3_aq || 0) > 0.01;
+
+      const vEtCuO = simP57.createApparatus('erlenmeyer_250', 200, 400);
+      vEtCuO.tempK = 543.15;
+      vEtCuO.isStoppered = true;
+      vEtCuO.moles = { C2H5OH_l: 0.1, CuO_s: 0.05 };
+      let resCuO = stepVesselChemistry(vEtCuO, 0.2, {});
+      for (let i = 0; i < 4; i++) resCuO = stepVesselChemistry(vEtCuO, 0.2, {});
+      const etCuOOk = (vEtCuO.moles.Cu_s || 0) > 0.01 && ((resCuO.gasProduced?.CH3CHO_g || 0) > 1e-4 || (vEtCuO.moles.CH3CHO_l || 0) > 1e-4);
+
+      const vLeb = simP57.createApparatus('erlenmeyer_250', 250, 400);
+      vLeb.tempK = 693.15;
+      vLeb.moles = { C2H5OH_l: 0.2, Al2O3_s: 0.05, ZnO_s: 0.05 };
+      const resLeb = stepVesselChemistry(vLeb, 0.2, {});
+      const lebOk = (resLeb.gasProduced?.C4H6_g || 0) > 0.002 && (resLeb.gasProduced?.H2_g || 0) > 0.002;
+
+      const vAlEth = simP57.createApparatus('erlenmeyer_250', 280, 400);
+      vAlEth.tempK = 528.15;
+      vAlEth.moles = { C2H5OH_l: 0.2, Al2O3_s: 0.05 };
+      stepVesselChemistry(vAlEth, 0.2, {});
+      const alEthOk = (vAlEth.moles.C2H5OC2H5_l || 0) > 0.002;
+
+      // 3) Complete Acetic Acid & Derivatives matrix: CuO(t°), PCl3->CH3COCl, P4O10->(CH3CO)2O, HVZ P_red+Br2, Acetamide, Soda-lime CH4, Ca-acetate->Acetone
+      const vAcCuO = simP57.createApparatus('beaker_250', 320, 400);
+      vAcCuO.tempK = 343.15;
+      vAcCuO.moles = { CH3COOH_l: 0.2, CuO_s: 0.04 };
+      for (let i = 0; i < 6; i++) stepVesselChemistry(vAcCuO, 0.2, {});
+      const acCuOOk = (vAcCuO.moles.Cu2_aq || 0) > 0.01 && (vAcCuO.moles.CH3COO_aq || 0) > 0.02;
+
+      const vAcP4 = simP57.createApparatus('erlenmeyer_250', 360, 400);
+      vAcP4.tempK = 353.15;
+      vAcP4.moles = { CH3COOH_l: 0.6, P4O10_s: 0.04 };
+      for (let i = 0; i < 5; i++) stepVesselChemistry(vAcP4, 0.2, {});
+      const acAnhOk = (vAcP4.moles.CH3CO_2O_l || 0) > 0.02;
+
+      const vHVZ = simP57.createApparatus('erlenmeyer_250', 400, 400);
+      vHVZ.tempK = 363.15;
+      vHVZ.moles = { CH3COOH_l: 0.2, Br2_l: 0.1, P_red_s: 0.01 };
+      const resHVZ = stepVesselChemistry(vHVZ, 0.2, {});
+      const hvzOk = (vHVZ.moles.BrCH2COOH_s || 0) > 0.005 && (resHVZ.gasProduced?.HBr_g || 0) > 0.005;
+
+      const vSoda = simP57.createApparatus('test_tube_50', 440, 400);
+      vSoda.tempK = 623.15;
+      vSoda.moles = { CH3COONa_s: 0.05, NaOH_s: 0.05, CaO_s: 0.05 };
+      const resSoda = stepVesselChemistry(vSoda, 0.2, {});
+      const sodaOk = (resSoda.gasProduced?.CH4_g || 0) > 0.002 && (vSoda.moles.Na2CO3_s || 0) > 0.002;
+
+      const vCaAc = simP57.createApparatus('test_tube_50', 480, 400);
+      vCaAc.tempK = 693.15;
+      vCaAc.moles = { CaCH3COO_2_s: 0.05 };
+      const resCaAc = stepVesselChemistry(vCaAc, 0.2, {});
+      const caAcOk = (resCaAc.gasProduced?.CH3COCH3_g || 0) > 0.002 && (vCaAc.moles.CaCO3_s || 0) > 0.002;
+
+      const vAmide = simP57.createApparatus('test_tube_50', 510, 400);
+      vAmide.tempK = 448.15;
+      vAmide.moles = { CH3COONH4_s: 0.05 };
+      stepVesselChemistry(vAmide, 0.2, {});
+      const amideOk = (vAmide.moles.CH3CONH2_s || 0) > 0.002;
+
+      // 4) Inverted vessel tube depth slider UI + upward tubing penetration geometry + submersion check
+      const simTube = new LabSimulation();
+      const vSrcT = simTube.createApparatus('erlenmeyer_250', 220, 400);
+      vSrcT.isStoppered = true;
+      const vInvT = simTube.createApparatus('beaker_250', 420, 320);
+      vInvT.isInverted = true;
+      vInvT.moles = { H2O_l: 4.5 };
+      simTube.connectTube(vSrcT.id, vInvT.id);
+      vSrcT.tubeSubmersionRatio = 0.15;
+      const tipShallow = getTubeDestTipPos(vSrcT, vInvT);
+      const subShallow = isTubeTipSubmerged(vSrcT, vInvT);
+      vSrcT.tubeSubmersionRatio = 0.85;
+      const tipDeep = getTubeDestTipPos(vSrcT, vInvT);
+      const subDeep = isTubeTipSubmerged(vSrcT, vInvT);
+      const geomInv = computeTubingGeometry(vSrcT, vInvT);
+
+      const hostTube = document.createElement('div');
+      const insTube = new InspectorPanel(hostTube, simTube, () => (k) => I18N.vi[k] || k, {});
+      simTube.selectedId = vSrcT.id;
+      insTube.update('vi', true);
+      const sliderInvPresent = Boolean(hostTube.querySelector('#ins-tube-depth-slider'));
+      const invTubeOk =
+        sliderInvPresent &&
+        tipDeep.y < tipShallow.y - 40 &&
+        subShallow === true &&
+        subDeep === false &&
+        geomInv.points.length >= 20;
+
+      // 5) Gravity parity for inverted & 180-deg tilted stoppered vessel (both _solidBodies and renderVessel run cleanly)
+      const vGrav = simTube.createApparatus('erlenmeyer_250', 600, 320);
+      vGrav.isStoppered = true;
+      vGrav.tiltDeg = 180;
+      vGrav.tiltAngle = Math.PI;
+      vGrav.moles = { CaCO3_s: 0.05, Na_s: 0.02 };
+      for (let i = 0; i < 20; i++) stepVesselSolidBodies(vGrav, false, 0, 1.0, 0.05);
+      const meanBodyY =
+        (vGrav._solidBodies || []).reduce((acc, b) => acc + b.y, 0) / Math.max(1, (vGrav._solidBodies || []).length);
+      const cGrav = document.createElement('canvas');
+      cGrav.width = 240;
+      cGrav.height = 240;
+      let gravRenderOk = false;
+      try {
+        renderVessel(cGrav.getContext('2d'), vGrav, { isSelected: false, isDropTarget: false, isDark: true, timeNow: 0, langCode: 'vi' });
+        gravRenderOk = true;
+      } catch (e) {
+        gravRenderOk = false;
+      }
+      const gravOk = gravRenderOk && meanBodyY < -20;
+
+      assert(
+        'Prompt 57 invariants: Geometric solid pouring threshold, full Ethanol (Ca/PBr3/CuO/Al2O3/Lebedev/CrO3) & Acetic (CuO/P4O10/HVZ/Soda-lime/Acetone/Acetamide) matrices, inverted tube depth slider+geometry & 180-deg gravity parity',
+        pourGeoOk && etCaOk && etPBrOk && etCuOOk && lebOk && alEthOk && acCuOOk && acAnhOk && hvzOk && sodaOk && caAcOk && amideOk && invTubeOk && gravOk,
+        `pour=${pourGeoOk}, et=[Ca:${etCaOk},PBr3:${etPBrOk},CuO:${etCuOOk},Leb:${lebOk},AlEth:${alEthOk}], ac=[CuO:${acCuOOk},Anh:${acAnhOk},HVZ:${hvzOk},CH4:${sodaOk},Acet:${caAcOk},Amide:${amideOk}], invTube=${invTubeOk}(slider=${sliderInvPresent},dy=${(tipShallow.y - tipDeep.y).toFixed(1)}), grav=${gravOk}(meanY=${meanBodyY.toFixed(1)})`
       );
     }
 

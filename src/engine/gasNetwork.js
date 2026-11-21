@@ -112,11 +112,14 @@ export function isTubeTipSubmerged(sourceVessel, targetVessel) {
   const liqMl = computeLiquidVolumeL(targetVessel.moles || {}, targetVessel.tempK || 298.15) * 1000;
   if (liqMl <= 0.05) return false;
   const tSpec = APPARATUS[targetVessel.typeId] || APPARATUS.beaker_250;
-  if (targetVessel.isInverted) return true;
   const subRatio = Math.max(0, Math.min(1, sourceVessel?.tubeSubmersionRatio ?? 0.72));
   const fillFrac = tSpec.geometry
     ? tSpec.geometry.getLiquidState(liqMl).fillRatio
     : Math.min(1, liqMl / Math.max(1, tSpec.maxVolumeMl || 250));
+  if (targetVessel.isInverted) {
+    // Inside inverted vessels, water occupies [0 .. fillFrac] measured upward from bottom mouth
+    return subRatio <= Math.min(0.98, fillFrac + 0.06);
+  }
   return subRatio >= Math.max(0.06, 1.0 - fillFrac);
 }
 
@@ -139,16 +142,28 @@ export function samplePolylineAt(points, u) {
 
 export function buildRigidTubePoints(p0, p1, p2, p3, target = null, opts = {}) {
   const tSpec = target ? APPARATUS[target.typeId] : null;
-  const routeOverMouth = Boolean(
-    target &&
-      target.kind === 'vessel' &&
-      !target.isInverted &&
-      !tSpec?.hasTwoEnds &&
-      !tSpec?.isHorizontalTube
-  );
+  const isRegularVesselTarget = Boolean(target && target.kind === 'vessel' && !tSpec?.hasTwoEnds && !tSpec?.isHorizontalTube);
   const points = [];
-  if (routeOverMouth && tSpec) {
+  if (isRegularVesselTarget && tSpec) {
     const tTilt = ((target.tiltDir < 0 ? -1 : 1) * (target.tiltDeg || 0) * Math.PI) / 180 + (target.landingTilt || 0);
+    if (target.isInverted) {
+      // Enter smoothly from underneath bottom mouth rim, then rise straight up to the adjusted depth tip
+      const pMouth = rotatePointAround(target.x, target.y + tSpec.height * 0.5 + 8, target.x, target.y, tTilt);
+      const archBot = Math.max(p0.y, pMouth.y) + 28;
+      const c1 = opts.c1 || { x: p0.x + (opts.dxStart || 0), y: Math.max(p0.y + 12, archBot) };
+      const c2 = { x: pMouth.x, y: archBot };
+      const stepsArch = 20;
+      for (let i = 0; i <= stepsArch; i++) {
+        points.push(cubicBezierPoint(i / stepsArch, p0, c1, c2, pMouth));
+      }
+      const mouthDepth = Math.hypot(p3.x - pMouth.x, p3.y - pMouth.y);
+      const stepsDip = mouthDepth > 6 ? 8 : 2;
+      for (let j = 1; j <= stepsDip; j++) {
+        const f = j / stepsDip;
+        points.push({ x: pMouth.x + (p3.x - pMouth.x) * f, y: pMouth.y + (p3.y - pMouth.y) * f });
+      }
+      return points;
+    }
     const pMouth = rotatePointAround(target.x, target.y - tSpec.height * 0.5 - 6, target.x, target.y, tTilt);
     const archTop = Math.min(p0.y, pMouth.y) - (opts.archLift || 46);
     const c1 = opts.c1 || { x: p0.x + (opts.dxStart || 0), y: Math.min(p0.y - 12, archTop) };
@@ -213,7 +228,7 @@ export function computeTubingGeometry(vessel, target) {
       : target.kind === 'condenser'
       ? { x: p3.x - condPorts.dir * 28, y: p3.y - 34 }
       : target.isInverted
-      ? { x: p3.x - 16, y: p3.y + 38 }
+      ? { x: target.x - 16, y: target.y + (tSpec.height || 90) * 0.5 + 28 }
       : tSpec.isHorizontalTube
       ? { x: p3.x + (tSide === 'left' ? -28 : 28), y: archTopY }
       : { x: p3.x, y: archTopY };
@@ -764,7 +779,7 @@ export function stepVesselGasAndPressure(
       !spec.isMortar &&
       ((spec.neckRadius || spec.width * 0.45) <= 22 || vessel.typeId?.startsWith('erlenmeyer') || vessel.typeId?.startsWith('round_flask'));
     const isCoolAmbient = (vessel.tempK || env.tempK || 298.15) < 355.0;
-    const EVAP_OR_VAPOR_SET = new Set(['H2O_g', 'C2H5OH_g', 'HCl_g', 'HBr_g', 'HI_g', 'HNO3_g', 'SO3_g', 'Br2_g', 'I2_g']);
+    const EVAP_OR_VAPOR_SET = new Set(['H2O_g', 'C2H5OH_g', 'CH3CHO_g', 'CH3COCH3_g', 'HCl_g', 'HBr_g', 'HI_g', 'HNO3_g', 'SO3_g', 'Br2_g', 'I2_g']);
 
     for (const g of NON_STEAM_GASES) {
       const m = produced[g] || 0;
@@ -974,14 +989,17 @@ export function stepVesselGasAndPressure(
       if ((routeProduced.C2H5Cl_g || 0) > 0 && target.restingOnId) {
         target.recentHalogenGasTimer = 1.6;
       }
-      if ((routeProduced.C2H5OH_g || 0) > 0) {
-        const dEt = routeProduced.C2H5OH_g;
-        if (target.tempK < SPECIES.C2H5OH_l.boilTempK) {
-          target.moles.C2H5OH_l = (target.moles.C2H5OH_l || 0) + dEt;
-          heatAddedJ += dEt * SPECIES.C2H5OH_l.dHVapJ;
-          addedCapJK += dEt * SPECIES.C2H5OH_l.cp;
-        } else {
-          storeUnabsorbedGas('C2H5OH_g', dEt);
+      for (const [vapId, liqId] of [['C2H5OH_g', 'C2H5OH_l'], ['CH3CHO_g', 'CH3CHO_l'], ['CH3COCH3_g', 'CH3COCH3_l']]) {
+        const dVap = routeProduced[vapId] || 0;
+        if (dVap > 0) {
+          const spLiq = SPECIES[liqId];
+          if (target.tempK < (spLiq?.boilTempK || 300)) {
+            target.moles[liqId] = (target.moles[liqId] || 0) + dVap;
+            heatAddedJ += dVap * (spLiq?.dHVapJ || 30000);
+            addedCapJK += dVap * (spLiq?.cp || 100);
+          } else {
+            storeUnabsorbedGas(vapId, dVap);
+          }
         }
       }
       let remSO3 = routeProduced.SO3_g || 0;
@@ -1099,6 +1117,8 @@ export function stepVesselGasAndPressure(
           g !== 'HNO3_g' &&
           g !== 'NH3_g' &&
           g !== 'C2H5OH_g' &&
+          g !== 'CH3CHO_g' &&
+          g !== 'CH3COCH3_g' &&
           g !== 'CO2_g' &&
           g !== 'SO3_g' &&
           g !== 'Cl2_g' &&

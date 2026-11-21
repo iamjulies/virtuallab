@@ -445,21 +445,21 @@ export class LabWorkbenchCanvas {
       if (src.isShattered || src.isBroken) continue;
       if (src.kind === 'vessel' && src.connectedTargetId) {
         const dst = this.sim.getItem(src.connectedTargetId);
-        if (!dst || dst.kind !== 'vessel' || dst.isInverted || dst.isShattered) continue;
+        if (!dst || dst.kind !== 'vessel' || dst.isShattered) continue;
         const geom = computeTubingGeometry(src, dst);
         if (geom?.p3 && Math.hypot(lx - geom.p3.x, ly - geom.p3.y) <= 14) {
           return { srcVessel: src, dstVessel: dst, p3: geom.p3 };
         }
       } else if (src.kind === 'electrode' && src.gasTargetId) {
         const dst = this.sim.getItem(src.gasTargetId);
-        if (!dst || dst.kind !== 'vessel' || dst.isInverted || dst.isShattered || dst.mountedOverElectrodeId === src.id) continue;
+        if (!dst || dst.kind !== 'vessel' || dst.isShattered || dst.mountedOverElectrodeId === src.id) continue;
         const p3 = getTubeDestTipPos(src, dst);
         if (Math.hypot(lx - p3.x, ly - p3.y) <= 14) {
           return { srcVessel: src, dstVessel: dst, p3 };
         }
       } else if (src.kind === 'condenser' && src.outletTargetId) {
         const dst = this.sim.getItem(src.outletTargetId);
-        if (!dst || dst.kind !== 'vessel' || dst.isInverted || dst.isShattered) continue;
+        if (!dst || dst.kind !== 'vessel' || dst.isShattered) continue;
         const p3 = getTubeDestTipPos(src, dst);
         if (Math.hypot(lx - p3.x, ly - p3.y) <= 14) {
           return { srcVessel: src, dstVessel: dst, p3 };
@@ -1345,10 +1345,17 @@ export class LabWorkbenchCanvas {
         const dstV = this.sim.getItem(this.tubeTipDragState.dstVesselId);
         const dstSpec = dstV ? APPARATUS[dstV.typeId] : null;
         if (dstV && dstSpec) {
-          const topY = dstV.y - dstSpec.height / 2 + 6;
-          const botY = dstV.y + dstSpec.height / 2 - 14;
-          const ratio = Math.max(0, Math.min(1, (pt.y - topY) / Math.max(12, botY - topY)));
-          this.sim.setTubeSubmersionRatio(this.tubeTipDragState.srcVesselId, ratio);
+          if (dstV.isInverted) {
+            const botMouthY = dstV.y + dstSpec.height / 2 - 2;
+            const topDomeY = dstV.y - dstSpec.height / 2 + 10;
+            const ratio = Math.max(0, Math.min(1, (botMouthY - pt.y) / Math.max(12, botMouthY - topDomeY)));
+            this.sim.setTubeSubmersionRatio(this.tubeTipDragState.srcVesselId, ratio);
+          } else {
+            const topY = dstV.y - dstSpec.height / 2 + 6;
+            const botY = dstV.y + dstSpec.height / 2 - 14;
+            const ratio = Math.max(0, Math.min(1, (pt.y - topY) / Math.max(12, botY - topY)));
+            this.sim.setTubeSubmersionRatio(this.tubeTipDragState.srcVesselId, ratio);
+          }
         }
         this.canvas.style.cursor = 'ns-resize';
         return;

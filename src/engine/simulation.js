@@ -5345,9 +5345,10 @@ export class LabSimulation {
     let liqOutFrac = 0;
     let curLiqMlNow = 0;
     let liquidDensityPour = 1.0;
+    let vHoldMl = 0;
 
     if (v.kind !== 'spoon') {
-      const vHoldMl = v.kind === 'filter_funnel' ? Math.max(0, 55 * Math.max(0, 1 - v.tiltDeg / 75)) : getVesselHoldVolumeMl(spec, v.tiltDeg);
+      vHoldMl = v.kind === 'filter_funnel' ? Math.max(0, 55 * Math.max(0, 1 - v.tiltDeg / 75)) : getVesselHoldVolumeMl(spec, v.tiltDeg);
       const curLiqL = computeLiquidVolumeL(v.moles, v.tempK);
       const curLiqMl = curLiqL * 1000;
       curLiqMlNow = curLiqMl;
@@ -5437,9 +5438,11 @@ export class LabSimulation {
       }
     }
 
-    // Realistic solid & mixture pouring: depends on vessel geometry/neck, tilt angle, buoyancy, and suspension vs settled state
+    // Realistic solid & mixture pouring: depends on vessel geometry/neck, fill height vs tilted hold volume, tilt angle, buoyancy & suspension
     const solidEntries = Object.entries(v.moles || {}).filter(([spId, n]) => n > 1e-8 && SPECIES[spId]?.phase === 's');
     if (solidEntries.length > 0 && (v.tiltDeg || 0) > 12) {
+      const curSolidMl = computeSolidVolumeMl(v.moles);
+      const totalContentsMl = curLiqMlNow + curSolidMl;
       let movedAnySolid = false;
       let domColor = '#e2e8f0';
       let bestN = 0;
@@ -5458,6 +5461,8 @@ export class LabSimulation {
           hasLiquid: curLiqMlNow > 0.05,
           suspensionFactor: susp,
           isPowder: Boolean(v.groundPowderMap?.[spId] || sp.isPrecipitate),
+          holdVolumeMl: v.kind !== 'spoon' ? vHoldMl : null,
+          totalContentsMl: v.kind !== 'spoon' ? totalContentsMl : null,
         });
         const dumpFrac = Math.min(1, pInfo.entrainedStep + pInfo.ratePerSec * dt);
         if (dumpFrac <= 1e-6) continue;
@@ -5726,7 +5731,8 @@ export class LabSimulation {
             const nBurn = Math.min(n, Math.max(0.001, n * 0.14 * Math.min(1, scaledDt * 4)));
             v.moles[spId] = n - nBurn;
             if (v.moles[spId] < 1e-12) delete v.moles[spId];
-            v.escapedGasMoles.H2O_g = (v.escapedGasMoles.H2O_g || 0) + 3 * nBurn;
+            v.escapedGasMoles.H2O_g = (v.escapedGasMoles.H2O_g || 0) + (sp.combustionH2O || 3) * nBurn;
+            v.escapedGasMoles.CO2_g = (v.escapedGasMoles.CO2_g || 0) + (sp.combustionCO2 || 2) * nBurn;
             const ignHeatJ = Math.min(9000, nBurn * (sp.combustionHeatJ || 1367000) * 0.18);
             const cNow = Math.max(25, computeHeatCapacityJK(v));
             v.tempK = Math.min(1350, v.tempK + ignHeatJ / cNow);

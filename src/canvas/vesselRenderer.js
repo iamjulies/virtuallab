@@ -1624,9 +1624,11 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
       ctx.restore();
     }
 
-    // Draggable depth tip bead on upright receiving vessel tubing outlet
-    if (target.kind === 'vessel' && !target.isInverted && !target.isShattered) {
-      const isSubmerged = (v.tubeSubmersionRatio ?? 0.72) >= 0.4;
+    // Draggable depth tip bead on upright OR inverted receiving vessel tubing outlet
+    if (target.kind === 'vessel' && !target.isShattered) {
+      const isSubmerged = target.isInverted
+        ? (v.tubeSubmersionRatio ?? 0.72) <= 0.75
+        : (v.tubeSubmersionRatio ?? 0.72) >= 0.4;
       ctx.save();
       ctx.fillStyle = isSubmerged ? '#0284c7' : '#f59e0b';
       ctx.strokeStyle = '#ffffff';
@@ -1719,8 +1721,10 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
         ctx.fill();
       }
     }
-    if (receiver.kind === 'vessel' && !receiver.isInverted && !receiver.isShattered) {
-      const isSub = (cond.tubeSubmersionRatio ?? 0.72) >= 0.4;
+    if (receiver.kind === 'vessel' && !receiver.isShattered) {
+      const isSub = receiver.isInverted
+        ? (cond.tubeSubmersionRatio ?? 0.72) <= 0.75
+        : (cond.tubeSubmersionRatio ?? 0.72) >= 0.4;
       ctx.fillStyle = isSub ? '#0284c7' : '#f59e0b';
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 1.3;
@@ -2391,6 +2395,12 @@ export function renderVessel(ctx, vessel, opts) {
 
   // Draw floating slush or solid frozen H2O(s) ice matrix with trapped solute tint & crystalline facets
   if (hasIce) {
+    const iceFlippedByGravity = !hasWater && (vessel.isInverted || Math.cos(effTilt) < -0.08);
+    ctx.save();
+    if (iceFlippedByGravity) {
+      ctx.translate(0, top + interiorBottom);
+      ctx.scale(1, -1);
+    }
     const aqSpanMl = Math.max(0.1, liqMl + iceMl);
     const iceFrac = Math.min(1, iceMl / aqSpanMl);
     const totalHeight = Math.max(4, interiorBottom - surfaceY);
@@ -2450,18 +2460,21 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.restore();
+    ctx.restore();
   }
 
   // Draw solids, crystals, precipitates, and floating Na inside clipped region
-  // When inverted, mirror static gravity-bound solids cleanly against the bottom mouth/stopper instead of ceiling
+  // Mirror gravity-bound solids cleanly against the bottom mouth/stopper when inverted OR tilted > 95° upside-down!
   const invertedNeckSpan = Math.min(w - 8, Math.max(20, (spec.neckRadius || w * 0.24) * 2.15));
-  const currentWidthAtBottom = vessel.isInverted ? invertedNeckSpan : w - 6;
+  const isUpsideDownByTilt = !vessel.isInverted && Math.cos(effTilt) < -0.08;
+  const isBottomAtMouth = vessel.isInverted || isUpsideDownByTilt;
+  const currentWidthAtBottom = isBottomAtMouth ? invertedNeckSpan : w - 6;
   const naInterfaceY = vessel.naInterfaceMl != null && strat.hasLightCover ? volumeMlToY(vessel.naInterfaceMl) : null;
   const solidBulkMl = solMl * 1.25;
   const solidPileTopY = solidBulkMl > 1e-4 ? Math.max(top + 2, volumeMlToY(Math.min(spec.maxVolumeMl * 1.04, solidBulkMl))) : interiorBottom;
   let solidSurfaceY = surfaceY;
   ctx.save();
-  if (vessel.isInverted) {
+  if (isBottomAtMouth) {
     ctx.translate(0, top + interiorBottom);
     ctx.scale(1, -1);
     if (hasWater) {
@@ -2469,6 +2482,11 @@ export function renderVessel(ctx, vessel, opts) {
       const invDivY = top + (interiorBottom - top) * invFrac;
       solidSurfaceY = top + interiorBottom - invDivY;
     }
+  } else if (Math.abs(effTilt) > 0.08) {
+    // Gentle downhill gravity slump when tilted toward one side (without crossing past horizontal)
+    ctx.translate(x, interiorBottom - 2);
+    ctx.rotate(-effTilt * 0.45);
+    ctx.translate(-x, -(interiorBottom - 2));
   }
   renderVesselSolids(
     ctx,

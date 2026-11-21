@@ -1790,7 +1790,7 @@ export class InspectorPanel {
                       <strong class="font-mono text-sky-400" id="live-tube-stats">${tubeGeom.arcLengthCm.toFixed(1)} cm · ${Math.min(tubeVolMl, tubeGeom.capacityMl).toFixed(2)}/${tubeGeom.capacityMl.toFixed(2)} mL</strong>
                     </div>
                     ${
-                      connTarget.kind === 'vessel' && !connTarget.isInverted
+                      connTarget.kind === 'vessel'
                         ? `<label class="flex flex-col gap-1 border-t border-sky-500/20 pt-1">
                              <div class="flex justify-between text-[11px]">
                                <span class="text-muted">${t('tubeDepthLabel')}</span>
