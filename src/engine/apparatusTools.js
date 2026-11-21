@@ -1304,7 +1304,7 @@ export function grindMortarSolids(sim, mortarId) {
     }
   }
 
-  // Mechanochemical Red Phosphorus + Potassium permanganate friction flash/explosion: 9P + 15KMnO4 -> 5K3PO4 + P4O10 + 15MnO2
+  // Mechanochemical Red Phosphorus + KMnO4 / K2Cr2O7 & Alkali Metals + K2Cr2O7 friction flash on grinding
   const nPRed = m.moles.P_red_s || 0;
   const nKMn = m.moles.KMnO4_s || 0;
   if (nPRed > 1e-7 && nKMn > 1e-7) {
@@ -1333,6 +1333,64 @@ export function grindMortarSolids(sim, mortarId) {
         descEn: 'Mechanical friction between Red Phosphorus and strong oxidizer KMnO₄ triggers immediate flash combustion!',
         vesselLabel: m.label,
       });
+    }
+  }
+  const nCr2O7 = m.moles.K2Cr2O7_s || 0;
+  if ((m.moles.P_red_s || 0) > 1e-7 && nCr2O7 > 1e-7) {
+    const dPCr = Math.min((m.moles.P_red_s || 0) / 18, nCr2O7 / 15) * 0.94;
+    if (dPCr > 1e-9) {
+      const cTot = computeHeatCapacityJK(m);
+      m.moles.P_red_s = (m.moles.P_red_s || 0) - 18 * dPCr;
+      if (m.moles.P_red_s < 1e-12) delete m.moles.P_red_s;
+      m.moles.K2Cr2O7_s = nCr2O7 - 15 * dPCr;
+      if (m.moles.K2Cr2O7_s < 1e-12) delete m.moles.K2Cr2O7_s;
+      m.moles.Cr2O3_s = (m.moles.Cr2O3_s || 0) + 15 * dPCr;
+      m.moles.K3PO4_s = (m.moles.K3PO4_s || 0) + 10 * dPCr;
+      m.moles.P4O10_s = (m.moles.P4O10_s || 0) + 2 * dPCr;
+      m.phosphorusFlameTimer = 1.1;
+      m.phosphorusFlameColor = 'p_white_yellow';
+      m.tempK = Math.min(1480, m.tempK + (dPCr * 5800000) / Math.max(40, cTot));
+      groundAny = true;
+      sim.addLog({
+        type: 'reaction',
+        equation: '15K₂Cr₂O₇(s) + 18P(đỏ) —(Ma sát / Nghiền)→ 15Cr₂O₃(s) + 10K₃PO₄ + 2P₄O₁₀',
+        nameVi: '⚠️ Cháy nổ cực mạnh khi nghiền Phosphorus đỏ với K₂Cr₂O₇!',
+        nameEn: '⚠️ Violent friction flash reaction: grinding Red Phosphorus + K₂Cr₂O₇!',
+        descVi: 'Hỗn hợp khô P đỏ + K₂Cr₂O₇ cực nhạy va chạm và ma sát, bùng cháy tạo Cr₂O₃ xanh lục thẫm, K₃PO₄ và khói trắng P₄O₁₀!',
+        descEn: 'Dry Red P + K₂Cr₂O₇ is highly friction-sensitive and flashes immediately to dark-green Cr₂O₃ and P₄O₁₀.',
+        vesselLabel: m.label,
+      });
+    }
+  }
+  for (const [mKey, oxProd, eqCr] of [
+    ['Na_s', 'Na2O_s', 'K₂Cr₂O₇(s) + 6Na(s) —(Ma sát / Va đập)→ Cr₂O₃(s) + K₂O + 3Na₂O'],
+    ['K_s', 'K2O_s', 'K₂Cr₂O₇(s) + 6K(s) —(Ma sát / Va đập)→ Cr₂O₃(s) + 4K₂O'],
+  ]) {
+    const nAlkCr = m.moles[mKey] || 0;
+    const remCr = m.moles.K2Cr2O7_s || 0;
+    if (nAlkCr > 1e-7 && remCr > 1e-7) {
+      const dAC = Math.min(nAlkCr / 6, remCr) * 0.90;
+      if (dAC > 1e-9) {
+        const cTot = computeHeatCapacityJK(m);
+        m.moles[mKey] = nAlkCr - 6 * dAC;
+        if (m.moles[mKey] < 1e-12) delete m.moles[mKey];
+        m.moles.K2Cr2O7_s = remCr - dAC;
+        if (m.moles.K2Cr2O7_s < 1e-12) delete m.moles.K2Cr2O7_s;
+        m.moles.Cr2O3_s = (m.moles.Cr2O3_s || 0) + dAC;
+        m.moles.K2O_s = (m.moles.K2O_s || 0) + dAC;
+        m.moles[oxProd] = (m.moles[oxProd] || 0) + 3 * dAC;
+        m.tempK = Math.min(1380, m.tempK + (dAC * 950000) / Math.max(40, cTot));
+        groundAny = true;
+        sim.addLog({
+          type: 'reaction',
+          equation: eqCr,
+          nameVi: `⚠️ Nổ tỏa nhiệt mạnh khi nghiền ${SPECIES[mKey]?.formula} với K₂Cr₂O₇!`,
+          nameEn: `⚠️ Explosive friction reaction: ${SPECIES[mKey]?.formula} + K₂Cr₂O₇!`,
+          descVi: 'Kim loại kiềm tiếp xúc chất oxi hóa mạnh K₂Cr₂O₇ khi va chạm/nghiền gây phản ứng khử nổ nguy hiểm!',
+          descEn: 'Alkali metal grinding with solid K₂Cr₂O₇ triggers a hazardous exothermic reduction.',
+          vesselLabel: m.label,
+        });
+      }
     }
   }
 

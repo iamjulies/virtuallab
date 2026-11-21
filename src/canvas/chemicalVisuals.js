@@ -186,6 +186,7 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
       vType === 'white_powder' ||
       vType === 'yellow_powder' ||
       vType === 'red_powder' ||
+      vType === 'green_powder' ||
       vType === 'brown_powder' ||
       vType === 'black_powder' ||
       vType === 'gray_white_powder' ||

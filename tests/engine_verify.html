@@ -1896,7 +1896,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 26 &&
+          STARTER_REAGENTS.length === 28 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2464,7 +2464,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.18';
+      const expectedBuild = 'virlab_beta_v4+build.19';
       const newKeysPresent =
         Boolean(I18N.vi.btnPickOnBench && I18N.en.btnPickOnBench) &&
         Boolean(I18N.vi.dcSwapPolarity && I18N.en.dcSwapPolarity) &&
@@ -2507,15 +2507,18 @@
         Boolean(I18N.vi.eq_rubber_stopper && I18N.en.eq_rubber_stopper) &&
         Boolean(I18N.vi.eq_phen_cotton && I18N.en.eq_phen_cotton) &&
         Boolean(I18N.vi.reg_p_red && I18N.en.reg_p_red) &&
+        Boolean(I18N.vi.reg_sio2 && I18N.en.reg_sio2) &&
+        Boolean(I18N.vi.reg_k2cr2o7 && I18N.en.reg_k2cr2o7) &&
+        Boolean(I18N.vi.regCatOxide && I18N.en.regCatOxide) &&
         Boolean(I18N.vi.eq_iron_spoon && I18N.en.eq_iron_spoon) &&
         Boolean(I18N.vi.alertGlassSoftenMelt && I18N.en.alertGlassSoftenMelt) &&
         Boolean(I18N.vi.alertCo2Extinguish && I18N.en.alertCo2Extinguish) &&
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.18 parity: All 39 apparatus & 26 starter reagents translated in VI/EN, Prompt 40-52 keys present, crucible_tongs removed, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.19 parity: All 39 apparatus & 28 starter reagents translated in VI/EN, Oxide category + SiO2/K2Cr2O7 keys present, IUPAC spellings enforced',
         APPARATUS_ORDER.length === 39 &&
-          STARTER_REAGENTS.length === 26 &&
+          STARTER_REAGENTS.length === 28 &&
           !APPARATUS.clay_triangle &&
           !APPARATUS.crucible_tongs &&
           allTranslated &&
@@ -7379,7 +7382,7 @@
       const mno2AcidOk = Math.abs((bMnColdAcid.moles.MnO2_s || 0) - 0.01) < 1e-6 && cl2HotTot > 0.002 && (bMnHotHCl.moles.Mn2_aq || 0) > 0.002;
 
       const iupacKmno4Ok =
-        STARTER_REAGENTS.length === 26 &&
+        STARTER_REAGENTS.length === 28 &&
         STARTER_REAGENTS.some((r) => r.id === 'kmno4') &&
         !/\b(kali|mangan|axit|clo|oxi(?! hóa))\b/i.test(`${I18N.vi.reg_kmno4} ${I18N.vi.reg_kmno4_desc} ${I18N.vi.alertMn2O7Hazard}`);
 
@@ -7493,7 +7496,7 @@
         (vIRoom.moles.IO3_aq || 0) > (vIRoom.moles.IO_aq || 0) * 4;
 
       const iupacHalOk =
-        STARTER_REAGENTS.length === 26 &&
+        STARTER_REAGENTS.length === 28 &&
         STARTER_REAGENTS.some((r) => r.id === 'br2') &&
         STARTER_REAGENTS.some((r) => r.id === 'i2') &&
         !/\b(brom|iot|clo|kali|natri|nhôm|sắt|axit)\b/i.test(`${I18N.vi.reg_br2} ${I18N.vi.reg_br2_desc} ${I18N.vi.reg_i2} ${I18N.vi.reg_i2_desc}`);
@@ -7609,7 +7612,7 @@
         (bSHNO3.moles.SO4_2_aq || 0) > 0.001;
 
       const iupacSulfOk =
-        STARTER_REAGENTS.length === 26 &&
+        STARTER_REAGENTS.length === 28 &&
         STARTER_REAGENTS.some((r) => r.id === 's') &&
         !/\b(lưu huỳnh|sunfua|hiđro|axit|oxi(?! hóa)|etanol)\b/i.test(`${I18N.vi.reg_s} ${I18N.vi.reg_s_desc}`);
 
@@ -8680,6 +8683,180 @@
         'Prompt 52 invariants: crucible_tongs removed, p_red reagent & Red P full 5-category chemistry (Metals, Cl2/Br2/I2/O2/S/subl, HNO3/H2SO4 conc selectivity, conc NaOH->PH3, KMnO4 mortar flash & AgNO3/CuSO4)',
         registryOk && metalsOk && phosphideHydOk && pcl5Made && pcl5DissocOk && pbrOk && piOk && pBurnOk && psAndSublOk && acidsOk && basesOk && saltsOk,
         `reg=${registryOk}, met=${metalsOk}, hyd=${phosphideHydOk}, hal=(${pcl5Made}/${pcl5DissocOk}/${pbrOk}/${piOk}), ox=${pBurnOk}, S_subl=${psAndSublOk}, acid=${acidsOk}, base=${basesOk}, salt=${saltsOk}`
+      );
+    }
+
+    // TEST 171: Prompt 53 (virlab_beta_v4+build.19) — 'Oxide' Filter Category, Amorphous SiO2 & K2Cr2O7 Full Physical + Chemical Matrix
+    {
+      const oxides = STARTER_REAGENTS.filter((r) => r.category === 'oxide');
+      const regCr = STARTER_REAGENTS.find((r) => r.id === 'k2cr2o7');
+      const regSi = STARTER_REAGENTS.find((r) => r.id === 'sio2');
+      const catOk =
+        STARTER_REAGENTS.length === 28 &&
+        oxides.length === 1 &&
+        oxides[0].id === 'sio2' &&
+        REAGENT_CATEGORIES.some((c) => c.id === 'oxide' && c.i18nKey === 'regCatOxide') &&
+        I18N.vi.regCatOxide === 'Oxide' &&
+        I18N.en.regCatOxide === 'Oxide' &&
+        regCr?.category === 'salt' &&
+        regCr?.speciesId === 'K2Cr2O7_s' &&
+        SPECIES.SiO2_s.density === 2.19 &&
+        SPECIES.K2Cr2O7_s.density === 2.676 &&
+        !/\b(natri|silic|crom|kali|oxi|axit|bazo|bazơ|etanol)\b/i.test(`${I18N.vi.reg_sio2} ${I18N.vi.reg_k2cr2o7}`);
+
+      // 1) SiO2 chemistry: conc hot NaOH, molten NaOH, Mg thermite (+excess Mg -> Mg2Si), CaCO3 fusion, C electric arc (1800C yes, 1000C no), strict inertness (HCl/HNO3/H2SO4/H2O/Fe/Zn)
+      const simSi = new LabSimulation();
+      simSi.environment.atmosphereMode = 'inert';
+      const vSiOH = simSi.createApparatus('beaker_250', 140, 427);
+      vSiOH.moles = { SiO2_s: 0.02, H2O_l: 1.5, Na_aq: 0.35, OH_aq: 0.35 };
+      const vSiMelt = simSi.createApparatus('crucible_porcelain', 220, 450);
+      vSiMelt.moles = { SiO2_s: 0.02, NaOH_s: 0.06 };
+      const vSiMg = simSi.createApparatus('crucible_porcelain', 300, 450);
+      vSiMg.moles = { SiO2_s: 0.01, Mg_s: 0.06 }; // excess Mg -> Si + Mg2Si
+      const vSiCa = simSi.createApparatus('crucible_porcelain', 380, 450);
+      vSiCa.moles = { SiO2_s: 0.02, CaCO3_s: 0.02 };
+      const vSiC1000 = simSi.createApparatus('crucible_porcelain', 460, 450);
+      vSiC1000.moles = { SiO2_s: 0.02, C_s: 0.06 };
+      const vSiC1850 = simSi.createApparatus('crucible_porcelain', 540, 450);
+      vSiC1850.moles = { SiO2_s: 0.02, C_s: 0.08 };
+      const vSiInert = simSi.createApparatus('beaker_250', 620, 427);
+      vSiInert.moles = { SiO2_s: 0.02, H2O_l: 1.0, H2SO4_l: 0.1, H_aq: 0.3, Cl_aq: 0.2, NO3_aq: 0.1, Fe_s: 0.01 };
+      let siCO = 0, siCO2 = 0;
+      for (let i = 0; i < 30; i++) {
+        vSiOH.tempK = 365;
+        stepVesselChemistry(vSiOH, 0.1, { environment: simSi.environment });
+        vSiMelt.tempK = 700;
+        stepVesselChemistry(vSiMelt, 0.1, { environment: simSi.environment });
+        vSiMg.tempK = 960;
+        stepVesselChemistry(vSiMg, 0.1, { environment: simSi.environment });
+        vSiCa.tempK = 1280;
+        siCO2 += stepVesselChemistry(vSiCa, 0.1, { environment: simSi.environment }).gasProduced?.CO2_g || 0;
+        vSiC1000.tempK = 1273;
+        stepVesselChemistry(vSiC1000, 0.1, { environment: simSi.environment });
+        vSiC1850.tempK = 2200;
+        siCO += stepVesselChemistry(vSiC1850, 0.1, { environment: simSi.environment }).gasProduced?.CO_g || 0;
+        vSiInert.tempK = 360;
+        stepVesselChemistry(vSiInert, 0.1, { environment: simSi.environment });
+      }
+      // Acidify silicate -> H2SiO3 gel
+      vSiOH.moles.H_aq = 0.6;
+      vSiOH.moles.OH_aq = 0;
+      stepVesselChemistry(vSiOH, 0.2, { environment: simSi.environment });
+      const sio2Ok =
+        (vSiOH.moles.H2SiO3_s || 0) > 0.002 &&
+        (vSiMelt.moles.Na2SiO3_s || 0) > 0.008 &&
+        ((vSiMg.moles.Si_s || 0) + (vSiMg.moles.Mg2Si_s || 0)) > 0.004 &&
+        (vSiMg.moles.MgO_s || 0) > 0.008 &&
+        (vSiCa.moles.CaSiO3_s || 0) > 0.004 &&
+        siCO2 > 0.004 &&
+        Math.abs((vSiC1000.moles.SiO2_s || 0) - 0.02) < 1e-9 &&
+        ((vSiC1850.moles.Si_s || 0) + (vSiC1850.moles.SiC_s || 0)) > 0.004 &&
+        siCO > 0.008 &&
+        Math.abs((vSiInert.moles.SiO2_s || 0) - 0.02) < 1e-9;
+
+      // 2) K2Cr2O7 physical + chemical suite
+      const simCr = new LabSimulation();
+      // 2a. Solubility @ 20 C vs 100 C + EtOH insolubility + weak acidic pH (~3.5-4.0)
+      const vCrCold = simCr.createApparatus('beaker_250', 120, 427);
+      vCrCold.moles = { K2Cr2O7_s: 0.2, H2O_l: 5.55 }; // 100 g water
+      vCrCold.tempK = 293.15;
+      const vCrHot = simCr.createApparatus('beaker_250', 200, 427);
+      vCrHot.moles = { K2Cr2O7_s: 0.35, H2O_l: 5.55 };
+      vCrHot.tempK = 373.15;
+      for (let i = 0; i < 40; i++) {
+        vCrCold.tempK = 293.15;
+        stepVesselChemistry(vCrCold, 0.2, { environment: simCr.environment });
+        vCrHot.tempK = 373.15;
+        stepVesselChemistry(vCrHot, 0.2, { environment: simCr.environment });
+      }
+      const phCr = computePH(vCrCold.moles, 0.1, 293.15);
+      const solCrOk = (vCrHot.moles.Cr2O7_2_aq || 0) > (vCrCold.moles.Cr2O7_2_aq || 0) * 4 && phCr >= 3.3 && phCr <= 4.3;
+
+      // 2b. Thermal decomp > 500 C + conc HCl -> Cl2 + Cr3+ (dil HCl none) + conc H2SO4 -> CrO3↓ (+ NaCl -> CrO2Cl2↑)
+      const vCrTherm = simCr.createApparatus('crucible_porcelain', 280, 450);
+      vCrTherm.moles = { K2Cr2O7_s: 0.04 };
+      const vCrHClConc = simCr.createApparatus('beaker_250', 360, 427);
+      vCrHClConc.moles = { K2Cr2O7_s: 0.01, H2O_l: 1.5, H_aq: 0.35, Cl_aq: 0.35 };
+      const vCrHClDil = simCr.createApparatus('beaker_250', 440, 427);
+      vCrHClDil.moles = { Cr2O7_2_aq: 0.01, K_aq: 0.02, H2O_l: 5.5, H_aq: 0.05, Cl_aq: 0.05 };
+      const vCrH2SO4 = simCr.createApparatus('beaker_250', 520, 427);
+      vCrH2SO4.moles = { K2Cr2O7_s: 0.01, H2SO4_l: 0.25, NaCl_s: 0.02 };
+      let crO2 = 0, crCl2 = 0, cro2cl2 = 0;
+      for (let i = 0; i < 30; i++) {
+        vCrTherm.tempK = 810;
+        crO2 += stepVesselChemistry(vCrTherm, 0.1, { environment: simCr.environment }).gasProduced?.O2_g || 0;
+        crCl2 += stepVesselChemistry(vCrHClConc, 0.1, { environment: simCr.environment }).gasProduced?.Cl2_g || 0;
+        stepVesselChemistry(vCrHClDil, 0.1, { environment: simCr.environment });
+        vCrH2SO4.tempK = 340;
+        cro2cl2 += stepVesselChemistry(vCrH2SO4, 0.1, { environment: simCr.environment }).gasProduced?.CrO2Cl2_g || 0;
+      }
+      const crAcidOk =
+        (vCrTherm.moles.K2CrO4_s || 0) > 0.005 &&
+        (vCrTherm.moles.Cr2O3_s || 0) > 0.002 &&
+        crO2 > 0.003 &&
+        (vCrHClConc.moles.Cr3_aq || 0) > 0.004 &&
+        crCl2 > 0.005 &&
+        (vCrHClDil.moles.Cr3_aq || 0) === 0 &&
+        (vCrH2SO4.moles.CrO3_s || 0) > 0.002 &&
+        cro2cl2 > 0.002;
+
+      // 2c. NaOH/NH3 switch -> yellow CrO4^2- (back to orange on H+); H2O2/H+ -> indigo CrO5 -> green Cr3+ + O2↑; Ba2+ & Ag+ ppts
+      const vCrSwitch = simCr.createApparatus('beaker_250', 600, 427);
+      vCrSwitch.moles = { H2O_l: 2.0, K_aq: 0.04, Cr2O7_2_aq: 0.02, OH_aq: 0.05, Na_aq: 0.05 };
+      stepVesselChemistry(vCrSwitch, 0.3, { environment: simCr.environment });
+      const turnedYellow = (vCrSwitch.moles.CrO4_2_aq || 0) > 0.03;
+      vCrSwitch.moles.H_aq = 0.06;
+      stepVesselChemistry(vCrSwitch, 0.3, { environment: simCr.environment });
+      const backOrange = (vCrSwitch.moles.Cr2O7_2_aq || 0) > 0.015;
+
+      const vCrPer = simCr.createApparatus('beaker_250', 680, 427);
+      vCrPer.moles = { H2O_l: 2.0, K_aq: 0.02, Cr2O7_2_aq: 0.01, H2O2_aq: 0.04, H_aq: 0.1 };
+      stepVesselChemistry(vCrPer, 0.25, { environment: simCr.environment });
+      const sawIndigoCrO5 = (vCrPer.moles.CrO5_aq || 0) > 0.005;
+      let perO2 = 0;
+      for (let i = 0; i < 40; i++) perO2 += stepVesselChemistry(vCrPer, 0.2, { environment: simCr.environment }).gasProduced?.O2_g || 0;
+      const perDecompGreen = (vCrPer.moles.Cr3_aq || 0) > 0.01 && perO2 > 0.01;
+
+      const vCrBaAg = simCr.createApparatus('beaker_250', 760, 427);
+      vCrBaAg.moles = { H2O_l: 2.0, Cr2O7_2_aq: 0.02, Ba2_aq: 0.02, Ag_aq: 0.02 };
+      stepVesselChemistry(vCrBaAg, 0.3, { environment: simCr.environment });
+      const pptCrOk = (vCrBaAg.moles.BaCrO4_s || 0) > 0.005 && (vCrBaAg.moles.Ag2Cr2O7_s || 0) > 0.002;
+
+      // 2d. Metals & Nonmetals + Mortar Flash (P_red + K2Cr2O7) + Inertness (HNO3/KMnO4/Br2) + Dry conservation
+      const vCrZn = simCr.createApparatus('beaker_250', 140, 427);
+      vCrZn.moles = { H2O_l: 2.0, Cr2O7_2_aq: 0.01, Zn_s: 0.04, H_aq: 0.2 };
+      const vCrDryMix = simCr.createApparatus('crucible_porcelain', 220, 450);
+      vCrDryMix.moles = { K2Cr2O7_s: 0.04, C_s: 0.03, S_s: 0.03 };
+      const mortarCr = simCr.createApparatus('mortar_pestle', 300, 450);
+      mortarCr.moles = { K2Cr2O7_s: 0.015, P_red_s: 0.018 };
+      const crMortarOk = simCr.grindMortar(mortarCr.id) && (mortarCr.moles.Cr2O3_s || 0) > 0.005;
+      const vCrInert = simCr.createApparatus('beaker_250', 380, 427);
+      vCrInert.moles = { H2O_l: 1.5, Cr2O7_2_aq: 0.01, K_aq: 0.03, H_aq: 0.2, NO3_aq: 0.2, MnO4_aq: 0.01, Br2_l: 0.01 };
+      let crGasDry = 0;
+      for (let i = 0; i < 30; i++) {
+        stepVesselChemistry(vCrZn, 0.1, { environment: simCr.environment });
+        vCrDryMix.tempK = 700;
+        const rDM = stepVesselChemistry(vCrDryMix, 0.1, { environment: simCr.environment });
+        crGasDry += (rDM.gasProduced?.CO2_g || 0) + (rDM.gasProduced?.SO2_g || 0);
+        stepVesselChemistry(vCrInert, 0.1, { environment: simCr.environment });
+      }
+      const vDryAll = simCr.createApparatus('porcelain_dish', 500, 450);
+      vDryAll.moles = { K_aq: 0.04, Na_aq: 0.02, Cr2O7_2_aq: 0.01, CrO4_2_aq: 0.01, SiO3_2_aq: 0.01, Cr3_aq: 0.01, Cl_aq: 0.03, CrO5_aq: 0.01 };
+      enforceDryPhaseBoundary(vDryAll);
+      const dryCrSiOk = Object.keys(vDryAll.moles).every((k) => !k.endsWith('_aq'));
+
+      const redoxAndInertOk =
+        (vCrZn.moles.Cr3_aq || 0) > 0.008 &&
+        (vCrDryMix.moles.Cr2O3_s || 0) > 0.01 &&
+        crGasDry > 0.005 &&
+        crMortarOk &&
+        Math.abs((vCrInert.moles.Cr2O7_2_aq || 0) - 0.01) < 1e-6 &&
+        dryCrSiOk;
+
+      assert(
+        'Prompt 53 invariants: Oxide category filter, SiO2 reactivity/inertness (NaOH/Mg/CaCO3/C-arc & acid-inert), & K2Cr2O7 solubility/pH/thermal/CrO4-switch/HCl/H2SO4/H2O2-CrO5/Ba-Ag/redox/mortar flash',
+        catOk && sio2Ok && solCrOk && crAcidOk && turnedYellow && backOrange && sawIndigoCrO5 && perDecompGreen && pptCrOk && redoxAndInertOk,
+        `cat=${catOk}, SiO2=${sio2Ok}, K2Cr2O7=(sol:${solCrOk}[pH:${phCr?.toFixed(2)}],acid:${crAcidOk},sw:${turnedYellow}/${backOrange},per:${sawIndigoCrO5}/${perDecompGreen},ppt:${pptCrOk},redox:${redoxAndInertOk}[zn=${(vCrZn.moles.Cr3_aq||0).toFixed(4)},dry=${(vCrDryMix.moles.Cr2O3_s||0).toFixed(4)}/${crGasDry.toFixed(4)},mrt=${crMortarOk},inert=${(vCrInert.moles.Cr2O7_2_aq||0).toFixed(4)},dryAll=${dryCrSiOk}])`
       );
     }
 

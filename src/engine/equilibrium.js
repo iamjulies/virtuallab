@@ -161,6 +161,8 @@ export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
   const nH = (moles.H_aq || 0) + (moles.H2SO4_l || 0) * 1.5;
   const nOH = moles.OH_aq || 0;
   const nEthoxide = moles.C2H5O_aq || 0;
+  const cCr2O7 = Math.max(0, moles.Cr2O7_2_aq || 0) / effVolL;
+  const crWeakH = cCr2O7 > 1e-6 && nOH <= 1e-12 ? Math.sqrt(3e-7 * cCr2O7) * effVolL : 0;
   const cNH3 = Math.max(0, moles.NH3_aq || 0) / effVolL;
   const cNH4 = Math.max(0, moles.NH4_aq || 0) / effVolL;
 
@@ -192,7 +194,7 @@ export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
     entry.boundProtonsConc += c * bp;
   }
 
-  const cNet = (nH - nOH - nEthoxide) / effVolL;
+  const cNet = (nH + crWeakH - nOH - nEthoxide) / effVolL;
   const kw = computeKw(tempK);
 
   let hPlus;

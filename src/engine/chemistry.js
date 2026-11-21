@@ -1397,6 +1397,10 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
     { cat: 'K_aq', cCat: 2, an: 'CO3_2_aq', cAn: 1, solid: 'K2CO3_s', formula: 'K₂CO₃', sol298: 8.1, coeff: 0.006, etohRel: 0.01, crystHeatJ: 30900 },
     { cat: 'K_aq', cCat: 1, an: 'OH_aq', cAn: 1, solid: 'KOH_s', formula: 'KOH', sol298: 21.5, coeff: 0.020, etohRel: 0.14, crystHeatJ: 57600 },
     { cat: 'K_aq', cCat: 1, an: 'MnO4_aq', cAn: 1, solid: 'KMnO4_s', formula: 'KMnO₄', sol298: 0.475, coeff: 0.032, etohRel: 0.02, crystHeatJ: -43600 },
+    { cat: 'K_aq', cCat: 2, an: 'Cr2O7_2_aq', cAn: 1, solid: 'K2Cr2O7_s', formula: 'K₂Cr₂O₇', sol298: 0.495, coeff: 0.026, etohRel: 0.002, crystHeatJ: -67000 },
+    { cat: 'K_aq', cCat: 2, an: 'CrO4_2_aq', cAn: 1, solid: 'K2CrO4_s', formula: 'K₂CrO₄', sol298: 3.3, coeff: 0.005, etohRel: 0.005, crystHeatJ: -18000 },
+    { cat: 'Na_aq', cCat: 2, an: 'Cr2O7_2_aq', cAn: 1, solid: 'Na2Cr2O7_s', formula: 'Na₂Cr₂O₇', sol298: 6.9, coeff: 0.012, etohRel: 0.02, crystHeatJ: -24000 },
+    { cat: 'Na_aq', cCat: 2, an: 'CrO4_2_aq', cAn: 1, solid: 'Na2CrO4_s', formula: 'Na₂CrO₄', sol298: 5.2, coeff: 0.008, etohRel: 0.01, crystHeatJ: -15000 },
     { cat: 'K_aq', cCat: 2, an: 'MnO4_2_aq', cAn: 1, solid: 'K2MnO4_s', formula: 'K₂MnO₄', sol298: 1.85, coeff: 0.015, etohRel: 0.01, crystHeatJ: -18000 },
     { cat: 'K_aq', cCat: 1, an: 'IO3_aq', cAn: 1, solid: 'KIO3_s', formula: 'KIO₃', sol298: 0.38, coeff: 0.024, etohRel: 0.01, crystHeatJ: -27700 },
     { cat: 'K_aq', cCat: 1, an: 'BrO3_aq', cAn: 1, solid: 'KBrO3_s', formula: 'KBrO₃', sol298: 0.42, coeff: 0.032, etohRel: 0.01, crystHeatJ: -41100 },
@@ -4588,6 +4592,475 @@ function stepPhosphorusChemistry(vessel, liquidVolL, dt, activeReactions, gasPro
 }
 
 /**
+ * Amorphous Silicon dioxide (SiO2_s) & Potassium dichromate (K2Cr2O7) solver (Prompt 53):
+ *  - SiO2: hot conc./molten NaOH/KOH -> silicate; Mg (600-800 C -> Si/Mg2Si); C (1700-2000 C -> Si/SiC); CaCO3 (900-1300 C -> CaSiO3); Al (>1150 C); HCl/HNO3/H2SO4/H2O/NH3/Fe/Zn/salts inert.
+ *  - K2Cr2O7: HCl conc -> Cl2 + Cr3+; H2SO4 conc -> CrO3↓ (+ NaCl -> CrO2Cl2↑); NaOH/NH3 ⇄ CrO4^2- (yellow/orange toggle);
+ *    H2O2/H+ -> indigo CrO5 -> green Cr3+ + O2↑; Ba2+ -> BaCrO4↓; Ag+ -> Ag2Cr2O7↓; Fe/Zn/Al/Mg/P_red/S/C reductions;
+ *    HNO3/KMnO4/Br2/I2/neutral NaCl/CuSO4/CaCO3 inert.
+ */
+function stepSiliconAndChromiumChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, iceMob = 1, options = {}) {
+  const moles = vessel.moles;
+  const T = vessel.tempK || CONSTANTS.T_STD_K;
+  const head = (vessel.headspaceGasMoles = vessel.headspaceGasMoles || {});
+  const atmMode = options.environment?.atmosphereMode || 'air';
+  const isInertAtm = atmMode === 'inert';
+  const isSealedVessel = Boolean(vessel.isStoppered || vessel.lidState === 'closed' || (vessel.leftStoppered && vessel.rightStoppered));
+  const isLowO2Env = isInertAtm || isSealedVessel || getVesselEffectiveO2Bar(vessel, options.environment) <= 0.03;
+  const liqMob = (moles.H2O_l || 0) > 1e-8 ? iceMob : 0;
+  let heatJ = 0;
+
+  const consumeSpecies = (id, amt) => {
+    moles[id] = Math.max(0, (moles[id] || 0) - amt);
+    if (moles[id] < 1e-13) delete moles[id];
+  };
+  const pushRxn = (id, equation, nameVi, nameEn, descVi, descEn, dXi, vigorousGas = false) => {
+    activeReactions.push({ id, equation, nameVi, nameEn, descVi, descEn, rateMolS: dXi / dt, vigorousGas, dXi });
+  };
+
+  // ==================== PART 1: SILICON DIOXIDE (SiO2_s) & SILICATE CHEMISTRY ====================
+  if ((moles.SiO2_s || 0) > 1e-10) {
+    const isDrySi = (moles.H2O_l || 0) < 0.015;
+    // 1a. Hot conc NaOH/KOH aqueous (>= 4.0 M OH-, >= 80 C = 353.15 K)
+    if (liquidVolL > 1e-6 && liqMob > 0 && T >= 353.15) {
+      const cOH = (moles.OH_aq || 0) / Math.max(1e-6, liquidVolL);
+      if (cOH >= 4.0) {
+        const dSiOH = Math.min(moles.SiO2_s, (moles.OH_aq || 0) / 2) * (1 - Math.exp(-0.36 * liqMob * dt));
+        if (dSiOH > 1e-11) {
+          consumeSpecies('SiO2_s', dSiOH);
+          consumeSpecies('OH_aq', 2 * dSiOH);
+          moles.SiO3_2_aq = (moles.SiO3_2_aq || 0) + dSiOH;
+          moles.H2O_l = (moles.H2O_l || 0) + dSiOH;
+          heatJ += dSiOH * 28000;
+          pushRxn('sio2_naoh_aq', 'SiO₂(s) + 2OH⁻(đặc, nóng) —(80–100 °C)→ SiO₃²⁻(aq) + H₂O', 'SiO₂ vô định hình tan chậm trong kiềm đặc nóng', 'Amorphous SiO₂ dissolves in hot conc. alkali → silicate', 'SiO₂ vô định hình tan trong NaOH đặc nóng tạo dung dịch thủy tinh lỏng Na₂SiO₃.', 'Amorphous SiO₂ slowly dissolves in hot conc. NaOH forming water glass.', dSiOH);
+        }
+      }
+    }
+    // 1b. Molten dry NaOH / KOH (>= 318 C = 591.15 K)
+    if (isDrySi && T >= 591.15) {
+      for (const [alkId, silId, alkName] of [['NaOH_s', 'Na2SiO3_s', 'NaOH'], ['KOH_s', 'K2SiO3_s', 'KOH']]) {
+        const nAlk = moles[alkId] || 0;
+        if (nAlk > 1e-10 && (moles.SiO2_s || 0) > 1e-10) {
+          const dMeltSi = Math.min(moles.SiO2_s, nAlk / 2) * (1 - Math.exp(-1.6 * dt));
+          if (dMeltSi > 1e-11) {
+            consumeSpecies('SiO2_s', dMeltSi);
+            consumeSpecies(alkId, 2 * dMeltSi);
+            moles[silId] = (moles[silId] || 0) + dMeltSi;
+            gasProduced.H2O_g = (gasProduced.H2O_g || 0) + dMeltSi;
+            heatJ += dMeltSi * 54000;
+            pushRxn(`sio2_melt_${alkId}`, `SiO₂(s) + 2${alkName}(l) —(>320 °C)→ ${SPECIES[silId].formula}(s) + H₂O(g)↑`, `SiO₂ phản ứng nhanh với ${alkName} nóng chảy`, `SiO₂ fuses rapidly with molten ${alkName}`, `Ở trạng thái nóng chảy (>320–500 °C), ${alkName} hòa tan nhanh SiO₂ tạo ${SPECIES[silId].formula}.`, `Molten ${alkName} rapidly fuses with SiO₂ forming ${SPECIES[silId].formula}.`, dMeltSi);
+          }
+        }
+      }
+    }
+    // 1c. Magnesium thermite reduction (600-800 C, T >= 873.15 K, inert/sealed or ignited Mg)
+    if (isDrySi && (moles.SiO2_s || 0) > 1e-10 && (moles.Mg_s || 0) > 1e-10 && T >= 873.15 && (isLowO2Env || (vessel.mgCombustionTimer || 0) > 0.02)) {
+      const dMgSi = Math.min(moles.SiO2_s, moles.Mg_s / 2) * (1 - Math.exp(-1.4 * dt));
+      if (dMgSi > 1e-11) {
+        consumeSpecies('SiO2_s', dMgSi);
+        consumeSpecies('Mg_s', 2 * dMgSi);
+        moles.Si_s = (moles.Si_s || 0) + dMgSi;
+        moles.MgO_s = (moles.MgO_s || 0) + 2 * dMgSi;
+        heatJ += dMgSi * 372000;
+        vessel.mgCombustionTimer = 0.9;
+        pushRxn('sio2_mg_red', 'SiO₂(s) + 2Mg(s) —(600–800 °C)→ Si(s) + 2MgO(s)', 'Phản ứng nhiệt Magnesium khử SiO₂ → Si + 2MgO', 'Magnesiothermic reduction: SiO₂ + 2Mg → Si + 2MgO', 'Nung hỗn hợp bột Mg và SiO₂ tới 600–800 °C xảy ra phản ứng tỏa nhiệt mạnh tạo Silicon và MgO.', 'Heating Mg + SiO₂ (600–800 °C) yields Silicon and MgO exothermically.', dMgSi);
+      }
+    }
+    // 1d. Carbothermal reduction ONLY in electric-arc extreme heat (>= 1700 C = 1973.15 K)
+    if (isDrySi && (moles.SiO2_s || 0) > 1e-10 && (moles.C_s || 0) > 1e-10 && T >= 1973.15) {
+      const dCSi = Math.min(moles.SiO2_s, moles.C_s / 2) * (1 - Math.exp(-0.9 * dt));
+      if (dCSi > 1e-11) {
+        consumeSpecies('SiO2_s', dCSi);
+        consumeSpecies('C_s', 2 * dCSi);
+        moles.Si_s = (moles.Si_s || 0) + dCSi;
+        gasProduced.CO_g = (gasProduced.CO_g || 0) + 2 * dCSi;
+        heatJ -= dCSi * 689000;
+        pushRxn('sio2_c_arc', 'SiO₂(s) + 2C(s) —(1,700–2,000 °C)→ Si(s) + 2CO(g)↑', 'Khử SiO₂ bằng Carbon ở lò hồ quang điện (≥ 1,700 °C)', 'Carbothermal SiO₂ reduction (electric arc ≥ 1,700 °C)', 'Chỉ xảy ra ở nhiệt độ cực cao ≥1,700 °C (lò hồ quang điện), tạo Si và khí CO.', 'Requires extreme electric-arc furnace temperature (≥1,700 °C) to form Si and CO↑.', dCSi, true);
+      }
+    }
+    // 1e. Calcium carbonate / CaO fluxing (900-1300 C, T >= 1173.15 K)
+    if (isDrySi && (moles.SiO2_s || 0) > 1e-10 && T >= 1173.15) {
+      if ((moles.CaCO3_s || 0) > 1e-10) {
+        const dCaC = Math.min(moles.SiO2_s, moles.CaCO3_s) * (1 - Math.exp(-0.75 * dt));
+        if (dCaC > 1e-11) {
+          consumeSpecies('SiO2_s', dCaC);
+          consumeSpecies('CaCO3_s', dCaC);
+          moles.CaSiO3_s = (moles.CaSiO3_s || 0) + dCaC;
+          gasProduced.CO2_g = (gasProduced.CO2_g || 0) + dCaC;
+          heatJ -= dCaC * 89000;
+          pushRxn('sio2_caco3', 'CaCO₃(s) + SiO₂(s) —(900–1,300 °C)→ CaSiO₃(l/s) + CO₂(g)↑', 'Nung CaCO₃ + SiO₂ ở 900–1,300 °C tạo xỉ CaSiO₃', 'High-T fusion of CaCO₃ + SiO₂ → CaSiO₃ + CO₂↑', 'Ở 900–1,300 °C, CaCO₃ tác dụng với SiO₂ tạo Calcium silicate nóng chảy và CO₂↑.', 'Fusing CaCO₃ + SiO₂ at 900–1,300 °C forms molten CaSiO₃ slag and CO₂↑.', dCaC, true);
+        }
+      }
+      if ((moles.CaO_s || 0) > 1e-10 && (moles.SiO2_s || 0) > 1e-10) {
+        const dCaO = Math.min(moles.SiO2_s, moles.CaO_s) * (1 - Math.exp(-0.85 * dt));
+        if (dCaO > 1e-11) {
+          consumeSpecies('SiO2_s', dCaO);
+          consumeSpecies('CaO_s', dCaO);
+          moles.CaSiO3_s = (moles.CaSiO3_s || 0) + dCaO;
+          heatJ += dCaO * 89000;
+          pushRxn('sio2_cao', 'CaO(s) + SiO₂(s) —(900–1,300 °C)→ CaSiO₃(s)', 'CaO hóa hợp SiO₂ tạo xỉ Calcium silicate', 'CaO fuses with SiO₂ yielding CaSiO₃ slag', 'Ở nhiệt độ cao, vôi sống CaO kết hợp với SiO₂ tạo CaSiO₃.', 'At high temperatures, CaO combines with SiO₂ forming CaSiO₃.', dCaO);
+        }
+      }
+    }
+    // 1f. Extreme Aluminium reduction (> 1150 C = 1423.15 K)
+    if (isDrySi && (moles.SiO2_s || 0) > 1e-10 && (moles.Al_s || 0) > 1e-10 && T >= 1423.15) {
+      const dAlSi = Math.min(moles.SiO2_s / 3, moles.Al_s / 4) * (1 - Math.exp(-0.28 * dt));
+      if (dAlSi > 1e-11) {
+        consumeSpecies('SiO2_s', 3 * dAlSi);
+        consumeSpecies('Al_s', 4 * dAlSi);
+        moles.Si_s = (moles.Si_s || 0) + 3 * dAlSi;
+        moles.Al2O3_s = (moles.Al2O3_s || 0) + 2 * dAlSi;
+        heatJ += dAlSi * 615000;
+        pushRxn('sio2_al_hi', '3SiO₂(s) + 4Al(s) —(>1,150 °C)→ 3Si(s) + 2Al₂O₃(s)', 'Nhiệt Aluminium khử SiO₂ ở nhiệt độ rất cao', 'Aluminothermic SiO₂ reduction (>1,150 °C)', 'Bột Al chỉ khử được SiO₂ ở nhiệt độ rất cao (>1,100–1,200 °C).', 'Aluminium powder reduces SiO₂ only above 1,100–1,200 °C.', dAlSi);
+      }
+    }
+  }
+  // Excess Mg -> Mg2Si; excess C @ >= 2173 K -> SiC; SiO3^2- + 2H+ -> H2SiO3↓ gel -> >100 C -> SiO2
+  if ((moles.H2O_l || 0) < 0.015 && (moles.Si_s || 0) > 1e-10) {
+    if ((moles.Mg_s || 0) > (moles.SiO2_s || 0) * 1.5 && moles.Mg_s > 1e-10 && T >= 873.15) {
+      const dSil = Math.min(moles.Si_s, moles.Mg_s / 2) * (1 - Math.exp(-0.75 * dt));
+      if (dSil > 1e-11) {
+        consumeSpecies('Si_s', dSil);
+        consumeSpecies('Mg_s', 2 * dSil);
+        moles.Mg2Si_s = (moles.Mg2Si_s || 0) + dSil;
+        heatJ += dSil * 78000;
+      }
+    }
+    if ((moles.C_s || 0) > 1e-10 && T >= 2173.15) {
+      const dSiC = Math.min(moles.Si_s, moles.C_s) * (1 - Math.exp(-0.65 * dt));
+      if (dSiC > 1e-11) {
+        consumeSpecies('Si_s', dSiC);
+        consumeSpecies('C_s', dSiC);
+        moles.SiC_s = (moles.SiC_s || 0) + dSiC;
+      }
+    }
+  }
+  if (liquidVolL > 1e-6 && liqMob > 0 && (moles.SiO3_2_aq || 0) > 1e-9 && (moles.H_aq || 0) > 1e-5) {
+    const dGel = Math.min(moles.SiO3_2_aq, moles.H_aq / 2) * (1 - Math.exp(-6.5 * liqMob * dt));
+    if (dGel > 1e-11) {
+      consumeSpecies('SiO3_2_aq', dGel);
+      consumeSpecies('H_aq', 2 * dGel);
+      moles.H2SiO3_s = (moles.H2SiO3_s || 0) + dGel;
+      pushRxn('silicate_gel', 'SiO₃²⁻(aq) + 2H⁺(aq) → H₂SiO₃(s)↓ (keo trắng)', 'Acid hóa silicate kết tủa keo trắng H₂SiO₃', 'Acidification of silicate precipitates H₂SiO₃↓ gel', 'Dung dịch silicate tác dụng acid kết tủa keo trắng H₂SiO₃.', 'Acidifying silicate precipitates gelatinous white H₂SiO₃.', dGel);
+    }
+  }
+  if ((moles.H2SiO3_s || 0) > 1e-10 && (moles.H2O_l || 0) < 0.01 && T >= 393.15) {
+    const dDeh = moles.H2SiO3_s * (1 - Math.exp(-0.85 * dt));
+    if (dDeh > 1e-11) {
+      consumeSpecies('H2SiO3_s', dDeh);
+      moles.SiO2_s = (moles.SiO2_s || 0) + dDeh;
+      gasProduced.H2O_g = (gasProduced.H2O_g || 0) + dDeh;
+    }
+  }
+
+  // ==================== PART 2: POTASSIUM DICHROMATE (K2Cr2O7) / CHROMATE ====================
+  // 2a. Base <-> Acid equilibrium: Cr2O7^2- (orange) + 2OH- ⇄ 2CrO4^2- (yellow) + H2O; Cr2O7^2- + 2NH3 + H2O -> 2CrO4^2- + 2NH4+
+  if (liquidVolL > 1e-6 && liqMob > 0) {
+    if ((moles.Cr2O7_2_aq || 0) > 1e-10 && (moles.OH_aq || 0) > 1e-9) {
+      const dBase = Math.min(moles.Cr2O7_2_aq, moles.OH_aq / 2) * (1 - Math.exp(-12.0 * liqMob * dt));
+      if (dBase > 1e-11) {
+        consumeSpecies('Cr2O7_2_aq', dBase);
+        consumeSpecies('OH_aq', 2 * dBase);
+        moles.CrO4_2_aq = (moles.CrO4_2_aq || 0) + 2 * dBase;
+        moles.H2O_l = (moles.H2O_l || 0) + dBase;
+        heatJ += dBase * 34000;
+        pushRxn('cr2o7_to_cro4', 'Cr₂O₇²⁻(cam) + 2OH⁻(aq) → 2CrO₄²⁻(vàng) + H₂O(l)', 'Kiềm hóa Cr₂O₇²⁻ (cam) → CrO₄²⁻ (vàng chanh)', 'Alkali converts orange Cr₂O₇²⁻ to lemon-yellow CrO₄²⁻', 'Ion OH⁻ chuyển cân bằng dichromate màu cam sang chromate màu vàng chanh ngay nhiệt độ thường.', 'Hydroxide shifts orange dichromate rapidly into lemon-yellow chromate.', dBase);
+      }
+    }
+    if ((moles.Cr2O7_2_aq || 0) > 1e-10 && (moles.NH3_aq || 0) > 1e-7 && (moles.H2O_l || 0) > 1e-6) {
+      const dAm = Math.min(moles.Cr2O7_2_aq, moles.NH3_aq / 2, moles.H2O_l) * (1 - Math.exp(-9.5 * liqMob * dt));
+      if (dAm > 1e-11) {
+        consumeSpecies('Cr2O7_2_aq', dAm);
+        consumeSpecies('NH3_aq', 2 * dAm);
+        consumeSpecies('H2O_l', dAm);
+        moles.CrO4_2_aq = (moles.CrO4_2_aq || 0) + 2 * dAm;
+        moles.NH4_aq = (moles.NH4_aq || 0) + 2 * dAm;
+        heatJ += dAm * 26000;
+        pushRxn('cr2o7_nh3', 'Cr₂O₇²⁻(cam) + 2NH₃(aq) + H₂O → 2CrO₄²⁻(vàng) + 2NH₄⁺', 'NH₃ chuyển dung dịch K₂Cr₂O₇ (cam) sang vàng tươi CrO₄²⁻', 'Aqueous NH₃ converts orange Cr₂O₇²⁻ to yellow CrO₄²⁻', 'Dung dịch NH₃ làm mất sắc cam dichromate chuyển sang màu vàng tươi chromate.', 'Aqueous ammonia converts orange dichromate into bright yellow chromate.', dAm);
+      }
+    }
+    if ((moles.CrO4_2_aq || 0) > 1e-10 && (moles.H_aq || 0) > 1e-6) {
+      const dAcid = Math.min(moles.CrO4_2_aq / 2, moles.H_aq / 2) * (1 - Math.exp(-12.0 * liqMob * dt));
+      if (dAcid > 1e-11) {
+        consumeSpecies('CrO4_2_aq', 2 * dAcid);
+        consumeSpecies('H_aq', 2 * dAcid);
+        moles.Cr2O7_2_aq = (moles.Cr2O7_2_aq || 0) + dAcid;
+        moles.H2O_l = (moles.H2O_l || 0) + dAcid;
+        heatJ += dAcid * 14000;
+        pushRxn('cro4_to_cr2o7', '2CrO₄²⁻(vàng) + 2H⁺(aq) → Cr₂O₇²⁻(cam) + H₂O(l)', 'Acid hóa CrO₄²⁻ (vàng) chuyển lại thành Cr₂O₇²⁻ (cam)', 'Acid converts yellow CrO₄²⁻ back to orange Cr₂O₇²⁻', 'Thêm acid làm cân bằng chromate (vàng) dịch chuyển ngược lại dichromate (cam).', 'Acidifying yellow chromate shifts equilibrium back to orange dichromate.', dAcid);
+      }
+    }
+
+    // 2b. Double-exchange precipitations: Ba2+ -> BaCrO4↓ (yellow); Ag+ -> Ag2Cr2O7↓ (brick-red) / Ag2CrO4↓
+    if ((moles.Ba2_aq || 0) > 1e-8) {
+      if ((moles.CrO4_2_aq || 0) > 1e-8) {
+        const dBaY = Math.min(moles.Ba2_aq, moles.CrO4_2_aq) * (1 - Math.exp(-9.0 * liqMob * dt));
+        if (dBaY > 1e-11) {
+          consumeSpecies('Ba2_aq', dBaY);
+          consumeSpecies('CrO4_2_aq', dBaY);
+          moles.BaCrO4_s = (moles.BaCrO4_s || 0) + dBaY;
+          pushRxn('ba_cro4_ppt', 'Ba²⁺(aq) + CrO₄²⁻(aq) → BaCrO₄(s)↓ (vàng tươi)', 'Kết tủa vàng tươi Barium chromate (BaCrO₄)', 'Bright yellow BaCrO₄ precipitate', 'Ba²⁺ kết tủa hoàn toàn ion chromate thành BaCrO₄ vàng tươi.', 'Ba²⁺ precipitates yellow BaCrO₄.', dBaY);
+        }
+      }
+      if ((moles.Cr2O7_2_aq || 0) > 1e-8 && (moles.H2O_l || 0) > 1e-6) {
+        const dBaD = Math.min(moles.Ba2_aq / 2, moles.Cr2O7_2_aq, moles.H2O_l) * (1 - Math.exp(-7.5 * liqMob * dt));
+        if (dBaD > 1e-11) {
+          consumeSpecies('Ba2_aq', 2 * dBaD);
+          consumeSpecies('Cr2O7_2_aq', dBaD);
+          consumeSpecies('H2O_l', dBaD);
+          moles.BaCrO4_s = (moles.BaCrO4_s || 0) + 2 * dBaD;
+          moles.H_aq = (moles.H_aq || 0) + 2 * dBaD;
+          pushRxn('ba_cr2o7_ppt', '2Ba²⁺(aq) + Cr₂O₇²⁻(aq) + H₂O → 2BaCrO₄(s)↓ + 2H⁺(aq)', 'BaCl₂ tác dụng K₂Cr₂O₇ kết tủa vàng tươi BaCrO₄', 'Ba²⁺ + Cr₂O₇²⁻ + H₂O → yellow BaCrO₄↓ + 2H⁺', 'Cân bằng thủy phân Cr₂O₇²⁻ dịch chuyển khi Ba²⁺ tạo kết tủa BaCrO₄ vàng tươi ít tan.', 'Ba²⁺ drives Cr₂O₇²⁻ hydrolysis to precipitate bright-yellow BaCrO₄.', dBaD);
+        }
+      }
+    }
+    if ((moles.Ag_aq || 0) > 1e-8) {
+      if ((moles.Cr2O7_2_aq || 0) > 1e-8) {
+        const dAgD = Math.min(moles.Ag_aq / 2, moles.Cr2O7_2_aq) * (1 - Math.exp(-9.0 * liqMob * dt));
+        if (dAgD > 1e-11) {
+          consumeSpecies('Ag_aq', 2 * dAgD);
+          consumeSpecies('Cr2O7_2_aq', dAgD);
+          moles.Ag2Cr2O7_s = (moles.Ag2Cr2O7_s || 0) + dAgD;
+          pushRxn('ag_cr2o7_ppt', '2Ag⁺(aq) + Cr₂O₇²⁻(aq) → Ag₂Cr₂O₇(s)↓ (đỏ gạch sẫm)', 'Kết tủa đỏ gạch sẫm Silver dichromate (Ag₂Cr₂O₇)', 'Dark brick-red Ag₂Cr₂O₇ precipitate', 'AgNO₃ tác dụng ngay với K₂Cr₂O₇ tạo kết tủa đỏ gạch sẫm Ag₂Cr₂O₇.', 'Ag⁺ immediately precipitates dark brick-red Ag₂Cr₂O₇.', dAgD);
+        }
+      }
+      if ((moles.CrO4_2_aq || 0) > 1e-8) {
+        const dAgC = Math.min(moles.Ag_aq / 2, moles.CrO4_2_aq) * (1 - Math.exp(-9.0 * liqMob * dt));
+        if (dAgC > 1e-11) {
+          consumeSpecies('Ag_aq', 2 * dAgC);
+          consumeSpecies('CrO4_2_aq', dAgC);
+          moles.Ag2CrO4_s = (moles.Ag2CrO4_s || 0) + dAgC;
+          pushRxn('ag_cro4_ppt', '2Ag⁺(aq) + CrO₄²⁻(aq) → Ag₂CrO₄(s)↓ (đỏ gạch)', 'Kết tủa đỏ gạch Silver chromate (Ag₂CrO₄)', 'Brick-red Ag₂CrO₄ precipitate', 'Ag⁺ tạo kết tủa đỏ gạch Ag₂CrO₄ với ion CrO₄²⁻.', 'Ag⁺ precipitates brick-red Ag₂CrO₄.', dAgC);
+        }
+      }
+    }
+
+    // 2c. H2O2 in acidic solution -> transient deep indigo CrO5(aq) -> emerald-green Cr3+ + O2↑
+    if ((moles.Cr2O7_2_aq || 0) > 1e-9 && (moles.H2O2_aq || 0) > 1e-7 && (moles.H_aq || 0) > 1e-5 && liqMob > 0) {
+      const dPer = Math.min(moles.Cr2O7_2_aq, moles.H2O2_aq / 4, moles.H_aq / 2) * (1 - Math.exp(-8.5 * liqMob * dt));
+      if (dPer > 1e-11) {
+        consumeSpecies('Cr2O7_2_aq', dPer);
+        consumeSpecies('H2O2_aq', 4 * dPer);
+        consumeSpecies('H_aq', 2 * dPer);
+        moles.CrO5_aq = (moles.CrO5_aq || 0) + 2 * dPer;
+        moles.H2O_l = (moles.H2O_l || 0) + 5 * dPer;
+        heatJ += dPer * 165000;
+        pushRxn('cr2o7_h2o2_cro5', 'Cr₂O₇²⁻ + 4H₂O₂ + 2H⁺ → 2CrO₅(xanh chàm đậm) + 5H₂O', 'H₂O₂ + K₂Cr₂O₇/H⁺ tạo hợp chất CrO₅ xanh chàm đậm!', 'Acidic dichromate + H₂O₂ forms deep indigo CrO₅!', 'Trong môi trường acid, H₂O₂ phản ứng tức thì tạo Chromium(VI) peroxide CrO₅ màu xanh chàm đậm.', 'In acidic media, H₂O₂ instantaneously yields deep indigo-blue CrO₅ peroxide.', dPer);
+      }
+    }
+    if ((moles.CrO5_aq || 0) > 1e-10 && (moles.H_aq || 0) > 1e-6 && liqMob > 0) {
+      const dDec = Math.min(moles.CrO5_aq / 2, moles.H_aq / 6) * (1 - Math.exp(-0.72 * liqMob * dt));
+      if (dDec > 1e-11) {
+        consumeSpecies('CrO5_aq', 2 * dDec);
+        consumeSpecies('H_aq', 6 * dDec);
+        moles.Cr3_aq = (moles.Cr3_aq || 0) + 2 * dDec;
+        moles.H2O_l = (moles.H2O_l || 0) + 3 * dDec;
+        gasProduced.O2_g = (gasProduced.O2_g || 0) + 3.5 * dDec;
+        heatJ += dDec * 185000;
+        pushRxn('cro5_decomp', '4CrO₅(aq) + 12H⁺ → 4Cr³⁺(xanh lục) + 7O₂(g)↑ + 6H₂O', 'CrO₅ kém bền phân hủy thành Cr³⁺ xanh lục và khí O₂↑', 'Unstable indigo CrO₅ decomposes → green Cr³⁺ + O₂↑', 'Peroxide CrO₅ phân hủy sau vài giây tạo dung dịch Cr³⁺ màu xanh lục và giải phóng khí O₂.', 'Indigo CrO₅ rapidly decomposes to emerald-green Cr³⁺ liberating O₂ gas.', dDec, true);
+      }
+    }
+
+    // 2d. Concentrated HCl (>= 4.5 M H+ & Cl-) -> green Cr3+ + Cl2↑ (dilute HCl does NOT react!)
+    const nDichTot = (moles.Cr2O7_2_aq || 0) + (moles.K2Cr2O7_s || 0);
+    if (nDichTot > 1e-10 && (moles.H_aq || 0) > 1e-4 && (moles.Cl_aq || 0) > 1e-4 && liqMob > 0) {
+      const cH = (moles.H_aq || 0) / Math.max(1e-6, liquidVolL);
+      const cCl = (moles.Cl_aq || 0) / Math.max(1e-6, liquidVolL);
+      if (cH >= 4.5 && cCl >= 4.5) {
+        const dHCl = Math.min(nDichTot, moles.H_aq / 14, moles.Cl_aq / 6) * (1 - Math.exp(-1.35 * liqMob * dt));
+        if (dHCl > 1e-11) {
+          const tkAq = Math.min(moles.Cr2O7_2_aq || 0, dHCl);
+          if (tkAq > 0) consumeSpecies('Cr2O7_2_aq', tkAq);
+          const tkSol = dHCl - tkAq;
+          if (tkSol > 0) { consumeSpecies('K2Cr2O7_s', tkSol); moles.K_aq = (moles.K_aq || 0) + 2 * tkSol; }
+          consumeSpecies('H_aq', 14 * dHCl);
+          consumeSpecies('Cl_aq', 6 * dHCl);
+          moles.Cr3_aq = (moles.Cr3_aq || 0) + 2 * dHCl;
+          moles.H2O_l = (moles.H2O_l || 0) + 7 * dHCl;
+          gasProduced.Cl2_g = (gasProduced.Cl2_g || 0) + 3 * dHCl;
+          heatJ += dHCl * 225000;
+          pushRxn('k2cr2o7_hcl_conc', 'K₂Cr₂O₇ + 14HCl(đặc) → 2KCl + 2CrCl₃(xanh lục) + 3Cl₂↑ + 7H₂O', 'K₂Cr₂O₇ oxi hóa HCl đặc sinh khí Cl₂ và dung dịch xanh lục Cr³⁺', 'Conc. HCl reduces K₂Cr₂O₇ → green Cr³⁺ + Cl₂↑', 'HCl đặc (36%) bị K₂Cr₂O₇ oxi hóa giải phóng khí Cl₂ vàng lục và chuyển dung dịch sang xanh lục Cr³⁺; HCl loãng không phản ứng.', 'Conc. HCl (not dilute) is oxidized by K₂Cr₂O₇ to Cl₂↑ and green Cr³⁺.', dHCl, true);
+        }
+      }
+    }
+
+    // 2e. Aqueous Acidic Redox with Fe, Zn, Al, Mg, P_red, or I- (KI) -> green Cr3+
+    if ((moles.Cr2O7_2_aq || 0) > 1e-10 && (moles.H_aq || 0) > 1e-4 && liqMob > 0) {
+      for (const [mId, ionId, mSt, eqM] of [
+        ['Zn_s', 'Zn2_aq', 3, 'Cr₂O₇²⁻ + 3Zn + 14H⁺ → 2Cr³⁺ + 3Zn²⁺ + 7H₂O'],
+        ['Fe_s', 'Fe2_aq', 3, 'Cr₂O₇²⁻ + 3Fe + 14H⁺ → 2Cr³⁺ + 3Fe²⁺ + 7H₂O'],
+        ['Mg_s', 'Mg2_aq', 3, 'Cr₂O₇²⁻ + 3Mg + 14H⁺ → 2Cr³⁺ + 3Mg²⁺ + 7H₂O'],
+        ['Al_s', 'Al3_aq', 2, 'Cr₂O₇²⁻ + 2Al + 14H⁺ → 2Cr³⁺ + 2Al³⁺ + 7H₂O'],
+      ]) {
+        const nM = moles[mId] || 0;
+        if (nM > 1e-9 && (moles.Cr2O7_2_aq || 0) > 1e-10 && (moles.H_aq || 0) > 1e-4) {
+          const dMCr = Math.min(moles.Cr2O7_2_aq, nM / mSt, moles.H_aq / 14) * (1 - Math.exp(-1.1 * liqMob * dt));
+          if (dMCr > 1e-11) {
+            consumeSpecies('Cr2O7_2_aq', dMCr);
+            consumeSpecies(mId, mSt * dMCr);
+            consumeSpecies('H_aq', 14 * dMCr);
+            moles.Cr3_aq = (moles.Cr3_aq || 0) + 2 * dMCr;
+            moles[ionId] = (moles[ionId] || 0) + mSt * dMCr;
+            moles.H2O_l = (moles.H2O_l || 0) + 7 * dMCr;
+            heatJ += dMCr * 620000;
+            pushRxn(`cr2o7_acid_${mId}`, eqM, `${SPECIES[mId].formula} khử K₂Cr₂O₇/H⁺ sang Cr³⁺ xanh lục`, `${SPECIES[mId].formula} reduces acidic Cr₂O₇²⁻ to green Cr³⁺`, `Trong môi trường acid loãng, ${SPECIES[mId].formula} khử ngay dung dịch cam Cr₂O₇²⁻ sang xanh lục Cr³⁺.`, `In dilute acid, ${SPECIES[mId].formula} reduces orange Cr₂O₇²⁻ to emerald-green Cr³⁺.`, dMCr);
+          }
+        }
+      }
+      if ((moles.Fe2_aq || 0) > 1e-8 && (moles.Cr2O7_2_aq || 0) > 1e-10) {
+        const dF2 = Math.min(moles.Cr2O7_2_aq, moles.Fe2_aq / 6, moles.H_aq / 14) * (1 - Math.exp(-4.5 * liqMob * dt));
+        if (dF2 > 1e-11) {
+          consumeSpecies('Cr2O7_2_aq', dF2);
+          consumeSpecies('Fe2_aq', 6 * dF2);
+          consumeSpecies('H_aq', 14 * dF2);
+          moles.Cr3_aq = (moles.Cr3_aq || 0) + 2 * dF2;
+          moles.Fe3_aq = (moles.Fe3_aq || 0) + 6 * dF2;
+          moles.H2O_l = (moles.H2O_l || 0) + 7 * dF2;
+          heatJ += dF2 * 290000;
+        }
+      }
+      if ((moles.P_red_s || 0) > 1e-9 && T >= 323.15 && (moles.Cr2O7_2_aq || 0) > 1e-10) {
+        const dPCrAq = Math.min(moles.P_red_s / 6, moles.Cr2O7_2_aq / 5, moles.H_aq / 40) * (1 - Math.exp(-0.55 * liqMob * dt));
+        if (dPCrAq > 1e-11) {
+          consumeSpecies('P_red_s', 6 * dPCrAq);
+          consumeSpecies('Cr2O7_2_aq', 5 * dPCrAq);
+          consumeSpecies('H_aq', 40 * dPCrAq);
+          moles.H3PO4_aq = (moles.H3PO4_aq || 0) + 6 * dPCrAq;
+          moles.Cr3_aq = (moles.Cr3_aq || 0) + 10 * dPCrAq;
+          moles.H2O_l = (moles.H2O_l || 0) + 11 * dPCrAq;
+          heatJ += dPCrAq * 1450000;
+          pushRxn('cr2o7_acid_pred', '6P(đỏ) + 5Cr₂O₇²⁻ + 40H⁺ —(t°)→ 6H₃PO₄ + 10Cr³⁺ + 11H₂O', 'P đỏ khử K₂Cr₂O₇ trong acid đun nóng → H₃PO₄ + Cr³⁺ xanh lục', 'Warm acidic dichromate oxidizes Red P → H₃PO₄ + green Cr³⁺', 'Trong dung dịch acid đun nóng, P đỏ bị oxi hóa lên H₃PO₄ còn Cr(VI) bị khử thành Cr³⁺ xanh lục.', 'In warm acidic solution, Red P reduces orange Cr₂O₇²⁻ to green Cr³⁺.', dPCrAq);
+        }
+      }
+    }
+  }
+
+  // 2f. Conc H2SO4 (>= 78%): K2Cr2O7 + 2H2SO4(đặc) -> 2CrO3↓ (đỏ sẫm) + 2KHSO4 + H2O; if NaCl/Cl- + warm -> CrO2Cl2↑
+  const sulfCr = computeSulfuricAcidState(moles);
+  if (sulfCr.w >= 0.78 && (moles.H2SO4_l || 0) > 1e-5 && ((moles.K2Cr2O7_s || 0) > 1e-10 || (moles.Cr2O7_2_aq || 0) > 1e-10)) {
+    const availCl = (moles.Cl_aq || 0) + (moles.NaCl_s || 0);
+    if (availCl > 1e-7 && T >= 323.15 && (moles.K2Cr2O7_s || 0) > 1e-10 && (moles.H2SO4_l || 0) > 1e-5) {
+      const dChl = Math.min(moles.K2Cr2O7_s, availCl / 4, moles.H2SO4_l / 6) * (1 - Math.exp(-1.1 * dt));
+      if (dChl > 1e-11) {
+        consumeSpecies('K2Cr2O7_s', dChl);
+        let needCl = 4 * dChl;
+        const tkNaCl = Math.min(moles.NaCl_s || 0, needCl);
+        if (tkNaCl > 0) { consumeSpecies('NaCl_s', tkNaCl); moles.Na_aq = (moles.Na_aq || 0) + tkNaCl; needCl -= tkNaCl; }
+        if (needCl > 0) consumeSpecies('Cl_aq', Math.min(moles.Cl_aq || 0, needCl));
+        consumeSpecies('H2SO4_l', 6 * dChl);
+        moles.K_aq = (moles.K_aq || 0) + 2 * dChl;
+        moles.HSO4_aq = (moles.HSO4_aq || 0) + 6 * dChl;
+        moles.H2O_l = (moles.H2O_l || 0) + 3 * dChl;
+        gasProduced.CrO2Cl2_g = (gasProduced.CrO2Cl2_g || 0) + 2 * dChl;
+        heatJ += dChl * 120000;
+        pushRxn('chromyl_chloride', 'K₂Cr₂O₇ + 4NaCl + 6H₂SO₄(đặc, t°) → 2CrO₂Cl₂(g)↑ + 2KHSO₄ + 4NaHSO₄ + 3H₂O', 'Phản ứng tạo hơi Chromyl chloride CrO₂Cl₂ màu đỏ nâu!', 'Chromyl chloride (CrO₂Cl₂) red-brown vapor evolved!', 'Khi đun nóng K₂Cr₂O₇ + NaCl trong H₂SO₄ đặc sinh khí CrO₂Cl₂ màu đỏ nâu đặc trưng.', 'Heating K₂Cr₂O₇ + NaCl in conc. H₂SO₄ evolves deep red-brown CrO₂Cl₂ vapor.', dChl, true);
+      }
+    }
+    const nKCrS = (moles.K2Cr2O7_s || 0) + (moles.Cr2O7_2_aq || 0);
+    if (nKCrS > 1e-10 && (moles.H2SO4_l || 0) > 1e-5) {
+      const dCrO3 = Math.min(nKCrS, moles.H2SO4_l / 2) * (1 - Math.exp(-1.8 * dt));
+      if (dCrO3 > 1e-11) {
+        const tkAq = Math.min(moles.Cr2O7_2_aq || 0, dCrO3);
+        if (tkAq > 0) consumeSpecies('Cr2O7_2_aq', tkAq);
+        const tkSol = dCrO3 - tkAq;
+        if (tkSol > 0) { consumeSpecies('K2Cr2O7_s', tkSol); moles.K_aq = (moles.K_aq || 0) + 2 * tkSol; }
+        consumeSpecies('H2SO4_l', 2 * dCrO3);
+        moles.CrO3_s = (moles.CrO3_s || 0) + 2 * dCrO3;
+        moles.HSO4_aq = (moles.HSO4_aq || 0) + 2 * dCrO3;
+        moles.H2O_l = (moles.H2O_l || 0) + dCrO3;
+        heatJ += dCrO3 * 85000;
+        pushRxn('k2cr2o7_h2so4_cro3', 'K₂Cr₂O₇ + 2H₂SO₄(đặc) → 2CrO₃(s)↓ (đỏ sẫm) + 2KHSO₄ + H₂O', 'H₂SO₄ đặc tách nước kết tủa hình kim đỏ sẫm CrO₃ (hỗn hợp sunfocromic)', 'Conc. H₂SO₄ precipitates crimson CrO₃ crystals from K₂Cr₂O₇', 'H₂SO₄ đặc 98% đẩy và tách nước tạo kết tủa đỏ sẫm CrO₃ (hỗn hợp rửa sunfocromic); H₂SO₄ loãng chỉ tạo môi trường H⁺.', 'Conc. H₂SO₄ dehydrates K₂Cr₂O₇ yielding crimson CrO₃ needles (chromic cleaning mixture).', dCrO3);
+      }
+    }
+  }
+
+  // 2g. Dry Solid Pyrotechnic / Thermite / Alkali / Nonmetal Redox Reactions of K2Cr2O7_s
+  if ((moles.K2Cr2O7_s || 0) > 1e-10 && (moles.H2O_l || 0) < 0.015) {
+    // Metals: Al/Mg/Zn (>=500 C), Fe (>=550 C); Na/K dry flash (>= 70 C)
+    const dryCrMetals = [
+      ['Al_s', 2, 'Al2O3_s', 1, 773.15, 1.4, 'k2cr2o7_al', 'K₂Cr₂O₇ + 2Al —(>500 °C)→ Al₂O₃ + Cr₂O₃ + K₂O', 890000],
+      ['Mg_s', 3, 'MgO_s', 3, 773.15, 1.4, 'k2cr2o7_mg', 'K₂Cr₂O₇ + 3Mg —(>500 °C)→ 3MgO + Cr₂O₃ + K₂O', 920000],
+      ['Zn_s', 3, 'ZnO_s', 3, 773.15, 0.85, 'k2cr2o7_zn', 'K₂Cr₂O₇ + 3Zn —(>500 °C)→ 3ZnO + Cr₂O₃ + K₂O', 480000],
+      ['Fe_s', 3, 'FeO_s', 3, 823.15, 0.55, 'k2cr2o7_fe', 'K₂Cr₂O₇ + 3Fe —(>550 °C)→ 3FeO + Cr₂O₃ + K₂O', 360000],
+      ['Na_s', 6, 'Na2O_s', 3, 343.15, 3.2, 'k2cr2o7_na_dry', '⚠️ K₂Cr₂O₇(s) + 6Na(s) —(t° nhẹ)→ Cr₂O₃ + K₂O + 3Na₂O', 980000],
+      ['K_s', 6, 'K2O_s', 3, 333.15, 3.5, 'k2cr2o7_k_dry', '⚠️ K₂Cr₂O₇(s) + 6K(s) —(t° nhẹ)→ Cr₂O₃ + 4K₂O', 990000],
+    ];
+    for (const [mId, mSt, oxId, oxSt, minK, rate, rxnId, eq, exH] of dryCrMetals) {
+      const nM = moles[mId] || 0;
+      if (nM > 1e-10 && (moles.K2Cr2O7_s || 0) > 1e-10 && T >= minK) {
+        const dMC = Math.min(moles.K2Cr2O7_s, nM / mSt) * (1 - Math.exp(-rate * dt));
+        if (dMC > 1e-11) {
+          consumeSpecies('K2Cr2O7_s', dMC);
+          consumeSpecies(mId, mSt * dMC);
+          moles.Cr2O3_s = (moles.Cr2O3_s || 0) + dMC;
+          moles.K2O_s = (moles.K2O_s || 0) + dMC;
+          moles[oxId] = (moles[oxId] || 0) + oxSt * dMC;
+          heatJ += dMC * exH;
+          if (mId === 'Mg_s') vessel.mgCombustionTimer = 0.9;
+          if (mId === 'Al_s') vessel.alCombustionTimer = 0.9;
+          pushRxn(rxnId, eq, `Phản ứng khử K₂Cr₂O₇ rắn bằng ${SPECIES[mId].formula} tạo Cr₂O₃ lục thẫm`, `Solid redox: K₂Cr₂O₇ + ${SPECIES[mId].formula} → dark-green Cr₂O₃`, eq, eq, dMC);
+        }
+      }
+    }
+    // P_red_s (>= 150 C = 423.15 K)
+    if ((moles.P_red_s || 0) > 1e-10 && (moles.K2Cr2O7_s || 0) > 1e-10 && T >= 423.15) {
+      const dPCr = Math.min(moles.K2Cr2O7_s / 15, moles.P_red_s / 18) * (1 - Math.exp(-3.6 * dt));
+      if (dPCr > 1e-11) {
+        consumeSpecies('K2Cr2O7_s', 15 * dPCr);
+        consumeSpecies('P_red_s', 18 * dPCr);
+        moles.Cr2O3_s = (moles.Cr2O3_s || 0) + 15 * dPCr;
+        moles.K3PO4_s = (moles.K3PO4_s || 0) + 10 * dPCr;
+        moles.P4O10_s = (moles.P4O10_s || 0) + 2 * dPCr;
+        heatJ += dPCr * 5800000;
+        vessel.phosphorusFlameTimer = 1.05;
+        vessel.phosphorusFlameColor = 'p_white_yellow';
+        pushRxn('k2cr2o7_pred_dry', '15K₂Cr₂O₇ + 18P(đỏ) —(>150 °C)→ 15Cr₂O₃ + 10K₃PO₄ + 2P₄O₁₀', '⚠️ Hỗn hợp P đỏ + K₂Cr₂O₇ bùng cháy dữ dội tạo Cr₂O₃ lục thẫm!', '⚠️ Dry Red P + K₂Cr₂O₇ flashes violently → green Cr₂O₃ + P₄O₁₀!', 'Hỗn hợp P đỏ + K₂Cr₂O₇ cực nhạy nhiệt (>150–200 °C) hoặc ma sát.', 'Dry Red P + K₂Cr₂O₇ ignites violently >150 °C or by friction.', dPCr);
+      }
+    }
+    // S_s (>= 300 C = 573.15 K): 8K2Cr2O7 + 9S -> 8Cr2O3 + 6K2SO4 + 2K2O + 3SO2↑
+    if ((moles.S_s || 0) > 1e-10 && (moles.K2Cr2O7_s || 0) > 1e-10 && T >= 573.15) {
+      const dSCr = Math.min(moles.K2Cr2O7_s / 8, moles.S_s / 9) * (1 - Math.exp(-1.1 * dt));
+      if (dSCr > 1e-11) {
+        consumeSpecies('K2Cr2O7_s', 8 * dSCr);
+        consumeSpecies('S_s', 9 * dSCr);
+        moles.Cr2O3_s = (moles.Cr2O3_s || 0) + 8 * dSCr;
+        moles.K2SO4_s = (moles.K2SO4_s || 0) + 6 * dSCr;
+        moles.K2O_s = (moles.K2O_s || 0) + 2 * dSCr;
+        gasProduced.SO2_g = (gasProduced.SO2_g || 0) + 3 * dSCr;
+        heatJ += dSCr * 2400000;
+        pushRxn('k2cr2o7_s_dry', '8K₂Cr₂O₇ + 9S —(>300 °C)→ 8Cr₂O₃(s) + 6K₂SO₄ + 2K₂O + 3SO₂↑', 'K₂Cr₂O₇ + Sulfur đun nóng (>300 °C) → Cr₂O₃ lục thẫm + K₂SO₄ + SO₂↑', 'Molten Sulfur + K₂Cr₂O₇ (>300 °C) → green Cr₂O₃ + K₂SO₄ + SO₂↑', 'Đun hỗn hợp bột K₂Cr₂O₇ + S (>300–400 °C) phản ứng tự duy trì tạo Cr₂O₃ xanh lục, K₂SO₄ và khí SO₂.', 'Heating K₂Cr₂O₇ + S above 300 °C gives dark-green Cr₂O₃, K₂SO₄, and SO₂.', dSCr, true);
+      }
+    }
+    // C_s (>= 400 C = 673.15 K): 2K2Cr2O7 + 3C -> 2Cr2O3 + 2K2CO3 + CO2↑
+    if ((moles.C_s || 0) > 1e-10 && (moles.K2Cr2O7_s || 0) > 1e-10 && T >= 673.15) {
+      const dCCr = Math.min(moles.K2Cr2O7_s / 2, moles.C_s / 3) * (1 - Math.exp(-0.95 * dt));
+      if (dCCr > 1e-11) {
+        consumeSpecies('K2Cr2O7_s', 2 * dCCr);
+        consumeSpecies('C_s', 3 * dCCr);
+        moles.Cr2O3_s = (moles.Cr2O3_s || 0) + 2 * dCCr;
+        moles.K2CO3_s = (moles.K2CO3_s || 0) + 2 * dCCr;
+        gasProduced.CO2_g = (gasProduced.CO2_g || 0) + dCCr;
+        heatJ += dCCr * 540000;
+        pushRxn('k2cr2o7_c_dry', '2K₂Cr₂O₇ + 3C —(>400 °C)→ 2Cr₂O₃(s) + 2K₂CO₃ + CO₂(g)↑', 'Carbon khử K₂Cr₂O₇ (>400 °C) → Cr₂O₃ xanh lục + K₂CO₃ + CO₂↑', 'Hot Carbon reduces K₂Cr₂O₇ (>400 °C) → green Cr₂O₃ + K₂CO₃ + CO₂↑', 'Nung nóng Carbon với K₂Cr₂O₇ trên 400–500 °C thu được Cr₂O₃ lục thẫm, K₂CO₃ và khí CO₂.', 'Heating Carbon + K₂Cr₂O₇ (>400 °C) forms green Cr₂O₃, K₂CO₃, and CO₂↑.', dCCr, true);
+      }
+    }
+    // SiO2_s at extreme temperature (> 800 C = 1073.15 K): 2K2Cr2O7 + 2SiO2 -> 2K2SiO3 + 2Cr2O3 + 3O2↑
+    if ((moles.SiO2_s || 0) > 1e-10 && (moles.K2Cr2O7_s || 0) > 1e-10 && T >= 1073.15) {
+      const dSiCr = Math.min(moles.K2Cr2O7_s / 2, moles.SiO2_s / 2) * (1 - Math.exp(-0.42 * dt));
+      if (dSiCr > 1e-11) {
+        consumeSpecies('K2Cr2O7_s', 2 * dSiCr);
+        consumeSpecies('SiO2_s', 2 * dSiCr);
+        moles.K2SiO3_s = (moles.K2SiO3_s || 0) + 2 * dSiCr;
+        moles.Cr2O3_s = (moles.Cr2O3_s || 0) + 2 * dSiCr;
+        gasProduced.O2_g = (gasProduced.O2_g || 0) + 3 * dSiCr;
+        pushRxn('k2cr2o7_sio2_hi', '2K₂Cr₂O₇ + 2SiO₂ —(>800 °C)→ 2K₂SiO₃ + 2Cr₂O₃ + 3O₂↑', 'SiO₂ đẩy CrO₃ ở >800–1,000 °C tạo silicate và Cr₂O₃', 'SiO₂ fuses with K₂Cr₂O₇ >800 °C → K₂SiO₃ + Cr₂O₃ + O₂↑', 'Chỉ ở nhiệt độ nung chảy rất cao >800–1,000 °C, SiO₂ mới đẩy được oxide tạo silicate và Cr₂O₃.', 'Only above 800–1,000 °C does SiO₂ fuse with K₂Cr₂O₇ yielding silicate and Cr₂O₃.', dSiCr);
+      }
+    }
+  }
+
+  return heatJ;
+}
+
+/**
  * Declarative complex dissociations & ion salt pairings enforced at zero-liquid dry phase boundaries.
  * Adding a new aqueous ion or complex to SPECIES should include its dry fate here.
  */
@@ -4617,9 +5090,18 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   H3PO4_aq: { H3PO4_s: 1 },
   H3PO3_aq: { P4O6_s: 0.25, H2O_g: 1.5 },
   H3PO2_aq: { H2O_g: 1.5, P_red_s: 0.5 },
+  CrO5_aq: { Cr2O3_s: 0.5, O2_g: 1.75 },
 };
 
 export const DRY_SALT_PAIRINGS = [
+  ['Ag_aq', 2, 'Cr2O7_2_aq', 1, 'Ag2Cr2O7_s', 1, false],
+  ['Ag_aq', 2, 'CrO4_2_aq', 1, 'Ag2CrO4_s', 1, false],
+  ['Ba2_aq', 1, 'CrO4_2_aq', 1, 'BaCrO4_s', 1, false],
+  ['Cr3_aq', 1, 'OH_aq', 3, 'CrOH3_s', 1, false],
+  ['Cr3_aq', 1, 'PO4_3_aq', 1, 'CrPO4_s', 1, false],
+  ['Cr3_aq', 2, 'SO4_2_aq', 3, 'Cr2SO4_3_s', 1, false],
+  ['Cr3_aq', 1, 'Cl_aq', 3, 'CrCl3_s', 1, false],
+  ['Cr3_aq', 1, 'NO3_aq', 3, 'CrNO3_3_s', 1, false],
   ['Ag_aq', 1, 'Cl_aq', 1, 'AgCl_s', 1, false],
   ['Ag_aq', 1, 'Br_aq', 1, 'AgBr_s', 1, false],
   ['Ag_aq', 1, 'I_aq', 1, 'AgI_s', 1, false],
@@ -4764,6 +5246,17 @@ export const DRY_SALT_PAIRINGS = [
   ['Fe2_aq', 3, 'PO4_3_aq', 2, 'Fe3PO4_2_s', 1, false],
   ['Al3_aq', 1, 'PO4_3_aq', 1, 'AlPO4_s', 1, false],
   ['Mn2_aq', 3, 'PO4_3_aq', 2, 'Mn3PO4_2_s', 1, false],
+  ['Na_aq', 2, 'SiO3_2_aq', 1, 'Na2SiO3_s', 1, false],
+  ['K_aq', 2, 'SiO3_2_aq', 1, 'K2SiO3_s', 1, false],
+  ['Ca2_aq', 1, 'SiO3_2_aq', 1, 'CaSiO3_s', 1, false],
+  ['H_aq', 2, 'SiO3_2_aq', 1, 'H2SiO3_s', 1, false],
+  ['K_aq', 2, 'Cr2O7_2_aq', 1, 'K2Cr2O7_s', 1, false],
+  ['Na_aq', 2, 'Cr2O7_2_aq', 1, 'Na2Cr2O7_s', 1, false],
+  ['H_aq', 2, 'Cr2O7_2_aq', 1, 'CrO3_s', 2, false],
+  ['K_aq', 2, 'CrO4_2_aq', 1, 'K2CrO4_s', 1, false],
+  ['Na_aq', 2, 'CrO4_2_aq', 1, 'Na2CrO4_s', 1, false],
+  ['NH4_aq', 2, 'CrO4_2_aq', 1, 'NH4_2_CrO4_s', 1, false],
+  ['H_aq', 2, 'CrO4_2_aq', 1, 'CrO3_s', 1, false],
 ];
 
 /**
@@ -5974,14 +6467,16 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     reactionHeatJ += stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
     reactionHeatJ += stepCarbideAndCarbonChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
     reactionHeatJ += stepPhosphorusChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
+    reactionHeatJ += stepSiliconAndChromiumChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
     stepLiquidLiquidPartition(vessel, strat, dt);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
   } else {
-    // Only allow dry chemisorption & dry halogen/sulfur/carbon/phosphorus reactions when no aqueous transport exists
+    // Only allow dry chemisorption & dry halogen/sulfur/carbon/phosphorus/silicon/chromium reactions when no aqueous transport exists
     reactionHeatJ += stepHalogenRedoxAndAlkali(vessel, 0, dt, activeReactions, gasProduced, strat, 0);
     reactionHeatJ += stepSulfurChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
     reactionHeatJ += stepCarbideAndCarbonChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
     reactionHeatJ += stepPhosphorusChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
+    reactionHeatJ += stepSiliconAndChromiumChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, 0, dt, activeReactions);
   }
 

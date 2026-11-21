@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.18',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.19',
     toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
     quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
     quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -114,6 +114,7 @@ export const I18N = {
     regCatAll: 'Tất cả',
     regCatAcid: 'Acid',
     regCatBase: 'Base',
+    regCatOxide: 'Oxide',
     regCatSalt: 'Muối',
     regCatMetal: 'Kim loại',
     regCatNonmetal: 'Phi kim',
@@ -214,6 +215,10 @@ export const I18N = {
     reg_c_desc: 'Bột đen xốp hấp phụ mạnh khí & chất màu (1.95 g/cm³ · thăng hoa >3,600 °C) · Cháy (>300–500 °C), khử oxide kim loại (>500 °C -> CO₂ ở <700 °C, >800 °C -> CO), tạo CH₄/Al₄C₃ & tác dụng HNO₃/H₂SO₄ đặc nóng',
     reg_p_red: 'Phosphorus đỏ (P đỏ)',
     reg_p_red_desc: 'Bột mịn màu đỏ sẫm tím (2.34 g/cm³ · thăng hoa >416 °C thành P₄) · Không tự cháy ở nhiệt độ thường; cháy ~250–260 °C (O₂ -> P₄O₁₀), bốc cháy trong Cl₂/Br₂, hóa hợp S/I₂/kim loại khi đun & khử HNO₃/H₂SO₄ đặc/KMnO₄',
+    reg_sio2: 'Silicon dioxide (SiO₂ vô định hình)',
+    reg_sio2_desc: 'Bột trắng siêu mịn xốp (2.19 g/cm³ · mềm 1,500–1,600 °C · nc ~1,710 °C) · Trơ với nước & HCl/HNO₃/H₂SO₄; tan trong NaOH đặc nóng/nóng chảy (Na₂SiO₃), phản ứng Mg (600–800 °C -> Si), CaCO₃ (900–1,300 °C -> CaSiO₃) & C (1,700–2,000 °C)',
+    reg_k2cr2o7: 'Potassium dichromate (K₂Cr₂O₇)',
+    reg_k2cr2o7_desc: 'Tinh thể đỏ cam tươi (2.676 g/cm³ · nc 398 °C · phân hủy >500 °C -> K₂CrO₄ + Cr₂O₃ + O₂↑) · Tan mạnh theo nhiệt độ (~12 g @ 20 °C → 102 g/100 mL @ 100 °C); kiềm hóa → vàng CrO₄²⁻, HCl đặc → Cl₂ + Cr³⁺ xanh lục, H₂SO₄ đặc → CrO₃↓, Ba²⁺ → BaCrO₄↓ vàng, Ag⁺ → Ag₂Cr₂O₇↓ đỏ gạch, H₂O₂/H⁺ → CrO₅ xanh chàm',
 
     // Workbench & Actions
     noSelection: 'Chưa chọn dụng cụ',
@@ -726,7 +731,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.18',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.19',
     toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
     quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
     quickPresetsHoldTitle: 'Quick Setup Presets (Hold F · Release to close)',
@@ -831,6 +836,7 @@ export const I18N = {
     regCatAll: 'All',
     regCatAcid: 'Acid',
     regCatBase: 'Base',
+    regCatOxide: 'Oxide',
     regCatSalt: 'Salt',
     regCatMetal: 'Metal',
     regCatNonmetal: 'Nonmetals',
@@ -929,6 +935,10 @@ export const I18N = {
     reg_c_desc: 'Porous dark black powder with strong adsorption (1.95 g/cm³ · sublimes >3,600 °C) · Burns (300–500 °C), reduces oxides (<700 °C -> CO₂, >800 °C -> CO), forms CH₄/Al₄C₃ & reacts with hot conc. HNO₃/H₂SO₄',
     reg_p_red: 'Red Phosphorus (P)',
     reg_p_red_desc: 'Fine dark crimson/red-violet powder (2.34 g/cm³ · sublimes >416 °C to P₄) · Air-stable at 25 °C; ignites ~250–260 °C (O₂ -> P₄O₁₀), reacts spontaneously with Cl₂/Br₂, combines hot with S/I₂/metals & reduces HNO₃/hot conc. H₂SO₄/KMnO₄',
+    reg_sio2: 'Silicon dioxide, amorphous (SiO₂)',
+    reg_sio2_desc: 'Ultra-fine white porous powder (2.19 g/cm³ · softens 1,500–1,600 °C · mp ~1,710 °C) · Inert toward water & HCl/HNO₃/H₂SO₄; dissolves in hot conc./molten NaOH (Na₂SiO₃), reduced by Mg (600–800 °C -> Si), fuses with CaCO₃ (900–1,300 °C -> CaSiO₃) & C (1,700–2,000 °C)',
+    reg_k2cr2o7: 'Potassium dichromate (K₂Cr₂O₇)',
+    reg_k2cr2o7_desc: 'Bright orange-red crystals (2.676 g/cm³ · mp 398 °C · decomps >500 °C -> Cr₂O₃ + O₂↑) · Steep aqueous solubility (~12 g @ 20 °C → 102 g/100 mL @ 100 °C); alkali -> yellow CrO₄²⁻, conc. HCl -> Cl₂↑ + green Cr³⁺, conc. H₂SO₄ -> CrO₃↓, Ba²⁺ -> BaCrO₄↓, Ag⁺ -> Ag₂Cr₂O₇↓, H₂O₂/H⁺ -> indigo CrO₅',
 
     noSelection: 'No apparatus selected',
     selectVesselTip: 'Click any vessel on the bench, or drag apparatus & reagents directly onto the workbench.',
