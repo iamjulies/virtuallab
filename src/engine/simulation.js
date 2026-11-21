@@ -5830,6 +5830,7 @@ export class LabSimulation {
         }
 
         v._reactionExtentMap = v._reactionExtentMap || {};
+        if (!v._rxnHoldMap || typeof v._rxnHoldMap.entries === 'function') v._rxnHoldMap = {};
         for (const rxn of chemRes.activeReactions) {
           v._reactionExtentMap[rxn.id] = (v._reactionExtentMap[rxn.id] || 0) + (rxn.dXi || 0);
           const prev = frameActiveMap.get(rxn.id);
@@ -5840,9 +5841,18 @@ export class LabSimulation {
             prev.rateMolS = rxn.rateMolS;
           }
 
-          // Log first occurrence or re-trigger after pause with student + expert telemetry
+          // Smooth anti-flicker display buffer + anti-spam 14s cyclical log gate
+          const prevHold = v._rxnHoldMap[rxn.id];
+          const smoothRate = prevHold ? prevHold.emaRateMolS * 0.68 + (rxn.rateMolS || 0) * 0.32 : (rxn.rateMolS || 0);
+          v._rxnHoldMap[rxn.id] = {
+            rxn: { ...rxn, rateMolS: smoothRate },
+            emaRateMolS: smoothRate,
+            lastActiveTime: this.timeSec,
+            firstSeenTime: prevHold ? prevHold.firstSeenTime : this.timeSec,
+          };
+
           const lastSeen = v.seenReactions[rxn.id] ?? -99;
-          if (this.timeSec - lastSeen > 4.0) {
+          if (this.timeSec - lastSeen > 14.0) {
             const curLiqL = computeLiquidVolumeL(v.moles, v.tempK);
             const curPh = computePH(v.moles, curLiqL, v.tempK);
             const curPBar = v.internalPressureBar ?? this.environment.pressureBar;
@@ -6246,7 +6256,20 @@ export class LabSimulation {
         v.escapedGasMoles.H2O_g = (v.escapedGasMoles.H2O_g || 0) + dSubl;
       }
 
-      v.activeReactions = Array.from(frameActiveMap.values());
+      // Assemble jitter-free debounced active reactions list (holds brief pauses up to 1.25s without flickering)
+      if (!v._rxnHoldMap || typeof v._rxnHoldMap.entries === 'function') v._rxnHoldMap = {};
+      const dispRxns = [];
+      for (const [id, entry] of Object.entries(v._rxnHoldMap)) {
+        const ageSec = this.timeSec - entry.lastActiveTime;
+        if (ageSec > 1.25) {
+          delete v._rxnHoldMap[id];
+          continue;
+        }
+        const decayedRate = frameActiveMap.has(id) ? entry.emaRateMolS : entry.emaRateMolS * Math.exp(-2.4 * Math.max(0, ageSec));
+        dispRxns.push({ ...entry.rxn, rateMolS: decayedRate, _firstSeen: entry.firstSeenTime });
+      }
+      dispRxns.sort((a, b) => (a._firstSeen - b._firstSeen) || String(a.id).localeCompare(String(b.id)));
+      v.activeReactions = dispRxns;
 
       // Dazzling Zinc combustion notification in concentrated O2 / hot air
       if (
@@ -6279,10 +6302,6 @@ export class LabSimulation {
         }
       }
 
-      // Boiling alert
-      if (frameBoiling && !v.wasBoiling) {
-        this.addLog({ type: 'alert', key: 'alertBoiling', vesselLabel: v.label });
-      }
       v.wasBoiling = frameBoiling;
 
       // Update precipitate settling (~12-15s undisturbed rest) & suspension decay (locked in frozen matrix)

@@ -40,6 +40,7 @@
       SPECIES,
       STARTER_REAGENTS,
       getGasRelativeAirDensity,
+      getSpeciesFusionHeatJ,
       isSolidMoltenAtTemp,
     } from '../src/data/species.js';
     import { REACTIONS } from '../src/data/reactions.js';
@@ -98,7 +99,7 @@
     import { LabSimulation } from '../src/engine/simulation.js';
     import { computeVesselRedoxAndCellMetrics } from '../src/engine/electrochemistry.js';
     import { checkThermometerInteractions, computeWashBottleStreamArc, syncDockedToolPositions } from '../src/engine/apparatusTools.js';
-    import { calcEvaporationRateMol, computeSteamOpacity, stepVesselThermodynamics } from '../src/engine/thermodynamics.js';
+    import { calcEvaporationRateMol, computeHeatCapacityJK, computeSteamOpacity, stepVesselThermodynamics } from '../src/engine/thermodynamics.js';
     import {
       calcEsterificationConcAtTime,
       calcEsterificationEquilibrium,
@@ -136,6 +137,7 @@
       computeSyringeTotalVolumeMl,
       computeTubingGeometry,
       isTubeTipSubmerged,
+      routeGasPacketToTarget,
     } from '../src/engine/gasNetwork.js';
     import { checkFlameLoopInteractions } from '../src/engine/apparatusTools.js';
     import { stepVesselSolidBodies } from '../src/engine/liquidSurfacePhysics.js';
@@ -2476,7 +2478,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.23';
+      const expectedBuild = 'virlab_beta_v4+build.24';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2534,7 +2536,7 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
       assert(
-        'Build virlab_beta_v4+build.23 parity: All 39 apparatus & 30 starter reagents translated in VI/EN, Prompt 57 Ethanol/Acetic/Pouring/TubeDepth/Gravity keys present, IUPAC spellings enforced',
+        'Build virlab_beta_v4+build.24 parity: All 39 apparatus & 30 starter reagents translated in VI/EN, Prompt 58 Thermal/VaporCatalysis/Condenser/AntiJitter/NoBoilingAlert parity enforced',
         APPARATUS_ORDER.length === 39 &&
           STARTER_REAGENTS.length === 30 &&
           !APPARATUS.clay_triangle &&
@@ -9446,6 +9448,108 @@
         'Prompt 57 invariants: Geometric solid pouring threshold, full Ethanol (Ca/PBr3/CuO/Al2O3/Lebedev/CrO3) & Acetic (CuO/P4O10/HVZ/Soda-lime/Acetone/Acetamide) matrices, inverted tube depth slider+geometry & 180-deg gravity parity',
         pourGeoOk && etCaOk && etPBrOk && etCuOOk && lebOk && alEthOk && acCuOOk && acAnhOk && hvzOk && sodaOk && caAcOk && amideOk && invTubeOk && gravOk,
         `pour=${pourGeoOk}, et=[Ca:${etCaOk},PBr3:${etPBrOk},CuO:${etCuOOk},Leb:${lebOk},AlEth:${alEthOk}], ac=[CuO:${acCuOOk},Anh:${acAnhOk},HVZ:${hvzOk},CH4:${sodaOk},Acet:${caAcOk},Amide:${amideOk}], invTube=${invTubeOk}(slider=${sliderInvPresent},dy=${(tipShallow.y - tipDeep.y).toFixed(1)}), grav=${gravOk}(meanY=${meanBodyY.toFixed(1)})`
+      );
+    }
+
+    // TEST 176: Prompt 58 (virlab_beta_v4+build.24) — Debounced Active Reactions & Non-Spamming Logs, NIST dHFusJ & Cp Thermal Differentiation, Hot EtOH Vapor Catalysis (CuO & Lebedev) + Pass-Through Flow, EtOH+H2SO4 BPE & Condenser Gas Pass-Through, No Boiling Alert
+    {
+      // 1) Debounced activeReactions & anti-spam 14s cyclical log gate + No boiling alert log
+      const simD = new LabSimulation();
+      const vDeb = simD.createApparatus('beaker_250', 220, 400);
+      vDeb.moles = { H2O_l: 2.0, NaOH_s: 0.05 };
+      simD.step(0.05);
+      const actImmediate = vDeb.activeReactions.length;
+      // Exhaust limiting solid abruptly and verify smoothed display holds briefly (< 1.25s) without instant UI strobe, then clears after 1.5s
+      delete vDeb.moles.NaOH_s;
+      simD.step(0.05);
+      const actHoldShort = vDeb.activeReactions.length;
+      for (let i = 0; i < 32; i++) simD.step(0.05);
+      const actCleared = vDeb.activeReactions.length === 0;
+
+      const vBoil = simD.createApparatus('erlenmeyer_250', 380, 400);
+      vBoil.moles = { H2O_l: 1.5 };
+      vBoil.tempK = 374.5;
+      simD.step(0.05);
+      const noBoilAlert = !simD.logs.some((l) => l.key === 'alertBoiling');
+      const debounceOk = actImmediate > 0 && actHoldShort > 0 && actCleared && noBoilAlert;
+
+      // 2) Thermodynamic differentiation: explicit NIST dHFusJ across meltable solids, cp-authentic heating rates, & fusion arrest plateau
+      const allMeltHaveFus = Object.values(SPECIES)
+        .filter((sp) => sp && sp.phase === 's' && sp.meltTempK && !sp.noMelt)
+        .every((sp) => typeof sp.dHFusJ === 'number' && sp.dHFusJ > 0 && getSpeciesFusionHeatJ(sp) > 0);
+      const vCu = { typeId: 'test_tube_50', moles: { Cu_s: 100 / 63.546 }, tempK: 298.15 }; // 100g Cu
+      const vWat = { typeId: 'test_tube_50', moles: { H2O_l: 100 / 18.015 }, tempK: 298.15 }; // 100g H2O
+      const vEt = { typeId: 'test_tube_50', moles: { C2H5OH_l: 78.93 / 46.068 }, tempK: 298.15 }; // 100mL EtOH
+      const cCu = computeHeatCapacityJK(vCu);
+      const cEt = computeHeatCapacityJK(vEt);
+      const cWat = computeHeatCapacityJK(vWat);
+      // Fusion plateau test on Sodium (mp = 370.95 K, dHFusJ = 2600 J/mol)
+      const vNaMelt = { typeId: 'test_tube_50', moles: { Na_s: 0.5 }, tempK: 370.0, isStoppered: true, headspaceGasMoles: {}, _latentMeltedMap: {} };
+      stepVesselThermodynamics(vNaMelt, 0.2, { tempK: 298.15, pressureBar: 1.0 }, 250, 3);
+      const plateauHeld = vNaMelt.tempK <= 372.5 && (vNaMelt._latentMeltedMap.Na_s || 0) > 10;
+      const thermoOk = allMeltHaveFus && cCu < cEt * 0.45 && cWat > cEt * 1.6 && plateauHeld;
+
+      // 3) Vapor-phase C2H5OH(g) catalysis through heated U-tube / Quartz tube / Reactor (CuO -> CH3CHO + Cu; Al2O3+ZnO -> C4H6 + H2)
+      const simVap = new LabSimulation();
+      const vSrcEt = simVap.createApparatus('erlenmeyer_250', 140, 400);
+      vSrcEt.isStoppered = true;
+      vSrcEt.moles = { C2H5OH_l: 0.6 };
+      vSrcEt.tempK = 365.0;
+      const uCuO = simVap.createApparatus('quartz_u_tube', 300, 400);
+      uCuO.leftStoppered = true;
+      uCuO.rightStoppered = true;
+      uCuO.moles = { CuO_s: 0.1 };
+      uCuO.tempK = 548.15; // 275 C
+      const vRecvAld = simVap.createApparatus('erlenmeyer_250', 460, 400);
+      vRecvAld.isStoppered = true;
+      vRecvAld.tempK = 285.0; // cold condenser trap
+      simVap.connectTube(vSrcEt.id, uCuO.id, { targetSide: 'left' });
+      simVap.connectTube(uCuO.id, vRecvAld.id, { sourceSide: 'right' });
+      for (let i = 0; i < 60; i++) { vSrcEt.tempK = 365.0; uCuO.tempK = 548.15; simVap.step(0.05); }
+      const vaporCuoOk =
+        (uCuO.moles.Cu_s || 0) > 0.005 &&
+        ((vRecvAld.headspaceGasMoles?.CH3CHO_g || 0) + (vRecvAld.moles?.CH3CHO_l || 0) + (uCuO.headspaceGasMoles?.CH3CHO_g || 0)) > 0.002;
+
+      const uLeb = simVap.createApparatus('quartz_tube', 620, 400);
+      uLeb.leftStoppered = true;
+      uLeb.rightStoppered = true;
+      uLeb.moles = { Al2O3_s: 0.05, ZnO_s: 0.05 };
+      uLeb.headspaceGasMoles = { C2H5OH_g: 0.08 };
+      uLeb.tempK = 693.15; // 420 C
+      const vRecvLeb = simVap.createApparatus('erlenmeyer_250', 780, 400);
+      vRecvLeb.isStoppered = true;
+      uLeb.connectedFromId = vSrcEt.id;
+      simVap.connectTube(uLeb.id, vRecvLeb.id, { sourceSide: 'right' });
+      for (let i = 0; i < 20; i++) simVap.step(0.05);
+      const vaporLebOk = ((vRecvLeb.headspaceGasMoles?.C4H6_g || 0) + (uLeb.headspaceGasMoles?.C4H6_g || 0)) > 0.001;
+
+      // 4) EtOH + conc. H2SO4 BPE > 165 C & Liebig Condenser passing non-condensable gas (C2H4) cleanly into inverted vessel #25
+      const bpExcessAcidC = solutionBoilingPointK({ C2H5OH_l: 0.25, H2SO4_l: 0.6 }, 1.0) - 273.15;
+      const bpEtherRatioC = solutionBoilingPointK({ C2H5OH_l: 0.5, H2SO4_l: 0.25 }, 1.0) - 273.15;
+      const simCond = new LabSimulation();
+      const vGen = simCond.createApparatus('erlenmeyer_250', 140, 400);
+      vGen.isStoppered = true;
+      vGen.moles = { C2H5OH_l: 0.25, H2SO4_l: 0.6 };
+      vGen.tempK = 448.15; // 175 C
+      const cond58 = simCond.createApparatus('liebig_condenser', 310, 340);
+      cond58.waterFlowOn = true;
+      const vInvRecv = simCond.createApparatus('erlenmeyer_1000', 480, 290);
+      vInvRecv.isInverted = true;
+      vInvRecv.isStoppered = true;
+      vInvRecv.moles = { H2O_l: 10.0 };
+      simCond.connectTube(vGen.id, cond58.id);
+      cond58.outletTargetId = vInvRecv.id;
+      for (let i = 0; i < 15; i++) simCond.step(0.05);
+      const condPassOk =
+        bpExcessAcidC >= 165 &&
+        bpEtherRatioC >= 130 &&
+        (vInvRecv.headspaceGasMoles?.C2H4_g || 0) > 0.002 &&
+        Boolean(cond58._liveTubeFlow?.composition?.length);
+
+      assert(
+        'Prompt 58 invariants: Anti-jitter debounced activeReactions & no alertBoiling spam, NIST dHFusJ + cp thermal scaling + fusion plateau, C2H5OH(g) CuO/Lebedev pass-through catalysis, EtOH+H2SO4 BPE > 165C & Condenser -> inverted receiver gas collection',
+        debounceOk && thermoOk && vaporCuoOk && vaporLebOk && condPassOk,
+        `deb=${debounceOk}(act=${actImmediate}/${actHoldShort}/${actCleared},noBoil=${noBoilAlert}), therm=${thermoOk}(cCu=${cCu.toFixed(1)},cEt=${cEt.toFixed(1)},cW=${cWat.toFixed(1)},plat=${plateauHeld}), vapCuO=${vaporCuoOk}(Cu=${(uCuO.moles.Cu_s||0).toFixed(4)}), leb=${vaporLebOk}, cond=${condPassOk}(bpA=${bpExcessAcidC.toFixed(1)}C,bpE=${bpEtherRatioC.toFixed(1)}C,C2H4=${(vInvRecv.headspaceGasMoles?.C2H4_g||0).toFixed(4)})`
       );
     }
 

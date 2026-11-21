@@ -5295,3 +5295,55 @@ export const STARTER_REAGENTS = [
     perMl: { CH3COOH_l: 1.0446 / (2 * AW.C + 4 * AW.H + 2 * AW.O) },
   },
 ];
+
+// Standard NIST molar enthalpies of fusion (J/mol) hydrated across all meltable solids
+const NIST_FUSION_ENTHALPY_J = {
+  H2O_s: 6010,
+  Br2_s: 10571,
+  Na_s: 2600,
+  K_s: 2334,
+  Li_s: 3000,
+  Ca_s: 8540,
+  Ba_s: 7120,
+  Mg_s: 8480,
+  Al_s: 10710,
+  Zn_s: 7320,
+  Fe_s: 13810,
+  Cu_s: 13260,
+  Ag_s: 11280,
+  S_s: 1727,
+  I2_s: 15520,
+  P_red_s: 18800,
+  NaOH_s: 6600,
+  KOH_s: 8600,
+  NaCl_s: 28160,
+  KCl_s: 26530,
+  AgNO3_s: 11550,
+  NaNO3_s: 15500,
+  KNO3_s: 10040,
+  KClO3_s: 18500,
+  K2Cr2O7_s: 36700,
+  K2CrO4_s: 28000,
+  CH3COOH_s: 11730,
+  CH3COONa_s: 18000,
+  CH3COOK_s: 14800,
+  CH3COONH4_s: 13200,
+  CH3CONH2_s: 15600,
+  ClCH2COOH_s: 12300,
+  BrCH2COOH_s: 13500,
+  CHI3_s: 16300,
+};
+
+export function getSpeciesFusionHeatJ(sp) {
+  if (!sp || sp.phase !== 's' || !sp.meltTempK || sp.noMelt) return 0;
+  if (typeof sp.dHFusJ === 'number' && sp.dHFusJ > 0) return sp.dHFusJ;
+  if (NIST_FUSION_ENTHALPY_J[sp.id]) return NIST_FUSION_ENTHALPY_J[sp.id];
+  const isMetal = Boolean(sp.isMetal || sp.visualType?.includes('metal') || sp.visualType?.includes('granules'));
+  return Math.max(1800, Math.round(sp.meltTempK * (isMetal ? 10.5 : 14.5)));
+}
+
+for (const sp of Object.values(SPECIES)) {
+  if (sp && sp.phase === 's' && sp.meltTempK && !sp.noMelt && !sp.dHFusJ) {
+    sp.dHFusJ = getSpeciesFusionHeatJ(sp);
+  }
+}

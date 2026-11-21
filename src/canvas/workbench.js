@@ -15,6 +15,7 @@ import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computePH, computeSolutionVisuals } from '../engine/equilibrium.js';
 import {
   buildRigidTubePoints,
+  computeCondenserOutletGeometry,
   computeSyringeDischargeArc,
   computeSyringeLiquidVolumeMl,
   computeTubingGeometry,
@@ -505,15 +506,7 @@ export class LabWorkbenchCanvas {
       const eH = el.renderHeight || eSpec.height;
       const tSpec = APPARATUS[target.typeId] || APPARATUS.gas_syringe;
       const p0 = { x: el.x, y: el.y - eH / 2 + 8 };
-      const p3 =
-        target.kind === 'gas_syringe'
-          ? (() => {
-              const g = getSyringeGeometry(target);
-              return { x: g.nozzleX, y: g.nozzleY };
-            })()
-          : target.isInverted
-          ? { x: target.x, y: target.y + tSpec.height / 2 - 4 }
-          : { x: target.x, y: target.y - tSpec.height / 2 + 10 };
+      const p3 = getTubeDestTipPos(el, target);
       const midY = Math.min(p0.y, p3.y) - 48;
       const p1 = { x: p0.x, y: midY };
       const p2 = { x: p3.x, y: midY };
@@ -525,6 +518,21 @@ export class LabWorkbenchCanvas {
       }
       if (minDist <= 12) {
         return { srcVessel: el, dstVessel: target, x: lx, y: ly, flow: el._liveTubeFlow || null };
+      }
+    }
+    for (let i = this.sim.items.length - 1; i >= 0; i--) {
+      const cond = this.sim.items[i];
+      if (cond.kind !== 'condenser' || !cond.outletTargetId) continue;
+      const target = this.sim.getItem(cond.outletTargetId);
+      if (!target || target.isShattered || target.isBroken) continue;
+      const { points = [] } = computeCondenserOutletGeometry(cond, target);
+      let minDist = Infinity;
+      for (let s = 1; s < points.length; s++) {
+        const d = ptSegDist(lx, ly, points[s - 1].x, points[s - 1].y, points[s].x, points[s].y);
+        if (d < minDist) minDist = d;
+      }
+      if (minDist <= 12) {
+        return { srcVessel: cond, dstVessel: target, x: lx, y: ly, flow: cond._liveTubeFlow || null };
       }
     }
     return null;

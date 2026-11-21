@@ -5297,41 +5297,7 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
       }
     }
 
-    // 1f-2. Catalytic Al2O3 dehydration & Lebedev reaction (Al2O3 + ZnO, 400-450 C -> Buta-1,3-diene)
-    if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.Al2O3_s || 0) > 1e-7 && T >= 513.15) {
-      if ((moles.ZnO_s || 0) > 1e-7 && T >= 653.15) {
-        // Lebedev synthesis: 2C2H5OH -> CH2=CH-CH=CH2(g) + 2H2O + H2(g)
-        const dLeb = (moles.C2H5OH_l / 2) * (1 - Math.exp(-0.85 * dt));
-        if (dLeb > 1e-11) {
-          consumeSpecies('C2H5OH_l', 2 * dLeb);
-          moles.H2O_l = (moles.H2O_l || 0) + 2 * dLeb;
-          gasProduced.C4H6_g = (gasProduced.C4H6_g || 0) + dLeb;
-          gasProduced.H2_g = (gasProduced.H2_g || 0) + dLeb;
-          heatJ -= dLeb * 102000;
-          pushRxn('etoh_lebedev', '2C₂H₅OH —(Al₂O₃ + ZnO, 400–450 °C)→ CH₂=CH–CH=CH₂(g)↑ + 2H₂O + H₂↑', 'Phản ứng Lebedev tổng hợp Buta-1,3-diene từ Ethanol', 'Lebedev synthesis: Ethanol —(Al₂O₃/ZnO, 450 °C)→ Buta-1,3-diene↑', 'Trên hệ xúc tác Al₂O₃ + ZnO ở 400–450 °C, Ethanol đóng mạch tách nước và H₂ tạo khí Buta-1,3-diene.', 'Over mixed Al₂O₃ + ZnO catalyst at 400–450 °C, Ethanol yields Buta-1,3-diene and H₂.', dLeb, true);
-        }
-      } else if (T < 603.15) {
-        const dAlEth = (moles.C2H5OH_l / 2) * (1 - Math.exp(-0.65 * dt));
-        if (dAlEth > 1e-11) {
-          consumeSpecies('C2H5OH_l', 2 * dAlEth);
-          moles.C2H5OC2H5_l = (moles.C2H5OC2H5_l || 0) + dAlEth;
-          moles.H2O_l = (moles.H2O_l || 0) + dAlEth;
-          heatJ -= dAlEth * 24000;
-          pushRxn('etoh_al2o3_ether', '2C₂H₅OH —(Al₂O₃, 240–260 °C)→ C₂H₅OC₂H₅ + H₂O', 'Tách nước dị thể qua xúc tác Al₂O₃ (240–260 °C) tạo Diethyl ether', 'Al₂O₃-catalyzed Ethanol dehydration (250 °C) → Diethyl ether', 'Xúc tác Al₂O₃ ở 240–260 °C tách nước liên phân tử Ethanol tạo Diethyl ether.', 'Al₂O₃ catalyst at 240–260 °C dehydrates Ethanol to Diethyl ether.', dAlEth);
-        }
-      } else {
-        const dAlC2H4 = moles.C2H5OH_l * (1 - Math.exp(-0.95 * dt));
-        if (dAlC2H4 > 1e-11) {
-          consumeSpecies('C2H5OH_l', dAlC2H4);
-          moles.H2O_l = (moles.H2O_l || 0) + dAlC2H4;
-          gasProduced.C2H4_g = (gasProduced.C2H4_g || 0) + dAlC2H4;
-          heatJ -= dAlC2H4 * 45500;
-          pushRxn('etoh_al2o3_ethene', 'C₂H₅OH —(Al₂O₃, 350–400 °C)→ C₂H₄(g)↑ + H₂O', 'Tách nước qua Al₂O₃ (350–400 °C) tạo Ethylene C₂H₄↑', 'Al₂O₃ dehydration of Ethanol (350–400 °C) → Ethylene C₂H₄↑', 'Ở 350–400 °C trên Al₂O₃, Ethanol tách nước nội phân tử sinh khí Ethene.', 'Over Al₂O₃ at 350–400 °C, Ethanol dehydrates to Ethylene gas.', dAlC2H4, true);
-        }
-      }
-    }
-
-    // 1f-3. –OH Nucleophilic substitution: HBr/H2SO4 (80-110 C), PBr3, PCl3; + Hot CuO (250-300 C) -> CH3CHO + Cu(red)
+    // 1f-3. –OH Nucleophilic substitution: HBr/H2SO4 (80-110 C), PBr3, PCl3 & acylation (CH3CO)2O / CH3COCl
     if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.Br_aq || 0) > 1e-6 && (moles.H_aq || 0) > 1e-4 && T >= 353.15) {
       const dHBrSub = Math.min(moles.C2H5OH_l, moles.Br_aq, moles.H_aq) * (1 - Math.exp(-0.52 * dt));
       if (dHBrSub > 1e-11) {
@@ -5364,22 +5330,6 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
         moles.H3PO3_aq = (moles.H3PO3_aq || 0) + dPClE;
         heatJ += dPClE * 135000;
         pushRxn('etoh_pcl3', '3C₂H₅OH + PCl₃(l) —(25–60 °C)→ 3C₂H₅Cl↑ + H₃PO₃', 'Thế –OH Ethanol bằng PCl₃ tạo khí Ethyl chloride C₂H₅Cl↑', 'Ethanol + PCl₃ → 3C₂H₅Cl↑ + H₃PO₃', 'PCl₃ thế nhóm –OH của Ethanol tạo Ethyl chloride bay hơi và H₃PO₃.', 'PCl₃ converts Ethanol to gaseous Chloroethane and H₃PO₃.', dPClE, true);
-      }
-    }
-    if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.CuO_s || 0) > 1e-9 && T >= 513.15) {
-      const dCuOE = Math.min(moles.C2H5OH_l, moles.CuO_s) * (1 - Math.exp(-0.95 * dt));
-      if (dCuOE > 1e-11) {
-        consumeSpecies('C2H5OH_l', dCuOE);
-        consumeSpecies('CuO_s', dCuOE);
-        moles.Cu_s = (moles.Cu_s || 0) + dCuOE;
-        moles.H2O_l = (moles.H2O_l || 0) + dCuOE;
-        if (T >= 295.0) {
-          gasProduced.CH3CHO_g = (gasProduced.CH3CHO_g || 0) + dCuOE;
-        } else {
-          moles.CH3CHO_l = (moles.CH3CHO_l || 0) + dCuOE;
-        }
-        heatJ -= dCuOE * 8200;
-        pushRxn('etoh_cuo_ald', 'C₂H₅OH + CuO(đen) —(250–300 °C)→ CH₃CHO(g)↑ + Cu(đỏ)↓ + H₂O', 'Oxi hóa không hoàn toàn Ethanol bằng CuO đun nóng → Acetaldehyde CH₃CHO + Cu đỏ', 'Mild Ethanol oxidation by hot CuO (250–300 °C) → CH₃CHO + Cu(red)', 'Bột CuO đen oxi hóa ancol bậc I Ethanol thành Acetaldehyde CH₃CHO mùi táo xanh và khử về Cu đỏ.', 'Hot black CuO oxidizes primary Ethanol selectively to Acetaldehyde (green-apple odor) and red Cu.', dCuOE, true);
       }
     }
     if ((moles.C2H5OH_l || 0) > 1e-10 && (moles.CH3CO_2O_l || 0) > 1e-9) {
@@ -5442,6 +5392,83 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
         moles.H2O_l = (moles.H2O_l || 0) + 5 * dIodo;
         heatJ += dIodo * 115000;
         pushRxn('etoh_iodoform', 'C₂H₅OH + 4I₂ + 6OH⁻ —(60 °C)→ CHI₃(s)↓ (vàng tươi) + HCOO⁻ + 5I⁻ + 5H₂O', 'Phản ứng Iodoform: Ethanol + I₂/NaOH → kết tủa vàng CHI₃↓', 'Iodoform test: Ethanol + I₂/NaOH (50–60 °C) → bright yellow CHI₃↓', 'I₂ đơn chất chỉ tan màu nâu trong Ethanol, nhưng có mặt NaOH đun 50–60 °C tạo kết tủa vàng Iodoform CHI₃↓.', 'Pure I₂ merely dissolves brown in Ethanol, but with NaOH @ 50–60 °C precipitates yellow CHI₃.', dIodo);
+      }
+    }
+  }
+
+  // ==================== PART 1B: ETHANOL VAPOR / HETEROGENEOUS HOT CATALYSIS (C2H5OH(l) or C2H5OH(g)) ====================
+  const headEt = vessel.headspaceGasMoles || {};
+  const availEtTotal = (moles.C2H5OH_l || 0) + (headEt.C2H5OH_g || 0);
+  if (availEtTotal > 1e-10 && T >= 493.15) {
+    const consumeEtAny = (amt) => {
+      let rem = amt;
+      const tkL = Math.min(moles.C2H5OH_l || 0, rem);
+      if (tkL > 0) { consumeSpecies('C2H5OH_l', tkL); rem -= tkL; }
+      if (rem > 0 && (headEt.C2H5OH_g || 0) > 0) {
+        const tkG = Math.min(headEt.C2H5OH_g, rem);
+        headEt.C2H5OH_g = Math.max(0, headEt.C2H5OH_g - tkG);
+        if (headEt.C2H5OH_g < 1e-13) delete headEt.C2H5OH_g;
+      }
+    };
+    const emitHotWater = (wAmt) => {
+      if (T >= 373.15) {
+        gasProduced.H2O_g = (gasProduced.H2O_g || 0) + wAmt;
+      } else {
+        moles.H2O_l = (moles.H2O_l || 0) + wAmt;
+      }
+    };
+    const curEtRem = () => (moles.C2H5OH_l || 0) + (headEt.C2H5OH_g || 0);
+
+    // Hot CuO (220–300+ °C): C2H5OH(g/l) + CuO -> CH3CHO↑ + Cu(red) + H2O(g)
+    if ((moles.CuO_s || 0) > 1e-9 && T >= 493.15) {
+      const kCuO = T >= 523.15 ? 2.4 : 0.85;
+      const dCuOE = Math.min(curEtRem(), moles.CuO_s) * (1 - Math.exp(-kCuO * dt));
+      if (dCuOE > 1e-11) {
+        consumeEtAny(dCuOE);
+        consumeSpecies('CuO_s', dCuOE);
+        moles.Cu_s = (moles.Cu_s || 0) + dCuOE;
+        emitHotWater(dCuOE);
+        if (T >= 295.0) {
+          gasProduced.CH3CHO_g = (gasProduced.CH3CHO_g || 0) + dCuOE;
+        } else {
+          moles.CH3CHO_l = (moles.CH3CHO_l || 0) + dCuOE;
+        }
+        heatJ -= dCuOE * 8200;
+        pushRxn('etoh_cuo_ald', 'C₂H₅OH(g) + CuO(đen) —(250–300 °C)→ CH₃CHO(g)↑ + Cu(đỏ)↓ + H₂O↑', 'Oxi hóa không hoàn toàn hơi Ethanol bằng CuO đun nóng → Acetaldehyde CH₃CHO + Cu đỏ', 'Mild Ethanol vapor oxidation by hot CuO (250–300 °C) → CH₃CHO + Cu(red)', 'Bột CuO đen oxi hóa hơi Ethanol thành Acetaldehyde CH₃CHO mùi táo xanh và khử về Cu đỏ.', 'Hot black CuO oxidizes Ethanol vapor selectively to Acetaldehyde (green-apple odor) and red Cu.', dCuOE, true);
+      }
+    }
+
+    // Catalytic Al2O3 dehydration & Lebedev reaction (Al2O3 + ZnO, 370-450+ °C -> Buta-1,3-diene)
+    const etCatLeft = curEtRem();
+    if (etCatLeft > 1e-10 && (moles.Al2O3_s || 0) > 1e-7 && T >= 513.15) {
+      if ((moles.ZnO_s || 0) > 1e-7 && T >= 643.15) {
+        const dLeb = (etCatLeft / 2) * (1 - Math.exp(-1.65 * dt));
+        if (dLeb > 1e-11) {
+          consumeEtAny(2 * dLeb);
+          emitHotWater(2 * dLeb);
+          gasProduced.C4H6_g = (gasProduced.C4H6_g || 0) + dLeb;
+          gasProduced.H2_g = (gasProduced.H2_g || 0) + dLeb;
+          heatJ -= dLeb * 102000;
+          pushRxn('etoh_lebedev', '2C₂H₅OH —(Al₂O₃ + ZnO, 400–450 °C)→ CH₂=CH–CH=CH₂(g)↑ + 2H₂O + H₂↑', 'Phản ứng Lebedev tổng hợp Buta-1,3-diene từ Ethanol', 'Lebedev synthesis: Ethanol —(Al₂O₃/ZnO, 450 °C)→ Buta-1,3-diene↑', 'Trên hệ xúc tác Al₂O₃ + ZnO ở 400–450 °C, hơi Ethanol đóng mạch tách nước và H₂ tạo khí Buta-1,3-diene.', 'Over mixed Al₂O₃ + ZnO catalyst at 400–450 °C, Ethanol vapor yields Buta-1,3-diene and H₂.', dLeb, true);
+        }
+      } else if (T < 603.15) {
+        const dAlEth = (etCatLeft / 2) * (1 - Math.exp(-1.15 * dt));
+        if (dAlEth > 1e-11) {
+          consumeEtAny(2 * dAlEth);
+          moles.C2H5OC2H5_l = (moles.C2H5OC2H5_l || 0) + dAlEth;
+          emitHotWater(dAlEth);
+          heatJ -= dAlEth * 24000;
+          pushRxn('etoh_al2o3_ether', '2C₂H₅OH —(Al₂O₃, 240–260 °C)→ C₂H₅OC₂H₅ + H₂O', 'Tách nước dị thể qua xúc tác Al₂O₃ (240–260 °C) tạo Diethyl ether', 'Al₂O₃-catalyzed Ethanol dehydration (250 °C) → Diethyl ether', 'Xúc tác Al₂O₃ ở 240–260 °C tách nước liên phân tử hơi Ethanol tạo Diethyl ether.', 'Al₂O₃ catalyst at 240–260 °C dehydrates Ethanol vapor to Diethyl ether.', dAlEth);
+        }
+      } else {
+        const dAlC2H4 = etCatLeft * (1 - Math.exp(-1.55 * dt));
+        if (dAlC2H4 > 1e-11) {
+          consumeEtAny(dAlC2H4);
+          emitHotWater(dAlC2H4);
+          gasProduced.C2H4_g = (gasProduced.C2H4_g || 0) + dAlC2H4;
+          heatJ -= dAlC2H4 * 45500;
+          pushRxn('etoh_al2o3_ethene', 'C₂H₅OH —(Al₂O₃, 350–400 °C)→ C₂H₄(g)↑ + H₂O', 'Tách nước qua Al₂O₃ (350–400 °C) tạo Ethylene C₂H₄↑', 'Al₂O₃ dehydration of Ethanol (350–400 °C) → Ethylene C₂H₄↑', 'Ở 350–400 °C trên Al₂O₃, hơi Ethanol tách nước nội phân tử sinh khí Ethene.', 'Over Al₂O₃ at 350–400 °C, Ethanol vapor dehydrates to Ethylene gas.', dAlC2H4, true);
+        }
       }
     }
   }

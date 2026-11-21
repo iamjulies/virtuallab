@@ -5,7 +5,7 @@ import {
   waterVaporPressureBar,
   waterVaporPressureMmHg,
 } from '../data/constants.js';
-import { SPECIES } from '../data/species.js';
+import { SPECIES, getSpeciesFusionHeatJ } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
 import {
   calcEffectiveSoluteMoles,
@@ -304,9 +304,14 @@ export function stepVesselThermodynamics(
   const boilingPointK = solutionBoilingPointK(vessel.moles, effectivePressureBar);
 
   // Regime 1: Universal sub-boiling evaporation (Clausius-Clapeyron + Margules activity + Stefan-Maxwell + Gilliland)
-  // Open vessels evaporate gently at any T; tube-connected vessels vent expanding warm vapor once T >= 80 C
-  // (or T >= 40 C when volatile Ethanol is present), while fuming HCl/NH3 outgas continuously through open tubes.
-  const canSubBoilVent = !vessel.isStoppered || (hasOpenTube && vessel.tempK >= 351.0);
+  // Open vessels evaporate gently at any T; tube-connected vessels vent expanding warm vapor cleanly
+  const canSubBoilVent =
+    !vessel.isStoppered ||
+    (hasOpenTube &&
+      ((vessel.moles.C2H5OH_l || 0) > 1e-6 && vessel.tempK >= 313.15 ||
+        (vessel.moles.CH3CHO_l || 0) > 1e-6 && vessel.tempK >= 292.0 ||
+        (vessel.moles.C2H5OC2H5_l || 0) > 1e-6 && vessel.tempK >= 303.0 ||
+        vessel.tempK >= 343.15));
   const canEtOHVent = !vessel.isStoppered || (hasOpenTube && nEthanol > 1e-7 && vessel.tempK >= 313.15);
   const canVentFumingHCl = !vessel.isStoppered || hasOpenTube;
   const strat = computePhaseStratification(vessel.moles, vessel.tempK, spec, computeSolidVolumeMl(vessel.moles));
@@ -556,7 +561,8 @@ export function stepVesselThermodynamics(
     flameTempOverrideK >= 850 &&
     effectiveBurnerW > 200 &&
     (vessel.moles.H2O_l || 0) + (vessel.moles.C2H5OH_l || 0) + (vessel.moles.CH3COOH_l || 0) + (vessel.moles.HNO3_l || 0) + (vessel.moles.H2SO4_l || 0) < 0.004;
-  const effHeatCapJK = isDryFocusedBunsen ? Math.max(16.0, cTotal * 0.28) : cTotal;
+  const cSampleOnly = Math.max(0, cTotal - (spec.glassHeatCapacityJK || 80.0));
+  const effHeatCapJK = isDryFocusedBunsen ? Math.max(8.5, (spec.glassHeatCapacityJK || 80.0) * 0.18 + cSampleOnly) : cTotal;
   const rawHeatJ = reactionHeatJ + effectiveBurnerW * dt + ambientExchangeJ + evapCoolingJ;
   const netHeatJ = Number.isFinite(rawHeatJ) ? rawHeatJ : 0;
   let newTempK = tCurClamped + netHeatJ / effHeatCapJK;
@@ -831,6 +837,32 @@ export function stepVesselThermodynamics(
   // Regime 3: Freezing / melting solid-liquid phase clamp with cryoscopy & latent heat
   const phaseRes = updateFreezeMeltPhase(vessel, dt, newTempK, cTotal);
   newTempK = phaseRes.updatedTempK;
+
+  // Regime 4: Enthalpy of fusion latent-heat thermal arrest for meltable crystalline solids
+  vessel._latentMeltedMap = vessel._latentMeltedMap || {};
+  for (const [spId, n] of Object.entries(vessel.moles)) {
+    if (n <= 1e-9 || spId === 'H2O_s' || spId === 'Br2_s' || spId === 'CH3COOH_s') continue;
+    const sp = SPECIES[spId];
+    if (!sp || sp.phase !== 's' || !sp.meltTempK || sp.noMelt) continue;
+    const dHFus = getSpeciesFusionHeatJ(sp);
+    if (dHFus <= 0) continue;
+    const maxLatentJ = n * dHFus;
+    if (vessel._latentMeltedMap[spId] === undefined) {
+      vessel._latentMeltedMap[spId] = tCurClamped >= sp.meltTempK + 0.5 ? maxLatentJ : 0;
+    }
+    const curLatentJ = Math.max(0, Math.min(maxLatentJ, vessel._latentMeltedMap[spId]));
+    if (newTempK > sp.meltTempK && curLatentJ < maxLatentJ - 1e-6) {
+      const availJ = (newTempK - sp.meltTempK) * effHeatCapJK;
+      const absJ = Math.min(availJ, maxLatentJ - curLatentJ);
+      vessel._latentMeltedMap[spId] = curLatentJ + absJ;
+      newTempK -= absJ / effHeatCapJK;
+    } else if (newTempK < sp.meltTempK && curLatentJ > 1e-6) {
+      const releaseNeedJ = (sp.meltTempK - newTempK) * effHeatCapJK;
+      const relJ = Math.min(releaseNeedJ, curLatentJ);
+      vessel._latentMeltedMap[spId] = curLatentJ - relJ;
+      newTempK += relJ / effHeatCapJK;
+    }
+  }
 
   vessel.tempK = newTempK;
   const hasAnyLiquid =

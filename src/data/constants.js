@@ -174,8 +174,12 @@ export function computeEthanolWaterVLE(moles, tempK, clampIon = false) {
     return { xE0: 0, xW0: 0, gammaE: 1, gammaW: 1, fIon: 1, pEBar: 0, pWBar: 0, pTotBar: 0, yE: 0, yW: 1 };
   }
   const nIon = Math.max(0, nonVolatileSoluteMoles(moles));
-  const fIonRaw = nSolv / (nSolv + nIon);
-  const fIon = clampIon ? Math.max(0.55, fIonRaw) : fIonRaw;
+  const nPureAcid = Math.max(0, moles.H2SO4_l || 0);
+  // Conc. H2SO4 binds Ethanol into ethyl hydrogen sulfate (C2H5HSO4) & depresses vapor activity well past 78 °C
+  const h2so4BindMol = nPureAcid > 1e-6 ? nPureAcid * 2.4 : 0;
+  const fIonRaw = nSolv / (nSolv + nIon + h2so4BindMol);
+  const minFloor = nPureAcid > 1e-6 ? 0.015 : 0.55;
+  const fIon = clampIon ? Math.max(minFloor, fIonRaw) : fIonRaw;
 
   const xE0 = nE / nSolv;
   const xW0 = nW / nSolv;
@@ -313,12 +317,12 @@ export function solutionBoilingPointK(moles, P_bar) {
     return Math.max(295, baseK + deltaK);
   }
 
-  // Binary Ethanol / Water / Salt mixture boiling point: solve P_tot(T) = P_bar via 18-step monotonic bisection
+  // Binary Ethanol / Water / Conc. H2SO4 / Salt mixture boiling point: solve P_tot(T) = P_bar via monotonic bisection
   if (nEtOH > 1e-9) {
     const targetP = Math.max(0.05, P_bar);
     let lo = 285.0;
-    let hi = 435.0;
-    for (let i = 0; i < 18; i++) {
+    let hi = nPureH2SO4 > 1e-6 ? 560.0 : 435.0;
+    for (let i = 0; i < 20; i++) {
       const mid = 0.5 * (lo + hi);
       const { pTotBar } = computeEthanolWaterVLE(moles, mid, true);
       if (pTotBar < targetP) {
@@ -327,7 +331,14 @@ export function solutionBoilingPointK(moles, P_bar) {
         hi = mid;
       }
     }
-    return 0.5 * (lo + hi);
+    const solvedBpK = 0.5 * (lo + hi);
+    if (nPureH2SO4 > 1e-6) {
+      // Empirical EtOH + 98% H2SO4 BPE (1:2 excess acid -> ~172-188 °C; 2:1 excess EtOH -> ~140-150 °C)
+      const acidMolFrac = nPureH2SO4 / Math.max(1e-9, nPureH2SO4 + nEtOH + nH2O);
+      const bpeMinK = 351.5 + 150.0 * Math.pow(acidMolFrac, 0.78);
+      return Math.min(545.0, Math.max(solvedBpK, bpeMinK));
+    }
+    return solvedBpK;
   }
 
   // Pure aqueous + non-volatile solute: Raoult's Law BPE

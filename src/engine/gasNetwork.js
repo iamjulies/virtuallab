@@ -616,7 +616,8 @@ export function routeGasPacketToTarget(
 
   if (target && target.kind === 'vessel' && (target.isInverted || preferInvertedDirect || target.isStoppered) && !target.isShattered) {
     target.headspaceGasMoles = target.headspaceGasMoles || createEmptyGasMap();
-    const trough = target.submergedInTroughId ? getApparatusById(target.submergedInTroughId) : target.isInverted ? sourceVessel || null : null;
+    const rawTrough = target.submergedInTroughId ? getApparatusById(target.submergedInTroughId) : target.isInverted && sourceVessel?.kind === 'vessel' ? sourceVessel : null;
+    const trough = rawTrough && rawTrough.kind === 'vessel' ? rawTrough : null;
     const targetSpec = APPARATUS[target.typeId] || APPARATUS.test_tube_50;
     const tgtT = target.tempK || env.tempK;
     let newPermMol = 0;
@@ -713,7 +714,7 @@ export function stepVesselGasAndPressure(
     produced[g] = gasProduced[g] || 0;
     totalPerm += produced[g];
   }
-  const totalSteam = (gasProduced.H2O_g || 0) + (steamProducedMol || 0);
+  let totalSteam = (gasProduced.H2O_g || 0) + (steamProducedMol || 0);
 
   const ventToRoom = () => {
     vessel._stepGasOutMol = (vessel._stepGasOutMol || 0) + totalPerm + totalSteam;
@@ -833,11 +834,12 @@ export function stepVesselGasAndPressure(
   const solMl = computeSolidVolumeMl(vessel.moles);
   const headspaceL = Math.max(0.015, (spec.maxVolumeMl - Math.min(spec.maxVolumeMl * 0.94, liqMl + solMl)) / 1000);
 
-  // If a sealed dual-ended flow tube receives upstream gas AND feeds downstream tubing, flush excess carrier gas downstream!
+  // If any stoppered flow-through reactor or dual-ended tube receives upstream gas AND feeds downstream tubing, sweep excess carrier & product gas cleanly downstream!
   let routeProduced = produced;
   const targetId = vessel.connectedTargetId || vessel.connectedSyringeId;
-  if (spec.hasTwoEnds && vessel.connectedFromId && targetId) {
-    const keepMol = Math.max(0.0025, (env.pressureBar * headspaceL) / (CONSTANTS.R_L_BAR_MOL_K * Math.max(250, vessel.tempK)));
+  if ((spec.hasTwoEnds || vessel.isStoppered) && (vessel.connectedFromId || (vessel.gasFlushInMol || 0) > 0) && targetId) {
+    const baseKeep = (env.pressureBar * headspaceL) / (CONSTANTS.R_L_BAR_MOL_K * Math.max(250, vessel.tempK));
+    const keepMol = vessel.gasFlushInMol > 0 ? Math.max(0.00018, baseKeep * 0.06) : Math.max(0.0025, baseKeep);
     vessel.headspaceGasMoles = vessel.headspaceGasMoles || createEmptyGasMap();
     const swept = { ...produced };
     let totalHeadNonSteam = 0;
@@ -852,6 +854,10 @@ export function stepVesselGasAndPressure(
           swept[g] = (swept[g] || 0) + ex;
         }
       }
+    }
+    if ((vessel.headspaceGasMoles.H2O_g || 0) > 1e-8) {
+      totalSteam += vessel.headspaceGasMoles.H2O_g;
+      vessel.headspaceGasMoles.H2O_g = 0;
     }
     routeProduced = swept;
   }

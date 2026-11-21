@@ -9,6 +9,7 @@ import {
 } from './equilibrium.js';
 import { computeHeatCapacityJK } from './thermodynamics.js';
 import { stepVesselChemistry } from './chemistry.js';
+import { NON_STEAM_GASES, routeGasPacketToTarget } from './gasNetwork.js';
 
 const UNIVERSAL_PH_COLORS = [
   '#dc2626', // 0-1
@@ -357,18 +358,24 @@ function stepLiebigCondenser(sim, cond, dt) {
 
   const nSteam = vapor.H2O_g || 0;
   const nEtOH = vapor.C2H5OH_g || 0;
+  const nAld = vapor.CH3CHO_g || 0;
+  const nAcet = vapor.CH3COCH3_g || 0;
   const nHCl = vapor.HCl_g || 0;
   const nNH3 = vapor.NH3_g || 0;
   const condW = nSteam * eff;
   const condE = nEtOH * eff;
+  const condAld = cond.waterFlowOn ? nAld * (eff * 0.85) : 0;
+  const condAcet = nAcet * eff;
   // HCl(g) & NH3(g) absorb strongly into chilled co-condensing water droplets
   const absHCl = condW > 1e-8 ? Math.min(nHCl, condW * 0.45, nHCl * eff) : 0;
   const absNH3 = condW > 1e-8 ? Math.min(nNH3, condW * 0.55, nNH3 * eff) : 0;
 
-  if (condW + condE > 1e-9) {
+  if (condW + condE + condAld + condAcet > 1e-9) {
     const dMl =
       ((condW * SPECIES.H2O_l.molarMass) / 0.997 +
-        (condE * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density);
+        (condE * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density +
+        (condAld * SPECIES.CH3CHO_l.molarMass) / SPECIES.CH3CHO_l.density +
+        (condAcet * SPECIES.CH3COCH3_l.molarMass) / SPECIES.CH3COCH3_l.density);
     cond.distillRateMlS = dMl / Math.max(1e-4, dt);
     cond.totalCondensedMl = (cond.totalCondensedMl || 0) + dMl;
     cond.activeDrop = true;
@@ -385,6 +392,14 @@ function stepLiebigCondenser(sim, cond, dt) {
         dst.moles.C2H5OH_l = (dst.moles.C2H5OH_l || 0) + condE;
         cAdd += condE * SPECIES.C2H5OH_l.cp;
       }
+      if (condAld > 0) {
+        dst.moles.CH3CHO_l = (dst.moles.CH3CHO_l || 0) + condAld;
+        cAdd += condAld * SPECIES.CH3CHO_l.cp;
+      }
+      if (condAcet > 0) {
+        dst.moles.CH3COCH3_l = (dst.moles.CH3COCH3_l || 0) + condAcet;
+        cAdd += condAcet * SPECIES.CH3COCH3_l.cp;
+      }
       if (absHCl > 0) {
         dst.moles.H_aq = (dst.moles.H_aq || 0) + absHCl;
         dst.moles.Cl_aq = (dst.moles.Cl_aq || 0) + absHCl;
@@ -396,6 +411,49 @@ function stepLiebigCondenser(sim, cond, dt) {
         dst.tempK = (cOld * dst.tempK + cAdd * tCond) / (cOld + cAdd);
       }
     }
+  }
+
+  // Pass remaining non-condensed gases & uncondensed vapors cleanly out of the condenser outlet into receiver!
+  const remSteam = Math.max(0, nSteam - condW);
+  const remNonSteam = createZeroGasMap();
+  remNonSteam.C2H5OH_g = Math.max(0, nEtOH - condE);
+  remNonSteam.CH3CHO_g = Math.max(0, nAld - condAld);
+  remNonSteam.CH3COCH3_g = Math.max(0, nAcet - condAcet);
+  remNonSteam.HCl_g = Math.max(0, nHCl - absHCl);
+  remNonSteam.NH3_g = Math.max(0, nNH3 - absNH3);
+  let outTot = remSteam + remNonSteam.C2H5OH_g + remNonSteam.CH3CHO_g + remNonSteam.CH3COCH3_g + remNonSteam.HCl_g + remNonSteam.NH3_g;
+  const outComp = [];
+  for (const g of NON_STEAM_GASES) {
+    if (g === 'C2H5OH_g' || g === 'CH3CHO_g' || g === 'CH3COCH3_g' || g === 'HCl_g' || g === 'NH3_g') {
+      if (remNonSteam[g] > 1e-12) outComp.push({ id: g, formula: SPECIES[g]?.formula || g, mol: remNonSteam[g] });
+      continue;
+    }
+    const amt = vapor[g] || 0;
+    if (amt > 1e-12) {
+      remNonSteam[g] = amt;
+      outTot += amt;
+      outComp.push({ id: g, formula: SPECIES[g]?.formula || g, mol: amt });
+    }
+  }
+  if (remSteam > 1e-12) {
+    outComp.push({ id: 'H2O_g', formula: 'H₂O(g)', mol: remSteam });
+  }
+  if (outTot > 1e-10) {
+    const tOutK = cond.waterFlowOn ? 293.15 : 345.0;
+    outComp.sort((a, b) => b.mol - a.mol);
+    const volMlS = (((outTot * CONSTANTS.R_L_BAR_MOL_K * tOutK) / Math.max(0.2, sim.environment?.pressureBar || 1.0)) * 1000) / Math.max(1e-4, dt);
+    cond._liveTubeFlow = {
+      composition: outComp.slice(0, 3).map((c) => ({ ...c, pct: Math.round((c.mol / outTot) * 100) })),
+      rateMlS: Number.isFinite(volMlS) ? volMlS : 0,
+      totalMlS: Number.isFinite(volMlS) ? volMlS : 0,
+      tempC: tOutK - 273.15,
+      updatedAt: Date.now(),
+    };
+    if (dst) {
+      routeGasPacketToTarget(cond, dst, remNonSteam, remSteam, sim.environment, (id) => sim.getItem(id));
+    }
+  } else if (cond._liveTubeFlow && Date.now() - cond._liveTubeFlow.updatedAt > 350) {
+    cond._liveTubeFlow = null;
   }
 
   // Clear per-step vapor buffer
