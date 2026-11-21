@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.25',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.26',
     toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
     quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
     quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -118,6 +118,7 @@ export const I18N = {
     regCatSalt: 'Muối',
     regCatMetal: 'Kim loại',
     regCatNonmetal: 'Phi kim',
+    regCatOrganic: 'Hữu cơ',
     regCatOther: 'Nước & Khác',
 
     // Equipment labels
@@ -159,7 +160,7 @@ export const I18N = {
     eq_quartz_tube: 'Ống thạch anh nung ngang',
     eq_quartz_u_tube: 'Ống thạch anh chữ U',
     eq_iron_spoon: 'Thìa sắt (Múc & Đốt chất rắn)',
-    eq_rubber_stopper: 'Nút cao su (Đậy kín / 1 lỗ)',
+    eq_rubber_stopper: 'Nút cao su (Đậy kín / 1 lỗ / 2 lỗ)',
     eq_phen_cotton: 'Bông tẩm Phenolphthalein',
 
     // Reagent labels (strict IUPAC)
@@ -602,7 +603,8 @@ export const I18N = {
     spoonEmpty: 'Thìa trống',
     spoonContentsLabel: 'Chất rắn trên thìa:',
     stopperModeLabel: 'Kiểu nút cao su:',
-    stopperModeHoled: '🕳️ Nút 1 lỗ (nối ống dẫn)',
+    stopperModeHoled: '🕳️ Nút 1 lỗ (ống dẫn)',
+    stopperModeDualHole: '🕳️🕳️ Nút 2 lỗ (Phễu + Khí)',
     stopperModeSolid: '⚫ Nút đặc (bịt kín)',
     stopperStatusMounted: 'Đang gắn:',
     stopperStatusLoose: 'Nút rời trên bàn',
@@ -814,7 +816,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.25',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.26',
     toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
     quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
     quickPresetsHoldTitle: 'Quick Setup Presets (Hold F · Release to close)',
@@ -923,6 +925,7 @@ export const I18N = {
     regCatSalt: 'Salt',
     regCatMetal: 'Metal',
     regCatNonmetal: 'Nonmetals',
+    regCatOrganic: 'Organic',
     regCatOther: 'Water & Others',
 
     eq_beaker_250: 'Beaker 250 mL (Low)',
@@ -963,7 +966,7 @@ export const I18N = {
     eq_quartz_tube: 'Horizontal Quartz Tube',
     eq_quartz_u_tube: 'U-Shaped Quartz Tube',
     eq_iron_spoon: 'Iron Combustion & Scoop Spoon',
-    eq_rubber_stopper: 'Rubber Stopper (Solid / 1-Hole)',
+    eq_rubber_stopper: 'Rubber Stopper (Solid / 1-Hole / 2-Hole)',
     eq_phen_cotton: 'Phenolphthalein Cotton Swab',
 
     reg_h2o: 'Water (H₂O)',
@@ -1401,8 +1404,9 @@ export const I18N = {
     spoonEmpty: 'Spoon empty',
     spoonContentsLabel: 'Solid on spoon:',
     stopperModeLabel: 'Stopper Configuration:',
-    stopperModeHoled: '🕳️ 1-Hole Tubing Bore',
-    stopperModeSolid: '⚫ Solid Airtight Bung',
+    stopperModeHoled: '🕳️ 1-Hole Bore',
+    stopperModeDualHole: '🕳️🕳️ 2-Hole (Funnel + Gas)',
+    stopperModeSolid: '⚫ Solid Bung',
     stopperStatusMounted: 'Mounted on:',
     stopperStatusLoose: 'Loose on bench',
     stopperUnplugBtn: '🔓 Remove',

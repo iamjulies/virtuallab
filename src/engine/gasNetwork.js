@@ -743,9 +743,16 @@ export function stepVesselGasAndPressure(
   const hasOutTubeSingle = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);
   let effectiveSealed = Boolean(vessel.isStoppered) || isLidClosed;
   let flowThroughVentOnly = false;
-  if (!spec.hasTwoEnds && vessel.isStoppered && vessel.stopperMode !== 'solid' && !hasOutTubeSingle) {
-    // Open 1-hole rubber stopper with NO connected tubing vents gas to room instead of pressurizing
-    flowThroughVentOnly = true;
+  if (!spec.hasTwoEnds && vessel.isStoppered && vessel.stopperMode !== 'solid') {
+    const hasSepFunnel = Boolean(vessel._hasMountedSepFunnel);
+    const openBores =
+      vessel.stopperMode === 'dual_hole'
+        ? (hasSepFunnel ? 0 : 1) + (hasOutTubeSingle ? 0 : 1)
+        : (hasSepFunnel || hasOutTubeSingle ? 0 : 1);
+    if (openBores > 0 && !hasOutTubeSingle) {
+      // Unconnected bore in 1-hole or 2-hole rubber stopper vents gas cleanly to room instead of pressurizing
+      flowThroughVentOnly = true;
+    }
   }
   if (spec.hasTwoEnds) {
     const connSide = vessel.connectedPortSide || (vessel.flippedX ? 'left' : 'right');
@@ -1476,7 +1483,8 @@ export function stepOpenGasBuoyancy(vessel, env, dt) {
   }
 
   const isSolidStoppered = Boolean(vessel.isStoppered && vessel.stopperMode === 'solid');
-  if (isSolidStoppered || isClosedLid || (vessel.isInverted && vessel.submergedInTroughId)) {
+  const isSingleHoleSepPlugged = Boolean(vessel.isStoppered && vessel.stopperMode === 'holed' && vessel._hasMountedSepFunnel);
+  if (isSolidStoppered || isSingleHoleSepPlugged || isClosedLid || (vessel.isInverted && vessel.submergedInTroughId)) {
     return;
   }
   const hasOutTube = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);

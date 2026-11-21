@@ -1374,7 +1374,10 @@ export class LabSimulation {
    * and detach supports that were slid away from underneath an item.
    */
   updateSupportAttachments() {
-    for (const it of this.items) {
+    if (this._updatingSupports) return;
+    this._updatingSupports = true;
+    try {
+      for (const it of [...this.items]) {
       if (
         it.kind === 'scale' ||
         it.kind === 'burner' ||
@@ -1415,6 +1418,13 @@ export class LabSimulation {
         it.fallStartY = null;
         if ((it.kind === 'filter_funnel' || it.kind === 'separatory_funnel') && support.kind === 'vessel') {
           it.mountedOnVesselId = support.id;
+          if (it.kind === 'separatory_funnel') {
+            const supSpec = APPARATUS[support.typeId];
+            if (supSpec?.stopperable && !supSpec.hasTwoEnds && (!support.isStoppered || support.stopperMode !== 'dual_hole')) {
+              this.ensureAttachedStopper(support.id, 'main', 'dual_hole');
+            }
+            syncDockedToolPositions(this);
+          }
         }
       } else if (!support && Math.abs(it.y - centerY) <= 10) {
         it.y = centerY;
@@ -1426,8 +1436,11 @@ export class LabSimulation {
         it.fallStartY = it.fallStartY ?? it.y;
         if (it.kind === 'filter_funnel' || it.kind === 'separatory_funnel') it.mountedOnVesselId = null;
       }
+      }
+      this.recomputeScaleReadings();
+    } finally {
+      this._updatingSupports = false;
     }
-    this.recomputeScaleReadings();
   }
 
   recomputeScaleReadings() {
@@ -2023,20 +2036,34 @@ export class LabSimulation {
   setStopperMode(stopperId, mode) {
     const st = this.getItem(stopperId);
     if (!st || st.kind !== 'rubber_stopper') return false;
-    st.stopperMode = mode === 'solid' ? 'solid' : 'holed';
+    const normMode = mode === 'solid' ? 'solid' : mode === 'dual_hole' ? 'dual_hole' : 'holed';
+    st.stopperMode = normMode;
     if (st.attachedToId) {
       const v = this.getItem(st.attachedToId);
       if (v) {
+        const oldSide = st.attachedSide || 'main';
+        const spec = APPARATUS[v.typeId];
+        const hasSep = this.items.some((f) => f.kind === 'separatory_funnel' && !f.isBroken && f.mountedOnVesselId === v.id);
         if (st.stopperMode === 'solid') {
-          const oldSide = st.attachedSide || 'main';
-          const spec = APPARATUS[v.typeId];
           if (!spec?.hasTwoEnds || (v.connectedPortSide || (v.flippedX ? 'left' : 'right')) === oldSide) {
             this.disconnectSyringe(v.id);
           }
+          if (!spec?.hasTwoEnds && hasSep) {
+            for (const f of this.items) {
+              if (f.kind === 'separatory_funnel' && f.mountedOnVesselId === v.id) {
+                f.mountedOnVesselId = null;
+                f.restingOnId = null;
+              }
+            }
+          }
+        } else if (st.stopperMode === 'holed' && !spec?.hasTwoEnds && hasSep) {
+          // 1-hole stopper only has 1 bore (occupied by funnel stem) -> disconnect tubing unless switched to dual_hole
+          this.disconnectSyringe(v.id);
         }
         v.stopperMode = st.stopperMode;
       }
     }
+    syncDockedToolPositions(this);
     this.emitChange();
     return true;
   }
@@ -2118,13 +2145,14 @@ export class LabSimulation {
     let st = this.items.find(
       (it) => it.kind === 'rubber_stopper' && it.attachedToId === v.id && (it.attachedSide || 'main') === chosenSide
     );
+    const normMode = mode === 'solid' ? 'solid' : mode === 'dual_hole' ? 'dual_hole' : 'holed';
     if (!st) {
       const slot = this.getMouthSlotCoords(v, chosenSide) || { x: v.x, y: v.y - 40 };
       st = this.createApparatus('rubber_stopper', slot.x, slot.y, { silent: true });
-      st.stopperMode = mode === 'solid' ? 'solid' : 'holed';
+      st.stopperMode = normMode;
       this.attachRubberStopper(st.id, v.id, chosenSide);
-    } else if (mode && st.stopperMode !== mode) {
-      st.stopperMode = mode === 'solid' ? 'solid' : 'holed';
+    } else if (mode && st.stopperMode !== normMode) {
+      st.stopperMode = normMode;
       v.stopperMode = st.stopperMode;
     }
     return st;
@@ -2223,8 +2251,10 @@ export class LabSimulation {
       }
       v.isStoppered = Boolean(v.leftStoppered && v.rightStoppered);
     } else {
-      // Unified single stopper system: attach a real removable holed rubber_stopper item
-      this.ensureAttachedStopper(v.id, 'main', 'holed');
+      // Unified single stopper system: preserve dual_hole (or auto-upgrade when a separatory funnel is mounted)
+      const hasMountedSep = this.items.some((f) => f.kind === 'separatory_funnel' && !f.isBroken && f.mountedOnVesselId === v.id);
+      const targetStopperMode = hasMountedSep || v.stopperMode === 'dual_hole' ? 'dual_hole' : 'holed';
+      this.ensureAttachedStopper(v.id, 'main', targetStopperMode);
     }
     v.overflowRateMlS = 0;
     v.wasOverflowing = false;
@@ -5349,6 +5379,7 @@ export class LabSimulation {
     if (!f || f.kind !== 'separatory_funnel' || f.isBroken) return false;
     if (!vesselId) {
       f.mountedOnVesselId = null;
+      syncDockedToolPositions(this);
       this.emitChange();
       return true;
     }
@@ -5356,6 +5387,10 @@ export class LabSimulation {
     if (!v || v.kind !== 'vessel' || v.isShattered || v.isInverted) return false;
     f.mountedOnVesselId = v.id;
     f.clampedToId = null;
+    const vSpec = APPARATUS[v.typeId];
+    if (vSpec?.stopperable && !vSpec.hasTwoEnds) {
+      this.ensureAttachedStopper(v.id, 'main', 'dual_hole');
+    }
     syncDockedToolPositions(this);
     this.recomputeScaleReadings();
     this.emitChange();

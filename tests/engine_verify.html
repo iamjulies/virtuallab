@@ -2478,7 +2478,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.25';
+      const expectedBuild = 'virlab_beta_v4+build.26';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2536,9 +2536,11 @@
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
         Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle) &&
         Boolean(I18N.vi.eq_separatory_funnel && I18N.en.eq_separatory_funnel) &&
-        Boolean(I18N.vi.condRefluxToggle && I18N.en.condRefluxToggle);
+        Boolean(I18N.vi.condRefluxToggle && I18N.en.condRefluxToggle) &&
+        Boolean(I18N.vi.regCatOrganic && I18N.en.regCatOrganic) &&
+        Boolean(I18N.vi.stopperModeDualHole && I18N.en.stopperModeDualHole);
       assert(
-        'Build virlab_beta_v4+build.25 parity: All 40 apparatus & 30 starter reagents translated in VI/EN, Prompt 59 Condenser/Reflux/Bath/Raoult/SeparatoryFunnel parity enforced',
+        'Build virlab_beta_v4+build.26 parity: All 40 apparatus & 30 starter reagents translated in VI/EN, Prompt 60 Dual-Hole Stopper & Organic Reagent Category parity enforced',
         APPARATUS_ORDER.length === 40 &&
           STARTER_REAGENTS.length === 30 &&
           !APPARATUS.clay_triangle &&
@@ -2792,7 +2794,7 @@
       assert(
         'Reagent filters work, Clean Bench clears 0 items, Quick Presets populate cleanly, and Zn + 0.125M NaOH evolves H2 & [Zn(OH)4]2-',
         REAGENT_CATEGORIES.length >= 5 &&
-          acidCount === 4 &&
+          acidCount === 3 &&
           cleanCount === 0 &&
           daniellCount >= 5 &&
           diffCount === 1 &&
@@ -8904,12 +8906,12 @@
 
       const regE = STARTER_REAGENTS.find((r) => r.id === 'etoh');
       const regA = STARTER_REAGENTS.find((r) => r.id === 'ch3cooh');
-      const acids4 = STARTER_REAGENTS.filter((r) => r.category === 'acid');
+      const acids3 = STARTER_REAGENTS.filter((r) => r.category === 'acid');
       const regOrgOk =
         STARTER_REAGENTS.length === 30 &&
-        acids4.length === 4 &&
-        Boolean(regE && regE.category === 'solvent_other' && regE.perMl?.C2H5OH_l > 0.017) &&
-        Boolean(regA && regA.category === 'acid' && regA.perMl?.CH3COOH_l > 0.017) &&
+        acids3.length === 3 &&
+        Boolean(regE && regE.category === 'organic' && regE.perMl?.C2H5OH_l > 0.017) &&
+        Boolean(regA && regA.category === 'organic' && regA.perMl?.CH3COOH_l > 0.017) &&
         SPECIES.C2H5OH_l.meltTempK === 159.01 &&
         SPECIES.CH3COOH_l.meltTempK === 289.75 &&
         !/\b(etanol|axit|axetic|etyl|natri|kali)\b/i.test(`${I18N.vi.reg_etoh} ${I18N.vi.reg_ch3cooh}`);
@@ -9667,6 +9669,60 @@
         'Prompt 59 invariants: Generalized organic Liebig condenser, Reflux vertical return, -20..200C thermostatic bath, Universal Raoult VLE + H2SO4 BPE, & ISO 4800 Separatory/Dropping Funnel (mount drop + 2-phase extraction interface auto-stop)',
         genCondOk && refluxOk && bathOk && raoultOk && dropModeOk && extOk,
         `genCond=${genCondOk}, reflux=${refluxOk}(dOrg=${(afterTotOrg-initTotOrg).toFixed(3)}), bath=${bathOk}(hot=${hotC.toFixed(1)}C,cold=${coldC.toFixed(1)}C), raoult=${raoultOk}(bpA=${bpEtAcid.toFixed(1)}C,bpE=${bpEtEther.toFixed(1)}C,bpAc=${bpAcAcid.toFixed(1)}C), sepDrop=${dropModeOk}, sepExt=${extOk}(valve=${sepExt.valveOpen},rcvBr=${(rcvBottom.moles.C2H5Br_l||0).toFixed(3)},remW=${(sepExt.moles.H2O_l||0).toFixed(2)})`
+      );
+    }
+
+    // TEST 178: Prompt 60 (virlab_beta_v4+build.26) — Dual-Hole Rubber Stopper (Funnel + Gas Tube Simultaneous) & Organic Reagent Category
+    {
+      // 1) Dual-hole stopper auto-attaches when mounting separatory funnel on stopperable flask, allows simultaneous gas delivery tube (CaC2 + H2O -> C2H2(g) collected in inverted receiver), & separates port offset cleanly
+      const simDual = new LabSimulation();
+      const genFlask = simDual.createApparatus('erlenmeyer_250', 220, 420);
+      genFlask.moles = { CaC2_s: 0.04 };
+      const sepFun = simDual.createApparatus('separatory_funnel', 220, 220);
+      sepFun.moles = { H2O_l: 0.5 };
+      simDual.mountSeparatoryFunnel(sepFun.id, genFlask.id);
+      const stDual = simDual.items.find((it) => it.kind === 'rubber_stopper' && it.attachedToId === genFlask.id);
+
+      const gasRecv = simDual.createApparatus('erlenmeyer_250', 460, 320);
+      gasRecv.isInverted = true;
+      gasRecv.isStoppered = true;
+      gasRecv.moles = { H2O_l: 2.0 };
+      const connRes = simDual.connectTube(genFlask.id, gasRecv.id);
+      const portMain = getVesselTubingPort(genFlask);
+
+      simDual.setSeparatoryValveFlow(sepFun.id, 0.25);
+      simDual.toggleSeparatoryValve(sepFun.id, true);
+      for (let i = 0; i < 40; i++) simDual.step(0.05);
+
+      const dualHoleOk =
+        connRes.ok &&
+        genFlask.isStoppered &&
+        genFlask.stopperMode === 'dual_hole' &&
+        stDual?.stopperMode === 'dual_hole' &&
+        genFlask._hasMountedSepFunnel === true &&
+        portMain && portMain.x > genFlask.x + 4 &&
+        sepFun.x < genFlask.x - 4 &&
+        (gasRecv.headspaceGasMoles?.C2H2_g || 0) > 0.005;
+
+      // 2) Switching stopper to 1-hole ('holed') while separatory funnel is mounted disconnects tubing; switching to 'solid' unmounts funnel
+      simDual.setStopperMode(stDual.id, 'holed');
+      const holedDisconnOk = !genFlask.connectedTargetId && genFlask.stopperMode === 'holed';
+      simDual.setStopperMode(stDual.id, 'solid');
+      const solidUnmountOk = !sepFun.mountedOnVesselId && genFlask.stopperMode === 'solid';
+
+      // 3) Organic Reagent Category separated cleanly in REAGENT_CATEGORIES with etoh & ch3cooh moved under 'organic'
+      const orgCat = REAGENT_CATEGORIES.find((c) => c.id === 'organic');
+      const regEt = STARTER_REAGENTS.find((r) => r.id === 'etoh');
+      const regAc = STARTER_REAGENTS.find((r) => r.id === 'ch3cooh');
+      const orgCatOk =
+        Boolean(orgCat && I18N.vi[orgCat.i18nKey] === 'Hữu cơ' && I18N.en[orgCat.i18nKey] === 'Organic') &&
+        regEt?.category === 'organic' &&
+        regAc?.category === 'organic';
+
+      assert(
+        'Prompt 60 invariants: Dual-hole rubber stopper (simultaneous Separatory Funnel + gas delivery tube with offset ports + CaC2+H2O->C2H2 collection + 1-hole/solid constraints) & Organic reagent category',
+        dualHoleOk && holedDisconnOk && solidUnmountOk && orgCatOk,
+        `dualHole=${dualHoleOk}(mode=${genFlask.stopperMode},portDx=${portMain ? (portMain.x - genFlask.x).toFixed(1) : 'n/a'},sepDx=${(sepFun.x - genFlask.x).toFixed(1)},C2H2=${(gasRecv.headspaceGasMoles?.C2H2_g || 0).toFixed(4)}), holedDisconn=${holedDisconnOk}, solidUnmount=${solidUnmountOk}, orgCat=${orgCatOk}`
       );
     }
 

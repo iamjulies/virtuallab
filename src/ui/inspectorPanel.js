@@ -1577,7 +1577,7 @@ export class InspectorPanel {
       `;
     } else if (item.kind === 'rubber_stopper') {
       const hostV = item.attachedToId ? this.sim.getItem(item.attachedToId) : null;
-      const isHoled = (item.stopperMode || 'holed') !== 'solid';
+      const stMode = item.stopperMode || 'holed';
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
@@ -1589,12 +1589,15 @@ export class InspectorPanel {
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex flex-col gap-1.5">
             <span class="text-muted">${t('stopperModeLabel')}</span>
-            <div class="grid grid-cols-2 gap-1.5">
-              <button type="button" id="ins-stopper-holed" class="py-1.5 px-2 rounded-lg border text-xs font-semibold ${
-                isHoled ? 'border-amber-500 bg-amber-500/15 text-amber-400' : 'border-theme bg-surface-alt text-muted'
+            <div class="grid grid-cols-1 gap-1.5">
+              <button type="button" id="ins-stopper-holed" class="py-1.5 px-2 rounded-lg border text-xs font-semibold text-left ${
+                stMode === 'holed' ? 'border-amber-500 bg-amber-500/15 text-amber-400' : 'border-theme bg-surface-alt text-muted'
               }">${t('stopperModeHoled')}</button>
-              <button type="button" id="ins-stopper-solid" class="py-1.5 px-2 rounded-lg border text-xs font-semibold ${
-                !isHoled ? 'border-sky-500 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface-alt text-muted'
+              <button type="button" id="ins-stopper-dual" class="py-1.5 px-2 rounded-lg border text-xs font-semibold text-left ${
+                stMode === 'dual_hole' ? 'border-emerald-500 bg-emerald-500/15 text-emerald-400' : 'border-theme bg-surface-alt text-muted'
+              }">${t('stopperModeDualHole')}</button>
+              <button type="button" id="ins-stopper-solid" class="py-1.5 px-2 rounded-lg border text-xs font-semibold text-left ${
+                stMode === 'solid' ? 'border-sky-500 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface-alt text-muted'
               }">${t('stopperModeSolid')}</button>
             </div>
           </div>
@@ -2804,6 +2807,9 @@ export class InspectorPanel {
     } else if (item.kind === 'rubber_stopper') {
       this.container.querySelector('#ins-stopper-holed')?.addEventListener('click', () => {
         this.sim.setStopperMode(item.id, 'holed');
+      });
+      this.container.querySelector('#ins-stopper-dual')?.addEventListener('click', () => {
+        this.sim.setStopperMode(item.id, 'dual_hole');
       });
       this.container.querySelector('#ins-stopper-solid')?.addEventListener('click', () => {
         this.sim.setStopperMode(item.id, 'solid');

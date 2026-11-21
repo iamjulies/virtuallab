@@ -3109,6 +3109,13 @@ export function renderVessel(ctx, vessel, opts) {
       ctx.stroke();
 
       if (vessel.stopperMode !== 'solid') {
+        if (vessel.stopperMode === 'dual_hole') {
+          ctx.fillStyle = vessel._hasMountedSepFunnel ? 'rgba(56, 189, 248, 0.35)' : pal.glassFill;
+          ctx.strokeStyle = vessel._hasMountedSepFunnel ? '#38bdf8' : pal.glassStroke;
+          ctx.lineWidth = 1.1;
+          ctx.fillRect(x - 9, top - 10, 6, 18);
+          ctx.strokeRect(x - 9, top - 10, 6, 18);
+        }
         const vPort = getVesselTubingPort(vessel);
         if (vPort) {
           const isConn = Boolean(vessel.connectedTargetId || vessel.connectedSyringeId);

@@ -725,9 +725,12 @@ export class LabWorkbenchCanvas {
     }
 
     if (hit.kind === 'rubber_stopper') {
-      return stepDiscrete(`stopper-mode:${hit.id}`, deltaY, () => {
+      return stepDiscrete(`stopper-mode:${hit.id}`, deltaY, (dir) => {
         soundEngine.playUiClick();
-        this.sim.setStopperMode(hit.id, hit.stopperMode === 'solid' ? 'holed' : 'solid');
+        const order = ['holed', 'dual_hole', 'solid'];
+        const curIdx = Math.max(0, order.indexOf(hit.stopperMode || 'holed'));
+        const nextMode = order[(curIdx + (dir > 0 ? 1 : order.length - 1)) % order.length];
+        this.sim.setStopperMode(hit.id, nextMode);
       });
     }
 
@@ -962,8 +965,7 @@ export class LabWorkbenchCanvas {
           created.mountedOnVesselId = hoverVessel.id;
           syncDockedToolPositions(this.sim);
         } else if (created.kind === 'separatory_funnel' && hoverVessel && !hoverVessel.isInverted) {
-          created.mountedOnVesselId = hoverVessel.id;
-          syncDockedToolPositions(this.sim);
+          this.sim.mountSeparatoryFunnel(created.id, hoverVessel.id);
         } else if (spec.supportsClamp) {
           const nearStand = this.findStandNear(created);
           const clampFloorLimit = BENCH_FLOOR_Y - (created.kind === 'burette' ? spec.height / 2 + 6 : (spec.height || 80) / 2 + 12);
@@ -1311,7 +1313,9 @@ export class LabWorkbenchCanvas {
         this.sim.cycleCrucibleLid(hit.id);
       } else if (hit && hit.kind === 'rubber_stopper') {
         soundEngine.playStopperPop(hit.stopperMode === 'solid');
-        this.sim.setStopperMode(hit.id, hit.stopperMode === 'solid' ? 'holed' : 'solid');
+        const order = ['holed', 'dual_hole', 'solid'];
+        const nextMode = order[(order.indexOf(hit.stopperMode || 'holed') + 1) % order.length];
+        this.sim.setStopperMode(hit.id, nextMode);
       } else if (hit && hit.typeId === 'bunsen_burner') {
         soundEngine.playFlameWhoosh(!hit.airHoleOpen);
         this.sim.toggleBurnerAirHole(hit.id);
@@ -1878,8 +1882,7 @@ export class LabWorkbenchCanvas {
             const tgt = this.findVesselAt(item.x, item.y + 52, null, false);
             if (tgt && !tgt.isInverted && Math.abs(item.x - tgt.x) <= 30) {
               if (dragMoved <= 6 || tgt.id !== this.dragState.unmountHoldoffId || Math.abs(item.y - (tgt.y - APPARATUS[tgt.typeId].height / 2 - 42)) <= 42) {
-                item.mountedOnVesselId = tgt.id;
-                syncDockedToolPositions(this.sim);
+                this.sim.mountSeparatoryFunnel(item.id, tgt.id);
               }
             }
           }

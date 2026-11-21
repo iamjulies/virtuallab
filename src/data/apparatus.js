@@ -935,7 +935,7 @@ export const APPARATUS = {
     breakable: false,
     flippable: true,
     i18nKey: 'eq_rubber_stopper',
-    isoStandard: 'DIN 12871 · Tapered EPDM Rubber Stopper (Solid / 1-Hole Bore)',
+    isoStandard: 'DIN 12871 · Tapered EPDM Rubber Stopper (Solid / 1-Hole / 2-Hole Bore)',
     materialSpec: 'Chemically Resistant EPDM Elastomer',
     tareMassG: 14.0,
     width: 34,
@@ -1408,8 +1408,9 @@ export function getVesselTubingPort(vessel, preferredSide = null) {
   }
   if (!vessel.isStoppered) return null;
   const effTilt = (vessel.tiltAngle || 0) + (vessel.landingTilt || 0);
+  const rawX = vessel.x + (vessel.stopperMode === 'dual_hole' ? 6 : 0);
   const rawY = vessel.isInverted ? vessel.y + spec.height / 2 + 8 : vessel.y - spec.height / 2 - 8;
-  const pt = rotatePointAround(vessel.x, rawY, vessel.x, vessel.y, effTilt);
+  const pt = rotatePointAround(rawX, rawY, vessel.x, vessel.y, effTilt);
   return { x: pt.x, y: pt.y, side: 'main' };
 }
 

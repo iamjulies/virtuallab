@@ -1152,6 +1152,9 @@ export function checkIndicatorStripInteractions(sim, strip) {
  * Keep docked items (magnetic stir bars, electrode rods, vessel-resting filter funnels) aligned with parent vessels.
  */
 export function syncDockedToolPositions(sim) {
+  for (const item of sim.items) {
+    if (item.kind === 'vessel') item._hasMountedSepFunnel = false;
+  }
   for (const it of sim.items) {
     if (it.kind === 'electrode') {
       if (it.dockedVesselId) {
@@ -1299,9 +1302,11 @@ export function syncDockedToolPositions(sim) {
         it.mountedOnVesselId = null;
         continue;
       }
+      v._hasMountedSepFunnel = true;
       const vSpec = APPARATUS[v.typeId];
       const sfSpec = APPARATUS.separatory_funnel;
-      it.x = v.x - (v.connectedTargetId ? 6 : 0);
+      const isDualHole = v.isStoppered && v.stopperMode === 'dual_hole';
+      it.x = v.x - (isDualHole || v.connectedTargetId ? 6 : 0);
       it.y = v.y - vSpec.height / 2 - (sfSpec?.height || 174) * 0.36;
       it.vy = 0;
       it.fallStartY = null;

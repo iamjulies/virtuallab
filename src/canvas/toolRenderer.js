@@ -1852,7 +1852,9 @@ export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFrom
   const pal = getThemePalette(isDark);
   const { x, y } = item;
   const orient = item._attachOrient || 'top';
-  const isHoled = (item.stopperMode || 'holed') !== 'solid';
+  const mode = item.stopperMode || 'holed';
+  const isSolid = mode === 'solid';
+  const isDual = mode === 'dual_hole';
 
   // Dynamically match host vessel's actual glass neck inner width so large flasks (e.g. erlenmeyer_1000) seal flush
   let neckHalfPx = 10;
@@ -1907,13 +1909,23 @@ export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFrom
   ctx.lineTo(topHalf - 1.5, -6.5);
   ctx.stroke();
 
-  if (isHoled) {
+  if (!isSolid) {
+    const tubeX = isDual ? 6 : 0;
+    if (isDual) {
+      // Left bore sleeve for Separatory / Dropping Funnel stem
+      ctx.fillStyle = connectedFromVessel?._hasMountedSepFunnel ? 'rgba(56, 189, 248, 0.35)' : pal.glassFill;
+      ctx.strokeStyle = connectedFromVessel?._hasMountedSepFunnel ? '#38bdf8' : pal.glassStroke;
+      ctx.lineWidth = 1.2;
+      ctx.fillRect(-9, -11, 6, 20);
+      ctx.strokeRect(-9, -11, 6, 20);
+    }
+
     // Glass bore tube stub + amber tubing connector ring on outer crown
     ctx.fillStyle = pal.glassFill;
     ctx.strokeStyle = pal.glassStroke;
     ctx.lineWidth = 1.2;
-    ctx.fillRect(-3.2, -13, 6.4, 22);
-    ctx.strokeRect(-3.2, -13, 6.4, 22);
+    ctx.fillRect(tubeX - 3.2, -13, 6.4, 22);
+    ctx.strokeRect(tubeX - 3.2, -13, 6.4, 22);
 
     const isConn = Boolean(
       connectedFromVessel &&
@@ -1924,13 +1936,13 @@ export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFrom
     ctx.strokeStyle = '#f59e0b';
     ctx.lineWidth = 1.8;
     ctx.beginPath();
-    ctx.arc(0, -10, 4.8, 0, Math.PI * 2);
+    ctx.arc(tubeX, -10, 4.8, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   }
   ctx.restore();
 
-  const modeTag = isHoled ? '1-Hole' : 'Solid';
+  const modeTag = isDual ? '2-Hole' : !isSolid ? '1-Hole' : 'Solid';
   drawLabelPill(ctx, x, y - 22, `${item.label} · ${modeTag}`, {
     pal,
     borderColor: isSelected ? '#3b82f6' : null,

@@ -4431,6 +4431,7 @@ export const REAGENT_CATEGORIES = [
   { id: 'salt', i18nKey: 'regCatSalt' },
   { id: 'metal', i18nKey: 'regCatMetal' },
   { id: 'nonmetal', i18nKey: 'regCatNonmetal' },
+  { id: 'organic', i18nKey: 'regCatOrganic' },
   { id: 'solvent_other', i18nKey: 'regCatOther' },
 ];
 
@@ -5344,7 +5345,7 @@ export const STARTER_REAGENTS = [
   {
     id: 'etoh',
     kind: 'liquid',
-    category: 'solvent_other',
+    category: 'organic',
     i18nKey: 'reg_etoh',
     descKey: 'reg_etoh_desc',
     formula: 'C₂H₅OH (l)',
@@ -5372,7 +5373,7 @@ export const STARTER_REAGENTS = [
   {
     id: 'ch3cooh',
     kind: 'liquid',
-    category: 'acid',
+    category: 'organic',
     i18nKey: 'reg_ch3cooh',
     descKey: 'reg_ch3cooh_desc',
     formula: 'CH₃COOH (l)',
