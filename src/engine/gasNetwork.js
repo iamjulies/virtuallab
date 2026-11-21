@@ -995,7 +995,16 @@ export function stepVesselGasAndPressure(
       if ((routeProduced.C2H5Cl_g || 0) > 0 && target.restingOnId) {
         target.recentHalogenGasTimer = 1.6;
       }
-      for (const [vapId, liqId] of [['C2H5OH_g', 'C2H5OH_l'], ['CH3CHO_g', 'CH3CHO_l'], ['CH3COCH3_g', 'CH3COCH3_l']]) {
+      const handledDirectGases = new Set([
+        'H2O_g', 'HCl_g', 'HBr_g', 'HI_g', 'HNO3_g', 'NH3_g',
+        'CO2_g', 'SO3_g', 'Cl2_g', 'Br2_g', 'I2_g',
+      ]);
+      for (const vapId of NON_STEAM_GASES) {
+        if (handledDirectGases.has(vapId)) continue;
+        const spVap = SPECIES[vapId];
+        const liqId = spVap?.liquidSpeciesId;
+        if (!spVap?.isCondensableVapor || !liqId) continue;
+        handledDirectGases.add(vapId);
         const dVap = routeProduced[vapId] || 0;
         if (dVap > 0) {
           const spLiq = SPECIES[liqId];
@@ -1116,22 +1125,7 @@ export function stepVesselGasAndPressure(
         }
       }
       for (const g of NON_STEAM_GASES) {
-        if (
-          g !== 'HCl_g' &&
-          g !== 'HBr_g' &&
-          g !== 'HI_g' &&
-          g !== 'HNO3_g' &&
-          g !== 'NH3_g' &&
-          g !== 'C2H5OH_g' &&
-          g !== 'CH3CHO_g' &&
-          g !== 'CH3COCH3_g' &&
-          g !== 'CO2_g' &&
-          g !== 'SO3_g' &&
-          g !== 'Cl2_g' &&
-          g !== 'Br2_g' &&
-          g !== 'I2_g' &&
-          routeProduced[g] > 0
-        ) {
+        if (!handledDirectGases.has(g) && routeProduced[g] > 0) {
           target.headspaceGasMoles[g] = (target.headspaceGasMoles[g] || 0) + routeProduced[g];
           target.gasFlushInMol = (target.gasFlushInMol || 0) + routeProduced[g];
           if (tipSubmerged && (target.moles.H2O_l || 0) > 1e-4) {

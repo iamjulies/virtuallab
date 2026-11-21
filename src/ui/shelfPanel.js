@@ -33,6 +33,8 @@ function apparatusSvg(typeId) {
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="28" width="24" height="3" rx="1"/><path d="M23 28V6M23 14h-9"/><circle cx="11" cy="14" r="3"/></svg>`;
     case 'filter_funnel':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 9h22l-9 11v10l-4-2V20z"/><path d="M11 9l7 8 7-8" opacity="0.55"/></svg>`;
+    case 'separatory_funnel':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 4h6v3l-1 1h-4l-1-1V4z" fill="currentColor" opacity="0.3"/><path d="M15 8h6l5 7a8.5 8.5 0 01-6 8.5v7.5l-2 2-2-2v-7.5A8.5 8.5 0 0110 15l5-7z"/><path d="M10.5 16h15" stroke="#38bdf8" stroke-width="1.4"/><path d="M13 26h10" stroke="#0ea5e9" stroke-width="2" stroke-linecap="round"/></svg>`;
     case 'wash_bottle':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="11" y="14" width="14" height="16" rx="3"/><path d="M14 14v-3h8v3M18 11c0-5-5-6-10-4"/><path d="M13 22h10" opacity="0.55"/></svg>`;
     case 'porcelain_dish':
@@ -82,7 +84,7 @@ function apparatusSvg(typeId) {
     case 'thermometer':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="14.5" y="4" width="7" height="21" rx="3.5"/><circle cx="18" cy="27" r="4.2" fill="#e11d48" stroke="currentColor" stroke-width="1.4"/><line x1="18" y1="11" x2="18" y2="25" stroke="#e11d48" stroke-width="2.2"/><path d="M18 8h2M18 12h2M18 16h2M18 20h2" opacity="0.65"/></svg>`;
     case 'ice_bath':
-      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="13" width="28" height="16" rx="3" fill="rgba(56,189,248,0.22)"/><path d="M3 13h30" stroke-width="2.2"/><rect x="8" y="16" width="6" height="5" rx="1" fill="rgba(255,255,255,0.65)"/><rect x="16" y="17" width="6" height="5" rx="1" fill="rgba(255,255,255,0.65)"/><rect x="23" y="15" width="5" height="5" rx="1" fill="rgba(255,255,255,0.65)"/><path d="M18 6v4M16 8h4" stroke="#38bdf8" stroke-width="1.4"/></svg>`;
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="13" width="28" height="16" rx="3" fill="rgba(56,189,248,0.22)"/><path d="M3 13h30" stroke-width="2.2"/><rect x="8" y="17" width="6" height="5" rx="1" fill="rgba(255,255,255,0.65)"/><path d="M22 25h6" stroke="#f97316" stroke-width="2"/><path d="M13 6v4M11 8h4" stroke="#38bdf8" stroke-width="1.4"/><path d="M23 5c-1.5 2 1.5 3 0 5" stroke="#f97316" stroke-width="1.4"/></svg>`;
     default:
       return '';
   }

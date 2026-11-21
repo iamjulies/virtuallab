@@ -414,7 +414,7 @@ export class InspectorPanel {
     }
     if (item.kind === 'bath') {
       const nestedCnt = this.sim.items.filter((i) => i.submergedInBathId === item.id).length;
-      return `bath|${item.id}|${item.bathMode || 'ice'}|${nestedCnt}|${langCode}|${logLen}`;
+      return `bath|${item.id}|${item.isBroken ? 1 : 0}|${item.bathTargetC ?? 0}|${item.bathMode || 'ice'}|${nestedCnt}|${langCode}|${logLen}`;
     }
     if (item.kind === 'thermometer') {
       return `therm|${item.id}|${item.isBroken ? 1 : 0}|${item.contactKind || ''}|${item.contactLabel || ''}|${langCode}|${logLen}`;
@@ -444,6 +444,11 @@ export class InspectorPanel {
       const spKeys = Object.keys(item.moles || {}).filter((k) => hasDisplayableSpeciesAmount(k, item.moles[k])).sort().join(',');
       return `${item.kind}|${item.id}|${item.isBroken ? 1 : 0}|${item.clampedToId}|${item.valveRateMlS || 0}|${item.isFiltering ? 1 : 0}|${item.uvMaskHalf ? 1 : 0}|${spKeys}|${this.logMode}|${langCode}|${logLen}`;
     }
+    if (item.kind === 'separatory_funnel') {
+      const spKeys = Object.keys(item.moles || {}).filter((k) => hasDisplayableSpeciesAmount(k, item.moles[k])).sort().join(',');
+      const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isInverted).length;
+      return `sep|${item.id}|${item.isBroken ? 1 : 0}|${item.clampedToId || ''}|${item.mountedOnVesselId || ''}|${item.valveOpen ? 1 : 0}|${Math.round((item.valveFlowFrac ?? 0.35) * 100)}|${item.isStoppered !== false ? 1 : 0}|${item.stopAtInterface !== false ? 1 : 0}|${(item.emulsionTimer || 0) > 0.2 ? 1 : 0}|${vCnt}|${spKeys}|${this.logMode}|${langCode}|${logLen}`;
+    }
     if (item.kind === 'rubber_stopper') {
       return `rb|${item.id}|${item.stopperMode || 'holed'}|${item.attachedToId || ''}|${item.attachedSide || ''}|${langCode}|${logLen}`;
     }
@@ -471,7 +476,7 @@ export class InspectorPanel {
     }
     if (item.kind === 'condenser') {
       const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered).length;
-      return `co|${item.id}|${item.flippedX ? 1 : 0}|${item.isBroken ? 1 : 0}|${item.waterFlowOn ? 1 : 0}|${item.clampedToId}|${item.connectedFromId || ''}|${item.outletTargetId || ''}|${vCnt}|${langCode}|${logLen}`;
+      return `co|${item.id}|${item.flippedX ? 1 : 0}|${item.isBroken ? 1 : 0}|${item.waterFlowOn ? 1 : 0}|${item.refluxMode ? 1 : 0}|${item.refluxVesselId || ''}|${item.clampedToId}|${item.connectedFromId || ''}|${item.outletTargetId || ''}|${vCnt}|${langCode}|${logLen}`;
     }
     if (item.kind === 'flame_loop') {
       return `fl|${item.id}|${item.flippedX ? 1 : 0}|${item.sampledIon || ''}|${langCode}|${logLen}`;
@@ -590,14 +595,31 @@ export class InspectorPanel {
         </div>
       `;
     } else if (item.kind === 'bath') {
-      const isIceSalt = item.bathMode === 'ice_salt';
-      const bathC = isIceSalt ? -10 : 0;
+      const steps = APPARATUS.ice_bath?.bathTempSteps || [-20, -10, 0, 10, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
+      const bathC = item.bathTargetC ?? (item.bathMode === 'ice_salt' ? -10 : 0);
+      const mediumKey =
+        bathC <= -15
+          ? 'bathMediumCryo'
+          : bathC <= -5
+            ? 'bathMediumIceSalt'
+            : bathC <= 5
+              ? 'bathMediumIce'
+              : bathC <= 25
+                ? 'bathMediumCoolWater'
+                : bathC <= 65
+                  ? 'bathMediumWarmWater'
+                  : bathC <= 105
+                    ? 'bathMediumHotWater'
+                    : bathC <= 155
+                      ? 'bathMediumSiliconeOil'
+                      : 'bathMediumHighOil';
+      const tempTextCls = bathC <= 0 ? 'text-sky-400' : bathC <= 50 ? 'text-emerald-400' : bathC <= 105 ? 'text-amber-400' : 'text-orange-400';
       const nestedVessels = this.sim.items.filter((i) => i.kind === 'vessel' && i.submergedInBathId === item.id && !i.isShattered);
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div>
-              <div class="text-sm font-bold">🧊 ${t('eq_ice_bath')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
+              <div class="text-sm font-bold">${bathC > 25 ? '🔥' : '🧊'} ${t('eq_ice_bath')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
               <div class="text-[11px] text-muted">${APPARATUS.ice_bath?.materialSpec || ''}</div>
             </div>
             <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
@@ -605,25 +627,38 @@ export class InspectorPanel {
           ${
             item.isBroken
               ? `<p class="text-xs text-red-400 font-medium">${t('alertToolBreak')}</p>`
-              : `<div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex items-center justify-between">
-            <span class="text-muted">${t('metricTemp')}</span>
-            <strong class="font-mono text-sky-400">${(bathC + 273.15).toFixed(1)} K (${bathC}°C)</strong>
+              : `<div class="p-2.5 rounded-lg border border-theme bg-surface flex items-center justify-between gap-2.5">
+            <img src="./assets/baths/bath_${steps.reduce((b, v) => (Math.abs(v - bathC) < Math.abs(b - bathC) ? v : b), steps[0])}.svg" alt="${bathC}°C" class="w-16 h-9 object-contain shrink-0 rounded" />
+            <div class="flex-1 min-w-0 text-right">
+              <div class="text-[11px] text-muted truncate">${t(mediumKey)}</div>
+              <strong class="font-mono text-sm ${tempTextCls}">${(bathC + 273.15).toFixed(1)} K (${bathC}°C)</strong>
+            </div>
           </div>
           <div class="flex flex-col gap-1.5">
             <span class="text-xs text-muted font-medium">${t('bathModeLabel')}</span>
-            <div class="grid grid-cols-2 gap-1.5">
-              <button type="button" id="bath-mode-ice" class="py-1.5 px-2 rounded-lg border text-xs font-semibold ${
-                !isIceSalt ? 'border-sky-500 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface text-muted'
-              }">${t('bathIceMode')}</button>
-              <button type="button" id="bath-mode-ice-salt" class="py-1.5 px-2 rounded-lg border text-xs font-semibold ${
-                isIceSalt ? 'border-cyan-400 bg-cyan-500/15 text-cyan-300' : 'border-theme bg-surface text-muted'
-              }">${t('bathIceSaltMode')}</button>
+            <div class="grid grid-cols-6 gap-1">
+              ${steps
+                .map((tc) => {
+                  const isAct = tc === bathC;
+                  const activeCls =
+                    tc <= 0
+                      ? 'border-sky-500 bg-sky-500/20 text-sky-300 font-bold'
+                      : tc <= 40
+                        ? 'border-teal-500 bg-teal-500/20 text-teal-300 font-bold'
+                        : tc <= 100
+                          ? 'border-amber-500 bg-amber-500/20 text-amber-300 font-bold'
+                          : 'border-orange-500 bg-orange-500/20 text-orange-300 font-bold';
+                  return `<button type="button" class="bath-step-btn py-1 px-0.5 rounded border text-[10.5px] font-mono ${
+                    isAct ? activeCls : 'border-theme bg-surface text-muted hover:border-accent'
+                  }" data-tempc="${tc}">${tc}°</button>`;
+                })
+                .join('')}
             </div>
           </div>
           <p class="text-[11px] text-muted leading-relaxed">${t('bathHint')}</p>
           ${
             nestedVessels.length > 0
-              ? `<div class="text-xs text-sky-300 font-mono">📥 ${nestedVessels.map((v) => `${v.label} (${kelvinToCelsius(v.tempK).toFixed(1)}°C)`).join(', ')}</div>`
+              ? `<div class="text-xs text-sky-300 font-mono" id="live-bath-nested">📥 ${nestedVessels.map((v) => `${v.label} (${kelvinToCelsius(v.tempK).toFixed(1)}°C)`).join(', ')}</div>`
               : ''
           }`
           }
@@ -1015,8 +1050,10 @@ export class InspectorPanel {
                 </div>
                 <div class="flex flex-wrap gap-2">
                   <button type="button" id="ins-cond-water" class="flex-1 py-1.5 px-2.5 rounded-lg border ${item.waterFlowOn ? 'border-sky-500/40 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface text-muted'} text-xs font-semibold">${t('actionToggleWaterFlow')} ${item.waterFlowOn ? (langCode === 'en' ? 'ON' : 'BẬT') : (langCode === 'en' ? 'OFF' : 'TẮT')}</button>
+                  <button type="button" id="ins-cond-reflux" class="flex-1 py-1.5 px-2.5 rounded-lg border ${item.refluxMode ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-400' : 'border-theme bg-surface text-muted'} text-xs font-semibold">${item.refluxMode ? t('condRefluxActive') : t('condRefluxToggle')}</button>
                   ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
-                </div>`
+                </div>
+                <p class="text-[11px] text-muted leading-snug">${t('condRefluxHint')}</p>`
           }
         </div>
       `;
@@ -1065,7 +1102,104 @@ export class InspectorPanel {
                     <button type="button" id="ins-bur-fill" class="px-2.5 py-1 rounded bg-accent text-white text-xs font-semibold">+25 mL</button>
                   </div>
                 </div>
-                ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}`
+                ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
+              </div>`
+          }
+        </div>
+      `;
+    } else if (item.kind === 'separatory_funnel') {
+      const sfSpec = APPARATUS.separatory_funnel;
+      const stands = this.sim.items.filter((i) => i.kind === 'stand');
+      const vessels = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isInverted);
+      const mountedV = item.mountedOnVesselId ? this.sim.getItem(item.mountedOnVesselId) : null;
+      const liqReagents = STARTER_REAGENTS.filter((r) => r.kind === 'liquid');
+      const solMl = computeSolidVolumeMl(item.moles);
+      const strat = item.liquidStratification || computePhaseStratification(item.moles, item.tempK, sfSpec, solMl);
+      const liqMl = strat?.totalLiqMl || 0;
+      const isEmulsion = (item.emulsionTimer || 0) > 0.2 && (strat?.layers?.length || 0) >= 1;
+      const layerLabel = (pk) =>
+        pk === 'organic_heavy' ? t('sepLayerHeavy') : pk === 'organic_light' ? t('sepLayerLight') : t('sepLayerAq');
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t('eq_separatory_funnel')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
+              <div class="text-[11px] text-muted">${sfSpec?.isoStandard || ''}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          ${
+            item.isBroken
+              ? `<p class="text-xs text-red-400 font-medium">${t('alertToolBreak')}</p>`
+              : `<div class="grid grid-cols-2 gap-2">
+                  <div class="p-2.5 rounded-lg border border-theme bg-surface">
+                    <div class="text-xs text-muted">${t('metricVol')}</div>
+                    <div class="text-sm font-bold font-mono" id="live-sep-vol">${liqMl.toFixed(2)} / 100.0 mL</div>
+                  </div>
+                  <div class="p-2.5 rounded-lg border border-theme bg-surface">
+                    <div class="text-xs text-muted">${langCode === 'en' ? 'Dispensed (ΔV)' : 'Đã xả / nhỏ (ΔV)'}</div>
+                    <div class="text-sm font-bold font-mono text-emerald-400" id="live-sep-disp">${(item.dispensedMl || 0).toFixed(2)} mL</div>
+                  </div>
+                </div>
+                <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex flex-col gap-1">
+                  <div class="text-muted font-medium">${t('sepPhasesTitle')}</div>
+                  ${
+                    liqMl <= 0.02
+                      ? `<div class="text-muted">—</div>`
+                      : isEmulsion
+                        ? `<div class="text-amber-400 font-medium animate-pulse">${t('sepEmulsionSettling')}</div>`
+                        : [...(strat?.layers || [])]
+                            .reverse()
+                            .map(
+                              (l) => `<div class="flex justify-between font-mono">
+                                <span>${layerLabel(l.phaseKey)}</span>
+                                <strong class="text-sky-400">${l.volMl.toFixed(2)} mL</strong>
+                              </div>`
+                            )
+                            .join('')
+                  }
+                </div>
+                <div class="grid grid-cols-2 gap-1.5">
+                  <button type="button" id="ins-sep-stopper" class="py-1.5 px-2 rounded-lg border text-xs font-semibold ${
+                    item.isStoppered !== false ? 'border-amber-500/40 bg-amber-500/15 text-amber-300' : 'border-theme bg-surface text-main'
+                  }">${item.isStoppered !== false ? `🔒 ${t('sepStopperClosed')}` : `🔓 ${t('sepStopperOpen')}`}</button>
+                  <button type="button" id="ins-sep-valve" class="py-1.5 px-2 rounded-lg border text-xs font-semibold ${
+                    item.valveOpen ? 'border-sky-500 bg-sky-500/20 text-sky-300' : 'border-theme bg-surface text-muted'
+                  }">${item.valveOpen ? t('sepValveOpen') : t('sepValveClosed')}</button>
+                </div>
+                <div class="flex flex-col gap-1">
+                  <div class="flex justify-between text-[11px]">
+                    <span class="text-muted">${t('sepFlowRateLabel')}</span>
+                    <strong class="font-mono text-sky-300" id="live-sep-rate">${((item.valveFlowFrac ?? 0.35) * 12).toFixed(1)} mL/s</strong>
+                  </div>
+                  <input type="range" id="ins-sep-flow-slider" min="5" max="100" step="5" value="${Math.round((item.valveFlowFrac ?? 0.35) * 100)}" class="w-full accent-sky-500 cursor-pointer" />
+                </div>
+                <label class="flex items-center gap-2 text-xs text-muted cursor-pointer select-none">
+                  <input type="checkbox" id="ins-sep-auto-stop" ${item.stopAtInterface !== false ? 'checked' : ''} class="accent-sky-500" />
+                  <span>${t('sepAutoInterface')}</span>
+                </label>
+                <button type="button" id="ins-sep-shake" ${liqMl <= 0.05 ? 'disabled' : ''} class="py-1.5 px-2.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-500 disabled:opacity-40">${t('sepShakeBtn')}</button>
+                <div class="flex flex-col gap-1 pt-1 border-t border-theme/50 text-xs">
+                  <span class="text-muted">${t('sepMountLabel')}</span>
+                  <div class="flex items-center gap-1.5">
+                    <div class="flex-1 px-2 py-1 rounded border border-theme bg-surface truncate">
+                      ${mountedV ? `${t(APPARATUS[mountedV.typeId].i18nKey)} ${mountedV.label}` : '—'}
+                    </div>
+                    <button type="button" id="ins-sep-mount-pick" ${vessels.length === 0 ? 'disabled' : ''} class="px-2 py-1 rounded bg-amber-600 text-white text-xs font-semibold hover:opacity-90 disabled:opacity-40">${t('sepMountPick')}</button>
+                    ${mountedV ? `<button type="button" id="ins-sep-unmount" class="px-2 py-1 rounded border border-red-500/40 bg-red-500/10 text-red-400 text-xs">${t('sepMountUnmount')}</button>` : ''}
+                  </div>
+                </div>
+                <div class="flex flex-col gap-1.5 pt-1 border-t border-theme/50">
+                  <span class="text-[11px] text-muted">${t('sepFillTitle')}</span>
+                  <div class="flex gap-1.5">
+                    <select id="sep-fill-sel" class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs">
+                      ${liqReagents.map((r) => `<option value="${r.id}">${t(r.i18nKey)}</option>`).join('')}
+                    </select>
+                    <button type="button" id="ins-sep-fill" class="px-2.5 py-1 rounded bg-accent text-white text-xs font-semibold">+25 mL</button>
+                  </div>
+                </div>
+                ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
+                <p class="text-[11px] text-muted leading-snug">${t('sepDropHint')}</p>`
           }
         </div>
       `;
@@ -2181,13 +2315,11 @@ export class InspectorPanel {
         this.sim.clearTare(item.id);
       });
     } else if (item.kind === 'bath') {
-      this.container.querySelector('#bath-mode-ice')?.addEventListener('click', () => {
-        soundEngine.playUiClick();
-        this.sim.setBathMode(item.id, 'ice');
-      });
-      this.container.querySelector('#bath-mode-ice-salt')?.addEventListener('click', () => {
-        soundEngine.playUiClick();
-        this.sim.setBathMode(item.id, 'ice_salt');
+      this.container.querySelectorAll('.bath-step-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          soundEngine.playUiClick();
+          this.sim.setBathTargetTempC(item.id, Number(btn.dataset.tempc));
+        });
       });
     } else if (item.kind === 'burner') {
       this.container.querySelector('#ins-bunsen-air-toggle')?.addEventListener('click', () => {
@@ -2255,7 +2387,7 @@ export class InspectorPanel {
       });
     } else if (item.kind === 'vessel') {
       this.container.querySelector('#ins-pour')?.addEventListener('click', () => {
-        const vessels = this.sim.items.filter((i) => !i.isShattered && !i.isBroken && (i.kind === 'vessel' || i.kind === 'filter_funnel' || i.kind === 'burette'));
+        const vessels = this.sim.items.filter((i) => !i.isShattered && !i.isBroken && (i.kind === 'vessel' || i.kind === 'filter_funnel' || i.kind === 'separatory_funnel' || i.kind === 'burette'));
         if (vessels.length < 2) {
           this.callbacks.onNotify?.(t('alertTransferNeedSecond'));
           return;
@@ -2413,7 +2545,7 @@ export class InspectorPanel {
           window.addEventListener('keydown', onEsc);
         });
       });
-    } else if (item.kind === 'filter_funnel' || item.kind === 'condenser' || item.kind === 'burette') {
+    } else if (item.kind === 'filter_funnel' || item.kind === 'separatory_funnel' || item.kind === 'condenser' || item.kind === 'burette') {
       this.container.querySelector('#ins-toggle-clamp')?.addEventListener('click', () => {
         if (item.clampedToId) {
           this.sim.detachFromStand(item.id);
@@ -2431,6 +2563,50 @@ export class InspectorPanel {
       this.container.querySelector('#ins-cond-water')?.addEventListener('click', () => {
         item.waterFlowOn = !item.waterFlowOn;
         this.sim.emitChange();
+      });
+      this.container.querySelector('#ins-cond-reflux')?.addEventListener('click', () => {
+        soundEngine.playClampClick();
+        this.sim.toggleCondenserReflux(item.id);
+      });
+      this.container.querySelector('#ins-sep-stopper')?.addEventListener('click', () => {
+        soundEngine.playStopperPop(item.isStoppered !== false);
+        this.sim.toggleSeparatoryStopper(item.id);
+      });
+      this.container.querySelector('#ins-sep-valve')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        this.sim.toggleSeparatoryValve(item.id);
+      });
+      this.container.querySelector('#ins-sep-flow-slider')?.addEventListener('input', (e) => {
+        this.sim.setSeparatoryValveFlow(item.id, Number(e.target.value) / 100);
+        const rateEl = this.container.querySelector('#live-sep-rate');
+        if (rateEl) rateEl.textContent = `${((item.valveFlowFrac ?? 0.35) * 12).toFixed(1)} mL/s`;
+      });
+      this.container.querySelector('#ins-sep-auto-stop')?.addEventListener('change', (e) => {
+        item.stopAtInterface = Boolean(e.target.checked);
+        this.sim.emitChange();
+      });
+      this.container.querySelector('#ins-sep-shake')?.addEventListener('click', () => {
+        soundEngine.playStirSwirl();
+        this.sim.shakeSeparatoryFunnel(item.id);
+      });
+      this.container.querySelector('#ins-sep-mount-pick')?.addEventListener('click', () => {
+        const vs = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isInverted);
+        if (vs.length === 0) return;
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: vs.map((v) => v.id),
+          promptText: `${t('sepMountLabel')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.mountSeparatoryFunnel(item.id, picked.id),
+        });
+      });
+      this.container.querySelector('#ins-sep-unmount')?.addEventListener('click', () => {
+        this.sim.mountSeparatoryFunnel(item.id, null);
+      });
+      this.container.querySelector('#ins-sep-fill')?.addEventListener('click', () => {
+        const regId = this.container.querySelector('#sep-fill-sel')?.value;
+        if (regId) {
+          this.sim.addReagentToVessel(item.id, regId, 25, { silentAnim: true });
+          this.sim.emitChange();
+        }
       });
       this.container.querySelector('#ins-cond-in-pick')?.addEventListener('click', () => {
         const srcs = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && APPARATUS[i.typeId]?.stopperable);
@@ -2770,6 +2946,32 @@ export class InspectorPanel {
       if (dEl) dEl.textContent = `${(item.dispensedMl || 0).toFixed(2)} mL`;
       return;
     }
+    if (item.kind === 'bath') {
+      const nEl = this.container.querySelector('#live-bath-nested');
+      if (nEl) {
+        const nestedVessels = this.sim.items.filter((i) => i.kind === 'vessel' && i.submergedInBathId === item.id && !i.isShattered);
+        nEl.textContent = nestedVessels.length > 0
+          ? `📥 ${nestedVessels.map((v) => `${v.label} (${kelvinToCelsius(v.tempK).toFixed(1)}°C)`).join(', ')}`
+          : '';
+      }
+      return;
+    }
+
+    if (item.kind === 'condenser') {
+      const cEl = this.container.querySelector('#live-cond-ml');
+      if (cEl) cEl.textContent = `${(item.totalCondensedMl || 0).toFixed(2)} mL`;
+      return;
+    }
+
+    if (item.kind === 'separatory_funnel') {
+      const vEl = this.container.querySelector('#live-sep-vol');
+      const dEl = this.container.querySelector('#live-sep-disp');
+      const liqMl = computeLiquidVolumeL(item.moles, item.tempK) * 1000;
+      if (vEl) vEl.textContent = `${liqMl.toFixed(2)} / 100.0 mL`;
+      if (dEl) dEl.textContent = `${(item.dispensedMl || 0).toFixed(2)} mL`;
+      return;
+    }
+
     if (item.kind === 'wash_bottle') {
       const wEl = this.container.querySelector('#live-wb-vol');
       if (wEl) wEl.textContent = `${(item.waterMl || 0).toFixed(1)} / 250 mL`;

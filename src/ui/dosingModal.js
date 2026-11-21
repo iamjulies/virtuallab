@@ -149,6 +149,7 @@ export class DosingModal {
         !i.isBroken &&
         (i.kind === 'vessel' ||
           i.kind === 'filter_funnel' ||
+          i.kind === 'separatory_funnel' ||
           (i.kind === 'burette' && reg.kind === 'liquid') ||
           (i.kind === 'spoon' && reg.kind === 'solid'))
     );
@@ -170,13 +171,13 @@ export class DosingModal {
 
   openTransfer(sourceVesselId, preferredTargetId = null) {
     const src = this.sim.getItem(sourceVesselId);
-    if (!src || (src.kind !== 'vessel' && src.kind !== 'filter_funnel')) return;
+    if (!src || (src.kind !== 'vessel' && src.kind !== 'filter_funnel' && src.kind !== 'separatory_funnel')) return;
     const others = this.sim.items.filter(
       (i) =>
         i.id !== sourceVesselId &&
         !i.isShattered &&
         !i.isBroken &&
-        (i.kind === 'vessel' || i.kind === 'filter_funnel' || i.kind === 'burette')
+        (i.kind === 'vessel' || i.kind === 'filter_funnel' || i.kind === 'separatory_funnel' || i.kind === 'burette')
     );
     if (others.length === 0) return;
 
@@ -274,7 +275,7 @@ export class DosingModal {
         !i.isBroken &&
         (i.kind === 'vessel' ||
           ((st.mode === 'reagent' || st.mode === 'transfer') &&
-            (i.kind === 'filter_funnel' || (i.kind === 'burette' && (!regForTarget || regForTarget.kind === 'liquid')))))
+            (i.kind === 'filter_funnel' || i.kind === 'separatory_funnel' || (i.kind === 'burette' && (!regForTarget || regForTarget.kind === 'liquid')))))
     );
 
     const wrapBackdropHtml = (targetFocusId, innerCardHtml) => {

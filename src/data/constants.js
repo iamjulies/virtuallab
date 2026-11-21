@@ -155,7 +155,7 @@ export function waterMoleFraction(moles) {
  * Pure Ethanol saturation vapor pressure (bar) via Clausius-Clapeyron around T_b = 351.44 K.
  */
 export function ethanolVaporPressureBar(T_K) {
-  const T = Math.max(200, Math.min(450, T_K));
+  const T = Math.max(200, Math.min(650, T_K));
   const dHVapEtOH = 38560;
   const tbEtOH = 351.44;
   return 1.01325 * Math.exp((dHVapEtOH / CONSTANTS.R_J_MOL_K) * (1 / tbEtOH - 1 / T));
@@ -175,11 +175,13 @@ export function computeEthanolWaterVLE(moles, tempK, clampIon = false) {
   }
   const nIon = Math.max(0, nonVolatileSoluteMoles(moles));
   const nPureAcid = Math.max(0, moles.H2SO4_l || 0);
-  // Conc. H2SO4 binds Ethanol into ethyl hydrogen sulfate (C2H5HSO4) & depresses vapor activity well past 78 °C
-  const h2so4BindMol = nPureAcid > 1e-6 ? nPureAcid * 2.4 : 0;
+  // Conc. H2SO4 binds Ethanol/Water via protonation & H-bonding (C2H5HSO4 / H3O+·HSO4-), raising boiling point uniformly
+  const h2so4BindMol = nPureAcid > 1e-6 ? nPureAcid * 4.0 : 0;
   const fIonRaw = nSolv / (nSolv + nIon + h2so4BindMol);
-  const minFloor = nPureAcid > 1e-6 ? 0.015 : 0.55;
+  const minFloor = nPureAcid > 1e-6 ? 0.012 : 0.55;
   const fIon = clampIon ? Math.max(minFloor, fIonRaw) : fIonRaw;
+  const xAcid = nPureAcid > 1e-6 ? nPureAcid / (nSolv + nPureAcid) : 0;
+  const gammaAcidAssoc = xAcid > 1e-6 ? Math.exp(-1.92 * Math.min(0.38, xAcid)) : 1.0;
 
   const xE0 = nE / nSolv;
   const xW0 = nW / nSolv;
@@ -187,12 +189,12 @@ export function computeEthanolWaterVLE(moles, tempK, clampIon = false) {
   // 3-suffix Margules binary interaction constants for Ethanol (1) + Water (2)
   const A_EW = 1.55;
   const A_WE = 0.88;
-  const gammaE = nE > 1e-12 && nW > 1e-12
+  const gammaE = (nE > 1e-12 && nW > 1e-12
     ? Math.exp(xW0 * xW0 * (A_EW + 2 * (A_WE - A_EW) * xE0))
-    : 1.0;
-  const gammaW = nE > 1e-12 && nW > 1e-12
+    : 1.0) * gammaAcidAssoc;
+  const gammaW = (nE > 1e-12 && nW > 1e-12
     ? Math.exp(xE0 * xE0 * (A_WE + 2 * (A_EW - A_WE) * xW0))
-    : 1.0;
+    : 1.0) * gammaAcidAssoc;
 
   const pSatE = nE > 1e-12 ? ethanolVaporPressureBar(tempK) : 0;
   const pSatW = nW > 1e-12 ? waterVaporPressureBar(tempK) : 0;
@@ -204,6 +206,131 @@ export function computeEthanolWaterVLE(moles, tempK, clampIon = false) {
   const yW = 1 - yE;
 
   return { xE0, xW0, gammaE, gammaW, fIon, pEBar, pWBar, pTotBar, yE, yW };
+}
+
+export const VOLATILE_LIQUID_PROPS = {
+  H2O_l: { group: 'aqueous', boilTempK: 373.15, dHVapJ: 40660, vaporSpeciesId: 'H2O_g' },
+  C2H5OH_l: { group: 'aqueous', boilTempK: 351.52, dHVapJ: 38560, vaporSpeciesId: 'C2H5OH_g' },
+  CH3COOH_l: { group: 'aqueous', boilTempK: 391.05, dHVapJ: 23700, vaporSpeciesId: 'CH3COOH_g' },
+  CH3CHO_l: { group: 'aqueous', boilTempK: 293.35, dHVapJ: 25760, vaporSpeciesId: 'CH3CHO_g' },
+  CH3COCH3_l: { group: 'aqueous', boilTempK: 329.2, dHVapJ: 31300, vaporSpeciesId: 'CH3COCH3_g' },
+  C2H5OC2H5_l: { group: 'organic_light', boilTempK: 307.75, dHVapJ: 26500, vaporSpeciesId: 'C2H5OC2H5_g' },
+  CH3COOC2H5_l: { group: 'organic_light', boilTempK: 350.25, dHVapJ: 31900, vaporSpeciesId: 'CH3COOC2H5_g' },
+  C2H5Br_l: { group: 'organic_heavy', boilTempK: 311.55, dHVapJ: 27000, vaporSpeciesId: 'C2H5Br_g' },
+  CH3COCl_l: { group: 'organic_heavy', boilTempK: 323.95, dHVapJ: 29200, vaporSpeciesId: 'CH3COCl_g' },
+  CH3CO_2O_l: { group: 'organic_heavy', boilTempK: 413.05, dHVapJ: 41000, vaporSpeciesId: 'CH3CO_2O_g' },
+  Br2_l: { group: 'organic_heavy', boilTempK: 331.95, dHVapJ: 29960, vaporSpeciesId: 'Br2_g' },
+  PCl3_l: { group: 'organic_heavy', boilTempK: 349.25, dHVapJ: 30500, vaporSpeciesId: 'PCl3_g' },
+  PBr3_l: { group: 'organic_heavy', boilTempK: 446.35, dHVapJ: 39700, vaporSpeciesId: 'PBr3_g' },
+  HNO3_l: { group: 'aqueous', boilTempK: 356.15, dHVapJ: 39100, vaporSpeciesId: 'HNO3_g' },
+};
+
+/**
+ * Clausius-Clapeyron saturation vapor pressure (bar) at temperature T (K).
+ */
+export function speciesVaporPressureBar(boilTempK, dHVapJ, tempK, pStdBar = CONSTANTS.P_STD_BAR) {
+  const tb = Math.max(120, Number(boilTempK) || 373.15);
+  const dh = Math.max(5000, Number(dHVapJ) || 35000);
+  const T = Math.max(140, Math.min(1800, Number(tempK) || CONSTANTS.T_STD_K));
+  return Math.max(1e-8, pStdBar * Math.exp((-dh / CONSTANTS.R_J_MOL_K) * (1 / T - 1 / tb)));
+}
+
+/**
+ * Universal multi-component Raoult + immiscible phase VLE solver.
+ * Computes partial vapor pressures P_i = x_{i,phase} * fIon * P_sat,i(T) and vapor mole fractions y_i.
+ */
+export function computeUniversalRaoultVLE(moles, tempK, speciesMap = null) {
+  const aqComps = [];
+  const orgLightComps = [];
+  const orgHeavyComps = [];
+  let nAqTot = 0;
+  let nLightTot = 0;
+  let nHeavyTot = 0;
+
+  for (const [id, n] of Object.entries(moles || {})) {
+    if (!Number.isFinite(n) || n <= 1e-11) continue;
+    const sp = speciesMap?.[id] || VOLATILE_LIQUID_PROPS[id];
+    const vpInfo = VOLATILE_LIQUID_PROPS[id];
+    const isVolLiq = (sp && sp.phase === 'l' && sp.vaporSpeciesId && sp.boilTempK) || Boolean(vpInfo);
+    if (!isVolLiq) continue;
+    const group = sp?.liquidGroup || sp?.group || vpInfo?.group || 'aqueous';
+    const entry = {
+      id,
+      mol: n,
+      boilTempK: sp?.boilTempK || vpInfo.boilTempK,
+      dHVapJ: sp?.dHVapJ || vpInfo.dHVapJ || 32000,
+      vaporSpeciesId: sp?.vaporSpeciesId || vpInfo?.vaporSpeciesId,
+      group,
+    };
+    if (group === 'organic_light') {
+      orgLightComps.push(entry);
+      nLightTot += n;
+    } else if (group === 'organic_heavy') {
+      orgHeavyComps.push(entry);
+      nHeavyTot += n;
+    } else {
+      aqComps.push(entry);
+      nAqTot += n;
+    }
+  }
+
+  const nIon = Math.max(0, nonVolatileSoluteMoles(moles || {}));
+  const nH2SO4Pure = moles?.H2SO4_l || 0;
+  const nAqSolvPlusNonVol = nAqTot + nH2SO4Pure * 4.0 + nIon;
+  const xAcidAq = nH2SO4Pure > 1e-6 ? nH2SO4Pure / Math.max(1e-12, nAqTot + nH2SO4Pure) : 0;
+  const gammaAcidAq = xAcidAq > 1e-6 ? Math.exp(-1.92 * Math.min(0.38, xAcidAq)) : 1.0;
+
+  const partialBar = {};
+  let pTotBar = 0;
+
+  // Aqueous miscible phase uses water/EtOH Margules/Antoine when applicable, otherwise Raoult's Law
+  for (const c of aqComps) {
+    let pSat =
+      c.id === 'H2O_l'
+        ? waterVaporPressureBar(tempK)
+        : c.id === 'C2H5OH_l'
+          ? ethanolVaporPressureBar(tempK)
+          : speciesVaporPressureBar(c.boilTempK, c.dHVapJ, tempK);
+    if (c.id === 'H2O_l' && (moles?.C2H5OH_l || 0) > 1e-10) {
+      const ew = computeEthanolWaterVLE(moles, tempK, true);
+      pSat = ew.pWBar;
+      partialBar[c.id] = pSat;
+      pTotBar += pSat;
+      continue;
+    }
+    if (c.id === 'C2H5OH_l' && (moles?.H2O_l || 0) > 1e-10) {
+      const ew = computeEthanolWaterVLE(moles, tempK, true);
+      pSat = ew.pEBar;
+      partialBar[c.id] = pSat;
+      pTotBar += pSat;
+      continue;
+    }
+    const xAq = c.mol / Math.max(1e-12, nAqSolvPlusNonVol);
+    const pC = xAq * gammaAcidAq * pSat;
+    partialBar[c.id] = pC;
+    pTotBar += pC;
+  }
+
+  for (const [phaseList, phaseTot] of [
+    [orgLightComps, nLightTot],
+    [orgHeavyComps, nHeavyTot],
+  ]) {
+    for (const c of phaseList) {
+      const xP = c.mol / Math.max(1e-12, phaseTot);
+      const pSat = speciesVaporPressureBar(c.boilTempK, c.dHVapJ, tempK);
+      const pC = xP * pSat;
+      partialBar[c.id] = pC;
+      pTotBar += pC;
+    }
+  }
+
+  const yMap = {};
+  if (pTotBar > 1e-12) {
+    for (const [id, p] of Object.entries(partialBar)) {
+      yMap[id] = p / pTotBar;
+    }
+  }
+  return { pTotBar, partialBar, yMap };
 }
 
 /**
@@ -222,7 +349,7 @@ export function waterBoilingPointK(P_bar) {
  * - Real non-ideal Ethanol-Water azeotrope VLE (78.15 C azeotrope / 78.3 C pure EtOH -> 99.6 C pure H2O)
  * - Raoult's Law BPE for non-volatile dissolved salts/bases
  */
-export function solutionBoilingPointK(moles, P_bar) {
+export function solutionBoilingPointK(moles, P_bar, speciesMap = null) {
   const baseK = waterBoilingPointK(P_bar);
   const pSafe = Math.max(0.05, Math.min(20, P_bar || CONSTANTS.P_STD_BAR));
   const pureHno3BpK =
@@ -242,33 +369,56 @@ export function solutionBoilingPointK(moles, P_bar) {
   const nSO4Tot = (moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0);
   const nH2SO4Aq = Math.min(nSO4Tot, ((moles.H_aq || 0) + (moles.HSO4_aq || 0)) * 0.5);
   const nH2SO4Tot = nPureH2SO4 + nH2SO4Aq;
+
+  // Check if any general volatile organic liquid other than calibrated (H2O, EtOH, HNO3, I2, S) is present
+  let hasGeneralVolatileOrganic = false;
+  for (const id of Object.keys(VOLATILE_LIQUID_PROPS)) {
+    if (id !== 'H2O_l' && id !== 'C2H5OH_l' && id !== 'HNO3_l' && id !== 'Br2_l' && id !== 'CH3COOH_l' && id !== 'CH3COOC2H5_l' && (moles[id] || 0) > 1e-8) {
+      hasGeneralVolatileOrganic = true;
+      break;
+    }
+  }
   // Ternary azeotrope: CH3COOC2H5 (82.6%) + C2H5OH (8.4%) + H2O (9.0%) boils at 70.2 C (343.35 K), below pure EtOAc 77.1 C
-  if (nEtOAc > 1e-6 && nEtOH > 1e-6 && nH2O > 1e-6 && nPureH2SO4 <= 0.15) {
+  if (nEtOAc > 1e-6 && nEtOH > 1e-6 && nH2O > 1e-6 && nPureH2SO4 <= 0.15 && !hasGeneralVolatileOrganic) {
     const azBpK =
       1 / (1 / 343.35 - (CONSTANTS.R_J_MOL_K / 31500) * Math.log(pSafe / CONSTANTS.P_STD_BAR));
     return Math.max(290, azBpK);
   }
-  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nPureHNO3 <= 1e-10 && nEtOAc > 1e-8) {
+  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nPureHNO3 <= 1e-10 && !hasGeneralVolatileOrganic && nEtOAc > 1e-8) {
     const etOAcBpK =
       1 / (1 / 350.25 - (CONSTANTS.R_J_MOL_K / 31900) * Math.log(pSafe / CONSTANTS.P_STD_BAR));
     return Math.max(290, etOAcBpK);
   }
-  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nPureHNO3 <= 1e-10 && nAcOH > 1e-10) {
+  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nPureHNO3 <= 1e-10 && !hasGeneralVolatileOrganic && nAcOH > 1e-10) {
     const pureAcBpK =
       1 / (1 / 391.05 - (CONSTANTS.R_J_MOL_K / 23700) * Math.log(pSafe / CONSTANTS.P_STD_BAR));
     return Math.max(300, pureAcBpK);
   }
-  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nBr2Liq > 1e-8) {
+  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && !hasGeneralVolatileOrganic && nBr2Liq > 1e-8) {
     const pureBr2BpK =
       1 / (1 / 331.95 - (CONSTANTS.R_J_MOL_K / 29960) * Math.log(pSafe / CONSTANTS.P_STD_BAR));
     return Math.max(266, pureBr2BpK);
   }
-  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nPureHNO3 <= 1e-10 && (moles.I2_s || 0) > 1e-8 && (moles.S_s || 0) <= 1e-8) {
+  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nPureHNO3 <= 1e-10 && !hasGeneralVolatileOrganic && (moles.I2_s || 0) > 1e-8 && (moles.S_s || 0) <= 1e-8) {
     return 457.45; // Iodine normal boiling point 184.3 C (molten above 113.7 C)
   }
-  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nPureHNO3 <= 1e-10 && (moles.S_s || 0) > 1e-8) {
+  if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10 && nPureHNO3 <= 1e-10 && !hasGeneralVolatileOrganic && (moles.S_s || 0) > 1e-8) {
     return 717.75; // Sulfur normal boiling point 444.6 C
   }
+
+  // Generalized Raoult's Law multi-component solver for ANY organic / volatile liquid + non-volatile solute/H2SO4 mixture
+  if (hasGeneralVolatileOrganic || (nH2O <= 1e-10 && nEtOH <= 1e-10 && (nAcOH > 1e-8 || nEtOAc > 1e-8 || nBr2Liq > 1e-8))) {
+    let lo = 240.0;
+    let hi = 560.0;
+    for (let i = 0; i < 24; i++) {
+      const mid = 0.5 * (lo + hi);
+      const { pTotBar } = computeUniversalRaoultVLE(moles, mid, speciesMap);
+      if (pTotBar < pSafe) lo = mid;
+      else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+  }
+
   if (nH2O <= 1e-10 && nEtOH <= 1e-10 && nPureH2SO4 <= 1e-10) return baseK;
 
   const mH2O = nH2O * CONSTANTS.M_H2O;
@@ -317,28 +467,21 @@ export function solutionBoilingPointK(moles, P_bar) {
     return Math.max(295, baseK + deltaK);
   }
 
-  // Binary Ethanol / Water / Conc. H2SO4 / Salt mixture boiling point: solve P_tot(T) = P_bar via monotonic bisection
+  // Generalized Ethanol / Water / Conc. H2SO4 / Non-volatile Salt mixture boiling point via universal Raoult + Margules VLE
   if (nEtOH > 1e-9) {
     const targetP = Math.max(0.05, P_bar);
     let lo = 285.0;
     let hi = nPureH2SO4 > 1e-6 ? 560.0 : 435.0;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 24; i++) {
       const mid = 0.5 * (lo + hi);
-      const { pTotBar } = computeEthanolWaterVLE(moles, mid, true);
+      const { pTotBar } = computeUniversalRaoultVLE(moles, mid, speciesMap);
       if (pTotBar < targetP) {
         lo = mid;
       } else {
         hi = mid;
       }
     }
-    const solvedBpK = 0.5 * (lo + hi);
-    if (nPureH2SO4 > 1e-6) {
-      // Empirical EtOH + 98% H2SO4 BPE (1:2 excess acid -> ~172-188 °C; 2:1 excess EtOH -> ~140-150 °C)
-      const acidMolFrac = nPureH2SO4 / Math.max(1e-9, nPureH2SO4 + nEtOH + nH2O);
-      const bpeMinK = 351.5 + 150.0 * Math.pow(acidMolFrac, 0.78);
-      return Math.min(545.0, Math.max(solvedBpK, bpeMinK));
-    }
-    return solvedBpK;
+    return Math.min(545.0, 0.5 * (lo + hi));
   }
 
   // Pure aqueous + non-volatile solute: Raoult's Law BPE

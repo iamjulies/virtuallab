@@ -1,6 +1,8 @@
 import {
   CONSTANTS,
+  VOLATILE_LIQUID_PROPS,
   computeEthanolWaterVLE,
+  computeUniversalRaoultVLE,
   solutionBoilingPointK,
   waterVaporPressureBar,
   waterVaporPressureMmHg,
@@ -269,12 +271,13 @@ export function stepVesselThermodynamics(
   const radCoeff = baseHLoss * lidLossScale * bunsenRadFactor;
   const tEnv = Math.max(150, env.tempK);
   const tCurClamped = Math.max(150, Math.min(1950, vessel.tempK));
-  const bathCoolingJ = bathSrc
-    ? -cTotal * (bathSrc.coolingK || 0.28) * (tCurClamped - bathSrc.tempK) * dt
-    : 0;
+  const bathImmersedLossScale = bathSrc ? 0.25 : 1.0;
+  const bathCouplingWK = bathSrc ? Math.max(cTotal * 0.85, 24.0) : 0;
+  const bathCoolingJ = bathSrc ? bathCouplingWK * (bathSrc.tempK - tCurClamped) * dt : 0;
   const ambientExchangeJ =
-    (-hLoss * (tCurClamped - env.tempK) -
+    ((-hLoss * (tCurClamped - env.tempK) -
       radCoeff * (Math.pow(tCurClamped, 4) - Math.pow(tEnv, 4))) *
+      bathImmersedLossScale) *
       dt +
     bathCoolingJ;
 
@@ -287,13 +290,28 @@ export function stepVesselThermodynamics(
   let br2ProducedMol = 0;
   let i2ProducedMol = 0;
   let sProducedMol = 0;
+  const extraVaporsProduced = {};
   let evapCoolingJ = 0;
   const nWater = vessel.moles.H2O_l || 0;
   const nEthanol = vessel.moles.C2H5OH_l || 0;
-  const nAmmonia = vessel.moles.NH3_aq || 0;
   const nPureHNO3 = vessel.moles.HNO3_l || 0;
   const nBr2Liq = vessel.moles.Br2_l || 0;
   const nI2Solid = vessel.moles.I2_s || 0;
+  const nAmmonia = vessel.moles.NH3_aq || 0;
+
+  let hasOtherVolatileOrg = false;
+  for (const vid of Object.keys(VOLATILE_LIQUID_PROPS)) {
+    if (
+      vid !== 'H2O_l' &&
+      vid !== 'C2H5OH_l' &&
+      vid !== 'HNO3_l' &&
+      vid !== 'Br2_l' &&
+      (vessel.moles[vid] || 0) > 1e-8
+    ) {
+      hasOtherVolatileOrg = true;
+      break;
+    }
+  }
 
   const hasOpenTube = !!(vessel.connectedTargetId || vessel.connectedSyringeId);
   const effectivePressureBar =
@@ -301,7 +319,7 @@ export function stepVesselThermodynamics(
       ? Math.max(env.pressureBar, vessel.internalPressureBar || env.pressureBar)
       : env.pressureBar;
 
-  const boilingPointK = solutionBoilingPointK(vessel.moles, effectivePressureBar);
+  const boilingPointK = solutionBoilingPointK(vessel.moles, effectivePressureBar, SPECIES);
 
   // Regime 1: Universal sub-boiling evaporation (Clausius-Clapeyron + Margules activity + Stefan-Maxwell + Gilliland)
   // Open vessels evaporate gently at any T; tube-connected vessels vent expanding warm vapor cleanly
@@ -318,7 +336,7 @@ export function stepVesselThermodynamics(
   const effTopAreaCm2 = strat.topAreaCm2 * (vessel.isStoppered && hasOpenTube ? 0.55 : 1.0);
   const aqCapFactor = strat.hasLightCover ? 0.06 : 1.0;
 
-  if ((nWater > 1e-7 || nEthanol > 1e-7 || nAmmonia > 1e-8 || nPureHNO3 > 1e-7 || nBr2Liq > 1e-8 || nI2Solid > 1e-8 || strat.lightOrganicMl > 0.05) && (canSubBoilVent || canEtOHVent || canVentFumingHCl) && vessel.tempK < boilingPointK) {
+  if ((nWater > 1e-7 || nEthanol > 1e-7 || nAmmonia > 1e-8 || nPureHNO3 > 1e-7 || nBr2Liq > 1e-8 || nI2Solid > 1e-8 || hasOtherVolatileOrg || strat.lightOrganicMl > 0.05) && (canSubBoilVent || canEtOHVent || canVentFumingHCl || hasOtherVolatileOrg) && vessel.tempK < boilingPointK) {
     const vle = computeEthanolWaterVLE(vessel.moles, vessel.tempK, false);
     const volMl = strat.totalLiqMl + computeSolidVolumeMl(vessel.moles);
     const areaCm2 = effTopAreaCm2;
@@ -340,12 +358,20 @@ export function stepVesselThermodynamics(
         : 0;
     const subBoilEtOH = Math.min(nEthanol, evapEtOHMolS * dt);
 
-    // 1c) Exposed top immiscible organic liquid evaporation (for beta_v3 solvents: Hexane/Ether/etc.)
-    if (!vessel.isStoppered && strat.topLayerKey === 'organic_light') {
-      for (const [id, nOrg] of Object.entries(vessel.moles)) {
+    // 1c) Generalized sub-boiling organic liquid evaporation (immiscible light/heavy & miscible CH3CHO/Acetone/AcOH/EtOAc/Ether/C2H5Br/CH3COCl)
+    if (!vessel.isStoppered || hasOpenTube) {
+      for (const id of Object.keys(VOLATILE_LIQUID_PROPS)) {
+        if (id === 'H2O_l' || id === 'C2H5OH_l' || id === 'HNO3_l' || id === 'Br2_l') continue;
+        const nOrg = vessel.moles[id] || 0;
         const sp = SPECIES[id];
-        if (!sp || sp.phase !== 'l' || sp.liquidGroup !== 'organic_light' || !sp.boilTempK || !sp.dHVapJ || nOrg <= 1e-9) continue;
-        const evOrgRate = calcEvaporationRateMol(sp, 1.0, vessel.tempK, areaCm2, 0, isStirred, 1.0);
+        if (nOrg <= 1e-9 || !sp || !sp.boilTempK || !sp.dHVapJ) continue;
+        if (vessel.tempK < (sp.meltTempK || 150)) continue;
+        if (vessel.isStoppered && hasOpenTube && vessel.tempK < sp.boilTempK - 22) continue;
+        const coverScale =
+          sp.liquidGroup === 'organic_light' || strat.topLayerKey === sp.liquidGroup || !strat.hasLightCover
+            ? 1.0
+            : 0.12;
+        const evOrgRate = calcEvaporationRateMol(sp, 1.0, vessel.tempK, effAreaCm2 * coverScale, 0, isStirred, 1.0);
         const dEvOrg = Math.min(nOrg, evOrgRate * dt);
         if (dEvOrg > 1e-12) {
           vessel.moles[id] = nOrg - dEvOrg;
@@ -353,7 +379,7 @@ export function stepVesselThermodynamics(
           evapCoolingJ -= dEvOrg * sp.dHVapJ;
           const vapId = sp.vaporSpeciesId;
           if (vapId) {
-            vessel.escapedGasMoles[vapId] = (vessel.escapedGasMoles[vapId] || 0) + dEvOrg;
+            extraVaporsProduced[vapId] = (extraVaporsProduced[vapId] || 0) + dEvOrg;
           }
         }
       }
@@ -669,6 +695,42 @@ export function stepVesselThermodynamics(
     }
     const leftoverJ = Math.max(0, excessJ - boilPureHNO3 * CONSTANTS.DELTA_H_VAP_HNO3_J);
     newTempK = boilingPointK + leftoverJ / cTotal;
+  } else if (newTempK >= boilingPointK && (hasOtherVolatileOrg || (remainingWater <= 1e-7 && remainingEtOH <= 1e-7 && remainingPureHNO3 <= 1e-7 && remBr2After <= 1e-7 && (vessel.moles.CH3COOH_l || 0) > 1e-7))) {
+    // Generalized Multi-Component Raoult's Law Boiling Clamp across all volatile liquids (EtOAc, Ether, Acetone, CH3CHO, AcOH, C2H5Br, CH3COCl, H2O, EtOH...)
+    const vleMix = computeUniversalRaoultVLE(vessel.moles, boilingPointK, SPECIES);
+    const activeVols = [];
+    let sumWeight = 0;
+    let weightedDH = 0;
+    for (const [id, yFrac] of Object.entries(vleMix.yMap)) {
+      const avail = vessel.moles[id] || 0;
+      const sp = SPECIES[id];
+      if (yFrac > 1e-6 && avail > 1e-11 && sp && sp.boilTempK && sp.vaporSpeciesId) {
+        activeVols.push({ id, yFrac, avail, sp });
+        sumWeight += yFrac;
+        weightedDH += yFrac * (sp.dHVapJ || 32000);
+      }
+    }
+    if (activeVols.length > 0 && sumWeight > 1e-6) {
+      isBoiling = true;
+      const excessJ = (newTempK - boilingPointK) * cTotal;
+      const effDH = Math.max(2000, weightedDH / sumWeight);
+      const boilTot = excessJ / effDH;
+      let usedJ = 0;
+      for (const comp of activeVols) {
+        const dBoil = Math.min(comp.avail, boilTot * (comp.yFrac / sumWeight));
+        if (dBoil <= 1e-12) continue;
+        vessel.moles[comp.id] = Math.max(0, comp.avail - dBoil);
+        if (vessel.moles[comp.id] < 1e-12) delete vessel.moles[comp.id];
+        usedJ += dBoil * (comp.sp.dHVapJ || 32000);
+        if (comp.id === 'H2O_l') steamProducedMol += dBoil;
+        else if (comp.id === 'C2H5OH_l') ethanolProducedMol += dBoil;
+        else if (comp.id === 'HNO3_l') hno3ProducedMol += dBoil;
+        else if (comp.id === 'Br2_l') br2ProducedMol += dBoil;
+        else extraVaporsProduced[comp.sp.vaporSpeciesId] = (extraVaporsProduced[comp.sp.vaporSpeciesId] || 0) + dBoil;
+      }
+      const remJ = Math.max(0, excessJ - usedJ);
+      newTempK = boilingPointK + remJ / cTotal;
+    }
   } else if ((remainingWater > 1e-7 || remainingEtOH > 1e-7) && newTempK >= boilingPointK) {
     isBoiling = true;
     const excessJ = (newTempK - boilingPointK) * cTotal;
@@ -894,6 +956,7 @@ export function stepVesselThermodynamics(
     i2ProducedMol,
     sProducedMol,
     metalVaporsProduced,
+    extraVaporsProduced,
     isBoiling,
     boilingPointK,
     steamOpacity,

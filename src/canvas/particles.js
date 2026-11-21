@@ -45,7 +45,7 @@ export class ParticleSystem {
       return;
     }
 
-    if (item.kind === 'filter_funnel' || item.kind === 'burette' || item.kind === 'condenser') {
+    if (item.kind === 'filter_funnel' || item.kind === 'separatory_funnel' || item.kind === 'burette' || item.kind === 'condenser') {
       const rate = metrics.rateMlS || 0;
       if (rate > 0.05 && Math.random() < Math.min(0.85, rate * dt * 8)) {
         const condSpout = item.kind === 'condenser' ? getCondenserPorts(item).spout : null;

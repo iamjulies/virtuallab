@@ -2478,7 +2478,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.24';
+      const expectedBuild = 'virlab_beta_v4+build.25';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2534,10 +2534,12 @@
         Boolean(I18N.vi.alertGlassSoftenMelt && I18N.en.alertGlassSoftenMelt) &&
         Boolean(I18N.vi.alertCo2Extinguish && I18N.en.alertCo2Extinguish) &&
         Boolean(I18N.vi.btnCompareMode && I18N.en.btnCompareMode) &&
-        Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle);
+        Boolean(I18N.vi.caoRubricTitle && I18N.en.caoRubricTitle) &&
+        Boolean(I18N.vi.eq_separatory_funnel && I18N.en.eq_separatory_funnel) &&
+        Boolean(I18N.vi.condRefluxToggle && I18N.en.condRefluxToggle);
       assert(
-        'Build virlab_beta_v4+build.24 parity: All 39 apparatus & 30 starter reagents translated in VI/EN, Prompt 58 Thermal/VaporCatalysis/Condenser/AntiJitter/NoBoilingAlert parity enforced',
-        APPARATUS_ORDER.length === 39 &&
+        'Build virlab_beta_v4+build.25 parity: All 40 apparatus & 30 starter reagents translated in VI/EN, Prompt 59 Condenser/Reflux/Bath/Raoult/SeparatoryFunnel parity enforced',
+        APPARATUS_ORDER.length === 40 &&
           STARTER_REAGENTS.length === 30 &&
           !APPARATUS.clay_triangle &&
           !APPARATUS.crucible_tongs &&
@@ -8462,7 +8464,7 @@
       const registryOk =
         !APPARATUS.crucible_tongs &&
         !APPARATUS_ORDER.includes('crucible_tongs') &&
-        APPARATUS_ORDER.length === 39 &&
+        APPARATUS_ORDER.length >= 39 &&
         Boolean(regP) &&
         regP.category === 'nonmetal' &&
         regP.speciesId === 'P_red_s' &&
@@ -9550,6 +9552,121 @@
         'Prompt 58 invariants: Anti-jitter debounced activeReactions & no alertBoiling spam, NIST dHFusJ + cp thermal scaling + fusion plateau, C2H5OH(g) CuO/Lebedev pass-through catalysis, EtOH+H2SO4 BPE > 165C & Condenser -> inverted receiver gas collection',
         debounceOk && thermoOk && vaporCuoOk && vaporLebOk && condPassOk,
         `deb=${debounceOk}(act=${actImmediate}/${actHoldShort}/${actCleared},noBoil=${noBoilAlert}), therm=${thermoOk}(cCu=${cCu.toFixed(1)},cEt=${cEt.toFixed(1)},cW=${cWat.toFixed(1)},plat=${plateauHeld}), vapCuO=${vaporCuoOk}(Cu=${(uCuO.moles.Cu_s||0).toFixed(4)}), leb=${vaporLebOk}, cond=${condPassOk}(bpA=${bpExcessAcidC.toFixed(1)}C,bpE=${bpEtherRatioC.toFixed(1)}C,C2H4=${(vInvRecv.headspaceGasMoles?.C2H4_g||0).toFixed(4)})`
+      );
+    }
+
+    // TEST 177: Prompt 59 (virlab_beta_v4+build.25) — Generalized Organic Condenser, Reflux Mode, -20..200C Thermostatic Bath, Universal Raoult VLE + Non-Volatile BPE, & ISO 4800 Separatory/Dropping Funnel
+    {
+      // 1) Generalized Liebig Condenser condensing multiple volatile organics (CH3CHO, Acetone, Ether, EtOAc, C2H5Br) while passing C2H4/CH4
+      const simOrgCond = new LabSimulation();
+      const condOrg = simOrgCond.createApparatus('liebig_condenser', 360, 260);
+      condOrg.waterFlowOn = true;
+      const recvOrg = simOrgCond.createApparatus('erlenmeyer_250', 480, 420);
+      recvOrg.isStoppered = true;
+      recvOrg.tempK = 275.15; // chilled receiver keeps volatile CH3CHO (bp 20.2 C) liquid
+      condOrg.outletTargetId = recvOrg.id;
+      condOrg.vaporInMoles = {
+        CH3CHO_g: 0.04,
+        CH3COCH3_g: 0.04,
+        C2H5OC2H5_g: 0.04,
+        CH3COOC2H5_g: 0.04,
+        C2H5Br_g: 0.04,
+        C2H4_g: 0.004,
+        CH4_g: 0.004,
+      };
+      simOrgCond.step(0.05);
+      const genCondOk =
+        (recvOrg.moles.CH3COCH3_l || 0) > 0.02 &&
+        (recvOrg.moles.CH3COOC2H5_l || 0) > 0.02 &&
+        (recvOrg.moles.C2H5Br_l || 0) > 0.02 &&
+        (recvOrg.moles.C2H5OC2H5_l || 0) > 0.02 &&
+        (recvOrg.moles.CH3CHO_l || 0) > 0.01 &&
+        (recvOrg.headspaceGasMoles.C2H4_g || 0) > 0.002 &&
+        (recvOrg.headspaceGasMoles.CH4_g || 0) > 0.002;
+
+      // 2) Reflux Mode: condenser mounts vertically on boiling flask and returns condensed vapors back into the SAME flask
+      const simRef = new LabSimulation();
+      const flaskRef = simRef.createApparatus('round_flask_250', 300, 420);
+      flaskRef.moles = { C2H5OH_l: 0.5, CH3COOH_l: 0.5, CH3COOC2H5_l: 0.2 };
+      const condRef = simRef.createApparatus('liebig_condenser', 300, 260);
+      condRef.waterFlowOn = true;
+      simRef.toggleCondenserReflux(condRef.id, flaskRef.id);
+      const initTotOrg = (flaskRef.moles.C2H5OH_l || 0) + (flaskRef.moles.CH3COOH_l || 0) + (flaskRef.moles.CH3COOC2H5_l || 0);
+      condRef.vaporInMoles = { CH3COOC2H5_g: 0.05, C2H5OH_g: 0.05 };
+      simRef.step(0.05);
+      const afterTotOrg = (flaskRef.moles.C2H5OH_l || 0) + (flaskRef.moles.CH3COOH_l || 0) + (flaskRef.moles.CH3COOC2H5_l || 0);
+      const refluxOk =
+        condRef.refluxMode === true &&
+        condRef.refluxVesselId === flaskRef.id &&
+        getCondenserPorts(condRef).isReflux === true &&
+        afterTotOrg > initTotOrg + 0.05;
+
+      // 3) Thermostatic Hot/Cold Bath (-20 .. 200 C): holds 170 C stably without charring & cools to -20 C
+      const simBath = new LabSimulation();
+      const bathHot = simBath.createApparatus('ice_bath', 250, 448);
+      simBath.setBathTargetTempC(bathHot.id, 170);
+      const flaskHot = simBath.createApparatus('erlenmeyer_250', 250, 410);
+      flaskHot.moles = { H2SO4_l: 0.5 };
+      flaskHot.tempK = 298.15;
+      simBath.updateSupportAttachments();
+      for (let i = 0; i < 120; i++) simBath.step(0.05);
+      const hotC = flaskHot.tempK - 273.15;
+
+      const bathCold = simBath.createApparatus('ice_bath', 520, 448);
+      simBath.setBathTargetTempC(bathCold.id, -20);
+      const flaskCold = simBath.createApparatus('erlenmeyer_250', 520, 410);
+      flaskCold.moles = { C2H5OH_l: 0.5 };
+      flaskCold.tempK = 320.0;
+      simBath.updateSupportAttachments();
+      for (let i = 0; i < 120; i++) simBath.step(0.05);
+      const coldC = flaskCold.tempK - 273.15;
+      const bathOk =
+        APPARATUS.ice_bath.bathTempSteps.length === 24 &&
+        hotC >= 165 && hotC <= 171 &&
+        coldC >= -21 && coldC <= -16;
+
+      // 4) Universal Raoult VLE + Non-Volatile Solutes (EtOH+H2SO4, EtOAc+AcOH+H2SO4, H2O+NaCl)
+      const bpEtAcid = solutionBoilingPointK({ C2H5OH_l: 0.25, H2SO4_l: 0.6 }, 1.0, SPECIES) - 273.15;
+      const bpEtEther = solutionBoilingPointK({ C2H5OH_l: 0.5, H2SO4_l: 0.25 }, 1.0, SPECIES) - 273.15;
+      const bpAcAcid = solutionBoilingPointK({ CH3COOH_l: 0.4, H2SO4_l: 0.4 }, 1.0, SPECIES) - 273.15;
+      const raoultOk = bpEtAcid >= 165 && bpEtEther >= 128 && bpAcAcid > 125;
+
+      // 5) ISO 4800 Pear-Shaped Separatory / Dropping Funnel (100 mL):
+      //    5a) Dropping mode mounted directly on stoppered/tubed boiling flask
+      const simSep = new LabSimulation();
+      const boiler = simSep.createApparatus('round_flask_250', 220, 420);
+      boiler.moles = { H2SO4_l: 0.5 };
+      boiler.isStoppered = true;
+      const sepDrop = simSep.createApparatus('separatory_funnel', 220, 260);
+      sepDrop.moles = { C2H5OH_l: 0.3 };
+      simSep.mountSeparatoryFunnel(sepDrop.id, boiler.id);
+      simSep.setSeparatoryValveFlow(sepDrop.id, 0.5);
+      simSep.toggleSeparatoryValve(sepDrop.id, true);
+      for (let i = 0; i < 12; i++) simSep.step(0.05);
+      const dropModeOk = sepDrop.mountedOnVesselId === boiler.id && (boiler.moles.C2H5OH_l || 0) > 0.01;
+
+      //    5b) Extraction mode: C2H5Br (heavy) + H2O (aq) + EtOAc (light) -> drains bottom layer only & auto-closes cleanly at interface!
+      const standSep = simSep.createApparatus('retort_stand', 432, 360);
+      const sepExt = simSep.createApparatus('separatory_funnel', 460, 240);
+      simSep.attachToStand(sepExt.id, standSep.id);
+      const rcvBottom = simSep.createApparatus('beaker_250', 460, 430);
+      sepExt.moles = { C2H5Br_l: 0.15, H2O_l: 1.0, CH3COOC2H5_l: 0.15 }; // ~11.2 mL heavy, ~18 mL aq, ~14.7 mL light
+      simSep.shakeSeparatoryFunnel(sepExt.id);
+      for (let i = 0; i < 60; i++) simSep.step(0.05); // settle emulsion
+      simSep.setSeparatoryValveFlow(sepExt.id, 0.8);
+      simSep.toggleSeparatoryValve(sepExt.id, true);
+      for (let i = 0; i < 60; i++) simSep.step(0.05);
+      const extOk =
+        !sepExt.valveOpen &&
+        (rcvBottom.moles.C2H5Br_l || 0) > 0.14 &&
+        (rcvBottom.moles.H2O_l || 0) < 0.02 &&
+        (sepExt.moles.H2O_l || 0) > 0.9 &&
+        (sepExt.moles.CH3COOC2H5_l || 0) > 0.14;
+
+      assert(
+        'Prompt 59 invariants: Generalized organic Liebig condenser, Reflux vertical return, -20..200C thermostatic bath, Universal Raoult VLE + H2SO4 BPE, & ISO 4800 Separatory/Dropping Funnel (mount drop + 2-phase extraction interface auto-stop)',
+        genCondOk && refluxOk && bathOk && raoultOk && dropModeOk && extOk,
+        `genCond=${genCondOk}, reflux=${refluxOk}(dOrg=${(afterTotOrg-initTotOrg).toFixed(3)}), bath=${bathOk}(hot=${hotC.toFixed(1)}C,cold=${coldC.toFixed(1)}C), raoult=${raoultOk}(bpA=${bpEtAcid.toFixed(1)}C,bpE=${bpEtEther.toFixed(1)}C,bpAc=${bpAcAcid.toFixed(1)}C), sepDrop=${dropModeOk}, sepExt=${extOk}(valve=${sepExt.valveOpen},rcvBr=${(rcvBottom.moles.C2H5Br_l||0).toFixed(3)},remW=${(sepExt.moles.H2O_l||0).toFixed(2)})`
       );
     }
 

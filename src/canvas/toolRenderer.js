@@ -1,7 +1,7 @@
 import { APPARATUS, getCondenserPorts, getProbeTipPos, getSyringeGeometry, getTubeDestTipPos } from '../data/apparatus.js';
 import { buildRigidTubePoints, samplePolylineAt } from '../engine/gasNetwork.js';
 import { SPECIES } from '../data/species.js';
-import { computeLiquidVolumeL, computeSolidVolumeMl, computeSolutionVisuals, computePH } from '../engine/equilibrium.js';
+import { computeLiquidVolumeL, computePhaseStratification, computeSolidVolumeMl, computeSolutionVisuals, computePH } from '../engine/equilibrium.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
 import { drawLabelPill, formatCanvasText, getCurrentCanvasTheme, getThemePalette, setCurrentLabelItemId } from './vesselRenderer.js';
 
@@ -193,6 +193,226 @@ export function renderFilterFunnel(ctx, item, isSelected, isDropTarget, isDark, 
   ctx.restore();
 }
 
+export function renderSeparatoryFunnel(ctx, item, isSelected, isDropTarget, isDark, langCode = 'vi', timeNow = 0) {
+  const pal = getThemePalette(isDark);
+  const spec = APPARATUS.separatory_funnel || { width: 64, height: 174, maxVolumeMl: 100 };
+  if (item.isBroken) {
+    renderBrokenToolShards(ctx, item, pal, isSelected, spec.width, spec.height);
+    return;
+  }
+
+  const isShaking = (item.emulsionTimer || 0) > 0.25;
+  const shakeDx = isShaking ? Math.sin(timeNow * 34) * 3.2 : 0;
+  const shakeTilt = isShaking ? Math.sin(timeNow * 26) * 0.08 : 0;
+  const x = item.x + shakeDx;
+  const y = item.y;
+  const topY = y - spec.height / 2;
+  const botY = y + spec.height / 2;
+
+  const neckTopY = topY + 16;
+  const neckBotY = topY + 34;
+  const bulbMaxY = y + 6;
+  const taperEndY = botY - 46;
+  const valveY = botY - 34;
+  const stemEndY = botY - 2;
+  const neckHalfW = 7.5;
+  const bulbHalfW = 28.5;
+  const stemHalfW = 3.6;
+
+  ctx.save();
+  const effTilt = (item.tiltAngle || 0) + shakeTilt;
+  if (Math.abs(effTilt) > 0.005) {
+    ctx.translate(x, y);
+    ctx.rotate(effTilt);
+    ctx.translate(-x, -y);
+  }
+  drawSelectionGlow(ctx, isSelected, isDropTarget);
+
+  const tracePearBody = () => {
+    ctx.beginPath();
+    ctx.moveTo(x - neckHalfW - 2, neckTopY);
+    ctx.lineTo(x + neckHalfW + 2, neckTopY);
+    ctx.lineTo(x + neckHalfW, neckBotY);
+    ctx.bezierCurveTo(x + bulbHalfW * 0.92, neckBotY + 16, x + bulbHalfW, bulbMaxY - 12, x + bulbHalfW * 0.92, bulbMaxY + 8);
+    ctx.bezierCurveTo(x + bulbHalfW * 0.72, taperEndY - 12, x + 5.2, taperEndY - 4, x + stemHalfW, taperEndY + 4);
+    ctx.lineTo(x + stemHalfW, stemEndY);
+    ctx.lineTo(x - stemHalfW + 1, stemEndY - 3);
+    ctx.lineTo(x - stemHalfW, taperEndY + 4);
+    ctx.bezierCurveTo(x - 5.2, taperEndY - 4, x - bulbHalfW * 0.72, taperEndY - 12, x - bulbHalfW * 0.92, bulbMaxY + 8);
+    ctx.bezierCurveTo(x - bulbHalfW, bulbMaxY - 12, x - bulbHalfW * 0.92, neckBotY + 16, x - neckHalfW, neckBotY);
+    ctx.closePath();
+  };
+
+  // Outer Borosilicate 3.3 pear-shaped body
+  tracePearBody();
+  ctx.fillStyle = pal.glassFill;
+  ctx.fill();
+  ctx.strokeStyle = isDropTarget ? '#10b981' : isSelected ? '#3b82f6' : pal.glassStroke;
+  ctx.lineWidth = isSelected || isDropTarget ? 2.2 : 1.65;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Stratified liquid layers or emulsion inside pear bulb
+  const solMl = computeSolidVolumeMl(item.moles);
+  const strat = item.liquidStratification || computePhaseStratification(item.moles, item.tempK, spec, solMl);
+  const totalLiqMl = strat?.totalLiqMl || 0;
+  if (totalLiqMl > 0.05) {
+    const liqTopSpan = taperEndY - (neckBotY + 12);
+    const fillFrac = Math.min(0.95, Math.max(0.06, totalLiqMl / (spec.maxVolumeMl || 100)));
+    const surfTopY = taperEndY - fillFrac * liqTopSpan;
+
+    ctx.save();
+    tracePearBody();
+    ctx.clip();
+
+    if (isShaking || !strat.layers || strat.layers.length <= 1) {
+      const liqL = totalLiqMl / 1000;
+      const vis = computeSolutionVisuals(
+        item.moles,
+        liqL,
+        computePH(item.moles, liqL, item.tempK),
+        3.5,
+        item.phenBleachFrac || 0,
+        item.phenIrrevFrac || 0
+      );
+      ctx.fillStyle = vis.css;
+      ctx.fillRect(x - bulbHalfW - 4, surfTopY, (bulbHalfW + 4) * 2, taperEndY - surfTopY + 8);
+      if (isShaking) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.36)';
+        for (let b = 0; b < 10; b++) {
+          const bx = x + Math.sin(timeNow * 14 + b * 1.9) * 15;
+          const by = surfTopY + 8 + ((b * 13 + timeNow * 40) % Math.max(12, taperEndY - surfTopY - 6));
+          ctx.beginPath();
+          ctx.arc(bx, by, 1.8 + (b % 3) * 0.7, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    } else {
+      // Bottom-up stratified phases: [0] bottom (organic_heavy / aqueous) -> top (organic_light)
+      let curBottomY = taperEndY + 2;
+      const totalSpanH = Math.max(6, taperEndY - surfTopY);
+      const layerColors = [];
+      for (let li = 0; li < strat.layers.length; li++) {
+        const layer = strat.layers[li];
+        const lFrac = Math.max(0.04, layer.volMl / Math.max(0.1, totalLiqMl));
+        const lH = lFrac * totalSpanH;
+        const lTopY = curBottomY - lH;
+        const layerMoles = {};
+        for (const [spId, n] of Object.entries(item.moles || {})) {
+          const sp = SPECIES[spId];
+          if (!sp || n <= 0) continue;
+          const grp = sp.phase === 'aq' ? 'aqueous' : sp.liquidGroup || 'aqueous';
+          if (grp === layer.phaseKey) layerMoles[spId] = n;
+        }
+        const lL = Math.max(1e-5, layer.volMl / 1000);
+        const lVis = computeSolutionVisuals(
+          layerMoles,
+          lL,
+          computePH(layerMoles, lL, item.tempK),
+          3.2,
+          item.phenBleachFrac || 0,
+          item.phenIrrevFrac || 0
+        );
+        ctx.fillStyle = lVis.css;
+        ctx.fillRect(x - bulbHalfW - 4, lTopY, (bulbHalfW + 4) * 2, curBottomY - lTopY + 1);
+        layerColors.push({ y: lTopY, phaseKey: layer.phaseKey });
+        curBottomY = lTopY;
+      }
+      // Crisp refractive interface lines between immiscible phases
+      ctx.strokeStyle = isDark ? 'rgba(248, 250, 252, 0.72)' : 'rgba(15, 23, 42, 0.45)';
+      ctx.lineWidth = 1.25;
+      for (let i = 0; i < layerColors.length - 1; i++) {
+        const iy = layerColors[i].y;
+        ctx.beginPath();
+        ctx.moveTo(x - bulbHalfW, iy);
+        ctx.quadraticCurveTo(x, iy + 1.8, x + bulbHalfW, iy);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  // ISO 4800 graduation marks & "100 mL" marking
+  ctx.strokeStyle = isDark ? 'rgba(226, 232, 240, 0.45)' : 'rgba(71, 85, 105, 0.45)';
+  ctx.lineWidth = 0.9;
+  for (let g = 0; g < 4; g++) {
+    const gy = neckBotY + 18 + g * 15;
+    ctx.beginPath();
+    ctx.moveTo(x - 6, gy);
+    ctx.lineTo(x + 2, gy);
+    ctx.stroke();
+  }
+  ctx.fillStyle = isDark ? 'rgba(226, 232, 240, 0.65)' : 'rgba(51, 65, 85, 0.68)';
+  ctx.font = 'bold 7.5px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('100 mL', x, bulbMaxY + 2);
+
+  // NS 19/26 Ground-glass stopper on top (when stoppered)
+  if (item.isStoppered !== false) {
+    ctx.fillStyle = isDark ? 'rgba(203, 213, 225, 0.55)' : 'rgba(148, 163, 184, 0.48)';
+    ctx.strokeStyle = isDark ? '#e2e8f0' : '#475569';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(x - 6.5, neckTopY + 5);
+    ctx.lineTo(x + 6.5, neckTopY + 5);
+    ctx.lineTo(x + 8.5, neckTopY - 8);
+    ctx.lineTo(x - 8.5, neckTopY - 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Flat hexagonal/coin grip head
+    ctx.beginPath();
+    ctx.roundRect(x - 10, neckTopY - 13, 20, 6, 2.5);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // PTFE Stopcock assembly (collar + directional handle: horizontal=CLOSED, vertical=OPEN)
+  ctx.fillStyle = '#e2e8f0';
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.roundRect(x - 8, valveY - 4, 16, 8, 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = item.valveOpen ? '#0ea5e9' : '#ef4444';
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  if (item.valveOpen) {
+    ctx.roundRect(x + 5, valveY - 11, 5, 22, 2);
+  } else {
+    ctx.roundRect(x - 14, valveY - 2.5, 28, 5, 2);
+  }
+  ctx.fill();
+  ctx.stroke();
+
+  // Active draining stream / drops from stem tip
+  if (item.activeDrop) {
+    ctx.strokeStyle = item.drainColor || 'rgba(186, 230, 253, 0.88)';
+    ctx.lineWidth = Math.max(1.4, (item.valveFlowFrac ?? 0.35) * 3.2);
+    ctx.beginPath();
+    ctx.moveTo(x, stemEndY);
+    ctx.lineTo(x, stemEndY + 15 + ((timeNow * 28) % 9));
+    ctx.stroke();
+  }
+
+  const layerBadge =
+    strat?.layers?.length >= 2
+      ? ` · ${strat.layers.length} ${langCode === 'en' ? 'layers' : 'lớp'}`
+      : '';
+  const valveTag = item.valveOpen ? '🔓' : '🔒';
+  const tag = `${item.label} · ${valveTag} ${totalLiqMl.toFixed(1)} mL${layerBadge}`;
+  drawLabelPill(ctx, x, topY - 10, tag, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : item.valveOpen ? '#0ea5e9' : null,
+    font: '600 10.5px system-ui, sans-serif',
+    height: 18,
+  });
+  ctx.restore();
+}
+
 export function renderWashBottle(ctx, item, isSelected, isDark, langCode = 'vi', timeNow = 0) {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
@@ -350,6 +570,32 @@ export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0
     }
   }
 
+  // Ground-glass adapter cone & falling reflux condensate droplets inside bore when Reflux mode is ON
+  if (item.refluxMode) {
+    ctx.fillStyle = isDark ? 'rgba(203, 213, 225, 0.35)' : 'rgba(148, 163, 184, 0.38)';
+    ctx.strokeStyle = pal.glassStroke;
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(-halfW + 4, -7);
+    ctx.lineTo(-halfW - 6, -5);
+    ctx.lineTo(-halfW - 6, 5);
+    ctx.lineTo(-halfW + 4, 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    if (item.activeDrop) {
+      ctx.fillStyle = item.lastCondColor || 'rgba(186, 230, 253, 0.9)';
+      for (let d = 0; d < 4; d++) {
+        const dx = halfW - 22 - ((timeNow * 42 + d * 28) % (spec.width - 30));
+        const dy = (d % 2 === 0 ? -1.8 : 1.8);
+        ctx.beginPath();
+        ctx.arc(dx, dy, 2.0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
   ctx.restore();
 
   // Intuitive Vapor Inlet & Condensate Outlet tube drag ports (in world coordinates matching rotated endpoints)
@@ -372,20 +618,22 @@ export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0
 
   if (item.activeDrop && !item.outletTargetId) {
     ctx.save();
-    const dropY = y + 18 + ((timeNow * 45) % 24);
-    ctx.fillStyle = 'rgba(186, 230, 253, 0.9)';
+    const dropY = ports.spout.y + 4 + ((timeNow * 45) % 22);
+    ctx.fillStyle = item.lastCondColor || 'rgba(186, 230, 253, 0.9)';
     ctx.beginPath();
-    ctx.arc(x + 68, dropY, 2.5, 0, Math.PI * 2);
+    ctx.arc(ports.spout.x, dropY, 2.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
 
+  const refluxTag = item.refluxMode ? (langCode === 'en' ? ' · ♻️ Reflux' : ' · ♻️ Hồi lưu') : '';
+  const labelY = item.refluxMode ? y - halfW - 18 : y - 34;
   drawLabelPill(
     ctx,
     x,
-    y - 34,
-    `${item.label} · ❄️ ${item.waterFlowOn ? 'H₂O ON' : 'OFF'} · ${(item.totalCondensedMl || 0).toFixed(1)}mL`,
-    { pal, borderColor: isSelected ? '#3b82f6' : null, font: '600 10.5px system-ui, sans-serif', height: 18 }
+    labelY,
+    `${item.label}${refluxTag} · ❄️ ${item.waterFlowOn ? 'H₂O ON' : 'OFF'} · ${(item.totalCondensedMl || 0).toFixed(1)}mL`,
+    { pal, borderColor: isSelected ? '#3b82f6' : item.refluxMode ? '#10b981' : null, font: '600 10.5px system-ui, sans-serif', height: 18 }
   );
 }
 
@@ -1732,9 +1980,29 @@ export function renderPhenCotton(ctx, item, isSelected, isDark) {
   ctx.restore();
 }
 
+const BATH_ASSET_IMG_CACHE = new Map();
+function getBathMilestoneImage(tempC) {
+  if (typeof Image === 'undefined') return null;
+  const steps = APPARATUS.ice_bath?.bathTempSteps || [-20, -10, 0, 10, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
+  let nearest = steps[0];
+  let bestD = Infinity;
+  for (const s of steps) {
+    const d = Math.abs(s - tempC);
+    if (d < bestD) { bestD = d; nearest = s; }
+  }
+  const key = `./assets/baths/bath_${nearest}.svg`;
+  if (!BATH_ASSET_IMG_CACHE.has(key)) {
+    const img = new Image();
+    img.src = key;
+    BATH_ASSET_IMG_CACHE.set(key, img);
+  }
+  const cached = BATH_ASSET_IMG_CACHE.get(key);
+  return cached && cached.complete && cached.naturalWidth > 0 ? cached : null;
+}
+
 export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCode = 'vi') {
   const pal = getThemePalette(isDark);
-  const spec = APPARATUS[item.typeId] || { width: 144, height: 68 };
+  const spec = APPARATUS[item.typeId] || { width: 146, height: 68 };
   const w = spec.width;
   const h = spec.height;
   if (item.isBroken) {
@@ -1756,13 +2024,59 @@ export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCo
   }
   const left = item.x - w / 2;
   const top = item.y - h / 2;
-  const isIceSalt = item.bathMode === 'ice_salt';
-  const bathC = isIceSalt ? -10 : 0;
+  const bathC = item.bathTargetC ?? (item.bathMode === 'ice_salt' ? -10 : 0);
+
+  let borderCol = '#0ea5e9';
+  let topCol = 'rgba(186, 230, 253, 0.56)';
+  let botCol = 'rgba(125, 211, 252, 0.64)';
+  let badgeTxtCol = isDark ? '#e0f2fe' : '#0369a1';
+  let mediumTag = langCode === 'en' ? 'Ice Water' : 'Nước đá';
+  if (bathC <= -15) {
+    borderCol = '#6366f1';
+    topCol = 'rgba(99, 102, 241, 0.62)';
+    botCol = 'rgba(49, 46, 129, 0.76)';
+    badgeTxtCol = '#c7d2fe';
+    mediumTag = langCode === 'en' ? 'Cryostat' : 'Bể Cryo';
+  } else if (bathC <= -5) {
+    borderCol = '#38bdf8';
+    topCol = 'rgba(56, 189, 248, 0.58)';
+    botCol = 'rgba(30, 64, 175, 0.68)';
+    badgeTxtCol = '#7dd3fc';
+    mediumTag = langCode === 'en' ? 'Ice+NaCl' : 'Đá+Muối';
+  } else if (bathC <= 5) {
+    borderCol = '#0ea5e9';
+    mediumTag = langCode === 'en' ? 'Pure Ice' : 'Nước đá';
+  } else if (bathC <= 25) {
+    borderCol = '#14b8a6';
+    topCol = 'rgba(94, 234, 212, 0.42)';
+    botCol = 'rgba(15, 118, 110, 0.56)';
+    badgeTxtCol = isDark ? '#5eead4' : '#0f766e';
+    mediumTag = langCode === 'en' ? 'Water Bath' : 'Bể nước';
+  } else if (bathC <= 105) {
+    const f = Math.min(1, (bathC - 25) / 75);
+    borderCol = f > 0.5 ? '#f97316' : '#f59e0b';
+    topCol = `rgba(251, 191, 36, ${(0.35 + f * 0.25).toFixed(2)})`;
+    botCol = `rgba(217, 119, 6, ${(0.42 + f * 0.3).toFixed(2)})`;
+    badgeTxtCol = isDark ? '#fde68a' : '#b45309';
+    mediumTag = bathC >= 95 ? (langCode === 'en' ? 'Boiling H₂O' : 'Nước sôi') : (langCode === 'en' ? 'Warm H₂O' : 'Bể nước nóng');
+  } else if (bathC <= 155) {
+    borderCol = '#ea580c';
+    topCol = 'rgba(245, 158, 11, 0.68)';
+    botCol = 'rgba(146, 64, 14, 0.82)';
+    badgeTxtCol = '#fed7aa';
+    mediumTag = langCode === 'en' ? 'Silicone Oil' : 'Bể dầu Silicone';
+  } else {
+    borderCol = '#ef4444';
+    topCol = 'rgba(249, 115, 22, 0.72)';
+    botCol = 'rgba(124, 45, 18, 0.88)';
+    badgeTxtCol = '#fecaca';
+    mediumTag = langCode === 'en' ? 'Hot Oil' : 'Dầu cao nhiệt';
+  }
 
   ctx.save();
   drawSelectionGlow(ctx, isSelected, false);
 
-  // Outer insulated polypropylene / stainless tub
+  // Outer insulated stainless / borosilicate tub
   const tubGrad = ctx.createLinearGradient(left, top, left + w, top);
   if (isDark) {
     tubGrad.addColorStop(0, '#1e293b');
@@ -1775,42 +2089,106 @@ export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCo
   }
 
   ctx.fillStyle = tubGrad;
-  ctx.strokeStyle = isSelected ? '#3b82f6' : isIceSalt ? '#0284c7' : '#64748b';
-  ctx.lineWidth = isSelected ? 2.4 : 1.6;
+  ctx.strokeStyle = isSelected ? '#3b82f6' : borderCol;
+  ctx.lineWidth = isSelected ? 2.4 : 1.75;
   ctx.beginPath();
   ctx.roundRect(left, top + 6, w, h - 6, [6, 6, 12, 12]);
   ctx.fill();
   ctx.stroke();
 
-  // Inner chilled water / brine bath cavity
+  // Inner thermal bath medium (fallback gradient + per-milestone SVG asset texture)
   const liqGrad = ctx.createLinearGradient(0, top + 12, 0, top + h - 4);
-  if (isIceSalt) {
-    liqGrad.addColorStop(0, 'rgba(56, 189, 248, 0.55)');
-    liqGrad.addColorStop(1, 'rgba(30, 64, 175, 0.65)');
-  } else {
-    liqGrad.addColorStop(0, 'rgba(186, 230, 253, 0.55)');
-    liqGrad.addColorStop(1, 'rgba(125, 211, 252, 0.62)');
-  }
+  liqGrad.addColorStop(0, topCol);
+  liqGrad.addColorStop(1, botCol);
   ctx.fillStyle = liqGrad;
   ctx.beginPath();
   ctx.roundRect(left + 6, top + 12, w - 12, h - 18, [3, 3, 9, 9]);
   ctx.fill();
 
-  // Floating translucent ice cubes inside bath
-  for (let i = 0; i < 6; i++) {
-    const cx = left + 18 + i * 21 + Math.sin(timeNow * 1.4 + i) * 1.5;
-    const cy = top + 17 + (i % 2) * 5 + Math.cos(timeNow * 1.1 + i * 2) * 1.2;
+  const milestoneImg = getBathMilestoneImage(bathC);
+  if (milestoneImg) {
     ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate((i % 3 - 1) * 0.22);
-    ctx.fillStyle = isIceSalt ? 'rgba(224, 242, 254, 0.85)' : 'rgba(255, 255, 255, 0.84)';
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
-    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.55;
     ctx.beginPath();
-    ctx.roundRect(-7, -5, 14, 10, 2);
-    ctx.fill();
-    ctx.stroke();
+    ctx.roundRect(left + 6, top + 12, w - 12, h - 18, [3, 3, 9, 9]);
+    ctx.clip();
+    ctx.drawImage(milestoneImg, left, top - 4, w, h + 4);
     ctx.restore();
+  }
+
+  // Animated milestone-specific thermal features
+  if (bathC <= 5) {
+    const nCubes = bathC <= -15 ? 4 : 6;
+    for (let i = 0; i < nCubes; i++) {
+      const cx = left + 18 + i * 21 + Math.sin(timeNow * 1.4 + i) * 1.5;
+      const cy = top + 17 + (i % 2) * 5 + Math.cos(timeNow * 1.1 + i * 2) * 1.2;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate((i % 3 - 1) * 0.22);
+      ctx.fillStyle = bathC <= -5 ? 'rgba(224, 242, 254, 0.86)' : 'rgba(255, 255, 255, 0.84)';
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.72)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(-7, -5, 14, 10, 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+  } else if (bathC <= 55) {
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.42)';
+    ctx.lineWidth = 1.2;
+    for (let r = 0; r < 2; r++) {
+      const ry = top + 20 + r * 9 + Math.sin(timeNow * 2 + r) * 1.2;
+      ctx.beginPath();
+      ctx.moveTo(left + 14, ry);
+      ctx.quadraticCurveTo(item.x, ry - 3, left + w - 14, ry);
+      ctx.stroke();
+    }
+  } else {
+    // Glowing immersion coil at bottom + bubbles (water 60-100C) or oil waves (>100C)
+    const glowAlpha = Math.min(0.95, 0.4 + (bathC - 50) / 160);
+    ctx.strokeStyle = bathC > 130 ? `rgba(239, 68, 68, ${glowAlpha})` : `rgba(249, 115, 22, ${glowAlpha})`;
+    ctx.lineWidth = 3.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(left + 20, top + h - 10);
+    ctx.lineTo(left + w - 20, top + h - 10);
+    ctx.stroke();
+
+    if (bathC <= 105) {
+      const nBub = Math.min(10, 2 + Math.floor((bathC - 55) / 8));
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.68)';
+      for (let b = 0; b < nBub; b++) {
+        const bx = left + 18 + ((b * 17) % (w - 36));
+        const by = top + h - 12 - ((timeNow * (14 + b * 2) + b * 9) % (h - 24));
+        ctx.beginPath();
+        ctx.arc(bx, by, 1.5 + (b % 2) * 0.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      // Silicone oil thermal convection shimmer
+      ctx.strokeStyle = 'rgba(254, 240, 138, 0.55)';
+      ctx.lineWidth = 1.3;
+      for (let wv = 0; wv < 2; wv++) {
+        const wy = top + 21 + wv * 10 + Math.sin(timeNow * 2.4 + wv) * 1.5;
+        ctx.beginPath();
+        ctx.moveTo(left + 15, wy);
+        ctx.quadraticCurveTo(item.x, wy - 3.5, left + w - 15, wy);
+        ctx.stroke();
+      }
+    }
+
+    // Rising steam / thermal heat haze above rim
+    ctx.strokeStyle = bathC > 105 ? 'rgba(251, 146, 60, 0.45)' : 'rgba(255, 255, 255, 0.45)';
+    ctx.lineWidth = 1.6;
+    for (let s = 0; s < 4; s++) {
+      const sx = left + 26 + s * 30 + Math.sin(timeNow * 2.2 + s) * 3;
+      const sy = top + 2 - ((timeNow * 14 + s * 6) % 12);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.quadraticCurveTo(sx - 3, sy - 5, sx + 1, sy - 10);
+      ctx.stroke();
+    }
   }
 
   // Rim bevel highlight
@@ -1820,8 +2198,8 @@ export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCo
   ctx.roundRect(left - 2, top + 3, w + 4, 8, 4);
   ctx.stroke();
 
-  // Condensation fog wisps & subzero frost crystals when Ice+NaCl (-10°C)
-  if (isIceSalt) {
+  // Subzero condensation fog wisps & frost crystals
+  if (bathC <= -5) {
     ctx.fillStyle = 'rgba(224, 242, 254, 0.28)';
     for (let f = 0; f < 4; f++) {
       const fx = left + 22 + f * 32 + Math.sin(timeNow * 0.9 + f) * 4;
@@ -1844,24 +2222,23 @@ export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCo
     }
   }
 
-  // Front temp badge
-  ctx.fillStyle = isDark ? 'rgba(15, 23, 42, 0.82)' : 'rgba(255, 255, 255, 0.86)';
-  ctx.strokeStyle = isIceSalt ? '#38bdf8' : '#0ea5e9';
-  ctx.lineWidth = 1;
+  // Front digital thermostat badge
+  ctx.fillStyle = isDark ? 'rgba(15, 23, 42, 0.86)' : 'rgba(15, 23, 42, 0.82)';
+  ctx.strokeStyle = borderCol;
+  ctx.lineWidth = 1.1;
   ctx.beginPath();
-  ctx.roundRect(item.x - 32, item.y + 4, 64, 16, 5);
+  ctx.roundRect(item.x - 36, item.y + 4, 72, 16, 5);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = isIceSalt ? '#0284c7' : isDark ? '#e0f2fe' : '#0369a1';
+  ctx.fillStyle = badgeTxtCol;
   ctx.font = 'bold 10px ui-monospace, monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(formatCanvasText(isIceSalt ? '-10°C NaCl' : '0°C Ice'), item.x, item.y + 12);
+  ctx.fillText(formatCanvasText(`${bathC}°C · ${bathC > 105 ? 'OIL' : bathC <= 0 ? 'ICE' : 'H₂O'}`), item.x, item.y + 12);
 
-  const labelMode = isIceSalt ? (langCode === 'en' ? 'Ice+NaCl (-10°C)' : 'Đá+Muối (-10°C)') : (langCode === 'en' ? 'Pure Ice (0°C)' : 'Nước đá (0°C)');
-  drawLabelPill(ctx, item.x, top - 14, `${item.label} · ${bathC}°C · ${labelMode}`, {
+  drawLabelPill(ctx, item.x, top - 14, `${item.label} · ${bathC}°C · ${mediumTag}`, {
     pal,
-    borderColor: isSelected ? '#3b82f6' : '#0ea5e9',
+    borderColor: isSelected ? '#3b82f6' : borderCol,
     font: '600 10px system-ui, sans-serif',
     height: 17,
     itemId: item.id,

@@ -526,7 +526,8 @@ export class LabSimulation {
       }
     } else if (spec.kind === 'bath') {
       Object.assign(base, {
-        bathMode: 'ice', // 'ice' (0 C) | 'ice_salt' (-10 C)
+        bathMode: 'ice', // 'ice' (0 C) | 'ice_salt' (-10 C) | temperature tier
+        bathTargetC: 0,
         bathTempK: spec.bathTempIceK || 273.15,
       });
     } else if (spec.kind === 'scale') {
@@ -560,6 +561,29 @@ export class LabSimulation {
         uvDarkFrac: 0,
         isBroken: false,
       });
+    } else if (spec.kind === 'separatory_funnel') {
+      Object.assign(base, {
+        moles: {},
+        particleCounts: {},
+        precipitateSettle: {},
+        tempK: this.environment.tempK,
+        phenBleachFrac: 0,
+        phenIrrevFrac: 0,
+        isStoppered: false,
+        mountedOnVesselId: null,
+        valveOpen: false,
+        valveFlowFrac: 0.35,
+        stopAtInterface: true,
+        emulsionTimer: 0,
+        activeDrop: false,
+        drainRateMlS: 0,
+        drainTargetId: null,
+        drainColor: null,
+        activeLayerKey: null,
+        dispensedMl: 0,
+        liquidStratification: null,
+        isBroken: false,
+      });
     } else if (spec.kind === 'wash_bottle') {
       Object.assign(base, {
         waterMl: 250,
@@ -574,6 +598,8 @@ export class LabSimulation {
     } else if (spec.kind === 'condenser') {
       Object.assign(base, {
         waterFlowOn: true,
+        refluxMode: false,
+        refluxVesselId: null,
         rotationDeg: 0,
         connectedFromId: null,
         outletTargetId: null,
@@ -804,8 +830,11 @@ export class LabSimulation {
       item.immersedFrac = undefined;
       item.gasTargetId = null;
     }
-    if (item.kind === 'filter_funnel') {
+    if (item.kind === 'filter_funnel' || item.kind === 'separatory_funnel') {
       item.mountedOnVesselId = null;
+    }
+    if (item.kind === 'condenser') {
+      item.refluxVesselId = null;
     }
     if (item.kind === 'salt_bridge') {
       item.vesselAId = null;
@@ -1328,6 +1357,13 @@ export class LabSimulation {
           bestCenterY = candY;
           bestSupport = sup;
         }
+      } else if (item.kind === 'separatory_funnel' && sup.kind === 'vessel' && !sup.isShattered && !sup.isInverted) {
+        const rimTop = sup.y - supSpec.height / 2;
+        const candY = rimTop - spec.height * 0.36;
+        if (dx <= 28 && (alreadyOnSup || item.y <= rimTop + 14) && candY < bestCenterY) {
+          bestCenterY = candY;
+          bestSupport = sup;
+        }
       }
     }
     return { centerY: bestCenterY, support: bestSupport };
@@ -1377,18 +1413,18 @@ export class LabSimulation {
         }
         it.vy = 0;
         it.fallStartY = null;
-        if (it.kind === 'filter_funnel' && support.kind === 'vessel') {
+        if ((it.kind === 'filter_funnel' || it.kind === 'separatory_funnel') && support.kind === 'vessel') {
           it.mountedOnVesselId = support.id;
         }
       } else if (!support && Math.abs(it.y - centerY) <= 10) {
         it.y = centerY;
         it.vy = 0;
         it.fallStartY = null;
-        if (it.kind === 'filter_funnel') it.mountedOnVesselId = null;
+        if (it.kind === 'filter_funnel' || it.kind === 'separatory_funnel') it.mountedOnVesselId = null;
       } else if (prevSupId && !support && !it.isDragging) {
         // Support beneath was moved away -> begin real freefall
         it.fallStartY = it.fallStartY ?? it.y;
-        if (it.kind === 'filter_funnel') it.mountedOnVesselId = null;
+        if (it.kind === 'filter_funnel' || it.kind === 'separatory_funnel') it.mountedOnVesselId = null;
       }
     }
     this.recomputeScaleReadings();
@@ -1401,7 +1437,7 @@ export class LabSimulation {
       for (const it of this.items) {
         if (it.restingOnId !== sc.id) continue;
         const spec = APPARATUS[it.typeId];
-        if (it.kind === 'vessel' || it.kind === 'filter_funnel' || it.kind === 'burette') {
+        if (it.kind === 'vessel' || it.kind === 'filter_funnel' || it.kind === 'separatory_funnel' || it.kind === 'burette') {
           loadG += (spec.tareMassG || 0) + computeContentsMassG(it.moles || {});
         } else if (it.kind === 'gas_syringe') {
           const syrMoles = buildCombinedSyringeTotalMoles(it);
@@ -2731,14 +2767,16 @@ export class LabSimulation {
     const isContainer =
       v.kind === 'vessel' ||
       v.kind === 'filter_funnel' ||
+      v.kind === 'separatory_funnel' ||
       (v.kind === 'burette' && reg.kind === 'liquid') ||
       (v.kind === 'spoon' && (reg.kind === 'solid' || reg.kind === 'liquid'));
     if (!isContainer) return false;
 
     let amt = Math.max(0, Number(amount) || 0);
-    if (v.kind === 'burette') {
+    if (v.kind === 'burette' || v.kind === 'separatory_funnel') {
+      const capMl = v.kind === 'burette' ? 50.0 : APPARATUS.separatory_funnel?.maxVolumeMl || 100.0;
       const curMl = computeLiquidVolumeL(v.moles, v.tempK) * 1000;
-      amt = Math.min(amt, Math.max(0, 50.0 - curMl));
+      amt = Math.min(amt, Math.max(0, capMl - curMl));
     } else if (v.kind === 'spoon') {
       const SPOON_MAX_VOL_ML = APPARATUS.iron_spoon?.maxVolumeMl || 2.8;
       if (reg.kind === 'liquid') {
@@ -2907,7 +2945,7 @@ export class LabSimulation {
       }
     }
 
-    if (v.kind === 'vessel' || v.kind === 'filter_funnel') {
+    if (v.kind === 'vessel' || v.kind === 'filter_funnel' || v.kind === 'separatory_funnel') {
       this.checkOverflow(v);
       v.liquidStratification = computePhaseStratification(
         v.moles,
@@ -3103,7 +3141,7 @@ export class LabSimulation {
         targetId = mountedFunnel.id;
       }
     }
-    const dstValid = dst.kind === 'vessel' || dst.kind === 'filter_funnel' || dst.kind === 'burette';
+    const dstValid = dst.kind === 'vessel' || dst.kind === 'filter_funnel' || dst.kind === 'separatory_funnel' || dst.kind === 'burette';
     if (!dstValid) return 0;
     if (!streamOpts?.silentUndo && !streamOpts?.pouredMlTotal) this.recordUndo();
 
@@ -3128,9 +3166,10 @@ export class LabSimulation {
     }
 
     let actualMl = Math.min(effPourableMl, Math.max(0, volumeMl));
-    if (dst.kind === 'burette') {
+    if (dst.kind === 'burette' || dst.kind === 'separatory_funnel') {
+      const dstCapMl = dst.kind === 'burette' ? 50.0 : APPARATUS.separatory_funnel?.maxVolumeMl || 100.0;
       const dstLiqMl = computeLiquidVolumeL(dst.moles, dst.tempK) * 1000;
-      actualMl = Math.min(actualMl, Math.max(0, 50.0 - dstLiqMl));
+      actualMl = Math.min(actualMl, Math.max(0, dstCapMl - dstLiqMl));
       if (actualMl <= 1e-4) return 0;
     }
     const frac = actualMl >= effPourableMl - 0.05 ? 1.0 : Math.min(1, actualMl / effPourableMl);
@@ -5187,8 +5226,138 @@ export class LabSimulation {
     const b = this.getItem(bathId);
     if (!b || b.kind !== 'bath') return false;
     const spec = APPARATUS[b.typeId] || APPARATUS.ice_bath;
-    b.bathMode = mode === 'ice_salt' ? 'ice_salt' : 'ice';
+    if (mode === 'ice_salt') {
+      return this.setBathTargetTempC(bathId, -10);
+    }
+    if (mode === 'ice') {
+      return this.setBathTargetTempC(bathId, 0);
+    }
+    b.bathMode = String(mode);
     b.bathTempK = b.bathMode === 'ice_salt' ? spec.bathTempSaltK || 263.15 : spec.bathTempIceK || 273.15;
+    this.emitChange();
+    return true;
+  }
+
+  setBathTargetTempC(bathId, tempC) {
+    const b = this.getItem(bathId);
+    if (!b || b.kind !== 'bath' || b.isBroken) return false;
+    const spec = APPARATUS[b.typeId] || APPARATUS.ice_bath;
+    const minC = spec.minTempC ?? -20;
+    const maxC = spec.maxTempC ?? 200;
+    const c = Math.max(minC, Math.min(maxC, Math.round(Number(tempC) || 0)));
+    b.bathTargetC = c;
+    b.bathTempK = c + CONSTANTS.KELVIN_OFFSET;
+    b.bathMode =
+      c <= -15
+        ? 'cryo_20'
+        : c <= -5
+          ? 'ice_salt'
+          : c <= 5
+            ? 'ice'
+            : c <= 25
+              ? 'cool_water'
+              : c <= 65
+                ? 'warm_water'
+                : c <= 105
+                  ? 'hot_water'
+                  : c <= 155
+                    ? 'silicone_oil_mid'
+                    : 'silicone_oil_high';
+    this.emitChange();
+    return true;
+  }
+
+  toggleCondenserReflux(condenserId, vesselId = null) {
+    const cond = this.getItem(condenserId);
+    if (!cond || cond.kind !== 'condenser' || cond.isBroken) return false;
+    const nextMode = !cond.refluxMode;
+    cond.refluxMode = nextMode;
+    if (nextMode) {
+      let host = vesselId ? this.getItem(vesselId) : null;
+      if (!host && cond.connectedFromId) host = this.getItem(cond.connectedFromId);
+      if (!host) {
+        host = this.items.find(
+          (i) => i.kind === 'vessel' && !i.isShattered && !i.isInverted && Math.abs(i.x - cond.x) <= 75
+        );
+      }
+      if (host && host.kind === 'vessel' && !host.isShattered) {
+        cond.refluxVesselId = host.id;
+        cond.connectedFromId = host.id;
+        host.connectedTargetId = cond.id;
+        host.isStoppered = true;
+        this.connectTube(host.id, cond.id);
+      }
+      syncDockedToolPositions(this);
+    } else {
+      cond.refluxVesselId = null;
+      const cSpec = APPARATUS.liebig_condenser;
+      cond.y = Math.min(SIM_BENCH_FLOOR_Y - getItemRotatedHalfExtentY(cSpec, cond), cond.y + 38);
+    }
+    this.emitChange();
+    return true;
+  }
+
+  toggleSeparatoryValve(funnelId, open = null) {
+    const f = this.getItem(funnelId);
+    if (!f || f.kind !== 'separatory_funnel' || f.isBroken) return false;
+    f.valveOpen = open === null ? !f.valveOpen : Boolean(open);
+    this.emitChange();
+    return f.valveOpen;
+  }
+
+  setSeparatoryValveFlow(funnelId, flowFrac = 0.35) {
+    const f = this.getItem(funnelId);
+    if (!f || f.kind !== 'separatory_funnel' || f.isBroken) return false;
+    f.valveFlowFrac = Math.max(0.05, Math.min(1.0, Number(flowFrac) || 0.35));
+    this.emitChange();
+    return true;
+  }
+
+  toggleSeparatoryStopper(funnelId, stoppered = null) {
+    const f = this.getItem(funnelId);
+    if (!f || f.kind !== 'separatory_funnel' || f.isBroken) return false;
+    f.isStoppered = stoppered === null ? !f.isStoppered : Boolean(stoppered);
+    this.emitChange();
+    return f.isStoppered;
+  }
+
+  shakeSeparatoryFunnel(funnelId) {
+    const f = this.getItem(funnelId);
+    if (!f || f.kind !== 'separatory_funnel' || f.isBroken) return false;
+    const liqMl = computeLiquidVolumeL(f.moles, f.tempK) * 1000;
+    if (liqMl <= 0.05) return false;
+    f.emulsionTimer = 2.6;
+    f.stirTimer = Math.max(f.stirTimer || 0, 2.6);
+    stepVesselChemistry(f, 0.25, this.environment, { timeSec: this.timeSec });
+    f.liquidStratification = computePhaseStratification(
+      f.moles,
+      f.tempK,
+      APPARATUS.separatory_funnel,
+      computeSolidVolumeMl(f.moles)
+    );
+    this.addLog({
+      type: 'info',
+      key: 'logSepFunnelShake',
+      vesselLabel: f.label,
+    });
+    this.emitChange();
+    return true;
+  }
+
+  mountSeparatoryFunnel(funnelId, vesselId = null) {
+    const f = this.getItem(funnelId);
+    if (!f || f.kind !== 'separatory_funnel' || f.isBroken) return false;
+    if (!vesselId) {
+      f.mountedOnVesselId = null;
+      this.emitChange();
+      return true;
+    }
+    const v = this.getItem(vesselId);
+    if (!v || v.kind !== 'vessel' || v.isShattered || v.isInverted) return false;
+    f.mountedOnVesselId = v.id;
+    f.clampedToId = null;
+    syncDockedToolPositions(this);
+    this.recomputeScaleReadings();
     this.emitChange();
     return true;
   }
@@ -5209,7 +5378,7 @@ export class LabSimulation {
     const v = this.getItem(vesselId);
     if (
       !v ||
-      (v.kind !== 'vessel' && v.kind !== 'filter_funnel' && v.kind !== 'spoon') ||
+      (v.kind !== 'vessel' && v.kind !== 'filter_funnel' && v.kind !== 'separatory_funnel' && v.kind !== 'spoon') ||
       v.isShattered ||
       v.isBroken
     ) {
@@ -5272,7 +5441,7 @@ export class LabSimulation {
       if (sup && sup.kind === 'bath' && !sup.isBroken) {
         const bSpec = APPARATUS[sup.typeId] || APPARATUS.ice_bath;
         const tBath = sup.bathTempK ?? (sup.bathMode === 'ice_salt' ? 263.15 : 273.15);
-        return { bath: sup, tempK: tBath, coolingK: bSpec.coolingK || 0.28 };
+        return { bath: sup, tempK: tBath, coolingK: bSpec.coolingK || 0.56 };
       }
     }
     const vSpec = APPARATUS[vessel.typeId] || APPARATUS.beaker_250;
@@ -5281,7 +5450,7 @@ export class LabSimulation {
       if (Math.abs(vessel.x - sup.x) <= 56 && vessel.y + vSpec.height / 2 >= sup.y - 10 && vessel.y <= sup.y + 42) {
         const bSpec = APPARATUS[sup.typeId] || APPARATUS.ice_bath;
         const tBath = sup.bathTempK ?? (sup.bathMode === 'ice_salt' ? 263.15 : 273.15);
-        return { bath: sup, tempK: tBath, coolingK: bSpec.coolingK || 0.28 };
+        return { bath: sup, tempK: tBath, coolingK: bSpec.coolingK || 0.56 };
       }
     }
     return null;
@@ -5292,7 +5461,7 @@ export class LabSimulation {
     const spec = v ? APPARATUS[v.typeId] || APPARATUS.beaker_250 : null;
     if (
       !v ||
-      (v.kind !== 'vessel' && v.kind !== 'filter_funnel' && v.kind !== 'spoon') ||
+      (v.kind !== 'vessel' && v.kind !== 'filter_funnel' && v.kind !== 'separatory_funnel' && v.kind !== 'spoon') ||
       v.isShattered ||
       v.isBroken ||
       v.isStoppered ||
@@ -5789,6 +5958,11 @@ export class LabSimulation {
         if (thermRes.metalVaporsProduced) {
           for (const [mG, mVal] of Object.entries(thermRes.metalVaporsProduced)) {
             if (mVal > 0) combinedGas[mG] = (combinedGas[mG] || 0) + mVal;
+          }
+        }
+        if (thermRes.extraVaporsProduced) {
+          for (const [vG, vVal] of Object.entries(thermRes.extraVaporsProduced)) {
+            if (vVal > 0) combinedGas[vG] = (combinedGas[vG] || 0) + vVal;
           }
         }
 
@@ -6722,10 +6896,12 @@ export class LabSimulation {
       for (const item of this.items) {
         if (item.kind === 'filter_funnel' && item.isFiltering) {
           this.visualHooks.onParticlesNeeded(item, { rateMlS: item.filtrateRateMlS, color: item.filtrateColor });
+        } else if (item.kind === 'separatory_funnel' && item.activeDrop) {
+          this.visualHooks.onParticlesNeeded(item, { rateMlS: item.drainRateMlS, color: item.drainColor });
         } else if (item.kind === 'burette' && item.streamingNow) {
           this.visualHooks.onParticlesNeeded(item, { rateMlS: item.valveRateMlS, color: item.streamColor });
         } else if (item.kind === 'condenser' && item.activeDrop) {
-          this.visualHooks.onParticlesNeeded(item, { rateMlS: item.distillRateMlS });
+          this.visualHooks.onParticlesNeeded(item, { rateMlS: item.distillRateMlS, color: item.lastCondColor });
         } else if (item.kind === 'electrode' && item.gasBubbleType && (item.gasBubbleRate || 0) > 1e-7) {
           this.visualHooks.onParticlesNeeded(item, { gasId: item.gasBubbleType, rateMolS: item.gasBubbleRate });
         } else if (item.kind === 'vessel' && (item.troughOverfillRate || 0) > 1e-4) {

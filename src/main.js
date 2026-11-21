@@ -616,6 +616,7 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
       !it.isBroken &&
       (it.kind === 'vessel' ||
         it.kind === 'filter_funnel' ||
+        it.kind === 'separatory_funnel' ||
         (it.kind === 'burette' && !isSolidReg) ||
         (it.kind === 'spoon' && isSolidReg));
     const candidates = sim.items.filter(validKind);
@@ -670,7 +671,7 @@ const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
         i.id !== sourceId &&
         !i.isShattered &&
         !i.isBroken &&
-        (i.kind === 'vessel' || i.kind === 'filter_funnel' || i.kind === 'burette')
+        (i.kind === 'vessel' || i.kind === 'filter_funnel' || i.kind === 'separatory_funnel' || i.kind === 'burette')
     );
     if (others.length === 0) return;
     const t = getTranslator();

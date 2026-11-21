@@ -354,6 +354,40 @@ export const APPARATUS = {
       [6.8, 2.85],
     ]),
   },
+  separatory_funnel: {
+    id: 'separatory_funnel',
+    kind: 'separatory_funnel',
+    category: 'separation',
+    supportsClamp: true,
+    stopperable: true,
+    breakable: true,
+    isPourable: true,
+    i18nKey: 'eq_separatory_funnel',
+    isoStandard: 'ISO 4800 Type 2 · 100 mL Pear-Shaped · NS 19/26 · PTFE 2.5 mm',
+    materialSpec: 'Borosilicate 3.3 (100 mL) · NS 19/26 Stopper + Stopcock',
+    diameterMm: 60,
+    heightMm: 228,
+    wallThicknessMm: 1.4,
+    glassHeatCapacityJK: 68.0,
+    maxThermalStressK: 783,
+    maxVolumeMl: 100,
+    tareMassG: 118.0,
+    width: 64,
+    height: 174,
+    neckRadius: 11,
+    surfaceAreaCm2: 18.5,
+    opticalPathCm: 4.0,
+    clampOffsetY: -6,
+    fragilityDropPx: 230,
+    geometry: new VesselGeometry([
+      [0.0, 0.38],
+      [2.2, 1.18],
+      [4.8, 2.38],
+      [7.0, 2.86],
+      [8.6, 2.48],
+      [9.8, 1.15],
+    ]),
+  },
   wash_bottle: {
     id: 'wash_bottle',
     kind: 'wash_bottle',
@@ -419,13 +453,16 @@ export const APPARATUS = {
     category: 'thermal',
     breakable: true,
     i18nKey: 'eq_ice_bath',
-    isoStandard: 'Thermostatic Ice / Ice-NaCl Cooling Bath (0 °C / -10 °C)',
-    materialSpec: 'Insulated Double-Wall Borosilicate + Cooling Jacket',
+    isoStandard: 'Thermostatic Heating / Cooling Bath (-20 °C .. +200 °C)',
+    materialSpec: 'Insulated Double-Wall Borosilicate + Cryo/Silicone-Oil Bath',
     width: 146,
     height: 68,
     maxVolumeMl: 1500,
     tareMassG: 420.0,
-    coolingK: 0.28,
+    coolingK: 0.56,
+    minTempC: -20,
+    maxTempC: 200,
+    bathTempSteps: [-20, -10, 0, 10, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200],
     bathTempIceK: 273.15,
     bathTempSaltK: 263.15,
     fragilityDropPx: 230,
@@ -1114,6 +1151,7 @@ export const APPARATUS_ORDER = [
   'water_trough',
   'mortar_pestle',
   'filter_funnel',
+  'separatory_funnel',
   'rubber_stopper',
   'wash_bottle',
   'pipette_10',
@@ -1190,19 +1228,25 @@ export function getStandGeometry(stand) {
 export function getCondenserPorts(cond) {
   const halfW = (APPARATUS.liebig_condenser?.width || 152) / 2;
   const dir = cond?.flippedX ? -1 : 1; // +1: left inlet -> right outlet tilted +0.14 rad
-  const baseAngle = dir * 0.14 + ((Number(cond?.rotationDeg) || 0) * Math.PI) / 180;
+  const isReflux = Boolean(cond?.refluxMode);
+  const baseAngle = isReflux
+    ? -Math.PI / 2
+    : dir * 0.14 + ((Number(cond?.rotationDeg) || 0) * Math.PI) / 180;
   const cos = Math.cos(baseAngle);
   const sin = Math.sin(baseAngle);
   const rot = (dx, dy) => ({
     x: cond.x + dx * cos - dy * sin,
     y: cond.y + dx * sin + dy * cos,
   });
+  const inlet = rot(isReflux ? -halfW * 0.94 : -dir * halfW * 0.94, 0);
+  const outlet = rot(isReflux ? halfW * 0.94 : dir * halfW * 0.94, 0);
   return {
     dir,
+    isReflux,
     tiltAngle: baseAngle,
-    inlet: rot(-dir * halfW * 0.94, 0),
-    outlet: rot(dir * halfW * 0.94, 0),
-    spout: rot(dir * 68, 8),
+    inlet,
+    outlet,
+    spout: isReflux ? inlet : rot(dir * 68, 8),
   };
 }
 
@@ -1272,6 +1316,7 @@ export function getItemRotatedHalfExtentY(spec, item = null) {
   let rad = 0;
   if (item) {
     if (item.kind === 'condenser') {
+      if (item.refluxMode) return hw;
       const dir = item.flippedX ? -1 : 1;
       rad = dir * 0.14 + ((Number(item.rotationDeg) || 0) * Math.PI) / 180;
     } else if (item.tiltAngle) {

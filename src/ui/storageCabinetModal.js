@@ -25,6 +25,7 @@ import {
   renderPhenCotton,
   renderRubberStopper,
   renderSaltBridge,
+  renderSeparatoryFunnel,
   renderSplint,
   renderStirBar,
   renderThermometer,
@@ -91,6 +92,7 @@ function drawCubbyThumbnail(canvas, entry) {
     } else if (clone.kind === 'gas_syringe') renderGasSyringe(ctx, clone, false, isDark, { tempK: clone.tempK || 298.15, pressureBar: 1.0 }, 'vi', 0);
     else if (clone.kind === 'pipette') renderPipette(ctx, clone, false, isDark, 'vi', 0);
     else if (clone.kind === 'filter_funnel') renderFilterFunnel(ctx, clone, false, false, isDark, 'vi', 0);
+    else if (clone.kind === 'separatory_funnel') renderSeparatoryFunnel(ctx, clone, false, false, isDark, 'vi', 0);
     else if (clone.kind === 'burette') renderBurette(ctx, clone, false, false, isDark, 0);
     else if (clone.kind === 'condenser') renderLiebigCondenser(ctx, clone, false, isDark, 0, 'vi');
     else if (clone.kind === 'spoon') renderIronSpoon(ctx, clone, false, isDark, 0);

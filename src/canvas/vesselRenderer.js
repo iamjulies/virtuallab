@@ -1535,6 +1535,7 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
     if (v.kind !== 'vessel' || !tid) continue;
     const target = items.find((it) => it.id === tid);
     if (!target) continue;
+    if (target.kind === 'condenser' && target.refluxMode && target.refluxVesselId === v.id) continue;
 
     const geom = computeTubingGeometry(v, target);
     const { p0, p1, p2, p3, points, arcLengthCm, capacityMl } = geom;

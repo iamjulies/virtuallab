@@ -60,6 +60,7 @@ import {
   renderPhenCotton,
   renderRubberStopper,
   renderSaltBridge,
+  renderSeparatoryFunnel,
   renderSplint,
   renderStirBar,
   renderThermometer,
@@ -373,6 +374,7 @@ export class LabWorkbenchCanvas {
       it.kind === 'phen_cotton' ||
       it.kind === 'electrode' ||
       it.kind === 'filter_funnel' ||
+      it.kind === 'separatory_funnel' ||
       it.kind === 'stir_bar' ||
       it.kind === 'salt_bridge' ||
       it.kind === 'pipette' ||
@@ -396,9 +398,10 @@ export class LabWorkbenchCanvas {
         return lx >= it.x - hw && lx <= it.x + hw && ly >= topEdge && ly <= botEdge;
       }
       const padX = it.kind === 'electrode' && it.dockedVesselId ? 4 : 8;
-      const hw = spec.width / 2 + padX;
+      const isRefluxCond = it.kind === 'condenser' && it.refluxMode;
+      const hw = (isRefluxCond ? spec.height : spec.width) / 2 + padX;
       const extTop = it.kind === 'stand' ? Math.max(0, it.extendPx || 0) : 0;
-      const hh = (it.renderHeight || spec.height) / 2 + 10;
+      const hh = (isRefluxCond ? spec.width : (it.renderHeight || spec.height)) / 2 + 10;
       return lx >= it.x - hw && lx <= it.x + hw && ly >= it.y - hh - extTop && ly <= it.y + hh;
     };
 
@@ -570,9 +573,17 @@ export class LabWorkbenchCanvas {
     };
 
     if (hit.kind === 'bath') {
-      return stepDiscrete(`bath:${hit.id}`, deltaY, () => {
+      return stepDiscrete(`bath:${hit.id}`, deltaY, (dir) => {
         soundEngine.playUiClick();
-        this.sim.setBathMode(hit.id, hit.bathMode === 'ice_salt' ? 'ice' : 'ice_salt');
+        const steps = APPARATUS.ice_bath?.bathTempSteps || [-20, -10, 0, 10, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200];
+        const curC = hit.bathTargetC ?? (hit.bathMode === 'ice_salt' ? -10 : 0);
+        let idx = steps.indexOf(curC);
+        if (idx < 0) {
+          idx = steps.reduce((best, v, i) => (Math.abs(v - curC) < Math.abs(steps[best] - curC) ? i : best), 0);
+        }
+        // Scroll up (deltaY < 0, dir < 0) increases temperature; scroll down decreases
+        const nextIdx = Math.max(0, Math.min(steps.length - 1, idx + (dir < 0 ? 1 : -1)));
+        this.sim.setBathTargetTempC(hit.id, steps[nextIdx]);
       });
     }
 
@@ -798,7 +809,13 @@ export class LabWorkbenchCanvas {
       return true;
     }
 
-    if (hit.kind === 'vessel' || hit.kind === 'filter_funnel' || hit.kind === 'spoon') {
+    if (hit.kind === 'vessel' || hit.kind === 'filter_funnel' || hit.kind === 'separatory_funnel' || hit.kind === 'spoon') {
+      if (hit.kind === 'separatory_funnel' && shiftKey) {
+        return stepDiscrete(`sep-valve:${hit.id}`, deltaY, () => {
+          soundEngine.playUiClick();
+          this.sim.toggleSeparatoryValve(hit.id);
+        });
+      }
       const spec = APPARATUS[hit.typeId] || {};
       const isHeld = this.dragState?.itemId === hit.id;
       if (hit.kind === 'vessel' && spec.hasLid && shiftKey && !isHeld) {
@@ -837,7 +854,7 @@ export class LabWorkbenchCanvas {
       for (let i = this.sim.items.length - 1; i >= 0; i--) {
         const it = this.sim.items[i];
         if (it.id === excludeId || it.isShattered || it.isBroken) continue;
-        if (it.kind !== 'filter_funnel' && it.kind !== 'burette' && it.kind !== 'spoon') continue;
+        if (it.kind !== 'filter_funnel' && it.kind !== 'separatory_funnel' && it.kind !== 'burette' && it.kind !== 'spoon') continue;
         const spec = APPARATUS[it.typeId];
         const hw = spec.width / 2 + 22;
         const hh = spec.height / 2 + 28;
@@ -880,7 +897,7 @@ export class LabWorkbenchCanvas {
     if (payloadType === 'reagent') {
       const tgt = this.findVesselAt(pt.x, pt.y, null, true);
       this.dropTargetVesselId = tgt ? tgt.id : null;
-    } else if (payloadId === 'pipette_10' || payloadId === 'stir_bar' || payloadId === 'electrode_rod' || payloadId === 'filter_funnel') {
+    } else if (payloadId === 'pipette_10' || payloadId === 'stir_bar' || payloadId === 'electrode_rod' || payloadId === 'filter_funnel' || payloadId === 'separatory_funnel') {
       const tgt = this.findVesselAt(pt.x, pt.y, null, false);
       const tSpec = tgt ? APPARATUS[tgt.typeId] : null;
       const valid = tgt && (payloadId !== 'electrode_rod' || !tSpec?.isHorizontalTube);
@@ -944,11 +961,14 @@ export class LabWorkbenchCanvas {
         } else if (created.kind === 'filter_funnel' && hoverVessel && !hoverVessel.isStoppered) {
           created.mountedOnVesselId = hoverVessel.id;
           syncDockedToolPositions(this.sim);
+        } else if (created.kind === 'separatory_funnel' && hoverVessel && !hoverVessel.isInverted) {
+          created.mountedOnVesselId = hoverVessel.id;
+          syncDockedToolPositions(this.sim);
         } else if (spec.supportsClamp) {
           const nearStand = this.findStandNear(created);
           const clampFloorLimit = BENCH_FLOOR_Y - (created.kind === 'burette' ? spec.height / 2 + 6 : (spec.height || 80) / 2 + 12);
           if (nearStand && created.y <= clampFloorLimit) {
-            if (created.kind === 'burette' || created.kind === 'filter_funnel' || created.kind === 'condenser') {
+            if (created.kind === 'burette' || created.kind === 'filter_funnel' || created.kind === 'separatory_funnel' || created.kind === 'condenser') {
               created.x = nearStand.x + 8;
             }
             this.sim.attachToStand(created.id, nearStand.id);
@@ -1007,7 +1027,7 @@ export class LabWorkbenchCanvas {
         // Snap gracefully to nearest open container within 105 px if dropped right next to it
         let bestD = 105;
         for (const it of this.sim.items) {
-          if ((it.kind === 'vessel' || it.kind === 'filter_funnel' || it.kind === 'burette' || it.kind === 'spoon') && !it.isShattered && !it.isBroken) {
+          if ((it.kind === 'vessel' || it.kind === 'filter_funnel' || it.kind === 'separatory_funnel' || it.kind === 'burette' || it.kind === 'spoon') && !it.isShattered && !it.isBroken) {
             const d = Math.hypot(it.x - pt.x, it.y - pt.y);
             if (d < bestD) {
               bestD = d;
@@ -1206,12 +1226,12 @@ export class LabWorkbenchCanvas {
           if (g.kind === 'electrode' && (!g.dockedVesselId || !activeIdSet.has(g.dockedVesselId))) {
             g.dockedVesselId = null;
           }
-          if (g.kind === 'filter_funnel' && g.id !== hit.id && (!g.mountedOnVesselId || !activeIdSet.has(g.mountedOnVesselId))) {
+          if ((g.kind === 'filter_funnel' || g.kind === 'separatory_funnel') && g.id !== hit.id && (!g.mountedOnVesselId || !activeIdSet.has(g.mountedOnVesselId))) {
             g.mountedOnVesselId = null;
           }
         }
-        const wasMountedId = hit.kind === 'filter_funnel' ? hit.mountedOnVesselId : null;
-        if (hit.kind === 'filter_funnel') hit.mountedOnVesselId = null;
+        const wasMountedId = (hit.kind === 'filter_funnel' || hit.kind === 'separatory_funnel') ? hit.mountedOnVesselId : null;
+        if (hit.kind === 'filter_funnel' || hit.kind === 'separatory_funnel') hit.mountedOnVesselId = null;
         if (hit.kind === 'wash_bottle' && (hit.waterMl || 0) > 0.1) {
           hit.isSpraying = true;
         }
@@ -1222,6 +1242,7 @@ export class LabWorkbenchCanvas {
           hit.kind === 'pipette' ||
           hit.kind === 'gas_syringe' ||
           hit.kind === 'filter_funnel' ||
+          hit.kind === 'separatory_funnel' ||
           hit.kind === 'wash_bottle' ||
           hit.kind === 'burette' ||
           hit.kind === 'condenser' ||
@@ -1574,7 +1595,7 @@ export class LabWorkbenchCanvas {
           if (stand && item.y <= clampFloorLimit) {
             this.dragState.clampStandId = stand.id;
             item.clampedToId = stand.id;
-            if (item.kind === 'burette' || item.kind === 'condenser' || item.kind === 'filter_funnel') {
+            if (item.kind === 'burette' || item.kind === 'condenser' || item.kind === 'filter_funnel' || item.kind === 'separatory_funnel') {
               const snapX = getStandGeometry(stand).clampTargetX(item.kind);
               if (Math.abs(item.x - snapX) < 32) item.x = snapX;
             }
@@ -1600,6 +1621,9 @@ export class LabWorkbenchCanvas {
       } else if (item.kind === 'stir_bar' || item.kind === 'electrode' || item.kind === 'filter_funnel') {
         const tgt = this.findVesselAt(item.x, item.y + 18, item.id, false);
         this.dropTargetVesselId = tgt && !tgt.isStoppered ? tgt.id : null;
+      } else if (item.kind === 'separatory_funnel') {
+        const tgt = this.findVesselAt(item.x, item.y + 38, item.id, false);
+        this.dropTargetVesselId = tgt && !tgt.isInverted ? tgt.id : null;
       } else if (item.kind === 'rubber_stopper' && !item.attachedToId) {
         const mTgt = this.findMouthTargetAt(item.x, item.y, 'stopper');
         this.dropTargetVesselId = mTgt ? mTgt.vessel.id : null;
@@ -1849,6 +1873,15 @@ export class LabWorkbenchCanvas {
                 syncDockedToolPositions(this.sim);
               }
             }
+          } else if (item.kind === 'separatory_funnel' && !this.dragState.pourTargetId) {
+            const dragMoved = Math.hypot(item.x - this.dragState.startX, item.y - this.dragState.startY);
+            const tgt = this.findVesselAt(item.x, item.y + 52, null, false);
+            if (tgt && !tgt.isInverted && Math.abs(item.x - tgt.x) <= 30) {
+              if (dragMoved <= 6 || tgt.id !== this.dragState.unmountHoldoffId || Math.abs(item.y - (tgt.y - APPARATUS[tgt.typeId].height / 2 - 42)) <= 42) {
+                item.mountedOnVesselId = tgt.id;
+                syncDockedToolPositions(this.sim);
+              }
+            }
           }
           item.fallStartY =
             item.clampedToId || item.dockedVesselId || item.inVesselId || item.mountedOnVesselId || item.attachedToId
@@ -1861,7 +1894,7 @@ export class LabWorkbenchCanvas {
             else soundEngine.playGlassClink(item.typeId, 0.72);
           }
         }
-        if (item && (item.kind === 'vessel' || item.kind === 'filter_funnel' || item.kind === 'pipette' || item.kind === 'spoon')) {
+        if (item && (item.kind === 'vessel' || item.kind === 'filter_funnel' || item.kind === 'separatory_funnel' || item.kind === 'pipette' || item.kind === 'spoon')) {
           if (!APPARATUS[item.typeId]?.isHorizontalTube) {
             item.tiltAngle = 0;
             item.tiltDeg = 0;
@@ -2399,7 +2432,7 @@ export class LabWorkbenchCanvas {
       ...this.sim.items.filter((i) => i.kind === 'gas_syringe' || i.kind === 'condenser' || i.kind === 'burette'),
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
       ...this.sim.items.filter((i) => i.kind === 'rubber_stopper' || i.kind === 'phen_cotton'),
-      ...this.sim.items.filter((i) => i.kind === 'filter_funnel' || i.kind === 'electrode' || i.kind === 'salt_bridge' || i.kind === 'stir_bar'),
+      ...this.sim.items.filter((i) => i.kind === 'filter_funnel' || i.kind === 'separatory_funnel' || i.kind === 'electrode' || i.kind === 'salt_bridge' || i.kind === 'stir_bar'),
       ...this.sim.items.filter((i) => i.kind === 'pipette' || i.kind === 'wash_bottle' || i.kind === 'splint' || i.kind === 'flame_loop' || i.kind === 'indicator_strip' || i.kind === 'spoon' || i.kind === 'thermometer'),
     ];
 
@@ -2440,6 +2473,8 @@ export class LabWorkbenchCanvas {
         renderPipette(ctx, item, isSelected, this.isDark, this.langCode, timeNow);
       } else if (item.kind === 'filter_funnel') {
         renderFilterFunnel(ctx, item, isSelected, isDropTgt, this.isDark, this.langCode, timeNow);
+      } else if (item.kind === 'separatory_funnel') {
+        renderSeparatoryFunnel(ctx, item, isSelected, isDropTgt, this.isDark, this.langCode, timeNow);
       } else if (item.kind === 'wash_bottle') {
         renderWashBottle(ctx, item, isSelected, this.isDark, this.langCode, timeNow);
       } else if (item.kind === 'condenser') {

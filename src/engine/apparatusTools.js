@@ -4,6 +4,7 @@ import { SPECIES, createZeroGasMap } from '../data/species.js';
 import {
   computeLiquidVolumeL,
   computePH,
+  computePhaseStratification,
   computeSolidVolumeMl,
   computeSolutionVisuals,
 } from './equilibrium.js';
@@ -266,6 +267,134 @@ function stepFilterFunnel(sim, funnel, dt) {
 }
 
 /**
+ * ISO 4800 Pear-Shaped Separatory / Dropping Funnel (100 mL):
+ * - Dropping mode: feeds reagent dropwise or in a controlled stream into a mounted (open or sealed) host vessel or flask below.
+ * - Extraction mode: computes stratified layers (organic_heavy / aqueous / organic_light), supports shaking & settling,
+ *   and selectively drains the bottom-most dense phase cleanly, stopping automatically at the phase interface!
+ */
+function stepSeparatoryFunnel(sim, funnel, dt) {
+  funnel.activeDrop = false;
+  funnel.drainRateMlS = 0;
+  funnel.drainTargetId = null;
+
+  if ((funnel.emulsionTimer || 0) > 0) {
+    funnel.emulsionTimer = Math.max(0, funnel.emulsionTimer - dt);
+  }
+
+  const sfSpec = APPARATUS.separatory_funnel;
+  const solMl = computeSolidVolumeMl(funnel.moles);
+  const strat = computePhaseStratification(funnel.moles, funnel.tempK, sfSpec, solMl);
+  funnel.liquidStratification = strat;
+  const totalLiqMl = strat.totalLiqMl || 0;
+  funnel.activeLayerKey = strat.layers[0]?.phaseKey || null;
+
+  if (totalLiqMl <= 0.002) {
+    funnel.valveOpen = false;
+    return;
+  }
+  if (!funnel.valveOpen) return;
+
+  let target = null;
+  if (funnel.mountedOnVesselId) {
+    const m = sim.getItem(funnel.mountedOnVesselId);
+    if (m && m.kind === 'vessel' && !m.isShattered && !m.isInverted) {
+      target = m;
+    } else {
+      funnel.mountedOnVesselId = null;
+    }
+  }
+  if (!target) {
+    const tipY = funnel.y + (sfSpec?.height || 174) * 0.5 - 6;
+    target = findOpenVesselBelowPoint(sim.items, funnel.x, tipY, 56, -8, 280);
+  }
+
+  const flowFrac = Math.max(0.05, Math.min(1.0, funnel.valveFlowFrac ?? 0.35));
+  const rateMlS = flowFrac * 12.0; // 0.6 .. 12.0 mL/s controllable stopcock
+  const isSettledMulti = strat.layers.length >= 2 && (funnel.emulsionTimer || 0) <= 0.2;
+  const bottomLayer = isSettledMulti ? strat.layers[0] : null;
+  const refVolMl = bottomLayer ? bottomLayer.volMl : totalLiqMl;
+  const moveMl = Math.min(refVolMl, rateMlS * dt);
+  if (moveMl <= 1e-6) return;
+  const frac = Math.min(1, moveMl / Math.max(1e-6, refVolMl));
+
+  funnel.activeDrop = true;
+  funnel.drainRateMlS = rateMlS;
+  funnel.drainTargetId = target ? target.id : null;
+  funnel.dispensedMl = (funnel.dispensedMl || 0) + moveMl;
+
+  // Color of draining bottom phase or bulk solution
+  const matchesTargetPhase = (sp) => {
+    if (!sp || (sp.phase !== 'l' && sp.phase !== 'aq')) return false;
+    if (!bottomLayer) return true;
+    if (bottomLayer.phaseKey === 'organic_heavy') return sp.phase === 'l' && sp.liquidGroup === 'organic_heavy';
+    if (bottomLayer.phaseKey === 'organic_light') return sp.phase === 'l' && sp.liquidGroup === 'organic_light';
+    return sp.phase === 'aq' || (sp.phase === 'l' && (sp.liquidGroup || 'aqueous') === 'aqueous');
+  };
+
+  const layerMoles = {};
+  for (const [id, n] of Object.entries(funnel.moles)) {
+    if (n > 0 && matchesTargetPhase(SPECIES[id])) layerMoles[id] = n;
+  }
+  const layerL = Math.max(1e-5, refVolMl / 1000);
+  funnel.drainColor = computeSolutionVisuals(
+    layerMoles,
+    layerL,
+    computePH(layerMoles, layerL, funnel.tempK),
+    2.5,
+    funnel.phenBleachFrac || 0,
+    funnel.phenIrrevFrac || 0
+  ).css;
+
+  const cDstBefore = target ? computeHeatCapacityJK(target) : 0;
+  const oldDstPhen = target ? target.moles.Phenolphthalein_aq || 0 : 0;
+  const oldDstBleach = target ? target.phenBleachFrac || 0 : 0;
+  let movedPhen = 0;
+  let cMoved = 0;
+
+  for (const [spId, n] of Object.entries(funnel.moles)) {
+    if (n <= 0 || !matchesTargetPhase(SPECIES[spId])) continue;
+    const dMol = n * frac;
+    funnel.moles[spId] = n - dMol;
+    if (funnel.moles[spId] < 1e-13) delete funnel.moles[spId];
+    if (target) {
+      if (spId === 'Phenolphthalein_aq') movedPhen = dMol;
+      target.moles[spId] = (target.moles[spId] || 0) + dMol;
+      cMoved += dMol * Math.max(0, SPECIES[spId]?.cp || 0);
+    }
+  }
+
+  if (target) {
+    if (movedPhen > 0) {
+      const totP = oldDstPhen + movedPhen;
+      target.phenBleachFrac = totP > 1e-14 ? (oldDstPhen * oldDstBleach + movedPhen * (funnel.phenBleachFrac || 0)) / totP : 0;
+    }
+    if (cDstBefore + cMoved > 0) {
+      target.tempK = (cDstBefore * target.tempK + cMoved * funnel.tempK) / (cDstBefore + cMoved);
+    }
+    sim.checkOverflow(target);
+  }
+
+  // Recompute remaining layers and auto-close cleanly right at phase interface!
+  if (bottomLayer && funnel.stopAtInterface !== false) {
+    const remStrat = computePhaseStratification(funnel.moles, funnel.tempK, sfSpec, solMl);
+    const sameBottomRemain = remStrat.layers.find((l) => l.phaseKey === bottomLayer.phaseKey)?.volMl || 0;
+    if (sameBottomRemain <= 0.06) {
+      funnel.valveOpen = false;
+      funnel.liquidStratification = remStrat;
+      funnel.activeLayerKey = remStrat.layers[0]?.phaseKey || null;
+      if (!funnel._lastInterfaceLogged || Math.abs(sim.timeSec - funnel._lastInterfaceLogged) > 1.2) {
+        funnel._lastInterfaceLogged = sim.timeSec;
+        sim.addLog({
+          type: 'info',
+          key: 'logSepFunnelInterface',
+          vesselLabel: funnel.label,
+        });
+      }
+    }
+  }
+}
+
+/**
  * Burette stopcock drip / continuous stream strictly vertically along burette.x into vessel underneath.
  */
 function stepBurette(sim, burette, dt) {
@@ -339,98 +468,149 @@ function stepLiebigCondenser(sim, cond, dt) {
   for (const n of Object.values(vapor)) totalInMol += n;
   if (totalInMol <= 1e-9) return;
 
-  const eff = cond.waterFlowOn ? 0.94 : 0.22;
+  const tJacketK = cond.waterFlowOn ? 286.15 : 333.15;
   const { spout } = getCondenserPorts(cond);
   const spoutX = spout.x;
   const spoutY = spout.y;
-  let dst = null;
+  let gasDst = null;
   if (cond.outletTargetId) {
     const oDst = sim.getItem(cond.outletTargetId);
     if (oDst && oDst.kind === 'vessel' && !oDst.isShattered) {
-      dst = oDst;
+      gasDst = oDst;
     } else if (!oDst || oDst.isShattered) {
       cond.outletTargetId = null;
     }
   }
-  if (!dst) {
-    dst = findOpenVesselBelowPoint(sim.items, spoutX, spoutY - 8, 58, 0, 320);
+
+  let refluxDst = null;
+  if (cond.refluxMode) {
+    const rId = cond.refluxVesselId || cond.connectedFromId;
+    const rV = rId ? sim.getItem(rId) : null;
+    if (rV && rV.kind === 'vessel' && !rV.isShattered) {
+      refluxDst = rV;
+    }
+  }
+  let liqDst = refluxDst || gasDst;
+  if (!liqDst && !cond.refluxMode) {
+    liqDst = findOpenVesselBelowPoint(sim.items, spoutX, spoutY - 8, 58, 0, 320);
+  }
+  const gasOutDst = cond.refluxMode ? gasDst : gasDst || liqDst;
+
+  // Data-driven generalized condensation across all condensable vapors (SPECIES[g].liquidSpeciesId)
+  const condensedLiqs = {};
+  const remNonSteam = createZeroGasMap();
+  let remSteam = 0;
+  let dCondMl = 0;
+  let cCondAdd = 0;
+  const tCond = cond.waterFlowOn ? 290.15 : 335.0;
+
+  for (const [gId, nIn] of Object.entries(vapor)) {
+    if (!Number.isFinite(nIn) || nIn <= 1e-12) continue;
+    if (gId === 'HCl_g' || gId === 'NH3_g' || gId === 'HBr_g' || gId === 'HI_g') continue;
+    const spVap = SPECIES[gId];
+    const liqId = spVap?.liquidSpeciesId;
+    const spLiq = liqId ? SPECIES[liqId] : null;
+    if (spVap?.isCondensableVapor && spLiq) {
+      const bpK = spLiq.boilTempK || 373.15;
+      let eff = 0;
+      if (cond.waterFlowOn) {
+        eff = bpK > tJacketK ? (bpK - tJacketK >= 15 ? 0.96 : 0.72 + 0.016 * (bpK - tJacketK)) : 0.12;
+      } else {
+        eff = bpK > tJacketK + 8 ? 0.28 : 0.04;
+      }
+      const dCond = nIn * Math.max(0, Math.min(0.98, eff));
+      const dRem = Math.max(0, nIn - dCond);
+      if (dCond > 1e-12) {
+        condensedLiqs[liqId] = (condensedLiqs[liqId] || 0) + dCond;
+        const dens = Math.max(0.4, spLiq.density || 0.997);
+        dCondMl += (dCond * (spLiq.molarMass || 50)) / dens;
+        cCondAdd += dCond * (spLiq.cp || 90);
+      }
+      if (dRem > 1e-12) {
+        if (gId === 'H2O_g') remSteam += dRem;
+        else remNonSteam[gId] = (remNonSteam[gId] || 0) + dRem;
+      }
+    } else if (gId === 'H2O_g') {
+      remSteam += nIn;
+    } else {
+      remNonSteam[gId] = (remNonSteam[gId] || 0) + nIn;
+    }
   }
 
-  const nSteam = vapor.H2O_g || 0;
-  const nEtOH = vapor.C2H5OH_g || 0;
-  const nAld = vapor.CH3CHO_g || 0;
-  const nAcet = vapor.CH3COCH3_g || 0;
+  // Acid/Base volatile gases (HCl, HBr, HI, NH3) absorb into chilled co-condensing water droplets
+  const condW = condensedLiqs.H2O_l || 0;
+  const effSol = cond.waterFlowOn ? 0.94 : 0.22;
   const nHCl = vapor.HCl_g || 0;
+  const nHBr = vapor.HBr_g || 0;
+  const nHI = vapor.HI_g || 0;
   const nNH3 = vapor.NH3_g || 0;
-  const condW = nSteam * eff;
-  const condE = nEtOH * eff;
-  const condAld = cond.waterFlowOn ? nAld * (eff * 0.85) : 0;
-  const condAcet = nAcet * eff;
-  // HCl(g) & NH3(g) absorb strongly into chilled co-condensing water droplets
-  const absHCl = condW > 1e-8 ? Math.min(nHCl, condW * 0.45, nHCl * eff) : 0;
-  const absNH3 = condW > 1e-8 ? Math.min(nNH3, condW * 0.55, nNH3 * eff) : 0;
+  const absHCl = condW > 1e-8 ? Math.min(nHCl, condW * 0.45, nHCl * effSol) : 0;
+  const absHBr = condW > 1e-8 ? Math.min(nHBr, condW * 0.45, nHBr * effSol) : 0;
+  const absHI = condW > 1e-8 ? Math.min(nHI, condW * 0.45, nHI * effSol) : 0;
+  const absNH3 = condW > 1e-8 ? Math.min(nNH3, condW * 0.55, nNH3 * effSol) : 0;
+  remNonSteam.HCl_g = Math.max(0, nHCl - absHCl);
+  remNonSteam.HBr_g = Math.max(0, nHBr - absHBr);
+  remNonSteam.HI_g = Math.max(0, nHI - absHI);
+  remNonSteam.NH3_g = Math.max(0, nNH3 - absNH3);
 
-  if (condW + condE + condAld + condAcet > 1e-9) {
-    const dMl =
-      ((condW * SPECIES.H2O_l.molarMass) / 0.997 +
-        (condE * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density +
-        (condAld * SPECIES.CH3CHO_l.molarMass) / SPECIES.CH3CHO_l.density +
-        (condAcet * SPECIES.CH3COCH3_l.molarMass) / SPECIES.CH3COCH3_l.density);
-    cond.distillRateMlS = dMl / Math.max(1e-4, dt);
-    cond.totalCondensedMl = (cond.totalCondensedMl || 0) + dMl;
+  // If co-condensing HNO3 with H2O, dissociate cleanly to aqueous H+ + NO3-; when anhydrous/dry keep HNO3_l
+  const condHNO3 = condensedLiqs.HNO3_l || 0;
+  let absHNO3Aq = 0;
+  if (condHNO3 > 0 && condW > 1e-7) {
+    absHNO3Aq = condHNO3;
+    delete condensedLiqs.HNO3_l;
+  }
+
+  if (dCondMl > 1e-9) {
+    cond.distillRateMlS = dCondMl / Math.max(1e-4, dt);
+    cond.totalCondensedMl = (cond.totalCondensedMl || 0) + dCondMl;
     cond.activeDrop = true;
+    const condVolL = Math.max(1e-6, dCondMl / 1000);
+    cond.lastCondColor = computeSolutionVisuals(
+      condensedLiqs,
+      condVolL,
+      absHCl + absHBr + absHI + absHNO3Aq > 0 ? 1.5 : absNH3 > 0 ? 11.0 : 7.0,
+      1.8,
+      0,
+      0
+    ).css;
 
-    if (dst) {
-      const cOld = computeHeatCapacityJK(dst);
-      const tCond = cond.waterFlowOn ? 291.15 : 335.0;
-      let cAdd = 0;
-      if (condW > 0) {
-        dst.moles.H2O_l = (dst.moles.H2O_l || 0) + condW;
-        cAdd += condW * SPECIES.H2O_l.cp;
-      }
-      if (condE > 0) {
-        dst.moles.C2H5OH_l = (dst.moles.C2H5OH_l || 0) + condE;
-        cAdd += condE * SPECIES.C2H5OH_l.cp;
-      }
-      if (condAld > 0) {
-        dst.moles.CH3CHO_l = (dst.moles.CH3CHO_l || 0) + condAld;
-        cAdd += condAld * SPECIES.CH3CHO_l.cp;
-      }
-      if (condAcet > 0) {
-        dst.moles.CH3COCH3_l = (dst.moles.CH3COCH3_l || 0) + condAcet;
-        cAdd += condAcet * SPECIES.CH3COCH3_l.cp;
+    if (liqDst) {
+      const cOld = computeHeatCapacityJK(liqDst);
+      for (const [liqId, nC] of Object.entries(condensedLiqs)) {
+        if (nC > 0) liqDst.moles[liqId] = (liqDst.moles[liqId] || 0) + nC;
       }
       if (absHCl > 0) {
-        dst.moles.H_aq = (dst.moles.H_aq || 0) + absHCl;
-        dst.moles.Cl_aq = (dst.moles.Cl_aq || 0) + absHCl;
+        liqDst.moles.H_aq = (liqDst.moles.H_aq || 0) + absHCl;
+        liqDst.moles.Cl_aq = (liqDst.moles.Cl_aq || 0) + absHCl;
+      }
+      if (absHBr > 0) {
+        liqDst.moles.H_aq = (liqDst.moles.H_aq || 0) + absHBr;
+        liqDst.moles.Br_aq = (liqDst.moles.Br_aq || 0) + absHBr;
+      }
+      if (absHI > 0) {
+        liqDst.moles.H_aq = (liqDst.moles.H_aq || 0) + absHI;
+        liqDst.moles.I_aq = (liqDst.moles.I_aq || 0) + absHI;
+      }
+      if (absHNO3Aq > 0) {
+        liqDst.moles.H_aq = (liqDst.moles.H_aq || 0) + absHNO3Aq;
+        liqDst.moles.NO3_aq = (liqDst.moles.NO3_aq || 0) + absHNO3Aq;
       }
       if (absNH3 > 0) {
-        dst.moles.NH3_aq = (dst.moles.NH3_aq || 0) + absNH3;
+        liqDst.moles.NH3_aq = (liqDst.moles.NH3_aq || 0) + absNH3;
       }
-      if (cOld + cAdd > 0) {
-        dst.tempK = (cOld * dst.tempK + cAdd * tCond) / (cOld + cAdd);
+      if (cOld + cCondAdd > 0 && !cond.refluxMode) {
+        liqDst.tempK = (cOld * liqDst.tempK + cCondAdd * tCond) / (cOld + cCondAdd);
       }
     }
   }
 
-  // Pass remaining non-condensed gases & uncondensed vapors cleanly out of the condenser outlet into receiver!
-  const remSteam = Math.max(0, nSteam - condW);
-  const remNonSteam = createZeroGasMap();
-  remNonSteam.C2H5OH_g = Math.max(0, nEtOH - condE);
-  remNonSteam.CH3CHO_g = Math.max(0, nAld - condAld);
-  remNonSteam.CH3COCH3_g = Math.max(0, nAcet - condAcet);
-  remNonSteam.HCl_g = Math.max(0, nHCl - absHCl);
-  remNonSteam.NH3_g = Math.max(0, nNH3 - absNH3);
-  let outTot = remSteam + remNonSteam.C2H5OH_g + remNonSteam.CH3CHO_g + remNonSteam.CH3COCH3_g + remNonSteam.HCl_g + remNonSteam.NH3_g;
+  // Route remaining non-condensable permanent gases (C2H4, C4H6, H2, CO2, etc.) & uncondensed vapors out top/outlet port!
+  let outTot = remSteam;
   const outComp = [];
   for (const g of NON_STEAM_GASES) {
-    if (g === 'C2H5OH_g' || g === 'CH3CHO_g' || g === 'CH3COCH3_g' || g === 'HCl_g' || g === 'NH3_g') {
-      if (remNonSteam[g] > 1e-12) outComp.push({ id: g, formula: SPECIES[g]?.formula || g, mol: remNonSteam[g] });
-      continue;
-    }
-    const amt = vapor[g] || 0;
+    const amt = remNonSteam[g] || 0;
     if (amt > 1e-12) {
-      remNonSteam[g] = amt;
       outTot += amt;
       outComp.push({ id: g, formula: SPECIES[g]?.formula || g, mol: amt });
     }
@@ -449,8 +629,17 @@ function stepLiebigCondenser(sim, cond, dt) {
       tempC: tOutK - 273.15,
       updatedAt: Date.now(),
     };
-    if (dst) {
-      routeGasPacketToTarget(cond, dst, remNonSteam, remSteam, sim.environment, (id) => sim.getItem(id));
+    if (gasOutDst) {
+      routeGasPacketToTarget(cond, gasOutDst, remNonSteam, remSteam, sim.environment, (id) => sim.getItem(id));
+    } else if (cond.refluxMode) {
+      // Uncondensed/permanent gases vent harmlessly from top of reflux condenser into room air
+      const srcV = refluxDst || (cond.connectedFromId ? sim.getItem(cond.connectedFromId) : null);
+      if (srcV && srcV.escapedGasMoles) {
+        for (const g of NON_STEAM_GASES) {
+          if (remNonSteam[g] > 1e-12) srcV.escapedGasMoles[g] = (srcV.escapedGasMoles[g] || 0) + remNonSteam[g];
+        }
+        if (remSteam > 1e-12) srcV.escapedGasMoles.H2O_g = (srcV.escapedGasMoles.H2O_g || 0) + remSteam;
+      }
     }
   } else if (cond._liveTubeFlow && Date.now() - cond._liveTubeFlow.updatedAt > 350) {
     cond._liveTubeFlow = null;
@@ -1086,6 +1275,36 @@ export function syncDockedToolPositions(sim) {
       it.y = v.y - vSpec.height / 2 - fSpec.height * 0.18;
       it.vy = 0;
       it.fallStartY = null;
+    } else if (it.kind === 'condenser' && it.refluxMode && it.refluxVesselId && !it.isDragging) {
+      const v = sim.getItem(it.refluxVesselId);
+      if (!v || v.isShattered) {
+        it.refluxVesselId = null;
+        continue;
+      }
+      const vSpec = APPARATUS[v.typeId];
+      const cSpec = APPARATUS.liebig_condenser;
+      const halfW = (cSpec?.width || 152) / 2;
+      it.x = v.x;
+      it.y = v.y - vSpec.height / 2 - halfW * 0.88;
+      it.vy = 0;
+      it.fallStartY = null;
+      if (it.connectedFromId !== v.id) {
+        it.connectedFromId = v.id;
+        v.connectedTargetId = it.id;
+        v.isStoppered = true;
+      }
+    } else if (it.kind === 'separatory_funnel' && it.mountedOnVesselId && !it.isDragging) {
+      const v = sim.getItem(it.mountedOnVesselId);
+      if (!v || v.isShattered || v.isInverted) {
+        it.mountedOnVesselId = null;
+        continue;
+      }
+      const vSpec = APPARATUS[v.typeId];
+      const sfSpec = APPARATUS.separatory_funnel;
+      it.x = v.x - (v.connectedTargetId ? 6 : 0);
+      it.y = v.y - vSpec.height / 2 - (sfSpec?.height || 174) * 0.36;
+      it.vy = 0;
+      it.fallStartY = null;
     }
   }
 }
@@ -1160,6 +1379,8 @@ export function stepApparatusTools(sim, dt, realDeltaSec) {
 
     if (it.kind === 'filter_funnel') {
       stepFilterFunnel(sim, it, dt);
+    } else if (it.kind === 'separatory_funnel') {
+      stepSeparatoryFunnel(sim, it, dt);
     } else if (it.kind === 'diffusion_tube') {
       stepDiffusionTube(sim, it, dt);
     } else if (it.kind === 'burette') {
