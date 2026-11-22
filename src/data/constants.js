@@ -236,6 +236,11 @@ export const VOLATILE_LIQUID_PROPS = {
   CH2CHCHO_l: { group: 'aqueous', boilTempK: 325.65, dHVapJ: 28300, vaporSpeciesId: 'CH2CHCHO_g' },
   CH2CHCH2OH_l: { group: 'aqueous', boilTempK: 370.25, dHVapJ: 40000, vaporSpeciesId: 'CH2CHCH2OH_g' },
   C4H9OH_l: { group: 'organic_light', boilTempK: 390.85, dHVapJ: 52350, vaporSpeciesId: 'C4H9OH_g' },
+  CH2CHCOOH_l: { group: 'aqueous', boilTempK: 414.15, dHVapJ: 46200, vaporSpeciesId: 'CH2CHCOOH_g' },
+  C6H5CH2Br_l: { group: 'organic_heavy', boilTempK: 474.15, dHVapJ: 51000, vaporSpeciesId: 'C6H5CH2Br_g' },
+  BrC6H4CH3_l: { group: 'organic_heavy', boilTempK: 456.15, dHVapJ: 49000, vaporSpeciesId: 'BrC6H4CH3_g' },
+  NO2C6H4CH3_l: { group: 'organic_heavy', boilTempK: 500.15, dHVapJ: 56000, vaporSpeciesId: 'NO2C6H4CH3_g' },
+  C7H14_l: { group: 'organic_light', boilTempK: 374.05, dHVapJ: 35360, vaporSpeciesId: 'C7H14_g' },
 };
 
 /**

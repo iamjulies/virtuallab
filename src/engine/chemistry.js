@@ -6437,6 +6437,361 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
           pushRxn('phenol_br2_white_ppt', 'C₆H₅OH + 3Br₂(aq) → C₆H₂Br₃OH↓ (trắng) + 3HBr', 'Phenol + nước Bromine → kết tủa trắng 2,4,6-Tribromophenol', 'Phenol + 3Br₂(aq) → white 2,4,6-Tribromophenol↓ + 3HBr', 'Phản ứng đặc trưng nhận biết Phenol tạo ngay kết tủa trắng 2,4,6-Tribromophenol.', 'Characteristic Phenol test immediately yields white 2,4,6-Tribromophenol precipitate.', dPhBr);
         }
       }
+
+      // 5D-2. Picric acid (2,4,6-Trinitrophenol): C6H5OH + 3HNO3(conc) -(H2SO4 conc, >= 353.15 K)-> C6H2(NO2)3OH↓ + 3H2O
+      const hasPicAcid = (moles.H2SO4_l || 0) > 1e-6 || (moles.HSO4_aq || 0) > 1e-4;
+      const hasPicNit = (moles.HNO3_l || 0) > 1e-7 || ((moles.NO3_aq || 0) > 1e-5 && (moles.H_aq || 0) > 1e-5);
+      if (hasPicAcid && hasPicNit && T >= 353.15) {
+        const nNitP = (moles.HNO3_l || 0) > 1e-7 ? moles.HNO3_l : Math.min(moles.NO3_aq || 0, moles.H_aq || 0);
+        const dPic = Math.min(moles[phSrc], nNitP / 3) * (1 - Math.exp(-0.72 * dt));
+        if (dPic > 1e-11) {
+          consumeSpecies(phSrc, dPic);
+          if ((moles.HNO3_l || 0) >= 3 * dPic) consumeSpecies('HNO3_l', 3 * dPic);
+          else { consumeSpecies('NO3_aq', 3 * dPic); consumeSpecies('H_aq', 3 * dPic); }
+          moles.C6H2_NO2_3OH_s = (moles.C6H2_NO2_3OH_s || 0) + dPic;
+          moles.H2O_l = (moles.H2O_l || 0) + 3 * dPic;
+          heatJ += dPic * 240000;
+          pushRxn('phenol_picric_acid', 'C₆H₅OH + 3HNO₃(đặc) —(H₂SO₄ đặc, 95 °C)→ C₆H₂(NO₂)₃OH↓ + 3H₂O', 'Nitro hóa Phenol → tinh thể vàng Picric acid', 'Phenol nitration → Picric acid C₆H₂(NO₂)₃OH↓', 'Phenol phản ứng với HNO₃ đặc/H₂SO₄ đặc tạo tinh thể vàng tươi 2,4,6-Trinitrophenol (Picric acid).', 'Nitration of Phenol in conc. H₂SO₄/HNO₃ precipitates bright yellow Picric acid.', dPic);
+        }
+      }
+
+      // 5D-3. Catechol / Hydroquinone: C6H5OH + H2O2 -(Fe2+ or H3PO4, 50–70 °C)-> C6H4(OH)2 + H2O
+      if ((moles.H2O2_aq || 0) > 1e-7 && ((moles.Fe2_aq || 0) > 1e-8 || (moles.H3PO4_aq || 0) > 1e-6) && T >= 323.15 && T <= 363.15) {
+        const dCat = Math.min(moles[phSrc], moles.H2O2_aq) * (1 - Math.exp(-0.58 * dt));
+        if (dCat > 1e-11) {
+          consumeSpecies(phSrc, dCat);
+          consumeSpecies('H2O2_aq', dCat);
+          moles.C6H4OH_2_s = (moles.C6H4OH_2_s || 0) + dCat;
+          moles.H2O_l = (moles.H2O_l || 0) + dCat;
+          heatJ += dCat * 165000;
+          pushRxn('phenol_catechol', 'C₆H₅OH + H₂O₂ —(Fe²⁺/H₃PO₄, 60 °C)→ C₆H₄(OH)₂ + H₂O', 'Hydroxyl hóa Phenol → Catechol & Hydroquinone', 'Phenol hydroxylation → Catechol / Hydroquinone', 'H₂O₂ có xúc tác Fe²⁺ hoặc H₃PO₄ gắn thêm –OH tạo đồng phân o/p-Dihydroxybenzene.', 'Catalytic H₂O₂ hydroxylation of Phenol yields Catechol and Hydroquinone.', dCat);
+        }
+      }
+    }
+
+    // ==================== PART 6: CARBOXYLIC ACID & ARENE (TOLUENE / ETHYLBENZENE) CHEMISTRY ====================
+    // 6A. Phenol regeneration from Phenoxide (H+ or CO2 + H2O) & Benzenesulfonate alkali fusion
+    if ((moles.C6H5O_aq || 0) > 1e-9) {
+      if ((moles.H_aq || 0) > 1e-6) {
+        const dReg = Math.min(moles.C6H5O_aq, moles.H_aq) * (1 - Math.exp(-3.5 * dt));
+        if (dReg > 1e-11) {
+          consumeSpecies('C6H5O_aq', dReg);
+          consumeSpecies('H_aq', dReg);
+          moles.C6H5OH_l = (moles.C6H5OH_l || 0) + dReg;
+          heatJ += dReg * 28000;
+          pushRxn('phenoxide_acidify', 'C₆H₅O⁻ + H⁺ → C₆H₅OH', 'Acid hóa Phenoxide tái tạo Phenol', 'Acidification of Phenoxide → Phenol', 'Acid mạnh đẩy Phenol ra khỏi muối Phenoxide.', 'Strong acid regenerates Phenol from Phenoxide.', dReg);
+        }
+      } else if (((moles.H2CO3_aq || 0) > 1e-8 || (moles.CO2_aq || 0) > 1e-8 || (moles.CO2_g || 0) > 1e-8 || (vessel.headspaceGasMoles?.CO2_g || 0) > 1e-8) && (moles.H2O_l || 0) > 1e-4) {
+        const hsCo2 = vessel.headspaceGasMoles || {};
+        const co2Src = (moles.H2CO3_aq || 0) > 1e-8 ? 'H2CO3_aq' : (moles.CO2_aq || 0) > 1e-8 ? 'CO2_aq' : (moles.CO2_g || 0) > 1e-8 ? 'CO2_g' : 'hs:CO2_g';
+        const nCo2Avail = co2Src === 'hs:CO2_g' ? (hsCo2.CO2_g || 0) : (moles[co2Src] || 0);
+        const dCo2Ph = Math.min(moles.C6H5O_aq, nCo2Avail, moles.H2O_l) * (1 - Math.exp(-1.6 * dt));
+        if (dCo2Ph > 1e-11) {
+          consumeSpecies('C6H5O_aq', dCo2Ph);
+          if (co2Src === 'hs:CO2_g') { hsCo2.CO2_g = Math.max(0, hsCo2.CO2_g - dCo2Ph); if (hsCo2.CO2_g < 1e-13) delete hsCo2.CO2_g; }
+          else consumeSpecies(co2Src, dCo2Ph);
+          if (co2Src !== 'H2CO3_aq') consumeSpecies('H2O_l', dCo2Ph);
+          moles.C6H5OH_l = (moles.C6H5OH_l || 0) + dCo2Ph;
+          moles.HCO3_aq = (moles.HCO3_aq || 0) + dCo2Ph;
+          heatJ += dCo2Ph * 22000;
+          pushRxn('phenoxide_co2', 'C₆H₅O⁻ + CO₂ + H₂O → C₆H₅OH + HCO₃⁻', 'Sục CO₂ vào Phenoxide tái tạo Phenol (đục nhẹ)', 'CO₂ + Phenoxide + H₂O → Phenol + HCO₃⁻', 'H₂CO₃ mạnh hơn Phenol nên đẩy được Phenol tự do ra khỏi muối Phenoxide.', 'Carbonic acid displaces weaker Phenol from Phenoxide solution.', dCo2Ph);
+        }
+      }
+    }
+    if ((moles.C6H5SO3H_aq || 0) > 1e-9 && (moles.OH_aq || 0) > 1e-6) {
+      const dBsa = Math.min(moles.C6H5SO3H_aq, moles.OH_aq) * (1 - Math.exp(-3.2 * dt));
+      if (dBsa > 1e-11) {
+        consumeSpecies('C6H5SO3H_aq', dBsa);
+        consumeSpecies('OH_aq', dBsa);
+        moles.C6H5SO3_aq = (moles.C6H5SO3_aq || 0) + dBsa;
+        moles.H2O_l = (moles.H2O_l || 0) + dBsa;
+        heatJ += dBsa * 55000;
+        pushRxn('bsa_neutralize', 'C₆H₅SO₃H + OH⁻ → C₆H₅SO₃⁻ + H₂O', 'Trung hòa Benzenesulfonic acid', 'Neutralization of Benzenesulfonic acid', 'Benzenesulfonic acid phản ứng nhanh với NaOH tạo muối Benzenesulfonate.', 'Benzenesulfonic acid neutralizes with alkali to Benzenesulfonate.', dBsa);
+      }
+    }
+    if ((moles.C6H5SO3Na_s || 0) > 1e-9 && (moles.NaOH_s || 0) > 1e-8 && T >= 573.15) {
+      const dFus = Math.min(moles.C6H5SO3Na_s, moles.NaOH_s / 2) * (1 - Math.exp(-0.75 * dt));
+      if (dFus > 1e-11) {
+        consumeSpecies('C6H5SO3Na_s', dFus);
+        consumeSpecies('NaOH_s', 2 * dFus);
+        moles.C6H5O_aq = (moles.C6H5O_aq || 0) + dFus;
+        moles.Na_aq = (moles.Na_aq || 0) + dFus;
+        moles.Na2SO3_s = (moles.Na2SO3_s || 0) + dFus;
+        gasProduced.H2O_g = (gasProduced.H2O_g || 0) + dFus;
+        heatJ += dFus * 65000;
+        pushRxn('bsa_alkali_fusion', 'C₆H₅SO₃Na + 2NaOH(rắn) —(310 °C)→ C₆H₅ONa + Na₂SO₃ + H₂O↑', 'Nung chảy kiềm Sodium benzenesulfonate → Sodium phenoxide', 'Alkali fusion of C₆H₅SO₃Na (310 °C) → Phenoxide + Na₂SO₃', 'Nung chảy C₆H₅SO₃Na với NaOH rắn ở 300–320 °C tạo muối Phenoxide.', 'Alkali fusion of sodium benzenesulfonate at 310 °C yields sodium phenoxide.', dFus, true);
+      }
+    }
+
+    // 6B. Carboxylic Acid Preparations: Oxalic acid (EtOH/Glycol + conc HNO3), Acrylic & Crotonic acid (Aldehyde + Tollens/Ag2O)
+    const oxNitConc = (moles.HNO3_l || 0) > 1e-7 ? moles.HNO3_l : ((moles.NO3_aq || 0) > 1e-4 && (moles.H_aq || 0) > 1e-4 && (moles.H2O_l || 0) < 0.8) ? Math.min(moles.NO3_aq, moles.H_aq) : 0;
+    if (oxNitConc > 1e-7 && T >= 333.15) {
+      if ((moles.C2H4OH_2_l || 0) > 1e-9) {
+        const dOxG = Math.min(moles.C2H4OH_2_l, oxNitConc / 4) * (1 - Math.exp(-0.68 * dt));
+        if (dOxG > 1e-11) {
+          consumeSpecies('C2H4OH_2_l', dOxG);
+          if ((moles.HNO3_l || 0) >= 4 * dOxG) consumeSpecies('HNO3_l', 4 * dOxG);
+          else { consumeSpecies('NO3_aq', 4 * dOxG); consumeSpecies('H_aq', 4 * dOxG); }
+          moles.H2C2O4_s = (moles.H2C2O4_s || 0) + dOxG;
+          gasProduced.NO2_g = (gasProduced.NO2_g || 0) + 4 * dOxG;
+          moles.H2O_l = (moles.H2O_l || 0) + 4 * dOxG;
+          heatJ += dOxG * 280000;
+          pushRxn('glycol_oxalic', 'HOCH₂CH₂OH + 4HNO₃(đặc) —(60 °C)→ HOOC–COOH + 4NO₂↑ + 4H₂O', 'Oxi hóa Ethylene glycol bằng HNO₃ đặc → Oxalic acid', 'Ethylene glycol + 4HNO₃(conc) → Oxalic acid + 4NO₂↑', 'HNO₃ đặc oxi hóa hai nhóm –CH₂OH của Ethylene glycol thành Oxalic acid và khí nâu đỏ NO₂.', 'Conc. HNO₃ oxidizes Ethylene glycol to Oxalic acid crystals and brown NO₂ gas.', dOxG, true);
+        }
+      } else if ((moles.C2H5OH_l || 0) > 1e-8) {
+        const dOxE = Math.min(moles.C2H5OH_l, oxNitConc / 8) * (1 - Math.exp(-0.55 * dt));
+        if (dOxE > 1e-11) {
+          consumeSpecies('C2H5OH_l', dOxE);
+          if ((moles.HNO3_l || 0) >= 8 * dOxE) consumeSpecies('HNO3_l', 8 * dOxE);
+          else { consumeSpecies('NO3_aq', 8 * dOxE); consumeSpecies('H_aq', 8 * dOxE); }
+          moles.H2C2O4_s = (moles.H2C2O4_s || 0) + dOxE;
+          gasProduced.NO2_g = (gasProduced.NO2_g || 0) + 8 * dOxE;
+          moles.H2O_l = (moles.H2O_l || 0) + 6 * dOxE;
+          heatJ += dOxE * 420000;
+          pushRxn('etoh_oxalic', 'C₂H₅OH + 8HNO₃(đặc) —(70 °C)→ HOOC–COOH + 8NO₂↑ + 6H₂O', 'Oxi hóa Ethanol bằng HNO₃ đặc → Oxalic acid + 8NO₂↑', 'Ethanol + 8HNO₃(conc) → Oxalic acid + 8NO₂↑', 'HNO₃ đặc nóng oxi hóa hoàn toàn Ethanol thành Oxalic acid và giải phóng khí NO₂.', 'Hot conc. HNO₃ oxidizes Ethanol to Oxalic acid and NO₂ gas.', dOxE, true);
+        }
+      }
+    }
+
+    // Acrylic & Crotonic acid via mild Tollens (Ag(NH3)2+ / Ag2O, 40–60 °C)
+    if ((moles.CH2CHCHO_l || 0) > 1e-9 && T >= 313.15) {
+      if ((moles.AgNH3_2_aq || 0) > 1e-7 && (moles.OH_aq || 0) > 1e-7) {
+        const dAcr = Math.min(moles.CH2CHCHO_l, moles.AgNH3_2_aq / 2, moles.OH_aq / 2) * (1 - Math.exp(-0.95 * dt));
+        if (dAcr > 1e-11) {
+          consumeSpecies('CH2CHCHO_l', dAcr);
+          consumeSpecies('AgNH3_2_aq', 2 * dAcr);
+          consumeSpecies('OH_aq', 2 * dAcr);
+          moles.CH2CHCOO_aq = (moles.CH2CHCOO_aq || 0) + dAcr;
+          moles.Ag_s = (moles.Ag_s || 0) + 2 * dAcr;
+          moles.NH3_aq = (moles.NH3_aq || 0) + 4 * dAcr;
+          moles.H2O_l = (moles.H2O_l || 0) + 2 * dAcr;
+          heatJ += dAcr * 115000;
+          pushRxn('acrolein_tollens', 'CH₂=CHCHO + 2[Ag(NH₃)₂]⁺ + 2OH⁻ —(50 °C)→ CH₂=CHCOO⁻ + 2Ag↓ + 4NH₃ + 2H₂O', 'Oxi hóa Acrolein bằng thuốc thử Tollens → Acrylate + 2Ag↓', 'Acrolein + Tollens reagent → Acrylate + 2Ag↓', 'Thuốc thử Tollens oxi hóa chọn lọc nhóm –CHO bảo toàn nối đôi C=C tạo muối Acrylate.', 'Tollens reagent selectively oxidizes Acrolein to Acrylate preserving C=C.', dAcr);
+        }
+      } else if ((moles.Ag2O_s || 0) > 1e-8) {
+        const dAcr2 = Math.min(moles.CH2CHCHO_l, moles.Ag2O_s) * (1 - Math.exp(-0.78 * dt));
+        if (dAcr2 > 1e-11) {
+          consumeSpecies('CH2CHCHO_l', dAcr2);
+          consumeSpecies('Ag2O_s', dAcr2);
+          moles.CH2CHCOOH_l = (moles.CH2CHCOOH_l || 0) + dAcr2;
+          moles.Ag_s = (moles.Ag_s || 0) + 2 * dAcr2;
+          heatJ += dAcr2 * 105000;
+          pushRxn('acrolein_ag2o', 'CH₂=CHCHO + Ag₂O —(50 °C)→ CH₂=CHCOOH + 2Ag↓', 'Oxi hóa Acrolein bằng Ag₂O → Acrylic acid + 2Ag↓', 'Acrolein + Ag₂O → Acrylic acid + 2Ag↓', 'Ag₂O oxi hóa nhóm –CHO của Acrolein thành Acrylic acid.', 'Ag₂O oxidizes Acrolein directly to Acrylic acid.', dAcr2);
+        }
+      }
+    }
+    if ((moles.CH2CHCOO_aq || 0) > 1e-9 && (moles.H_aq || 0) > 1e-6) {
+      const dAcrH = Math.min(moles.CH2CHCOO_aq, moles.H_aq) * (1 - Math.exp(-3.0 * dt));
+      if (dAcrH > 1e-11) {
+        consumeSpecies('CH2CHCOO_aq', dAcrH);
+        consumeSpecies('H_aq', dAcrH);
+        moles.CH2CHCOOH_l = (moles.CH2CHCOOH_l || 0) + dAcrH;
+        heatJ += dAcrH * 15000;
+      }
+    }
+    if ((moles.CH3CHCHCHO_l || 0) > 1e-9 && T >= 313.15) {
+      if ((moles.AgNH3_2_aq || 0) > 1e-7 && (moles.OH_aq || 0) > 1e-7) {
+        const dCrot = Math.min(moles.CH3CHCHCHO_l, moles.AgNH3_2_aq / 2, moles.OH_aq / 2) * (1 - Math.exp(-0.88 * dt));
+        if (dCrot > 1e-11) {
+          consumeSpecies('CH3CHCHCHO_l', dCrot);
+          consumeSpecies('AgNH3_2_aq', 2 * dCrot);
+          consumeSpecies('OH_aq', 2 * dCrot);
+          moles.CH3CHCHCOO_aq = (moles.CH3CHCHCOO_aq || 0) + dCrot;
+          moles.Ag_s = (moles.Ag_s || 0) + 2 * dCrot;
+          moles.NH3_aq = (moles.NH3_aq || 0) + 4 * dCrot;
+          moles.H2O_l = (moles.H2O_l || 0) + 2 * dCrot;
+          heatJ += dCrot * 112000;
+          pushRxn('croton_tollens', 'CH₃CH=CHCHO + 2[Ag(NH₃)₂]⁺ + 2OH⁻ —(50 °C)→ CH₃CH=CHCOO⁻ + 2Ag↓ + 4NH₃ + 2H₂O', 'Oxi hóa Crotonaldehyde bằng Tollens → Crotonate + 2Ag↓', 'Crotonaldehyde + Tollens → Crotonate + 2Ag↓', 'Oxi hóa nhẹ Crotonaldehyde ở 50 °C thu được muối Crotonate và kết tủa bạc.', 'Mild Tollens oxidation of Crotonaldehyde yields Crotonate and Ag mirror.', dCrot);
+        }
+      } else if ((moles.Ag2O_s || 0) > 1e-8) {
+        const dCrot2 = Math.min(moles.CH3CHCHCHO_l, moles.Ag2O_s) * (1 - Math.exp(-0.74 * dt));
+        if (dCrot2 > 1e-11) {
+          consumeSpecies('CH3CHCHCHO_l', dCrot2);
+          consumeSpecies('Ag2O_s', dCrot2);
+          moles.CH3CHCHCOOH_s = (moles.CH3CHCHCOOH_s || 0) + dCrot2;
+          moles.Ag_s = (moles.Ag_s || 0) + 2 * dCrot2;
+          heatJ += dCrot2 * 102000;
+          pushRxn('croton_ag2o', 'CH₃CH=CHCHO + Ag₂O —(50 °C)→ CH₃CH=CHCOOH + 2Ag↓', 'Oxi hóa Crotonaldehyde bằng Ag₂O → Crotonic acid', 'Crotonaldehyde + Ag₂O → Crotonic acid + 2Ag↓', 'Ag₂O oxi hóa Crotonaldehyde tạo tinh thể trắng Crotonic acid.', 'Ag₂O oxidizes Crotonaldehyde to white Crotonic acid crystals.', dCrot2);
+        }
+      }
+    }
+    if ((moles.CH3CHCHCOO_aq || 0) > 1e-9 && (moles.H_aq || 0) > 1e-6) {
+      const dCrotH = Math.min(moles.CH3CHCHCOO_aq, moles.H_aq) * (1 - Math.exp(-3.0 * dt));
+      if (dCrotH > 1e-11) {
+        consumeSpecies('CH3CHCHCOO_aq', dCrotH);
+        consumeSpecies('H_aq', dCrotH);
+        moles.CH3CHCHCOOH_s = (moles.CH3CHCHCOOH_s || 0) + dCrotH;
+        heatJ += dCrotH * 15000;
+      }
+    }
+
+    // 6C. Carboxylic Acid Properties: H2C2O4_s, C6H5COOH_s, CH2CHCOOH_l, CH3CHCHCOOH_s (OH-, CaCO3/CO3^2-, Mg, Phenoxide)
+    const carbAcids = [
+      { id: 'H2C2O4_s', ion: 'C2O4_2_aq', stoich: 2, label: 'H₂C₂O₄', name: 'Oxalic acid' },
+      { id: 'C6H5COOH_s', ion: 'C6H5COO_aq', stoich: 1, label: 'C₆H₅COOH', name: 'Benzoic acid' },
+      { id: 'CH2CHCOOH_l', ion: 'CH2CHCOO_aq', stoich: 1, label: 'CH₂=CHCOOH', name: 'Acrylic acid' },
+      { id: 'CH3CHCHCOOH_s', ion: 'CH3CHCHCOO_aq', stoich: 1, label: 'CH₃CH=CHCOOH', name: 'Crotonic acid' },
+    ];
+    for (const ca of carbAcids) {
+      const nCa = moles[ca.id] || 0;
+      if (nCa <= 1e-10) continue;
+      if ((moles.OH_aq || 0) > 1e-6) {
+        const dN = Math.min(nCa, moles.OH_aq / ca.stoich) * (1 - Math.exp(-3.0 * dt));
+        if (dN > 1e-11) {
+          consumeSpecies(ca.id, dN);
+          consumeSpecies('OH_aq', ca.stoich * dN);
+          moles[ca.ion] = (moles[ca.ion] || 0) + dN;
+          moles.H2O_l = (moles.H2O_l || 0) + ca.stoich * dN;
+          heatJ += dN * 54000 * ca.stoich;
+          pushRxn(`ca_oh_${ca.id}`, `${ca.label} + ${ca.stoich > 1 ? '2' : ''}OH⁻ → ${ca.ion.replace('_2_aq', '²⁻').replace('_aq', '⁻')} + ${ca.stoich > 1 ? '2' : ''}H₂O`, `Trung hòa ${ca.name} bằng kiềm`, `Neutralization of ${ca.name}`, `${ca.name} phản ứng hoàn toàn với dung dịch kiềm tạo muối carboxylate.`, `${ca.name} neutralizes cleanly with alkali.`, dN);
+        }
+      } else if ((moles.CaCO3_s || 0) > 1e-8 && (moles.H2O_l || 0) > 1e-4) {
+        const acidNeed = ca.stoich === 2 ? 1 : 2;
+        const dC = Math.min(nCa / acidNeed, moles.CaCO3_s) * (1 - Math.exp(-1.4 * dt));
+        if (dC > 1e-11) {
+          consumeSpecies(ca.id, acidNeed * dC);
+          consumeSpecies('CaCO3_s', dC);
+          moles[ca.ion] = (moles[ca.ion] || 0) + acidNeed * dC;
+          moles.Ca2_aq = (moles.Ca2_aq || 0) + dC;
+          gasProduced.CO2_g = (gasProduced.CO2_g || 0) + dC;
+          moles.H2O_l = (moles.H2O_l || 0) + dC;
+          heatJ += dC * 28000;
+          pushRxn(`ca_caco3_${ca.id}`, `${acidNeed > 1 ? '2' : ''}${ca.label} + CaCO₃ → Ca²⁺ + ${acidNeed > 1 ? '2' : ''}${ca.ion.replace('_2_aq', '²⁻').replace('_aq', '⁻')} + CO₂↑ + H₂O`, `${ca.name} + CaCO₃ → giải phóng CO₂↑`, `${ca.name} + CaCO₃ → CO₂↑`, `${ca.name} mạnh hơn H₂CO₃ nên sủi bọt khí CO₂ với CaCO₃ (khác với Phenol).`, `${ca.name} evolves CO₂ gas with CaCO₃, distinguishing –COOH from Phenol.`, dC, true);
+        }
+      } else if ((moles.Mg_s || 0) > 1e-8 && (moles.H2O_l || 0) > 1e-4) {
+        const acidNeed = ca.stoich === 2 ? 1 : 2;
+        const dMg = Math.min(nCa / acidNeed, moles.Mg_s) * (1 - Math.exp(-1.6 * dt));
+        if (dMg > 1e-11) {
+          consumeSpecies(ca.id, acidNeed * dMg);
+          consumeSpecies('Mg_s', dMg);
+          moles[ca.ion] = (moles[ca.ion] || 0) + acidNeed * dMg;
+          moles.Mg2_aq = (moles.Mg2_aq || 0) + dMg;
+          gasProduced.H2_g = (gasProduced.H2_g || 0) + dMg;
+          heatJ += dMg * 195000;
+          pushRxn(`ca_mg_${ca.id}`, `${acidNeed > 1 ? '2' : ''}${ca.label} + Mg → Mg²⁺ + ${acidNeed > 1 ? '2' : ''}${ca.ion.replace('_2_aq', '²⁻').replace('_aq', '⁻')} + H₂↑`, `${ca.name} + Mg → H₂↑`, `${ca.name} + Mg → H₂↑`, `Kim loại Mg khử H⁺ của ${ca.name} giải phóng khí H₂.`, `Magnesium reacts with ${ca.name} evolving H₂ gas.`, dMg, true);
+        }
+      }
+    }
+
+    // 6D. Arene Chemistry: Toluene (C6H5CH3_l) & Ethylbenzene (C6H5C2H5_l)
+    const hasFeAr = (moles.Fe_s || 0) > 1e-8 || (moles.FeCl3_s || 0) > 1e-8 || (moles.FeBr3_s || 0) > 1e-8 || (moles.Fe3_aq || 0) > 1e-8;
+    const hsAr = vessel.headspaceGasMoles || {};
+    const brAr = (moles.Br2_l || 0) > 1e-9 ? 'Br2_l' : (moles.Br2_g || 0) > 1e-9 ? 'Br2_g' : (hsAr.Br2_g || 0) > 1e-9 ? 'hs:Br2_g' : null;
+    if ((moles.C6H5CH3_l || 0) > 1e-9) {
+      // Ring bromination (Fe, 30-50 C, no UV) vs Side-chain benzyl bromination (UV or >= 373.15 K, no Fe)
+      if (brAr) {
+        const nBrA = brAr.startsWith('hs:') ? hsAr.Br2_g : moles[brAr];
+        const takeBrA = (amt) => {
+          if (brAr.startsWith('hs:')) { hsAr.Br2_g = Math.max(0, hsAr.Br2_g - amt); if (hsAr.Br2_g < 1e-13) delete hsAr.Br2_g; }
+          else consumeSpecies(brAr, amt);
+        };
+        if (hasFeAr && !uvOn && T >= 303.15) {
+          const dTolBr = Math.min(moles.C6H5CH3_l, nBrA) * (1 - Math.exp(-0.95 * dt));
+          if (dTolBr > 1e-11) {
+            consumeSpecies('C6H5CH3_l', dTolBr);
+            takeBrA(dTolBr);
+            moles.BrC6H4CH3_l = (moles.BrC6H4CH3_l || 0) + dTolBr;
+            gasProduced.HBr_g = (gasProduced.HBr_g || 0) + dTolBr;
+            heatJ += dTolBr * 52000;
+            pushRxn('toluene_ring_br2', 'C₆H₅CH₃ + Br₂ —(Fe, 30–50 °C)→ o/p-BrC₆H₄CH₃ + HBr↑', 'Thế Bromine vào nhân thơm Toluene (xúc tác Fe)', 'Toluene ring bromination (Fe) → o/p-Bromotoluene + HBr↑', 'Nhóm –CH₃ đẩy electron hoạt hóa vòng thơm giúp thế Br₂ vào vị trí ortho/para.', 'Electron-donating –CH₃ directs Fe-catalyzed bromination to ortho/para positions.', dTolBr, true);
+          }
+        } else if (!hasFeAr && (uvOn || T >= 373.15)) {
+          const dBnBr = Math.min(moles.C6H5CH3_l, nBrA) * (1 - Math.exp(-0.85 * dt));
+          if (dBnBr > 1e-11) {
+            consumeSpecies('C6H5CH3_l', dBnBr);
+            takeBrA(dBnBr);
+            moles.C6H5CH2Br_l = (moles.C6H5CH2Br_l || 0) + dBnBr;
+            gasProduced.HBr_g = (gasProduced.HBr_g || 0) + dBnBr;
+            heatJ += dBnBr * 44000;
+            pushRxn('toluene_benzyl_br2', 'C₆H₅CH₃ + Br₂ —(UV / 110 °C)→ C₆H₅CH₂Br + HBr↑', 'Thế gốc tự do ở nhánh methyl Toluene → Benzyl bromide', 'Side-chain radical bromination (UV/110 °C) → Benzyl bromide', 'Dưới tia UV hoặc đun nóng không có Fe, Br₂ thế ưu tiên vào carbon benzyl tạo Benzyl bromide.', 'Under UV or heat without Fe, Br₂ substitutes at the benzylic methyl group.', dBnBr, true);
+          }
+        }
+      }
+
+      // Toluene Nitration (35 C -> NO2C6H4CH3; >= 100 C -> TNT)
+      const hasTolAcid = (moles.H2SO4_l || 0) > 1e-6 || (moles.HSO4_aq || 0) > 1e-4;
+      const hasTolNit = (moles.HNO3_l || 0) > 1e-7 || ((moles.NO3_aq || 0) > 1e-5 && (moles.H_aq || 0) > 1e-5);
+      if (hasTolAcid && hasTolNit && T >= 303.15) {
+        const nNitT = (moles.HNO3_l || 0) > 1e-7 ? moles.HNO3_l : Math.min(moles.NO3_aq || 0, moles.H_aq || 0);
+        if (T >= 373.15 && nNitT >= 3e-7) {
+          const dTnt = Math.min(moles.C6H5CH3_l, nNitT / 3) * (1 - Math.exp(-0.55 * dt));
+          if (dTnt > 1e-11) {
+            consumeSpecies('C6H5CH3_l', dTnt);
+            if ((moles.HNO3_l || 0) >= 3 * dTnt) consumeSpecies('HNO3_l', 3 * dTnt);
+            else { consumeSpecies('NO3_aq', 3 * dTnt); consumeSpecies('H_aq', 3 * dTnt); }
+            moles.C6H2_NO2_3CH3_s = (moles.C6H2_NO2_3CH3_s || 0) + dTnt;
+            moles.H2O_l = (moles.H2O_l || 0) + 3 * dTnt;
+            heatJ += dTnt * 280000;
+            pushRxn('toluene_tnt', 'C₆H₅CH₃ + 3HNO₃(đặc) —(H₂SO₄ đặc, 100–110 °C)→ 2,4,6-(NO₂)₃C₆H₂CH₃↓ + 3H₂O', 'Nitro hóa mạnh Toluene → 2,4,6-Trinitrotoluene (TNT)', 'Vigorous nitration of Toluene → 2,4,6-Trinitrotoluene (TNT)', 'Đun nóng 100–110 °C với hỗn hợp HNO₃/H₂SO₄ dư tạo tinh thể vàng TNT.', 'Vigorous nitration at 100–110 °C produces yellow 2,4,6-Trinitrotoluene (TNT).', dTnt);
+          }
+        } else {
+          const dMonoN = Math.min(moles.C6H5CH3_l, nNitT) * (1 - Math.exp(-0.85 * dt));
+          if (dMonoN > 1e-11) {
+            consumeSpecies('C6H5CH3_l', dMonoN);
+            if ((moles.HNO3_l || 0) >= dMonoN) consumeSpecies('HNO3_l', dMonoN);
+            else { consumeSpecies('NO3_aq', dMonoN); consumeSpecies('H_aq', dMonoN); }
+            moles.NO2C6H4CH3_l = (moles.NO2C6H4CH3_l || 0) + dMonoN;
+            moles.H2O_l = (moles.H2O_l || 0) + dMonoN;
+            heatJ += dMonoN * 125000;
+            pushRxn('toluene_nitration', 'C₆H₅CH₃ + HNO₃ —(H₂SO₄ đặc, 35 °C)→ o/p-NO₂C₆H₄CH₃ + H₂O', 'Nitro hóa Toluene (35 °C) → o/p-Nitrotoluene', 'Toluene nitration (35 °C) → o/p-Nitrotoluene', 'Toluene phản ứng nitro hóa dễ hơn Benzene ngay ở 30–40 °C.', 'Toluene nitrates more readily than Benzene at 30–40 °C.', dMonoN);
+          }
+        }
+      }
+
+      // Toluene Hydrogenation (Ni/Pt, >= 423.15 K) -> Methylcyclohexane
+      if (((moles.Ni_s || 0) > 1e-8 || (moles.Pt_s || 0) > 1e-8) && (moles.H2_g || 0) > 1e-9 && T >= 423.15) {
+        const dHydT = Math.min(moles.C6H5CH3_l, moles.H2_g / 3) * (1 - Math.exp(-0.62 * dt));
+        if (dHydT > 1e-11) {
+          consumeSpecies('C6H5CH3_l', dHydT);
+          consumeSpecies('H2_g', 3 * dHydT);
+          moles.C7H14_l = (moles.C7H14_l || 0) + dHydT;
+          heatJ += dHydT * 205000;
+          pushRxn('toluene_hydrogenation', 'C₆H₅CH₃ + 3H₂ —(Ni, 180 °C)→ C₇H₁₄', 'Hydro hóa Toluene → Methylcyclohexane', 'Toluene hydrogenation → Methylcyclohexane', 'Cộng 3H₂ vào vòng thơm Toluene tạo Methylcyclohexane.', 'Catalytic hydrogenation of Toluene yields Methylcyclohexane.', dHydT);
+        }
+      }
+
+      // Toluene + KMnO4 (ONLY on heating >= 343.15 K / 70–100 °C -> Benzoate + 2MnO2↓)
+      if ((moles.MnO4_aq || 0) > 1e-7 && (moles.H2O_l || 0) > 1e-4 && T >= 343.15) {
+        const dKmT = Math.min(moles.C6H5CH3_l, moles.MnO4_aq / 2) * (1 - Math.exp(-0.78 * dt));
+        if (dKmT > 1e-11) {
+          consumeSpecies('C6H5CH3_l', dKmT);
+          consumeSpecies('MnO4_aq', 2 * dKmT);
+          moles.C6H5COO_aq = (moles.C6H5COO_aq || 0) + dKmT;
+          moles.MnO2_s = (moles.MnO2_s || 0) + 2 * dKmT;
+          moles.OH_aq = (moles.OH_aq || 0) + dKmT;
+          moles.H2O_l = (moles.H2O_l || 0) + dKmT;
+          heatJ += dKmT * 360000;
+          pushRxn('toluene_kmno4_hot', 'C₆H₅CH₃ + 2MnO₄⁻ —(80–100 °C)→ C₆H₅COO⁻ + 2MnO₂↓ + OH⁻ + H₂O', 'Oxi hóa Toluene bằng KMnO₄ đun nóng → Benzoate + MnO₂↓', 'Hot KMnO₄ oxidizes Toluene → Benzoate + 2MnO₂↓', 'Khác với Benzene trơ hoàn toàn, Toluene làm mất màu KMnO₄ khi đun nóng tạo kết tủa nâu đen MnO₂.', 'Unlike inert Benzene, hot KMnO₄ oxidizes Toluene to Benzoate and brown-black MnO₂↓.', dKmT);
+        }
+      }
+    }
+
+    // Ethylbenzene + KMnO4 (>= 343.15 K) -> Benzoate + CO3^2- + 4MnO2↓
+    if ((moles.C6H5C2H5_l || 0) > 1e-9 && (moles.MnO4_aq || 0) > 1e-7 && (moles.H2O_l || 0) > 1e-4 && T >= 343.15) {
+      const dKmEb = Math.min(moles.C6H5C2H5_l, moles.MnO4_aq / 4) * (1 - Math.exp(-0.72 * dt));
+      if (dKmEb > 1e-11) {
+        consumeSpecies('C6H5C2H5_l', dKmEb);
+        consumeSpecies('MnO4_aq', 4 * dKmEb);
+        moles.C6H5COO_aq = (moles.C6H5COO_aq || 0) + dKmEb;
+        moles.CO3_2_aq = (moles.CO3_2_aq || 0) + dKmEb;
+        moles.MnO2_s = (moles.MnO2_s || 0) + 4 * dKmEb;
+        moles.OH_aq = (moles.OH_aq || 0) + dKmEb;
+        moles.H2O_l = (moles.H2O_l || 0) + 2 * dKmEb;
+        heatJ += dKmEb * 620000;
+        pushRxn('ethylbenzene_kmno4_hot', 'C₆H₅C₂H₅ + 4MnO₄⁻ —(90 °C)→ C₆H₅COO⁻ + CO₃²⁻ + 4MnO₂↓ + OH⁻ + 2H₂O', 'Oxi hóa cắt mạch Ethylbenzene bằng KMnO₄ nóng → Benzoate + MnO₂↓', 'Hot KMnO₄ cleaves Ethylbenzene → Benzoate + CO₃²⁻ + 4MnO₂↓', 'Toàn bộ nhánh ethyl bị oxi hóa cắt mạch thành nhóm –COO⁻ (Benzoate) và MnO₂↓.', 'Hot KMnO₄ cleaves the entire ethyl side chain to Benzoate and MnO₂↓.', dKmEb);
+      }
+    }
+
+    // Benzoate acidification: C6H5COO- + H+ -> C6H5COOH↓ (white crystals)
+    if ((moles.C6H5COO_aq || 0) > 1e-9 && (moles.H_aq || 0) > 1e-6) {
+      const dBzAcid = Math.min(moles.C6H5COO_aq, moles.H_aq) * (1 - Math.exp(-3.2 * dt));
+      if (dBzAcid > 1e-11) {
+        consumeSpecies('C6H5COO_aq', dBzAcid);
+        consumeSpecies('H_aq', dBzAcid);
+        moles.C6H5COOH_s = (moles.C6H5COOH_s || 0) + dBzAcid;
+        heatJ += dBzAcid * 24000;
+        pushRxn('benzoate_acidify', 'C₆H₅COO⁻ + H⁺ → C₆H₅COOH↓ (trắng)', 'Acid hóa Benzoate kết tinh Benzoic acid trắng', 'Acidification of Benzoate → white Benzoic acid↓', 'Acid hóa muối Benzoate kết tủa tinh thể trắng Benzoic acid.', 'Acidifying Benzoate precipitates white Benzoic acid crystals.', dBzAcid);
+      }
     }
   }
 
@@ -6478,6 +6833,11 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   C6H5SO3H_aq: { C6H6_g: 1, SO3_g: 1 },
   C6H5O_aq: { C6H5OH_s: 1 },
   C2H5NH2_aq: { C2H5NH2_g: 1 },
+  C2O4_2_aq: { H2C2O4_s: 1 },
+  C6H5COO_aq: { C6H5COOH_s: 1 },
+  C6H5SO3_aq: { C6H5SO3Na_s: 1 },
+  CH2CHCOO_aq: { CH2CHCOOH_g: 1 },
+  CH3CHCHCOO_aq: { CH3CHCHCOOH_s: 1 },
 };
 
 export const DRY_SALT_PAIRINGS = [

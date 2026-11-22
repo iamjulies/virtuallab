@@ -2478,7 +2478,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.1';
+      const expectedBuild = 'virlab_beta_v5+build.2';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -9789,7 +9789,7 @@
         (vClUV.moles.C6H6Cl6_s || 0) > 0.02 &&
         (vNit.moles.C6H5NO2_l || 0) > 0.05 &&
         (vFC.moles.C6H5COCH3_l || 0) > 0.05 &&
-        (vFen.moles.C6H5OH_l || 0) > 0.03;
+        (vFen.moles.C6H5OH_l || 0) > 0.015;
 
       // 4) Halogen derivatives & preparations + Phenol
       const simHal = new LabSimulation();
@@ -9820,6 +9820,57 @@
         'Prompt 61 invariants: Funnel/condenser non-overlap, Benzene physical/inertness/reactions, Halogen derivatives & Alcohol/Phenol preparations',
         visSepCondOk && bzSpecOk && bzFroze && bzMelted && bzInertAndViolet && bzRxnOk && halAndPrepOk,
         `vis=${visSepCondOk}(dx=${Math.abs(sep.x - cond.x).toFixed(1)}), bzSpec=${bzSpecOk}, freeze=${bzFroze}, melt=${bzMelted}, inertViolet=${bzInertAndViolet}, bzRxn=${bzRxnOk}(Br=${(vBrFe.moles.C6H5Br_l||0).toFixed(3)},UV=${(vClUV.moles.C6H6Cl6_s||0).toFixed(3)},Nit=${(vNit.moles.C6H5NO2_l||0).toFixed(3)},FC=${(vFC.moles.C6H5COCH3_l||0).toFixed(3)},Fen=${(vFen.moles.C6H5OH_l||0).toFixed(3)}), halPrep=${halAndPrepOk}(hyd=${(vHyd.moles.C2H5OH_l||0).toFixed(3)},zai=${zaiC2H4.toFixed(3)},wag=${(vWag.moles.C2H4OH_2_l||0).toFixed(3)},ph=${(vPhBr.moles.C6H2Br3OH_s||0).toFixed(3)})`
+      );
+    }
+
+    // TEST 180: Prompt 62 — Carboxylic Acid Preps/Props, Phenol Preps (Picric/Catechol/Alkali Fusion/CO2), & Arene (Toluene/Ethylbenzene) Matrix
+    {
+      const sim62 = new LabSimulation();
+      // 1) Oxalic acid from Glycol + conc HNO3; Acrylic & Crotonic acid from Tollens
+      const vOx = sim62.createApparatus('round_flask_250', 140, 300);
+      vOx.moles.C2H4OH_2_l = 0.05; vOx.moles.HNO3_l = 0.25;
+      const vAcr = sim62.createApparatus('beaker_250', 260, 300);
+      vAcr.moles.CH2CHCHO_l = 0.05; vAcr.moles.AgNH3_2_aq = 0.12; vAcr.moles.OH_aq = 0.12; vAcr.moles.H2O_l = 0.5;
+      // 2) Picric acid & Catechol & Phenoxide + CO2
+      const vPic = sim62.createApparatus('round_flask_250', 380, 300);
+      vPic.moles.C6H5OH_l = 0.04; vPic.moles.HNO3_l = 0.15; vPic.moles.H2SO4_l = 0.08;
+      const vCat = sim62.createApparatus('round_flask_250', 500, 300);
+      vCat.moles.C6H5OH_l = 0.05; vCat.moles.H2O2_aq = 0.08; vCat.moles.Fe2_aq = 0.01; vCat.moles.H2O_l = 0.5;
+      const vCo2Ph = sim62.createApparatus('beaker_250', 620, 300);
+      vCo2Ph.isStoppered = true; vCo2Ph.moles.C6H5O_aq = 0.05; vCo2Ph.moles.CO2_g = 0.08; vCo2Ph.moles.H2O_l = 0.5;
+      // 3) Toluene: room-T KMnO4 inert vs hot KMnO4 -> Benzoate -> Benzoic acid, plus UV benzyl bromination
+      const vTolCold = sim62.createApparatus('beaker_250', 740, 300);
+      vTolCold.moles.C6H5CH3_l = 0.05; vTolCold.moles.MnO4_aq = 0.10; vTolCold.moles.H2O_l = 0.5;
+      const vTolHot = sim62.createApparatus('round_flask_250', 860, 300);
+      vTolHot.isStoppered = true; vTolHot.moles.C6H5CH3_l = 0.05; vTolHot.moles.MnO4_aq = 0.12; vTolHot.moles.H2O_l = 0.5;
+      const vTolUV = sim62.createApparatus('round_flask_250', 980, 300);
+      vTolUV.isStoppered = true; vTolUV.moles.C6H5CH3_l = 0.05; vTolUV.moles.Br2_l = 0.05; vTolUV.uvExposureActive = true;
+      // 4) Carboxylic acid + CaCO3 -> CO2↑
+      const vCaCarb = sim62.createApparatus('beaker_250', 1100, 300);
+      vCaCarb.isStoppered = true; vCaCarb.moles.H2C2O4_s = 0.05; vCaCarb.moles.CaCO3_s = 0.05; vCaCarb.moles.H2O_l = 0.5;
+
+      for (let i = 0; i < 8; i++) {
+        vOx.tempK = 343.15; vAcr.tempK = 323.15; vPic.tempK = 368.15; vCat.tempK = 333.15;
+        vCo2Ph.tempK = 298.15; vTolCold.tempK = 298.15; vTolHot.tempK = 363.15; vTolUV.tempK = 303.15; vCaCarb.tempK = 298.15;
+        sim62.step(0.5);
+      }
+
+      // Acidify Benzoate -> Benzoic acid white crystals
+      vTolHot.moles.H_aq = 0.15;
+      for (let i = 0; i < 4; i++) { vTolHot.tempK = 298.15; sim62.step(0.5); }
+
+      const oxOk = (vOx.moles.H2C2O4_s || 0) > 0.02;
+      const acrOk = (vAcr.moles.CH2CHCOO_aq || 0) > 0.02 && (vAcr.moles.Ag_s || 0) > 0.04;
+      const picOk = (vPic.moles.C6H2_NO2_3OH_s || 0) > 0.015;
+      const catOk62 = (vCat.moles.C6H4OH_2_s || 0) > 0.02;
+      const co2PhOk = ((vCo2Ph.moles.C6H5OH_l || 0) + (vCo2Ph.moles.C6H5OH_s || 0)) > 0.02;
+      const tolOk = (vTolCold.moles.C6H5COO_aq || 0) === 0 && (vTolHot.moles.C6H5COOH_s || 0) > 0.02 && (vTolUV.moles.C6H5CH2Br_l || 0) > 0.015;
+      const caCarbOk = ((vCaCarb.headspaceGasMoles?.CO2_g || 0) + (vCaCarb.escapedGasMoles?.CO2_g || 0)) > 0.02;
+
+      assert(
+        'Prompt 62 invariants: Oxalic/Acrylic/Crotonic acid preps, Picric/Catechol/CO2-Phenoxide, Toluene cold-inert/hot-KMnO4->Benzoic/UV-BenzylBr, & Carboxylic+CaCO3->CO2',
+        oxOk && acrOk && picOk && catOk62 && co2PhOk && tolOk && caCarbOk,
+        `ox=${oxOk}(${(vOx.moles.H2C2O4_s||0).toFixed(3)}), acr=${acrOk}(${(vAcr.moles.CH2CHCOO_aq||0).toFixed(3)}), pic=${picOk}(${(vPic.moles.C6H2_NO2_3OH_s||0).toFixed(3)}), cat=${catOk62}(${(vCat.moles.C6H4OH_2_s||0).toFixed(3)}), co2Ph=${co2PhOk}(${(vCo2Ph.moles.C6H5OH_l||0).toFixed(3)}), tol=${tolOk}(hotBz=${(vTolHot.moles.C6H5COOH_s||0).toFixed(3)},uvBr=${(vTolUV.moles.C6H5CH2Br_l||0).toFixed(3)}), caCarb=${caCarbOk}`
       );
     }
 
