@@ -434,6 +434,20 @@ export function computeSolutionVisuals(
     }
   }
 
+  // 3b. Soap micelle / emulsion opalescence (milky homogeneous solution during lipid saponification)
+  const nSoapMol = (moles.C17H33COO_aq || 0) + (moles.C17H35COO_aq || 0);
+  if (nSoapMol > 1e-5 && (phaseFilter === 'aq' || phaseFilter === 'aqueous' || phaseFilter === 'all')) {
+    const cSoap = nSoapMol / Math.max(1e-4, liquidVolL);
+    const hasOilLeft = (moles.C57H104O6_l || 0) > 1e-6 || (moles.C57H110O6_s || 0) > 1e-6;
+    const wSoap = Math.min(hasOilLeft ? 0.68 : 0.42, cSoap / (cSoap + 0.16));
+    if (wSoap > 0.02) {
+      r = Math.round(r * (1 - wSoap) + 244 * wSoap);
+      g = Math.round(g * (1 - wSoap) + 241 * wSoap);
+      b = Math.round(b * (1 - wSoap) + 230 * wSoap);
+      alpha = Math.min(0.90, alpha + wSoap * 0.44);
+    }
+  }
+
   return {
     css: `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`,
     r,
@@ -652,7 +666,7 @@ export function computePhaseStratification(moles, tempK = CONSTANTS.T_STD_K, ves
 
   const T = Number.isFinite(tempK) ? Math.max(155, Math.min(800, tempK)) : CONSTANTS.T_STD_K;
   const aqVolL = computeAqueousVolumeL(moles, T);
-  const aqVolMl = aqVolL * 1000;
+  let aqVolMl = aqVolL * 1000;
   let aqMassG = 0;
   for (const [id, n] of Object.entries(moles)) {
     if (!Number.isFinite(n) || n <= 1e-12) continue;
@@ -662,12 +676,17 @@ export function computePhaseStratification(moles, tempK = CONSTANTS.T_STD_K, ves
       aqMassG += n * sp.molarMass;
     }
   }
-  const aqDensity = aqVolMl > 1e-6 ? aqMassG / aqVolMl : 0.997;
 
   let lightVolMl = 0;
   let lightMassG = 0;
   let heavyVolMl = 0;
   let heavyMassG = 0;
+  let aqBonusVolMl = 0;
+  let aqBonusMassG = 0;
+
+  const nSoapStrat = (moles.C17H33COO_aq || 0) + (moles.C17H35COO_aq || 0);
+  const cSoapStrat = aqVolL > 1e-5 ? nSoapStrat / aqVolL : 0;
+  const lipidEmulsifyFrac = nSoapStrat > 1e-5 && aqVolMl > 0.5 ? Math.min(0.95, Math.max(0, (cSoapStrat - 0.04) / 0.25)) : 0;
 
   for (const [id, n] of Object.entries(moles)) {
     if (!Number.isFinite(n) || n <= 1e-12) continue;
@@ -676,14 +695,25 @@ export function computePhaseStratification(moles, tempK = CONSTANTS.T_STD_K, ves
     const lg = sp.liquidGroup || 'aqueous';
     if (lg === 'organic_light' && sp.density > 0) {
       const mG = n * sp.molarMass;
-      lightMassG += mG;
-      lightVolMl += mG / sp.density;
+      const vMl = mG / sp.density;
+      if (id === 'C57H104O6_l' && lipidEmulsifyFrac > 0.01) {
+        aqBonusMassG += mG * lipidEmulsifyFrac;
+        aqBonusVolMl += vMl * lipidEmulsifyFrac;
+        lightMassG += mG * (1 - lipidEmulsifyFrac);
+        lightVolMl += vMl * (1 - lipidEmulsifyFrac);
+      } else {
+        lightMassG += mG;
+        lightVolMl += vMl;
+      }
     } else if (lg === 'organic_heavy' && sp.density > 0) {
       const mG = n * sp.molarMass;
       heavyMassG += mG;
       heavyVolMl += mG / sp.density;
     }
   }
+  aqVolMl += aqBonusVolMl;
+  aqMassG += aqBonusMassG;
+  const aqDensity = aqVolMl > 1e-6 ? aqMassG / aqVolMl : 0.997;
 
   const lightDensity = lightVolMl > 1e-6 ? lightMassG / lightVolMl : 0.72;
   const heavyDensity = heavyVolMl > 1e-6 ? heavyMassG / heavyVolMl : 1.48;

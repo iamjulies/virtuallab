@@ -6385,18 +6385,7 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
       }
     }
 
-    // 5C-8. Ethyl acetate alkaline saponification: CH3COOC2H5 + OH- -(>= 60 °C)-> CH3COO- + C2H5OH
-    if ((moles.CH3COOC2H5_l || 0) > 1e-9 && (moles.OH_aq || 0) > 1e-6 && T >= 333.15) {
-      const dSap = Math.min(moles.CH3COOC2H5_l, moles.OH_aq) * (1 - Math.exp(-0.82 * dt));
-      if (dSap > 1e-11) {
-        consumeSpecies('CH3COOC2H5_l', dSap);
-        consumeSpecies('OH_aq', dSap);
-        moles.CH3COO_aq = (moles.CH3COO_aq || 0) + dSap;
-        moles.C2H5OH_l = (moles.C2H5OH_l || 0) + dSap;
-        heatJ += dSap * 48000;
-        pushRxn('etoac_saponification', 'CH₃COOC₂H₅ + OH⁻ —(75 °C)→ CH₃COO⁻ + C₂H₅OH', 'Xà phòng hóa Ethyl acetate tái tạo Ethanol', 'Alkaline saponification of Ethyl acetate → CH₃COO⁻ + Ethanol', 'Đun Ethyl acetate với NaOH thủy phân hoàn toàn tái tạo Ethanol.', 'Hot NaOH saponifies Ethyl acetate to Acetate and Ethanol.', dSap);
-      }
-    }
+    // 5C-8. Ethyl acetate alkaline saponification is handled by unified Arrhenius + RK2 stepEsterAndLipidKinetics below (Part 7E).
 
     // 5D. Phenol (C6H5OH_l / C6H5OH_s) Reactions
     const phSrc = (moles.C6H5OH_l || 0) > 1e-9 ? 'C6H5OH_l' : (moles.C6H5OH_s || 0) > 1e-9 ? 'C6H5OH_s' : null;
@@ -6926,7 +6915,7 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
       }
     }
 
-    // Formate esters (HCOOCH3 / HCOOC2H5): saponification + Tollens + Cu(OH)2
+    // Formate esters (HCOOCH3 / HCOOC2H5): Tollens (saponification handled by unified Arrhenius + RK2 kinetics in Part 7E)
     for (const fe of [{ id: 'HCOOCH3_l', alc: 'CH3OH_l', label: 'HCOOCH₃' }, { id: 'HCOOC2H5_l', alc: 'C2H5OH_l', label: 'HCOOC₂H₅' }]) {
       const nFe = moles[fe.id] || 0;
       if (nFe <= 1e-10) continue;
@@ -6937,13 +6926,6 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
           moles.CO3_2_aq = (moles.CO3_2_aq || 0) + dFeT; moles[fe.alc] = (moles[fe.alc] || 0) + dFeT;
           moles.Ag_s = (moles.Ag_s || 0) + 2 * dFeT; moles.NH4_aq = (moles.NH4_aq || 0) + 2 * dFeT; moles.NH3_aq = (moles.NH3_aq || 0) + 2 * dFeT;
           pushRxn(`tollens_${fe.id}`, `${fe.label} + 2[Ag(NH₃)₂]⁺ + 2OH⁻ → 2Ag↓ + ${fe.alc === 'CH3OH_l' ? 'CH₃OH' : 'C₂H₅OH'}`, `Ester formate ${fe.label} tráng bạc tạo 2Ag↓`, `${fe.label} undergoes Tollens silver mirror reaction`, 'Ester của Formic acid có nhóm H–COO– nên tham gia phản ứng tráng gương.', 'Formate esters preserve the –CHO motif and yield a silver mirror.', dFeT);
-        }
-      } else if ((moles.OH_aq || 0) > 1e-6 && T >= 323.15) {
-        const dFeS = Math.min(nFe, moles.OH_aq) * (1 - Math.exp(-1.1 * dt));
-        if (dFeS > 1e-11) {
-          consumeSpecies(fe.id, dFeS); consumeSpecies('OH_aq', dFeS);
-          moles.HCOO_aq = (moles.HCOO_aq || 0) + dFeS; moles[fe.alc] = (moles[fe.alc] || 0) + dFeS;
-          pushRxn(`sap_${fe.id}`, `${fe.label} + OH⁻ → HCOO⁻ + ${fe.alc === 'CH3OH_l' ? 'CH₃OH' : 'C₂H₅OH'}`, `Xà phòng hóa ${fe.label}`, `Alkaline hydrolysis of ${fe.label}`, 'Thủy phân ester formate trong kiềm tạo Formate và alcohol.', 'Alkali hydrolyzes formate ester to Formate and alcohol.', dFeS);
         }
       }
     }
@@ -7067,23 +7049,138 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
       }
     }
 
-    // 7E. Lipids / Triglycerides (Triolein C57H104O6_l & Tristearin C57H110O6_s): Saponification, Acid Hydrolysis, Hydrogenation, Br2 Decolorization
-    if ((moles.C57H104O6_l || 0) > 1e-9) {
-      if ((moles.OH_aq || 0) > 1e-6 && T >= 343.15) {
-        const dSapL = Math.min(moles.C57H104O6_l, moles.OH_aq / 3) * (1 - Math.exp(-0.85 * dt));
-        if (dSapL > 1e-11) {
-          consumeSpecies('C57H104O6_l', dSapL); consumeSpecies('OH_aq', 3 * dSapL);
-          moles.C3H5OH_3_l = (moles.C3H5OH_3_l || 0) + dSapL; moles.C17H33COO_aq = (moles.C17H33COO_aq || 0) + 3 * dSapL;
-          pushRxn('triolein_saponification', '(C₁₇H₃₃COO)₃C₃H₅ + 3OH⁻ —(t°)→ C₃H₅(OH)₃ + 3C₁₇H₃₃COO⁻', 'Xà phòng hóa Triolein tạo Glycerol & muối Oleate (xà phòng)', 'Saponification of Triolein → Glycerol + 3 Oleate soap', 'Đun chất béo lỏng với dung dịch kiềm thu được xà phòng và Glycerol.', 'Alkaline saponification of Triolein produces Glycerol and Oleate soap.', dSapL);
+    // 7E. Unified Arrhenius + RK2 Midpoint Ester & Lipid Hydrolysis / Saponification Kinetics
+    {
+      const R_GAS = CONSTANTS.R_J_MOL_K || 8.314;
+      const isStirred = (vessel.stirTimer || 0) > 0.05;
+      const hasEtOHCosolvent = (moles.C2H5OH_l || 0) >= 0.005 || (moles.CH3OH_l || 0) >= 0.005;
+      const totVolL = Math.max(0.008, (options?.strat?.totalLiqMl || liquidVolL * 1000 || 20) / 1000);
+      const cH = (moles.H_aq || 0) / totVolL;
+
+      const ESTER_KINETICS = [
+        { id: 'HCOOCH3_l', acidId: 'HCOOH_l', saltId: 'HCOO_aq', alcId: 'CH3OH_l', stoich: 1, aAlk: 1.25e8, eaAlk: 41800, aAcid: 4.80e8, eaAcid: 62500, kc: 0.28, isFat: false, dHAlkJ: 46000, dHAcidJ: 3200, rxnIdAlk: 'sap_HCOOCH3_l', eqAlk: 'HCOOCH₃ + OH⁻ → HCOO⁻ + CH₃OH', nameViAlk: 'Xà phòng hóa Methyl formate', nameEnAlk: 'Alkaline hydrolysis of Methyl formate' },
+        { id: 'HCOOC2H5_l', acidId: 'HCOOH_l', saltId: 'HCOO_aq', alcId: 'C2H5OH_l', stoich: 1, aAlk: 6.50e7, eaAlk: 43500, aAcid: 2.20e8, eaAcid: 64000, kc: 0.26, isFat: false, dHAlkJ: 46000, dHAcidJ: 3400, rxnIdAlk: 'sap_HCOOC2H5_l', eqAlk: 'HCOOC₂H₅ + OH⁻ → HCOO⁻ + C₂H₅OH', nameViAlk: 'Xà phòng hóa Ethyl formate', nameEnAlk: 'Alkaline hydrolysis of Ethyl formate' },
+        { id: 'CH3COOC2H5_l', acidId: 'CH3COOH_l', saltId: 'CH3COO_aq', alcId: 'C2H5OH_l', stoich: 1, aAlk: 1.58e7, eaAlk: 46500, aAcid: 6.15e7, eaAcid: 67000, kc: 0.25, isFat: false, skipAcid: true, dHAlkJ: 48000, dHAcidJ: 3800, rxnIdAlk: 'etoac_saponification', eqAlk: 'CH₃COOC₂H₅ + OH⁻ → CH₃COO⁻ + C₂H₅OH', nameViAlk: 'Xà phòng hóa Ethyl acetate', nameEnAlk: 'Alkaline saponification of Ethyl acetate' },
+        { id: 'C6H5COOC2H5_l', acidId: 'C6H5COOH_s', saltId: 'C6H5COO_aq', alcId: 'C2H5OH_l', stoich: 1, aAlk: 4.10e7, eaAlk: 58200, aAcid: 1.20e8, eaAcid: 72000, kc: 0.24, isFat: false, dHAlkJ: 45000, dHAcidJ: 3500, rxnIdAlk: 'sap_C6H5COOC2H5_l', eqAlk: 'C₆H₅COOC₂H₅ + OH⁻ → C₆H₅COO⁻ + C₂H₅OH', nameViAlk: 'Xà phòng hóa Ethyl benzoate', nameEnAlk: 'Alkaline hydrolysis of Ethyl benzoate' },
+        { id: 'C57H104O6_l', acidId: 'C17H33COOH_l', saltId: 'C17H33COO_aq', alcId: 'C3H5OH_3_l', stoich: 3, aAlk: 3.20e7, eaAlk: 54000, aAcid: 1.80e8, eaAcid: 74500, kc: 0.22, isFat: true, dHAlkJ: 135000, dHAcidJ: 11000, rxnIdAlk: 'triolein_saponification', eqAlk: '(C₁₇H₃₃COO)₃C₃H₅ + 3OH⁻ ⇌(Nhũ tương hóa) C₃H₅(OH)₃ + 3C₁₇H₃₃COO⁻', nameViAlk: 'Xà phòng hóa Triolein (tự xúc tác nhũ tương hóa) → Glycerol + Oleate', nameEnAlk: 'Autocatalytic Triolein saponification → Glycerol + 3 Oleate soap' },
+        { id: 'C57H110O6_s', acidId: 'C17H35COOH_s', saltId: 'C17H35COO_aq', alcId: 'C3H5OH_3_l', stoich: 3, aAlk: 3.20e7, eaAlk: 54000, aAcid: 1.80e8, eaAcid: 74500, kc: 0.22, isFat: true, meltTempK: 345.15, dHAlkJ: 140000, dHAcidJ: 12000, rxnIdAlk: 'tristearin_saponification', eqAlk: '(C₁₇H₃₅COO)₃C₃H₅ + 3OH⁻ ⇌(Nhũ tương hóa) C₃H₅(OH)₃ + 3C₁₇H₃₅COO⁻', nameViAlk: 'Xà phòng hóa Tristearin → Glycerol + Stearate', nameEnAlk: 'Autocatalytic Tristearin saponification → Glycerol + 3 Stearate soap' },
+      ];
+
+      for (const ep of ESTER_KINETICS) {
+        const nEster = moles[ep.id] || 0;
+        const nAcid = moles[ep.acidId] || 0;
+        const nAlc = moles[ep.alcId] || 0;
+        if (nEster <= 1e-10 && (ep.skipAcid || nAcid <= 1e-10 || nAlc <= 1e-10)) continue;
+
+        const cEstEq = (nEster * ep.stoich) / totVolL;
+        const cOH = (moles.OH_aq || 0) / totVolL;
+        const cSalt = (moles[ep.saltId] || 0) / totVolL;
+        const cW = (moles.H2O_l || 0) / totVolL;
+
+        // 1. Alkaline Saponification (Arrhenius k2 + RK2 Midpoint integration + Lipid Autocatalytic Emulsion)
+        if (cOH > 1e-7 && cEstEq > 1e-9 && (moles.H2O_l || 0) > 1e-5) {
+          const k2Base = ep.aAlk * Math.exp(-ep.eaAlk / (R_GAS * Math.max(250, T)));
+          const solidFactor = ep.meltTempK && T < ep.meltTempK ? 0.22 : 1.0;
+          const mixFactor = ep.isFat ? (isStirred ? 1.0 : hasEtOHCosolvent ? 0.85 : 0.28) : (cEstEq > 0.9 && !isStirred ? 0.45 : 1.0);
+          const rateAlkAt = (ce, coh, cs) => {
+            if (ce <= 1e-10 || coh <= 1e-10) return 0;
+            const emul = ep.isFat ? (0.20 + 0.80 * (cs / (cs + 0.05))) : 1.0;
+            const viscBrake = ep.isFat && !isStirred && !hasEtOHCosolvent ? (1 / (1 + 1.2 * cs)) : 1.0;
+            return k2Base * solidFactor * mixFactor * emul * viscBrake * ce * coh;
+          };
+
+          // Multi-substep RK2 Midpoint integration prevents stiff overshoot/spikes
+          const r0 = rateAlkAt(cEstEq, cOH, cSalt);
+          const estMaxScale = k2Base * mixFactor * Math.max(cEstEq, cOH) * dt;
+          const nSub = Math.max(1, Math.min(12, Math.ceil(estMaxScale * 3.5)));
+          const subDt = dt / nSub;
+          let ce = cEstEq, coh = cOH, cs = cSalt;
+          for (let s = 0; s < nSub; s++) {
+            const k1 = rateAlkAt(ce, coh, cs);
+            const ceMid = Math.max(0, ce - 0.5 * subDt * k1);
+            const cohMid = Math.max(0, coh - 0.5 * subDt * k1);
+            const csMid = cs + 0.5 * subDt * k1;
+            const k2rk = rateAlkAt(ceMid, cohMid, csMid);
+            const stepDx = Math.min(subDt * k2rk, ce, coh);
+            ce -= stepDx; coh -= stepDx; cs += stepDx;
+          }
+          const dxEqMol = Math.min(nEster * ep.stoich, moles.OH_aq || 0, Math.max(0, (cEstEq - ce) * totVolL));
+          const dFormMol = dxEqMol / ep.stoich;
+          if (dFormMol > 1e-11 && r0 >= 0) {
+            consumeSpecies(ep.id, dFormMol);
+            consumeSpecies('OH_aq', dxEqMol);
+            moles[ep.saltId] = (moles[ep.saltId] || 0) + dxEqMol;
+            moles[ep.alcId] = (moles[ep.alcId] || 0) + dFormMol;
+            heatJ += dFormMol * ep.dHAlkJ;
+            if (T >= 303.15 || dxEqMol / Math.max(1e-6, dt) >= 1e-5) {
+              pushRxn(ep.rxnIdAlk, ep.eqAlk, ep.nameViAlk, ep.nameEnAlk, 'Thủy phân ester/chất béo theo động học Arrhenius + tự xúc tác nhũ tương hóa bằng xà phòng.', 'Arrhenius RK2 kinetics with autocatalytic soap emulsification.', dFormMol);
+            }
+          }
         }
-      } else if ((moles.H_aq || 0) > 1e-5 && (moles.H2O_l || 0) > 1e-4 && T >= 353.15) {
-        const dHydL = Math.min(moles.C57H104O6_l, moles.H2O_l / 3) * (1 - Math.exp(-0.55 * dt));
-        if (dHydL > 1e-11) {
-          consumeSpecies('C57H104O6_l', dHydL); consumeSpecies('H2O_l', 3 * dHydL);
-          moles.C3H5OH_3_l = (moles.C3H5OH_3_l || 0) + dHydL; moles.C17H33COOH_l = (moles.C17H33COOH_l || 0) + 3 * dHydL;
-          pushRxn('triolein_acid_hyd', '(C₁₇H₃₃COO)₃C₃H₅ + 3H₂O ⇌(H⁺, t°) C₃H₅(OH)₃ + 3C₁₇H₃₃COOH', 'Thủy phân Triolein trong môi trường acid', 'Acid hydrolysis of Triolein → Glycerol + 3 Oleic acid', 'Thủy phân thuận nghịch chất béo trong acid tạo Glycerol và Oleic acid.', 'Acid hydrolysis yields Glycerol and Oleic acid.', dHydL);
+        // 2. Reversible Acid-Catalyzed Hydrolysis <-> Esterification (halts strictly at Kc < 1)
+        else if (!ep.skipAcid && cH > 1e-4 && (moles.H2O_l || 0) > 1e-5) {
+          const kCat = ep.aAcid * Math.exp(-ep.eaAcid / (R_GAS * Math.max(250, T)));
+          const mixFactor = ep.isFat ? (isStirred ? 1.0 : hasEtOHCosolvent ? 0.85 : 0.32) : 1.0;
+          const timeMult = ep.isFat ? 18.0 : 8.0; // Compressed lab timescale for slow acid equilibrium while preserving exact Kc
+          const k1 = kCat * cH * mixFactor * timeMult;
+          const kRev = k1 / ep.kc;
+          const cAcid = nAcid / totVolL;
+          const cAlcEq = (nAlc * ep.stoich) / totVolL;
+          const netRateAt = (ce, cw, ca, cal) => k1 * ce * cw - kRev * ca * cal;
+          const kr1 = netRateAt(cEstEq, cW, cAcid, cAlcEq);
+          const dcMid = 0.5 * dt * kr1;
+          const kr2 = netRateAt(
+            Math.max(0, cEstEq - dcMid),
+            Math.max(0, cW - dcMid),
+            Math.max(0, cAcid + dcMid),
+            Math.max(0, cAlcEq + dcMid)
+          );
+          let dxEqMol = kr2 * dt * totVolL;
+          if (dxEqMol > 1e-11) {
+            dxEqMol = Math.min(dxEqMol, nEster * ep.stoich, moles.H2O_l || 0);
+            const dHyd = dxEqMol / ep.stoich;
+            if (dHyd > 1e-11) {
+              consumeSpecies(ep.id, dHyd); consumeSpecies('H2O_l', dxEqMol);
+              moles[ep.acidId] = (moles[ep.acidId] || 0) + dxEqMol;
+              moles[ep.alcId] = (moles[ep.alcId] || 0) + dHyd;
+              heatJ -= dHyd * ep.dHAcidJ;
+              pushRxn(`acid_hyd_${ep.id}`, `${ep.id.replace('_l', '').replace('_s', '')} + ${ep.stoich > 1 ? '3' : ''}H₂O ⇌(H⁺, Kc=${ep.kc}) Acid + ${ep.stoich > 1 ? 'Glycerol' : 'Alcohol'}`, `Thủy phân thuận nghịch trong acid (đạt cân bằng Kc = ${ep.kc})`, `Reversible acid hydrolysis (Kc = ${ep.kc})`, 'Phản ứng thuận nghịch tiến về cân bằng nhiệt động Kc, không bao giờ đạt 100% khi còn nước/sản phẩm.', 'Reversible acid hydrolysis approaches thermodynamic Kc equilibrium (never 100%).', dHyd);
+            }
+          } else if (dxEqMol < -1e-11 && nAcid > 1e-9 && nAlc > 1e-9) {
+            dxEqMol = Math.max(dxEqMol, -nAcid, -nAlc * ep.stoich);
+            const dRev = (-dxEqMol) / ep.stoich;
+            if (dRev > 1e-11) {
+              consumeSpecies(ep.acidId, -dxEqMol); consumeSpecies(ep.alcId, dRev);
+              moles[ep.id] = (moles[ep.id] || 0) + dRev; moles.H2O_l = (moles.H2O_l || 0) + (-dxEqMol);
+              heatJ += dRev * ep.dHAcidJ;
+            }
+          }
         }
       }
+
+      // Soap Salting-Out: Adding saturated NaCl precipitates RCOONa(s) floating white soap cake
+      const cNaSalt = (moles.Na_aq || 0) / totVolL;
+      const cClSalt = (moles.Cl_aq || 0) / totVolL;
+      if (cNaSalt >= 1.8 && cClSalt >= 1.5 && (moles.H2O_l || 0) > 1e-4) {
+        for (const [ionId, solidId, label] of [
+          ['C17H33COO_aq', 'C17H33COONa_s', 'C₁₇H₃₃COONa'],
+          ['C17H35COO_aq', 'C17H35COONa_s', 'C₁₇H₃₅COONa'],
+        ]) {
+          const nSoapI = moles[ionId] || 0;
+          if (nSoapI > 1e-9 && (moles.Na_aq || 0) > 1e-9) {
+            const dSaltOut = Math.min(nSoapI, moles.Na_aq) * (1 - Math.exp(-2.2 * dt));
+            if (dSaltOut > 1e-11) {
+              consumeSpecies(ionId, dSaltOut); consumeSpecies('Na_aq', dSaltOut);
+              moles[solidId] = (moles[solidId] || 0) + dSaltOut;
+              pushRxn(`saltout_${solidId}`, `${ionId.replace('_aq', '⁻')} + Na⁺ —(NaCl bão hòa)→ ${label}↓`, `Kết tinh tách xà phòng ${label}↓ nổi lên trên khi thêm NaCl bão hòa`, `Salting-out soap: ${label}↓ precipitates with brine`, 'Dung dịch NaCl bão hòa làm giảm độ tan của muối Sodium carboxylate khiến xà phòng kết tinh tách lớp nổi lên trên.', 'Saturated NaCl brine salts out solid soap curd floating cleanly above the aqueous layer.', dSaltOut);
+            }
+          }
+        }
+      }
+    }
+
+    // Triolein catalytic hydrogenation & Br2 unsaturation decolorization
+    if ((moles.C57H104O6_l || 0) > 1e-9) {
       if (((moles.Ni_s || 0) > 1e-8 || (moles.Pt_s || 0) > 1e-8) && getG('H2_g') > 1e-8 && T >= 423.15) {
         const dHard = Math.min(moles.C57H104O6_l, getG('H2_g') / 3) * (1 - Math.exp(-0.78 * dt));
         if (dHard > 1e-11) {
@@ -7099,14 +7196,6 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
           consumeSpecies('C57H104O6_l', dBrL); consumeSpecies(brLip, 3 * dBrL);
           pushRxn('triolein_br2', '(C₁₇H₃₃COO)₃C₃H₅ + 3Br₂ → Cộng Br₂ mất màu', 'Chất béo không no Triolein làm mất màu nước Bromine', 'Unsaturated Triolein decolorizes Bromine', 'Liên kết C=C trong gốc oleate cộng Br₂ làm mất màu dung dịch Bromine.', 'C=C bonds in Triolein rapidly decolorize Bromine.', dBrL);
         }
-      }
-    }
-    if ((moles.C57H110O6_s || 0) > 1e-9 && (moles.OH_aq || 0) > 1e-6 && T >= 343.15) {
-      const dSapS = Math.min(moles.C57H110O6_s, moles.OH_aq / 3) * (1 - Math.exp(-0.75 * dt));
-      if (dSapS > 1e-11) {
-        consumeSpecies('C57H110O6_s', dSapS); consumeSpecies('OH_aq', 3 * dSapS);
-        moles.C3H5OH_3_l = (moles.C3H5OH_3_l || 0) + dSapS; moles.C17H35COO_aq = (moles.C17H35COO_aq || 0) + 3 * dSapS;
-        pushRxn('tristearin_saponification', '(C₁₇H₃₅COO)₃C₃H₅ + 3OH⁻ —(t°)→ C₃H₅(OH)₃ + 3C₁₇H₃₅COO⁻', 'Xà phòng hóa Tristearin → Sodium stearate + Glycerol', 'Saponification of Tristearin → Glycerol + 3 Stearate soap', 'Đun Tristearin với kiềm tạo xà phòng rắn Stearate và Glycerol.', 'Alkaline saponification of Tristearin yields hard Stearate soap.', dSapS);
       }
     }
 
@@ -7468,6 +7557,8 @@ export const DRY_SALT_PAIRINGS = [
   ['Mn2_aq', 3, 'PO4_3_aq', 2, 'Mn3PO4_2_s', 1, false],
   ['Na_aq', 2, 'SiO3_2_aq', 1, 'Na2SiO3_s', 1, false],
   ['K_aq', 2, 'SiO3_2_aq', 1, 'K2SiO3_s', 1, false],
+  ['Na_aq', 1, 'C17H33COO_aq', 1, 'C17H33COONa_s', 1, false],
+  ['Na_aq', 1, 'C17H35COO_aq', 1, 'C17H35COONa_s', 1, false],
   ['Ca2_aq', 1, 'SiO3_2_aq', 1, 'CaSiO3_s', 1, false],
   ['H_aq', 2, 'SiO3_2_aq', 1, 'H2SiO3_s', 1, false],
   ['K_aq', 2, 'Cr2O7_2_aq', 1, 'K2Cr2O7_s', 1, false],

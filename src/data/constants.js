@@ -250,6 +250,7 @@ export const VOLATILE_LIQUID_PROPS = {
   CCl4_l: { group: 'organic_heavy', boilTempK: 349.85, dHVapJ: 32430, vaporSpeciesId: 'CCl4_g' },
   C3H7Br_l: { group: 'organic_heavy', boilTempK: 332.55, dHVapJ: 30100, vaporSpeciesId: 'C3H7Br_g' },
   C6H10_l: { group: 'organic_light', boilTempK: 356.15, dHVapJ: 33400, vaporSpeciesId: 'C6H10_g' },
+  C6H5COOC2H5_l: { group: 'organic_heavy', boilTempK: 486.15, dHVapJ: 54000, vaporSpeciesId: 'C6H5COOC2H5_g' },
 };
 
 /**

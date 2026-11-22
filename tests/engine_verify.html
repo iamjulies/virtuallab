@@ -2478,7 +2478,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.4';
+      const expectedBuild = 'virlab_beta_v5+build.5';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -9895,6 +9895,7 @@
       vCann.moles.HCHO_aq = 0.10; vCann.moles.OH_aq = 0.15; vCann.moles.H2O_l = 0.05;
       // 4) Triolein saponification & catalytic hardening -> Tristearin(s)
       const vSap = sim63.createApparatus('round_flask_250', 620, 300);
+      vSap.stirTimer = 5.0;
       vSap.moles.C57H104O6_l = 0.04; vSap.moles.OH_aq = 0.15; vSap.moles.H2O_l = 0.5;
       const vHard = sim63.createApparatus('round_flask_250', 720, 300);
       vHard.isStoppered = true; vHard.moles.C57H104O6_l = 0.04; vHard.moles.H2_g = 0.15; vHard.moles.Ni_s = 0.05;
@@ -9986,6 +9987,59 @@
         'Prompt 64 invariants: Funnel stem penetrates stopper bore cleanly beside condenser, HCHO/HCOOH removed from shelf & synthesized from CH3OH, pure MeOH & Glycerol liquid volumes render properly',
         funnelAlignOk && noDirectHchoHcooh && prepFromMeohOk && liqVisualOk,
         `funnel=${funnelAlignOk}(stemY=${funnelStemTipY.toFixed(1)}>=${(rimTop+4).toFixed(1)},taper=${funnelTaperEndY.toFixed(1)}<condTop=${condTopY.toFixed(1)},dx=${Math.abs(sep.x-cond.x).toFixed(1)}), shelf=${noDirectHchoHcooh}(n=${STARTER_REAGENTS.length}), prep=${prepFromMeohOk}(HCHO=${(vPrepAld.moles.HCHO_aq||0).toFixed(3)},HCOOH=${(vPrepAcid.moles.HCOOH_l||0).toFixed(3)}), liq=${liqVisualOk}(meMl=${meVolMl.toFixed(1)},glMl=${glVolMl.toFixed(1)})`
+      );
+    }
+
+    // TEST 183: Prompt 65 — Smooth Arrhenius RK2 Ester & Lipid Saponification, Reversible Acid Equilibrium (< 100%), Emulsification & Soap Salting-Out Phenomena
+    {
+      const sim65 = new LabSimulation();
+      // 1) Lipid saponification at 25 C vs 80 C: no instant 100% spike, smooth autocatalytic curve
+      const vCold = sim65.createApparatus('beaker_250', 160, 300);
+      vCold.moles.C57H104O6_l = 0.02; vCold.moles.OH_aq = 0.06; vCold.moles.Na_aq = 0.06; vCold.moles.H2O_l = 3.0;
+      const vHot = sim65.createApparatus('beaker_250', 320, 300);
+      vHot.moles.C57H104O6_l = 0.02; vHot.moles.OH_aq = 0.06; vHot.moles.Na_aq = 0.06; vHot.moles.H2O_l = 3.0;
+      vHot.stirTimer = 5.0;
+
+      // Initial 2-phase check before soap forms
+      const stratStart = computePhaseStratification(vHot.moles, 298.15, APPARATUS.beaker_250, 0);
+      const startTwoPhase = stratStart.isMultiPhase && stratStart.lightOrganicMl > 10 && stratStart.aqueousMl > 40;
+
+      vCold.tempK = 298.15; vHot.tempK = 353.15;
+      sim65.step(0.5);
+      const hotSoap05 = vHot.moles.C17H33COO_aq || 0;
+      for (let i = 0; i < 6; i++) {
+        vCold.tempK = 298.15; vHot.tempK = 353.15; vHot.stirTimer = 3.0;
+        sim65.step(0.5);
+      }
+      const hotSoap35 = vHot.moles.C17H33COO_aq || 0;
+      const coldSoap = vCold.moles.C17H33COO_aq || 0;
+      const smoothArrhOk =
+        coldSoap < 0.004 &&
+        hotSoap05 > 0.0005 && hotSoap05 < 0.025 &&
+        hotSoap35 > hotSoap05 * 2 && hotSoap35 < 0.059;
+
+      // 2) Lipid phenomena: milky soap emulsification & saturated NaCl salting-out curd
+      const visSoap = computeSolutionVisuals(vHot.moles, 0.06, null, 4.5, null, 0, { phaseFilter: 'aqueous' });
+      const stratMid = computePhaseStratification(vHot.moles, 353.15, APPARATUS.beaker_250, 0);
+      const emulOk = visSoap.r > 215 && visSoap.g > 210 && visSoap.b > 200 && stratMid.lightOrganicMl < stratStart.lightOrganicMl * 0.7;
+
+      vHot.moles.Na_aq = (vHot.moles.Na_aq || 0) + 0.35;
+      vHot.moles.Cl_aq = 0.35;
+      for (let i = 0; i < 6; i++) { vHot.tempK = 330.15; sim65.step(0.5); }
+      const saltOutOk = (vHot.moles.C17H33COONa_s || 0) > 0.008;
+
+      // 3) Reversible acid-catalyzed hydrolysis strictly < 100% (Kc = 0.28 for HCOOCH3 at 300 K)
+      const vAcEst = sim65.createApparatus('round_flask_250', 500, 300);
+      vAcEst.isStoppered = true;
+      vAcEst.moles.HCOOCH3_l = 0.05; vAcEst.moles.H2O_l = 0.15; vAcEst.moles.H_aq = 0.08; vAcEst.moles.Cl_aq = 0.08;
+      for (let i = 0; i < 20; i++) { vAcEst.tempK = 300.15; sim65.step(0.5); }
+      const acYield = (vAcEst.moles.HCOOH_l || 0) / 0.05;
+      const revEqOk = acYield > 0.15 && acYield < 0.85 && (vAcEst.moles.HCOOCH3_l || 0) > 0.005;
+
+      assert(
+        'Prompt 65 invariants: Arrhenius+RK2 smooth kinetics (no spike/no cold jump), reversible acid equilibrium (<100%), soap emulsification & brine salting-out curd',
+        startTwoPhase && smoothArrhOk && emulOk && saltOutOk && revEqOk,
+        `twoPhase=${startTwoPhase}, arrhRK2=${smoothArrhOk}(cold=${coldSoap.toFixed(4)},h0.5=${hotSoap05.toFixed(4)},h3.5=${hotSoap35.toFixed(4)}), emul=${emulOk}(rgb=${visSoap.r}/${visSoap.g}/${visSoap.b},oil=${stratStart.lightOrganicMl.toFixed(1)}->${stratMid.lightOrganicMl.toFixed(1)}), saltOut=${saltOutOk}(curd=${(vHot.moles.C17H33COONa_s||0).toFixed(4)}), revEq=${revEqOk}(yield=${(acYield*100).toFixed(1)}%)`
       );
     }
 

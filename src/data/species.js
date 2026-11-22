@@ -852,6 +852,23 @@ export const SPECIES = {
     color: '#f8fafc',
     visualType: 'liquid',
   },
+  C6H5COOC2H5_l: {
+    id: 'C6H5COOC2H5_l',
+    formula: 'C₆H₅COOC₂H₅',
+    name: 'Ethyl benzoate',
+    phase: 'l',
+    liquidGroup: 'organic_heavy',
+    molarMass: 9 * AW.C + 10 * AW.H + 2 * AW.O,
+    density: 1.045,
+    cp: 245.0,
+    meltTempK: 238.55,
+    boilTempK: 486.15,
+    dHVapJ: 54000,
+    vaporSpeciesId: 'C6H5COOC2H5_g',
+    partialMolarVolMl: 143.7,
+    color: '#fefce8',
+    visualType: 'liquid',
+  },
   CH3CHO_l: {
     id: 'CH3CHO_l',
     formula: 'CH₃CHO',
@@ -4037,6 +4054,8 @@ export const SPECIES = {
   PVC_s: { id: 'PVC_s', formula: '(–CH₂–CHCl–)ₙ', name: 'Polyvinyl chloride (PVC)', phase: 's', isPrecipitate: true, molarMass: 2 * AW.C + 3 * AW.H + AW.Cl, density: 1.380, cp: 72.0, meltTempK: 473.15, dHFusJ: 9500, color: '#f1f5f9', highlightColor: '#ffffff', visualType: 'white_powder', renderLayer: 'precipitate', renderOrder: 186 },
   Buna_s: { id: 'Buna_s', formula: '(–CH₂–CH=CH–CH₂–)ₙ', name: 'Polybutadiene (Buna rubber)', phase: 's', isPrecipitate: true, molarMass: 4 * AW.C + 6 * AW.H, density: 0.910, cp: 108.0, noMelt: true, color: '#fef9c3', highlightColor: '#ffffff', visualType: 'white_powder', renderLayer: 'precipitate', renderOrder: 186 },
   Novolac_s: { id: 'Novolac_s', formula: '(C₇H₆O)ₙ', name: 'Phenol-formaldehyde resin (Novolac)', phase: 's', isPrecipitate: true, molarMass: 7 * AW.C + 6 * AW.H + AW.O, density: 1.250, cp: 145.0, noMelt: true, color: '#f59e0b', highlightColor: '#fde68a', visualType: 'yellow_crystal', renderLayer: 'precipitate', renderOrder: 186 },
+  C17H33COONa_s: { id: 'C17H33COONa_s', formula: 'C₁₇H₃₃COONa↓', name: 'Sodium oleate (Soap curd)', phase: 's', isPrecipitate: true, isColloidal: true, molarMass: 18 * AW.C + 33 * AW.H + 2 * AW.O + AW.Na, density: 0.920, cp: 520.0, meltTempK: 505.15, dHFusJ: 28000, color: '#fef9c3', highlightColor: '#ffffff', visualType: 'white_precipitate', renderLayer: 'precipitate', renderOrder: 186 },
+  C17H35COONa_s: { id: 'C17H35COONa_s', formula: 'C₁₇H₃₅COONa↓', name: 'Sodium stearate (Soap curd)', phase: 's', isPrecipitate: true, isColloidal: true, molarMass: 18 * AW.C + 35 * AW.H + 2 * AW.O + AW.Na, density: 0.940, cp: 540.0, meltTempK: 533.15, dHFusJ: 30000, color: '#ffffff', highlightColor: '#f8fafc', visualType: 'white_precipitate', renderLayer: 'precipitate', renderOrder: 186 },
   HCOONa_s: { id: 'HCOONa_s', formula: 'HCOONa', name: 'Sodium formate', phase: 's', molarMass: AW.C + AW.H + 2 * AW.O + AW.Na, density: 1.92, cp: 82.7, meltTempK: 526.15, color: '#f8fafc', highlightColor: '#ffffff', visualType: 'white_crystal', renderLayer: 'bottom', renderOrder: 184 },
   HCOOK_s: { id: 'HCOOK_s', formula: 'HCOOK', name: 'Potassium formate', phase: 's', molarMass: AW.C + AW.H + 2 * AW.O + AW.K, density: 1.91, cp: 86.0, meltTempK: 440.65, color: '#f8fafc', highlightColor: '#ffffff', visualType: 'white_crystal', renderLayer: 'bottom', renderOrder: 184 },
   Al2O3_s: {
@@ -5462,6 +5481,7 @@ export const SPECIES = {
   C4H6Br2_g: { id: 'C4H6Br2_g', formula: 'C₄H₆Br₂(g)', name: 'Dibromobutene vapor', phase: 'g', gasOrder: 86, isCondensableVapor: true, liquidSpeciesId: 'C4H6Br2_l', molarMass: 4 * AW.C + 6 * AW.H + 2 * AW.Br, cp: 112.0, color: '#fefce8' },
   C4H6Br4_g: { id: 'C4H6Br4_g', formula: 'C₄H₆Br₄(g)', name: 'Tetrabromobutane vapor', phase: 'g', gasOrder: 86, isCondensableVapor: true, liquidSpeciesId: 'C4H6Br4_l', molarMass: 4 * AW.C + 6 * AW.H + 4 * AW.Br, cp: 145.0, color: '#fef3c7' },
   C6H10_g: { id: 'C6H10_g', formula: 'C₆H₁₀(g)', name: 'Cyclohexene vapor', phase: 'g', gasOrder: 86, isCondensableVapor: true, liquidSpeciesId: 'C6H10_l', molarMass: 6 * AW.C + 10 * AW.H, cp: 105.0, color: '#f8fafc' },
+  C6H5COOC2H5_g: { id: 'C6H5COOC2H5_g', formula: 'C₆H₅COOC₂H₅(g)', name: 'Ethyl benzoate vapor', phase: 'g', gasOrder: 86, isCondensableVapor: true, liquidSpeciesId: 'C6H5COOC2H5_l', molarMass: 9 * AW.C + 10 * AW.H + 2 * AW.O, cp: 155.0, color: '#fefce8' },
   CH3COCl_g: {
     id: 'CH3COCl_g',
     formula: 'CH₃COCl(g)',
@@ -6765,6 +6785,8 @@ const NIST_FUSION_ENTHALPY_J = {
   C17H35COOH_s: 61200,
   PE_s: 8200,
   PVC_s: 9500,
+  C17H33COONa_s: 28000,
+  C17H35COONa_s: 30000,
 };
 
 export function getSpeciesFusionHeatJ(sp) {
