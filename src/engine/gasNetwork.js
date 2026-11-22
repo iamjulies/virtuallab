@@ -1371,8 +1371,53 @@ export function stepVesselGasAndPressure(
   const partialAirAndGas = maxedSyringe || lidOnlyMode
     ? env.pressureBar + (extraGasMol * CONSTANTS.R_L_BAR_MOL_K * safeTempK) / effectiveVolL
     : (((vessel.sealedAirMoles || 0) + extraGasMol) * CONSTANTS.R_L_BAR_MOL_K * safeTempK) / effectiveVolL;
-  const hasWater = (vessel.moles.H2O_l || 0) > 1e-6;
-  const vaporContribution = !maxedSyringe && hasWater ? Math.max(0, waterVaporPressureBar(safeTempK) - 0.03) : 0;
+  // Multi-component Raoult saturated vapor contribution (H2O + volatile organics like EtOH, Acetone, Hexane)
+  let totalVapLiqMol = 0;
+  let weightedPsatBar = 0;
+  let weightedPsat298Bar = 0;
+  for (const [spId, nL] of Object.entries(vessel.moles || {})) {
+    if (!Number.isFinite(nL) || nL <= 1e-6) continue;
+    const sp = SPECIES[spId];
+    if (!sp || sp.phase !== 'l' || !sp.boilTempK || !sp.dHVapJ) continue;
+    totalVapLiqMol += nL;
+    const pSatT =
+      spId === 'H2O_l'
+        ? waterVaporPressureBar(safeTempK)
+        : Math.min(8.5, Math.exp((sp.dHVapJ / CONSTANTS.R_J_MOL_K) * (1 / sp.boilTempK - 1 / safeTempK)));
+    const pSatBase =
+      spId === 'H2O_l'
+        ? waterVaporPressureBar(298.15)
+        : Math.min(1.0, Math.exp((sp.dHVapJ / CONSTANTS.R_J_MOL_K) * (1 / sp.boilTempK - 1 / 298.15)));
+    weightedPsatBar += nL * pSatT;
+    weightedPsat298Bar += nL * pSatBase;
+  }
+  const vapPsatNow = totalVapLiqMol > 1e-7 ? weightedPsatBar / totalVapLiqMol : 0;
+  const vapPsatBase = totalVapLiqMol > 1e-7 ? weightedPsat298Bar / totalVapLiqMol : 0;
+  const vaporContribution = !maxedSyringe && totalVapLiqMol > 1e-7 ? Math.max(0, vapPsatNow - vapPsatBase) : 0;
+
+  // Thermal air expansion relief through submerged delivery tube when heated -> enables real cooling suck-back!
+  const connectedTargetPre = vessel.connectedTargetId ? getApparatusById(vessel.connectedTargetId) : null;
+  if (
+    connectedTargetPre &&
+    !maxedSyringe &&
+    vessel.isStoppered &&
+    (vessel.sealedAirMoles || 0) > 1e-6 &&
+    safeTempK > 308
+  ) {
+    const pNowAir = ((vessel.sealedAirMoles + extraGasMol) * CONSTANTS.R_L_BAR_MOL_K * safeTempK) / effectiveVolL + vaporContribution;
+    if (pNowAir > env.pressureBar + 0.025) {
+      const targetMaxAirMol = Math.max(
+        1e-6,
+        ((env.pressureBar + 0.02 - vaporContribution) * effectiveVolL) / (CONSTANTS.R_L_BAR_MOL_K * safeTempK) - extraGasMol
+      );
+      if (vessel.sealedAirMoles > targetMaxAirMol) {
+        vessel.sealedAirMoles = Math.max(1e-6, targetMaxAirMol);
+        if ((vessel.sealedAirO2Moles || 0) > 0) {
+          vessel.sealedAirO2Moles = Math.min(vessel.sealedAirO2Moles, vessel.sealedAirMoles * CONSTANTS.AIR_O2_FRAC);
+        }
+      }
+    }
+  }
 
   const rawPressureBar = partialAirAndGas + vaporContribution;
   vessel.internalPressureBar = Number.isFinite(rawPressureBar)

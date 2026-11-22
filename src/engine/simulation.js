@@ -17,6 +17,7 @@ import {
   getVesselEndPorts,
 } from '../data/apparatus.js';
 import { getInnerPolygonPx, getVesselHoldVolumeMl } from '../data/vesselGeometry.js';
+import { applyPresetScenario } from '../data/presets.js';
 import {
   calcSolidPourDischargeRate,
   calcSolidTransferRatio,
@@ -1024,285 +1025,7 @@ export class LabSimulation {
     this.activeReagentTransfer = null;
     this.timeSec = 0;
     this.nextId = 1;
-
-    if (presetName === 'clean') {
-      // Truly empty workbench (0 items)
-      this.selectedId = null;
-      this.emitChange();
-      return;
-    }
-
-    if (presetName === 'gas_collect') {
-      const flask = this.createApparatus('erlenmeyer_250', 290, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      const stand = this.createApparatus('retort_stand', 685, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
-      const syringe = this.createApparatus('gas_syringe', 625, 325);
-      this.attachToStand(syringe.id, stand.id);
-      this.createApparatus('burner', 135, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
-      this.connectSyringe(flask.id, syringe.id);
-      this.selectedId = flask.id;
-    } else if (presetName === 'trough_collect') {
-      const flask = this.createApparatus('erlenmeyer_250', 220, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      const trough = this.createApparatus('water_trough', 540, SIM_BENCH_FLOOR_Y - APPARATUS.water_trough.height / 2 + 2);
-      const tube = this.createApparatus('test_tube_50', trough.x, trough.y - 68);
-      this.toggleVesselInverted(tube.id);
-      tube.submergedInTroughId = trough.id;
-      this.connectTube(flask.id, tube.id);
-      this.selectedId = flask.id;
-    } else if (presetName === 'titration') {
-      const stand = this.createApparatus('retort_stand', 360, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
-      const burette = this.createApparatus('burette_50', 300, 235);
-      this.attachToStand(burette.id, stand.id);
-      const flask = this.createApparatus('erlenmeyer_250', 300, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      const stirBar = this.createApparatus('stir_bar', 490, SIM_BENCH_FLOOR_Y - 8);
-      this.insertStirBarIntoVessel(stirBar.id, flask.id, 600);
-      this.createApparatus('litmus_paper', 540, SIM_BENCH_FLOOR_Y - 12);
-      this.selectedId = burette.id;
-    } else if (presetName === 'filtration') {
-      const beaker = this.createApparatus('beaker_250', 340, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      const funnel = this.createApparatus('filter_funnel', 340, beaker.y - APPARATUS.beaker_250.height / 2 - APPARATUS.filter_funnel.height * 0.18);
-      funnel.mountedOnVesselId = beaker.id;
-      this.createApparatus('wash_bottle', 450, SIM_BENCH_FLOOR_Y - APPARATUS.wash_bottle.height / 2 + 2);
-      this.createApparatus('beaker_tall_250', 180, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_tall_250.height / 2 + 2);
-      this.selectedId = funnel.id;
-    } else if (presetName === 'daniell_cell') {
-      const bLeft = this.createApparatus('beaker_250', 270, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      const bRight = this.createApparatus('beaker_250', 410, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      const bridge = this.createApparatus('salt_bridge', 340, bLeft.y - 36);
-      bridge.vesselAId = bLeft.id;
-      bridge.vesselBId = bRight.id;
-      const elZn = this.createApparatus('electrode_rod', bLeft.x - 16, bLeft.y - 16);
-      elZn.material = 'Zn';
-      elZn.dockedVesselId = bLeft.id;
-      elZn.dockSide = 'left';
-      const elCu = this.createApparatus('electrode_rod', bRight.x + 16, bRight.y - 16);
-      elCu.material = 'Cu';
-      elCu.dockedVesselId = bRight.id;
-      elCu.dockSide = 'right';
-      const dmm = this.createApparatus('volt_ammeter', 620, SIM_BENCH_FLOOR_Y - APPARATUS.volt_ammeter.height / 2 + 2);
-      dmm.posElectrodeId = elCu.id;
-      dmm.negElectrodeId = elZn.id;
-      this.selectedId = dmm.id;
-    } else if (presetName === 'electrolysis') {
-      const beaker = this.createApparatus('beaker_250', 300, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      const elA = this.createApparatus('electrode_rod', beaker.x - 24, beaker.y - 16);
-      elA.material = 'C';
-      elA.dockedVesselId = beaker.id;
-      elA.dockSide = 'left';
-      const elB = this.createApparatus('electrode_rod', beaker.x + 24, beaker.y - 16);
-      elB.material = 'C';
-      elB.dockedVesselId = beaker.id;
-      elB.dockSide = 'right';
-      const dc = this.createApparatus('dc_power', 520, SIM_BENCH_FLOOR_Y - APPARATUS.dc_power.height / 2 + 2);
-      dc.posElectrodeId = elA.id;
-      dc.negElectrodeId = elB.id;
-      this.createApparatus('splint', 690, SIM_BENCH_FLOOR_Y - 12);
-      this.selectedId = dc.id;
-    } else if (presetName === 'distillation') {
-      const burner = this.createApparatus('burner', 220, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
-      const flask = this.createApparatus('erlenmeyer_250', 220, burner.y - APPARATUS.burner.height / 2 + 10 - APPARATUS.erlenmeyer_250.height / 2);
-      const stand = this.createApparatus('retort_stand', 500, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
-      const cond = this.createApparatus('liebig_condenser', 450, 250);
-      this.attachToStand(cond.id, stand.id);
-      const recv = this.createApparatus('beaker_250', 610, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      this.connectTube(flask.id, cond.id);
-      this.connectCondenserOutlet(cond.id, recv.id);
-      this.selectedId = flask.id;
-    } else if (presetName === 'ammonia_fountain') {
-      const flask = this.createApparatus('erlenmeyer_250', 220, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      const burner = this.createApparatus('burner', 220, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
-      flask.y = burner.y - APPARATUS.burner.height / 2 + 10 - APPARATUS.erlenmeyer_250.height / 2;
-      const stand = this.createApparatus('retort_stand', 520, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
-      const fountainFlask = this.createApparatus('erlenmeyer_250', 460, 210);
-      this.toggleVesselInverted(fountainFlask.id);
-      this.attachToStand(fountainFlask.id, stand.id);
-      const waterBeaker = this.createApparatus('beaker_250', 460, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      this.connectTube(flask.id, fountainFlask.id);
-      this.selectedId = waterBeaker.id;
-    } else if (presetName === 'graham_diffusion') {
-      const tube = this.createApparatus('diffusion_tube', 430, SIM_BENCH_FLOOR_Y - APPARATUS.diffusion_tube.height / 2 + 2);
-      this.selectedId = tube.id;
-    } else if (presetName === 'cuo_h2_reduction') {
-      // Textbook CuO + H2 reduction: diluted ~5.5M HCl + mossy Zn granules (steady 25s H2 stream) -> rubber tube -> clamped test tube containing black CuO(s) over alcohol burner
-      const flask = this.createApparatus('erlenmeyer_250', 220, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      this.addReagentToVessel(flask.id, 'h2o', 40, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(flask.id, 'hcl_37', 30, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(flask.id, 'zn', 12.0, { fine: false, silentAnim: true, silentEmit: true });
-      flask.particleCounts.Zn_s = 2; // Large mossy Zinc chunks give sustained H2 stream over ~25s!
-      flask.tempK = this.environment.tempK;
-      flask.isStoppered = true;
-
-      const burner = this.createApparatus('burner', 530, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
-      this.setBurnerFlame(burner.id, 0);
-      const stand = this.createApparatus('retort_stand', 585, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
-      const tube = this.createApparatus('test_tube_50', 530, 326);
-      tube.moles = { CuO_s: 0.04 };
-      tube.particleCounts = { CuO_s: 260 };
-      this.attachToStand(tube.id, stand.id);
-      this.connectTube(flask.id, tube.id);
-      this.addLog({ type: 'info', key: 'guideCuoH2', vesselLabel: tube.label });
-      this.selectedId = burner.id;
-    } else if (presetName === 'zn_burn_o2') {
-      // Textbook O2 prep (H2O2 + CuO catalyst) -> O2 jar + Zn porcelain dish over burner
-      const flaskA = this.createApparatus('erlenmeyer_250', 200, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      flaskA.moles = { CuO_s: 0.02 };
-      this.addReagentToVessel(flaskA.id, 'h2o2_30', 35, { silentAnim: true, silentEmit: true });
-      flaskA.isStoppered = true;
-      const flaskO2 = this.createApparatus('erlenmeyer_250', 430, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      flaskO2.headspaceGasMoles.O2_g = 0.008;
-      flaskO2.moles = { Zn_s: 0.03 };
-      flaskO2.particleCounts = { Zn_s: 12 };
-      this.connectTube(flaskA.id, flaskO2.id);
-      const burner = this.createApparatus('burner', 690, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
-      this.setBurnerFlame(burner.id, 3);
-      const dish = this.createApparatus('porcelain_dish', 690, burner.y - APPARATUS.burner.height / 2 + 10 - APPARATUS.porcelain_dish.height / 2);
-      this.addReagentToVessel(dish.id, 'zn', 2.0, { fine: true, silentAnim: true, silentEmit: true });
-      this.createApparatus('splint', 820, SIM_BENCH_FLOOR_Y - 12);
-      this.addLog({ type: 'info', key: 'guideZnBurnO2', vesselLabel: flaskO2.label });
-      this.selectedId = flaskO2.id;
-    } else if (presetName === 'air_tarnish_deliquesce') {
-      const dish = this.createApparatus('porcelain_dish', 290, SIM_BENCH_FLOOR_Y - APPARATUS.porcelain_dish.height / 2 + 2);
-      this.addReagentToVessel(dish.id, 'na', 1.2, { silentAnim: true, silentEmit: true });
-      const beaker = this.createApparatus('beaker_250', 550, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      this.addReagentToVessel(beaker.id, 'naoh', 4.5, { silentAnim: true, silentEmit: true });
-      this.addLog({ type: 'info', key: 'guideAirTarnish', vesselLabel: dish.label });
-      this.selectedId = dish.id;
-    } else if (presetName === 'na_water_phen') {
-      const beaker = this.createApparatus('beaker_250', 360, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      this.addReagentToVessel(beaker.id, 'h2o', 90, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(beaker.id, 'phen', 2, { silentAnim: true, silentEmit: true });
-      const dish = this.createApparatus('porcelain_dish', 580, SIM_BENCH_FLOOR_Y - APPARATUS.porcelain_dish.height / 2 + 2);
-      this.addReagentToVessel(dish.id, 'na', 0.45, { silentAnim: true, silentEmit: true });
-      this.selectedId = beaker.id;
-    } else if (presetName === 'copper_hydroxide_series') {
-      this.createApparatus('scale', 210, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height / 2 + 2);
-      const beaker = this.createApparatus('beaker_250', 210, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height - APPARATUS.beaker_250.height / 2 + 2);
-      this.addReagentToVessel(beaker.id, 'h2o', 60, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(beaker.id, 'cuso4_5h2o', 6.0, { silentAnim: true, silentEmit: true });
-      this.createApparatus('burner', 530, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
-      this.createApparatus('erlenmeyer_250', 720, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      this.selectedId = beaker.id;
-    } else if (presetName === 'amphoteric_zn_cu') {
-      const bZn = this.createApparatus('beaker_250', 270, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      bZn.moles = { H2O_l: 3.5, ZnOH2_s: 0.03 };
-      const bCu = this.createApparatus('beaker_250', 510, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      bCu.moles = { H2O_l: 3.5, CuOH2_s: 0.03 };
-      this.createApparatus('burner', 740, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
-      this.selectedId = bZn.id;
-    } else if (presetName === 'cu_ammine_complex') {
-      const bCu = this.createApparatus('beaker_250', 340, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      this.addReagentToVessel(bCu.id, 'h2o', 45, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bCu.id, 'cuso4_5h2o', 2.5, { silentAnim: true, silentEmit: true });
-      bCu.moles.CuOH2_s = 0.008;
-      delete bCu.moles.Cu2_aq;
-      const beakerNh3 = this.createApparatus('beaker_250', 580, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      this.addReagentToVessel(beakerNh3.id, 'nh3_25', 25, { silentAnim: true, silentEmit: true });
-      this.addLog({ type: 'info', key: 'guideCuAmmine', vesselLabel: bCu.label });
-      this.selectedId = bCu.id;
-    } else if (presetName === 'compare_rate_factors') {
-      const bCoarse = this.createApparatus('erlenmeyer_250', 200, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      bCoarse.label = '#A (Đá vôi cục)';
-      this.addReagentToVessel(bCoarse.id, 'h2o', 45, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bCoarse.id, 'hcl_37', 12, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bCoarse.id, 'caco3', 5.0, { fine: false, silentAnim: true, silentEmit: true });
-      bCoarse.particleCounts.CaCO3_s = 3;
-
-      const bFine = this.createApparatus('erlenmeyer_250', 440, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      bFine.label = '#B (Bột mịn CaCO₃)';
-      this.addReagentToVessel(bFine.id, 'h2o', 45, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bFine.id, 'hcl_37', 12, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bFine.id, 'caco3', 5.0, { fine: true, silentAnim: true, silentEmit: true });
-      bFine.particleCounts.CaCO3_s = 800;
-      bFine.groundPowderMap.CaCO3_s = true;
-
-      const bHot = this.createApparatus('erlenmeyer_250', 680, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      bHot.label = '#C (Đặc + Nóng 55°C)';
-      this.addReagentToVessel(bHot.id, 'h2o', 25, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bHot.id, 'hcl_37', 30, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bHot.id, 'caco3', 5.0, { fine: false, silentAnim: true, silentEmit: true });
-      bHot.particleCounts.CaCO3_s = 3;
-      bHot.tempK = 328.15;
-
-      this.compareVesselIds = [bCoarse.id, bFine.id, bHot.id];
-      this.selectedId = bFine.id;
-    } else if (presetName === 'compare_corrosion') {
-      const bChem = this.createApparatus('beaker_250', 185, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      bChem.label = '#A (Ăn mòn hóa học Zn+HCl)';
-      this.addReagentToVessel(bChem.id, 'h2o', 55, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bChem.id, 'hcl_37', 18, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bChem.id, 'zn', 2.5, { fine: false, silentAnim: true, silentEmit: true });
-
-      const bElec = this.createApparatus('beaker_250', 415, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      bElec.label = '#B (Pin điện hóa Zn–Cu)';
-      this.addReagentToVessel(bElec.id, 'h2o', 55, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bElec.id, 'hcl_37', 18, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bElec.id, 'zn', 2.5, { fine: false, silentAnim: true, silentEmit: true });
-      bElec.moles.Cu_s = 0.008;
-
-      const elZn = this.createApparatus('electrode_rod', 395, 390);
-      elZn.material = 'Zn';
-      elZn.dockedVesselId = bElec.id;
-      elZn.dockSide = 'left';
-      const elCu = this.createApparatus('electrode_rod', 435, 390);
-      elCu.material = 'Cu';
-      elCu.dockedVesselId = bElec.id;
-      elCu.dockSide = 'right';
-      const vm = this.createApparatus('volt_ammeter', 585, SIM_BENCH_FLOOR_Y - APPARATUS.volt_ammeter.height / 2 + 2);
-      vm.mode = 'ammeter';
-      vm.posElectrodeId = elCu.id;
-      vm.negElectrodeId = elZn.id;
-      syncDockedToolPositions(this);
-
-      const bPass = this.createApparatus('beaker_250', 790, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      bPass.label = '#C (Cu nguyên chất trong HCl)';
-      this.addReagentToVessel(bPass.id, 'h2o', 55, { silentAnim: true, silentEmit: true });
-      this.addReagentToVessel(bPass.id, 'hcl_37', 18, { silentAnim: true, silentEmit: true });
-      bPass.moles.Cu_s = 0.03;
-
-      this.compareVesselIds = [bChem.id, bElec.id, bPass.id];
-      this.selectedId = bElec.id;
-    } else if (presetName === 'caco3_calcination_limewater') {
-      const bnCruc = this.createApparatus('bunsen_burner', 200, SIM_BENCH_FLOOR_Y - APPARATUS.bunsen_burner.height / 2 + 2);
-      bnCruc.airHoleOpen = true;
-      this.setBurnerFlame(bnCruc.id, 3);
-      const cruc = this.createApparatus(
-        'crucible_porcelain',
-        200,
-        bnCruc.y - APPARATUS.bunsen_burner.height / 2 + 10 - APPARATUS.crucible_porcelain.height / 2 + 12
-      );
-      this.addReagentToVessel(cruc.id, 'caco3', 3.0, { fine: true, silentAnim: true, silentEmit: true });
-      cruc.particleCounts.CaCO3_s = 800;
-      cruc.groundPowderMap.CaCO3_s = true;
-      cruc.lidState = 'ajar';
-
-      const bnQuartz = this.createApparatus('bunsen_burner', 530, SIM_BENCH_FLOOR_Y - APPARATUS.bunsen_burner.height / 2 + 2);
-      bnQuartz.airHoleOpen = true;
-      this.setBurnerFlame(bnQuartz.id, 3);
-      const stand = this.createApparatus('retort_stand', 595, SIM_BENCH_FLOOR_Y - APPARATUS.retort_stand.height / 2 + 2);
-      const qTube = this.createApparatus('quartz_tube', 530, 386);
-      this.addReagentToVessel(qTube.id, 'caco3', 3.0, { fine: true, silentAnim: true, silentEmit: true });
-      qTube.particleCounts.CaCO3_s = 800;
-      qTube.groundPowderMap.CaCO3_s = true;
-      this.attachToStand(qTube.id, stand.id);
-      qTube.y = 386;
-
-      const limeBeaker = this.createApparatus('beaker_250', 775, SIM_BENCH_FLOOR_Y - APPARATUS.beaker_250.height / 2 + 2);
-      limeBeaker.label = '#Nước vôi trong';
-      this.addReagentToVessel(limeBeaker.id, 'h2o', 70, { silentAnim: true, silentEmit: true });
-      limeBeaker.moles.Ca2_aq = 0.0016;
-      limeBeaker.moles.OH_aq = 0.0032;
-      this.connectTube(qTube.id, limeBeaker.id);
-      this.addLog({ type: 'info', key: 'guideCaco3Calcination', vesselLabel: cruc.label });
-      this.selectedId = cruc.id;
-    } else {
-      // 'starter' default bench: Scale + Beaker 250 mL + Burner + Erlenmeyer 250 mL
-      this.createApparatus('scale', 220, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height / 2 + 2);
-      const beaker = this.createApparatus('beaker_250', 220, SIM_BENCH_FLOOR_Y - APPARATUS.scale.height - APPARATUS.beaker_250.height / 2 + 2);
-      this.createApparatus('burner', 560, SIM_BENCH_FLOOR_Y - APPARATUS.burner.height / 2 + 2);
-      this.createApparatus('erlenmeyer_250', 760, SIM_BENCH_FLOOR_Y - APPARATUS.erlenmeyer_250.height / 2 + 2);
-      this.selectedId = beaker.id;
-    }
-    this.updateSupportAttachments();
-    this.emitChange();
+    applyPresetScenario(this, presetName, SIM_BENCH_FLOOR_Y);
   }
 
   getSupportSurfaceForItem(item) {
@@ -5988,55 +5711,136 @@ export class LabSimulation {
         }
       }
 
-      for (let s = 0; s < numSteps; s++) {
-        const chemRes = stepVesselChemistry(v, dt, {
-          uvLight: this.environment.uvLight,
-          environment: this.environment,
-          heatSrc,
-        });
-        frameRxnHeatJ += Number.isFinite(chemRes.reactionHeatJ) ? chemRes.reactionHeatJ : 0;
-        const thermRes = stepVesselThermodynamics(
-          v,
-          dt,
-          this.environment,
-          chemRes.reactionHeatJ,
-          burnerPowerW,
-          burnerFlameLevel,
-          burnerFlameTempK,
-          bathSrc
-        );
-        frameFreezeMeltMol += (thermRes.freezeMeltRateMolS || 0) * dt;
-        if (Number.isFinite(thermRes.freezePointK)) {
-          lastFreezePointK = thermRes.freezePointK;
-        }
-        const dryRes = enforceDryPhaseBoundary(v);
+      const hasAlkaliOrFlash =
+        (v.moles.Na_s || 0) > 1e-7 ||
+        (v.moles.K_s || 0) > 1e-7 ||
+        (v.naDryBurnTimer || 0) > 0.01 ||
+        (v.kDryBurnTimer || 0) > 0.01 ||
+        Boolean(v.naIgnited || v.kIgnited) ||
+        (v.znCombustionTimer || 0) > 0 ||
+        (v.mgCombustionTimer || 0) > 0 ||
+        (v.alCombustionTimer || 0) > 0 ||
+        (v.feSparkBurning || 0) > 0;
+      const hasSteepRateOrTemp =
+        (v.lastTotalRateMolS || 0) > 0.04 ||
+        Math.abs(v._lastStepDeltaTK || 0) > 3.5 ||
+        burnerPowerW > 120;
+      const adaptiveFactor = hasAlkaliOrFlash || hasSteepRateOrTemp ? 4 : 1;
+      const subDt = dt / adaptiveFactor;
+      const tempBeforeSubLoop = v.tempK || CONSTANTS.T_STD_K;
+      v.lastAdaptiveSubsteps = adaptiveFactor;
 
+      for (let baseStep = 0; baseStep < numSteps; baseStep++) {
         const combinedGas = createZeroGasMap();
-        for (const gId of ALL_GAS_IDS) {
-          combinedGas[gId] = (chemRes.gasProduced[gId] || 0) + (dryRes.gasProduced[gId] || 0);
-        }
-        combinedGas.HCl_g += thermRes.hclProducedMol || 0;
-        combinedGas.HNO3_g += thermRes.hno3ProducedMol || 0;
-        combinedGas.NH3_g += thermRes.nh3ProducedMol || 0;
-        combinedGas.C2H5OH_g += thermRes.ethanolProducedMol || 0;
-        combinedGas.Br2_g += thermRes.br2ProducedMol || 0;
-        combinedGas.I2_g += thermRes.i2ProducedMol || 0;
-        combinedGas.S_g += thermRes.sProducedMol || 0;
-        if (thermRes.metalVaporsProduced) {
-          for (const [mG, mVal] of Object.entries(thermRes.metalVaporsProduced)) {
-            if (mVal > 0) combinedGas[mG] = (combinedGas[mG] || 0) + mVal;
+        let combinedSteam = 0;
+
+        for (let sub = 0; sub < adaptiveFactor; sub++) {
+          const chemRes = stepVesselChemistry(v, subDt, {
+            uvLight: this.environment.uvLight,
+            environment: this.environment,
+            heatSrc,
+          });
+          frameRxnHeatJ += Number.isFinite(chemRes.reactionHeatJ) ? chemRes.reactionHeatJ : 0;
+          const thermRes = stepVesselThermodynamics(
+            v,
+            subDt,
+            this.environment,
+            chemRes.reactionHeatJ,
+            burnerPowerW,
+            burnerFlameLevel,
+            burnerFlameTempK,
+            bathSrc
+          );
+          frameFreezeMeltMol += (thermRes.freezeMeltRateMolS || 0) * subDt;
+          if (Number.isFinite(thermRes.freezePointK)) {
+            lastFreezePointK = thermRes.freezePointK;
           }
-        }
-        if (thermRes.extraVaporsProduced) {
-          for (const [vG, vVal] of Object.entries(thermRes.extraVaporsProduced)) {
-            if (vVal > 0) combinedGas[vG] = (combinedGas[vG] || 0) + vVal;
+          const dryRes = enforceDryPhaseBoundary(v);
+
+          for (const gId of ALL_GAS_IDS) {
+            combinedGas[gId] += (chemRes.gasProduced[gId] || 0) + (dryRes.gasProduced[gId] || 0);
+          }
+          combinedGas.HCl_g += thermRes.hclProducedMol || 0;
+          combinedGas.HNO3_g += thermRes.hno3ProducedMol || 0;
+          combinedGas.NH3_g += thermRes.nh3ProducedMol || 0;
+          combinedGas.C2H5OH_g += thermRes.ethanolProducedMol || 0;
+          combinedGas.Br2_g += thermRes.br2ProducedMol || 0;
+          combinedGas.I2_g += thermRes.i2ProducedMol || 0;
+          combinedGas.S_g += thermRes.sProducedMol || 0;
+          if (thermRes.metalVaporsProduced) {
+            for (const [mG, mVal] of Object.entries(thermRes.metalVaporsProduced)) {
+              if (mVal > 0) combinedGas[mG] = (combinedGas[mG] || 0) + mVal;
+            }
+          }
+          if (thermRes.extraVaporsProduced) {
+            for (const [vG, vVal] of Object.entries(thermRes.extraVaporsProduced)) {
+              if (vVal > 0) combinedGas[vG] = (combinedGas[vG] || 0) + vVal;
+            }
+          }
+          combinedSteam += thermRes.steamProducedMol || 0;
+          if (thermRes.isBoiling) frameBoiling = true;
+          if ((thermRes.steamOpacity || 0) > frameSteamOpacity) {
+            frameSteamOpacity = thermRes.steamOpacity;
+          }
+          if (chemRes.naEvent === 'explosion' || (chemRes.naEvent === 'ignition_flame' && frameNaEvent !== 'explosion') || (!frameNaEvent && chemRes.naEvent)) {
+            frameNaEvent = chemRes.naEvent;
+          }
+          if (chemRes.kEvent === 'explosion' || (chemRes.kEvent === 'ignition_flame' && frameKEvent !== 'explosion') || (!frameKEvent && chemRes.kEvent)) {
+            frameKEvent = chemRes.kEvent;
+          }
+          v._reactionExtentMap = v._reactionExtentMap || {};
+          if (!v._rxnHoldMap || typeof v._rxnHoldMap.entries === 'function') v._rxnHoldMap = {};
+          for (const rxn of chemRes.activeReactions) {
+            v._reactionExtentMap[rxn.id] = (v._reactionExtentMap[rxn.id] || 0) + (rxn.dXi || 0);
+            const prev = frameActiveMap.get(rxn.id);
+            if (!prev) {
+              frameActiveMap.set(rxn.id, { ...rxn });
+            } else {
+              prev.dXi += rxn.dXi;
+              prev.rateMolS = rxn.rateMolS;
+            }
+            const prevHold = v._rxnHoldMap[rxn.id];
+            const smoothRate = prevHold ? prevHold.emaRateMolS * 0.68 + (rxn.rateMolS || 0) * 0.32 : (rxn.rateMolS || 0);
+            v._rxnHoldMap[rxn.id] = {
+              rxn: { ...rxn, rateMolS: smoothRate },
+              emaRateMolS: smoothRate,
+              lastActiveTime: this.timeSec,
+              firstSeenTime: prevHold ? prevHold.firstSeenTime : this.timeSec,
+            };
+            const lastSeen = v.seenReactions[rxn.id] ?? -99;
+            if (this.timeSec - lastSeen > 14.0) {
+              const curLiqL = computeLiquidVolumeL(v.moles, v.tempK);
+              const curPh = computePH(v.moles, curLiqL, v.tempK);
+              const curPBar = v.internalPressureBar ?? this.environment.pressureBar;
+              const dH_kJ = rxn.dH !== undefined ? (rxn.dH * Math.max(1e-5, rxn.dXi || 0.001)) / 1000 : -frameRxnHeatJ / 1000;
+              this.addLog({
+                type: 'reaction',
+                rxnId: rxn.id,
+                equation: rxn.equation,
+                ionicEq: rxn.ionicEquation || '',
+                nameVi: rxn.nameVi,
+                nameEn: rxn.nameEn,
+                descVi: rxn.descVi,
+                descEn: rxn.descEn,
+                vesselLabel: v.label,
+                rateMolS: rxn.rateMolS || 0,
+                dXi: rxn.dXi || 0,
+                dH_kJ,
+                phNow: curPh,
+                phDelta: phBeforeStep !== null && curPh !== null ? curPh - phBeforeStep : null,
+                pBar: curPBar,
+                deltaPBar: curPBar - pBeforeStepBar,
+                tempC: v.tempK - 273.15,
+              });
+            }
+            v.seenReactions[rxn.id] = this.timeSec;
           }
         }
 
         const gasEvents = stepVesselGasAndPressure(
           v,
           combinedGas,
-          thermRes.steamProducedMol,
+          combinedSteam,
           this.environment,
           getApp
         );
@@ -6044,11 +5848,7 @@ export class LabSimulation {
         for (const gId of ALL_GAS_IDS) {
           if (gId !== 'H2O_g') frameGas[gId] += combinedGas[gId];
         }
-        frameSteam += combinedGas.H2O_g + (thermRes.steamProducedMol || 0);
-        if (thermRes.isBoiling) frameBoiling = true;
-        if ((thermRes.steamOpacity || 0) > frameSteamOpacity) {
-          frameSteamOpacity = thermRes.steamOpacity;
-        }
+        frameSteam += combinedGas.H2O_g + combinedSteam;
         if (v._mn2o7HazardPending) {
           v._mn2o7HazardPending = false;
           if ((this.timeSec - (v.seenReactions.mn2o7_hazard ?? -99)) > 4.5) {
@@ -6062,63 +5862,6 @@ export class LabSimulation {
               this.visualHooks.onAlert('oxyhydrogen_detonation', { x: v.x, y: v.y }, { blastScale: 0.65 });
             }
           }
-        }
-        if (chemRes.naEvent === 'explosion' || (chemRes.naEvent === 'ignition_flame' && frameNaEvent !== 'explosion') || (!frameNaEvent && chemRes.naEvent)) {
-          frameNaEvent = chemRes.naEvent;
-        }
-        if (chemRes.kEvent === 'explosion' || (chemRes.kEvent === 'ignition_flame' && frameKEvent !== 'explosion') || (!frameKEvent && chemRes.kEvent)) {
-          frameKEvent = chemRes.kEvent;
-        }
-
-        v._reactionExtentMap = v._reactionExtentMap || {};
-        if (!v._rxnHoldMap || typeof v._rxnHoldMap.entries === 'function') v._rxnHoldMap = {};
-        for (const rxn of chemRes.activeReactions) {
-          v._reactionExtentMap[rxn.id] = (v._reactionExtentMap[rxn.id] || 0) + (rxn.dXi || 0);
-          const prev = frameActiveMap.get(rxn.id);
-          if (!prev) {
-            frameActiveMap.set(rxn.id, { ...rxn });
-          } else {
-            prev.dXi += rxn.dXi;
-            prev.rateMolS = rxn.rateMolS;
-          }
-
-          // Smooth anti-flicker display buffer + anti-spam 14s cyclical log gate
-          const prevHold = v._rxnHoldMap[rxn.id];
-          const smoothRate = prevHold ? prevHold.emaRateMolS * 0.68 + (rxn.rateMolS || 0) * 0.32 : (rxn.rateMolS || 0);
-          v._rxnHoldMap[rxn.id] = {
-            rxn: { ...rxn, rateMolS: smoothRate },
-            emaRateMolS: smoothRate,
-            lastActiveTime: this.timeSec,
-            firstSeenTime: prevHold ? prevHold.firstSeenTime : this.timeSec,
-          };
-
-          const lastSeen = v.seenReactions[rxn.id] ?? -99;
-          if (this.timeSec - lastSeen > 14.0) {
-            const curLiqL = computeLiquidVolumeL(v.moles, v.tempK);
-            const curPh = computePH(v.moles, curLiqL, v.tempK);
-            const curPBar = v.internalPressureBar ?? this.environment.pressureBar;
-            const dH_kJ = rxn.dH !== undefined ? (rxn.dH * Math.max(1e-5, rxn.dXi || 0.001)) / 1000 : -frameRxnHeatJ / 1000;
-            this.addLog({
-              type: 'reaction',
-              rxnId: rxn.id,
-              equation: rxn.equation,
-              ionicEq: rxn.ionicEquation || '',
-              nameVi: rxn.nameVi,
-              nameEn: rxn.nameEn,
-              descVi: rxn.descVi,
-              descEn: rxn.descEn,
-              vesselLabel: v.label,
-              rateMolS: rxn.rateMolS || 0,
-              dXi: rxn.dXi || 0,
-              dH_kJ,
-              phNow: curPh,
-              phDelta: phBeforeStep !== null && curPh !== null ? curPh - phBeforeStep : null,
-              pBar: curPBar,
-              deltaPBar: curPBar - pBeforeStepBar,
-              tempC: v.tempK - 273.15,
-            });
-          }
-          v.seenReactions[rxn.id] = this.timeSec;
         }
 
         for (const ev of gasEvents) {
@@ -6148,6 +5891,7 @@ export class LabSimulation {
         }
         if (v.isShattered) break;
       }
+      v._lastStepDeltaTK = (v.tempK || tempBeforeSubLoop) - tempBeforeSubLoop;
 
       if (v.isShattered) continue;
 

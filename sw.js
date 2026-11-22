@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v5-build-7';
+const CACHE_NAME = 'virlab-beta-v5-build-8';
 const ASSETS = [
   './',
   './index.html',
@@ -42,7 +42,11 @@ const ASSETS = [
   './src/data/organic/nitrogen_bio.js',
   './src/data/reactions.js',
   './src/data/apparatus.js',
+  './src/data/presets.js',
   './src/engine/equilibrium.js',
+  './src/engine/chemistryHelpers.js',
+  './src/engine/inorganicSolvers.js',
+  './src/engine/organicLegacySolver.js',
   './src/engine/chemistry.js',
   './src/engine/organicEngine.js',
   './src/engine/thermodynamics.js',

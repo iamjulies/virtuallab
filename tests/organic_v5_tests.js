@@ -8,6 +8,8 @@ import { LabSimulation } from '../src/engine/simulation.js';
 import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
 import { computeBeerLambertReading } from '../src/engine/analyticalTools.js';
 import { renderColorimeter, renderPhConductometer, renderTlcPlate } from '../src/canvas/toolRenderer.js';
+import { PRESET_MENU_ITEMS } from '../src/data/presets.js';
+import { I18N } from '../src/data/i18n.js';
 
 export function runOrganicV5Tests(assert) {
   // TEST 184: Prompt 66 — Modular Organic Architecture, Reversible Zero-Reactant/Anhydrous Solver,
@@ -329,6 +331,79 @@ export function runOrganicV5Tests(assert) {
       'Prompt 67 invariants: Full organic ecosystem (UV halo, polymers, iodoform/palmitate/Tollens, aniline/glycine/Glucose-Sucrose/Starch-I2 thermochromic) & Analytical Trio (pH/EC curve, Beer-Lambert A, TLC Rf)',
       hexUvOk && polyOk && iodoPalTolOk && aniGlyOk && carbOk && phProbeOk && colorimeterOk && tlcOk && anaRenderOk,
       `uv=${hexUvOk}, poly=${polyOk}, oxy=${iodoPalTolOk}, nbio=${aniGlyOk}(ani=${(vAni.moles.C6H2Br3NH2_s||0).toFixed(4)},glyA=${(vGlyA.moles.Glycinium_aq||0).toFixed(4)},glyB=${(vGlyB.moles.Glycinate_aq||0).toFixed(4)}), carb=${carbOk}(st:${coldStarchComplex.toFixed(4)}->${hotStarchComplex.toFixed(4)}->${reCooledStarch.toFixed(4)},glcCu2O:${(vGlc.moles.Cu2O_s||0).toFixed(4)}), phEC=${phProbeOk}(pts=${phMeter.history.length},k=${(phMeter.measuredConductivity||0).toFixed(1)}), beer=${colorimeterOk}(A525=${a525.toFixed(2)},A635=${a635.toFixed(3)}), tlc=${tlcOk}(sf=${tlc.solventFront.toFixed(2)},sty=${stySpot?.rf},acid=${acidSpot?.rf}), rnd=${anaRenderOk}`
+    );
+  }
+
+  // TEST 186: Prompt 68 — Adaptive Sub-stepping, Sealed Saturated Vapor Overpressure (Stopper Pop),
+  // Cooling / Dissolution Suck-back, & Guided Experiments ('Thí nghiệm mẫu') Presets Registry
+  {
+    // 1) Presets registry & bilingual VI/EN parity ('Thí nghiệm mẫu:' / 'Guided Experiments:')
+    const sim68 = new LabSimulation();
+    const presetsTranslated =
+      I18N.vi.quickPresets.includes('Thí nghiệm mẫu') &&
+      I18N.en.quickPresets.includes('Guided Experiments') &&
+      PRESET_MENU_ITEMS.every((p) => Boolean(I18N.vi[p.i18nKey] && I18N.en[p.i18nKey]));
+
+    sim68.setupPreset('ester_distill');
+    const esterHasFlaskCond = sim68.items.some((i) => i.typeId === 'round_flask_250') && sim68.items.some((i) => i.typeId === 'liebig_condenser');
+    sim68.setupPreset('titration_probe');
+    const titProbeOk = sim68.items.some((i) => i.kind === 'burette') && sim68.items.some((i) => i.kind === 'ph_conductometer');
+    sim68.setupPreset('starch_colorimetry');
+    const colPresetOk = sim68.items.some((i) => i.kind === 'colorimeter') && sim68.items.some((i) => i.moles?.Starch_aq > 0);
+    const presetsOk = presetsTranslated && esterHasFlaskCond && titProbeOk && colPresetOk;
+
+    // 2) Adaptive sub-stepping activates finer step splitting under vigorous / alkali / high-T kinetics
+    const simAda = new LabSimulation();
+    const vCalm = simAda.createApparatus('beaker_250', 200, 380);
+    vCalm.moles = { H2O_l: 2.0 };
+    const vVig = simAda.createApparatus('beaker_250', 420, 380);
+    vVig.moles = { H2O_l: 2.0, Na_s: 0.01 };
+    simAda.step(0.05);
+    const adaptiveOk = (vCalm.lastAdaptiveSubsteps || 0) === 1 && (vVig.lastAdaptiveSubsteps || 0) >= 4;
+
+    // 3) Sealed volatile organic vapor overpressure -> pops rubber_stopper cleanly!
+    const simPop = new LabSimulation();
+    const vSeal = simPop.createApparatus('erlenmeyer_250', 260, 360);
+    vSeal.isStoppered = true;
+    vSeal.stopperMode = 'solid';
+    vSeal.moles.CH3COCH3_l = 0.25; // Boils at 56.1 C (329.2 K)
+    let popped = false;
+    for (let i = 0; i < 16; i++) {
+      vSeal.tempK = 355.15; // 82 C sealed vapor > 2 bar -> exceeds popOverpressureBar (+0.38 bar)
+      simPop.step(0.25);
+      if (!vSeal.isStoppered) {
+        popped = true;
+        break;
+      }
+    }
+
+    // 4) Thermal contraction & soluble-gas suck-back through submerged delivery tube
+    const simSuck = new LabSimulation();
+    const vGen = simSuck.createApparatus('erlenmeyer_250', 240, 360);
+    const vRecv = simSuck.createApparatus('beaker_250', 480, 360);
+    vGen.isStoppered = true;
+    vGen.moles.H2O_l = 0.1;
+    vGen.tempK = 393.15; // Hot flask connected to submerged tube vents expanding air cleanly
+    vRecv.moles.H2O_l = 8.0;
+    simSuck.connectTube(vGen.id, vRecv.id);
+    for (let i = 0; i < 4; i++) {
+      vGen.tempK = 393.15;
+      simSuck.step(0.25);
+    }
+    const waterBeforeCool = vGen.moles.H2O_l || 0;
+    const airAfterHeat = vGen.sealedAirMoles || 0;
+    for (let i = 0; i < 8; i++) {
+      vGen.tempK = 278.15; // Rapid cooling contracts sealed gas < 1 bar -> liquid sucked back!
+      simSuck.step(0.25);
+    }
+    const suckBackOk =
+      (vGen.moles.H2O_l || 0) > waterBeforeCool + 0.05 &&
+      simSuck.logs.some((l) => l.key === 'alertTubeSuckBack' || l.equation?.includes('Phun trào'));
+
+    assert(
+      'Prompt 68 invariants: Guided presets registry & 1-click organic/analytical benches, 4x adaptive sub-stepping, volatile vapor stopper_pop & cooling suck-back',
+      presetsOk && adaptiveOk && popped && suckBackOk,
+      `presets=${presetsOk}, adaptive=${adaptiveOk}(calm=${vCalm.lastAdaptiveSubsteps},vig=${vVig.lastAdaptiveSubsteps}), pop=${popped}(p=${(vSeal.internalPressureBar||0).toFixed(2)}), suck=${suckBackOk}(H2O:${waterBeforeCool.toFixed(2)}->${(vGen.moles.H2O_l||0).toFixed(2)},p=${(vGen.internalPressureBar||0).toFixed(2)},air=${airAfterHeat.toFixed(4)})`
     );
   }
 }

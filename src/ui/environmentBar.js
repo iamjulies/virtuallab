@@ -1,4 +1,5 @@
 import { CONSTANTS, kelvinToCelsius, waterBoilingPointK } from '../data/constants.js';
+import { PRESET_MENU_ITEMS } from '../data/presets.js';
 
 export class EnvironmentBar {
   constructor(container, sim, appState, callbacks) {
@@ -113,30 +114,10 @@ export class EnvironmentBar {
 
         <!-- Right Toolbar: Presets, Device Mode, Theme, Language -->
         <div class="env-toolbar-group">
-          <!-- Presets -->
+          <!-- Guided Experiments -->
           <select id="preset-select" style="max-width: 195px;" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium truncate">
             <option value="">${t('quickPresets')}</option>
-            <option value="starter">${t('presetStarter')}</option>
-            <option value="clean">${t('presetClean')}</option>
-            <option value="compare_rate_factors">${t('presetCompareRateFactors')}</option>
-            <option value="compare_corrosion">${t('presetCompareCorrosion')}</option>
-            <option value="caco3_calcination_limewater">${t('presetCaco3Calcination')}</option>
-            <option value="cu_ammine_complex">${t('presetCuAmmineComplex')}</option>
-            <option value="cuo_h2_reduction">${t('presetCuoH2Reduction')}</option>
-            <option value="zn_burn_o2">${t('presetZnBurnO2')}</option>
-            <option value="air_tarnish_deliquesce">${t('presetAirTarnish')}</option>
-            <option value="na_water_phen">${t('presetNaWaterPhen')}</option>
-            <option value="copper_hydroxide_series">${t('presetCuSeries')}</option>
-            <option value="amphoteric_zn_cu">${t('presetAmphotericZnCu')}</option>
-            <option value="gas_collect">${t('presetGasCollect')}</option>
-            <option value="trough_collect">${t('presetTroughCollect')}</option>
-            <option value="titration">${t('presetTitration')}</option>
-            <option value="filtration">${t('presetFiltration')}</option>
-            <option value="daniell_cell">${t('presetDaniellCell')}</option>
-            <option value="electrolysis">${t('presetElectrolysis')}</option>
-            <option value="distillation">${t('presetDistillation')}</option>
-            <option value="ammonia_fountain">${t('presetAmmoniaFountain')}</option>
-            <option value="graham_diffusion">${t('presetGrahamDiffusion')}</option>
+            ${PRESET_MENU_ITEMS.map((p) => `<option value="${p.id}">${t(p.i18nKey)}</option>`).join('\n            ')}
           </select>
 
           <!-- Device Preview Switcher -->
