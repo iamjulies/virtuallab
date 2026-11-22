@@ -373,7 +373,7 @@ export const APPARATUS = {
     maxVolumeMl: 100,
     tareMassG: 118.0,
     width: 64,
-    height: 174,
+    height: 196,
     neckRadius: 11,
     surfaceAreaCm2: 18.5,
     opticalPathCm: 4.0,

@@ -195,7 +195,7 @@ export function renderFilterFunnel(ctx, item, isSelected, isDropTarget, isDark, 
 
 export function renderSeparatoryFunnel(ctx, item, isSelected, isDropTarget, isDark, langCode = 'vi', timeNow = 0) {
   const pal = getThemePalette(isDark);
-  const spec = APPARATUS.separatory_funnel || { width: 64, height: 174, maxVolumeMl: 100 };
+  const spec = APPARATUS.separatory_funnel || { width: 64, height: 196, maxVolumeMl: 100 };
   if (item.isBroken) {
     renderBrokenToolShards(ctx, item, pal, isSelected, spec.width, spec.height);
     return;
@@ -209,11 +209,11 @@ export function renderSeparatoryFunnel(ctx, item, isSelected, isDropTarget, isDa
   const topY = y - spec.height / 2;
   const botY = y + spec.height / 2;
 
-  const neckTopY = topY + 16;
-  const neckBotY = topY + 34;
-  const bulbMaxY = y + 6;
-  const taperEndY = botY - 46;
-  const valveY = botY - 34;
+  const neckTopY = topY + 14;
+  const neckBotY = topY + 32;
+  const bulbMaxY = y - 8;
+  const taperEndY = botY - 68;
+  const valveY = botY - 54;
   const stemEndY = botY - 2;
   const neckHalfW = 7.5;
   const bulbHalfW = 28.5;

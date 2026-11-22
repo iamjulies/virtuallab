@@ -1910,7 +1910,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 30 &&
+          STARTER_REAGENTS.length === 31 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2161,8 +2161,8 @@
           badgeCustomEn === 'Non-standard' &&
           badgeCryoEn === '❄️ Cryo' &&
           badgeCryoVi === '❄️ Cryo' &&
-          /virlab_beta_v[34]\+/.test(I18N.vi.appSubtitle) &&
-          /virlab_beta_v[34]\+/.test(I18N.en.appSubtitle) &&
+          /virlab_beta_v[345]\+/.test(I18N.vi.appSubtitle) &&
+          /virlab_beta_v[345]\+/.test(I18N.en.appSubtitle) &&
           I18N.vi.reg_cuso4_5h2o.includes('Copper(II)'),
         `min=${minAttr}, badges=${badgeSatp}|${badgeCustomEn}|${badgeCryoEn}|${badgeCryoVi}, subVi=${I18N.vi.appSubtitle}`
       );
@@ -2478,7 +2478,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v4+build.26';
+      const expectedBuild = 'virlab_beta_v5+build.1';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2538,11 +2538,12 @@
         Boolean(I18N.vi.eq_separatory_funnel && I18N.en.eq_separatory_funnel) &&
         Boolean(I18N.vi.condRefluxToggle && I18N.en.condRefluxToggle) &&
         Boolean(I18N.vi.regCatOrganic && I18N.en.regCatOrganic) &&
+        Boolean(I18N.vi.reg_benzene && I18N.en.reg_benzene) &&
         Boolean(I18N.vi.stopperModeDualHole && I18N.en.stopperModeDualHole);
       assert(
-        'Build virlab_beta_v4+build.26 parity: All 40 apparatus & 30 starter reagents translated in VI/EN, Prompt 60 Dual-Hole Stopper & Organic Reagent Category parity enforced',
+        'Build virlab_beta_v5+build.1 parity: All 40 apparatus & 31 starter reagents translated in VI/EN, Prompt 61 Benzene, Halogen Derivatives & Alcohol/Phenol Preparations parity enforced',
         APPARATUS_ORDER.length === 40 &&
-          STARTER_REAGENTS.length === 30 &&
+          STARTER_REAGENTS.length === 31 &&
           !APPARATUS.clay_triangle &&
           !APPARATUS.crucible_tongs &&
           allTranslated &&
@@ -7406,7 +7407,7 @@
       const mno2AcidOk = Math.abs((bMnColdAcid.moles.MnO2_s || 0) - 0.01) < 1e-6 && cl2HotTot > 0.002 && (bMnHotHCl.moles.Mn2_aq || 0) > 0.002;
 
       const iupacKmno4Ok =
-        STARTER_REAGENTS.length === 30 &&
+        STARTER_REAGENTS.length === 31 &&
         STARTER_REAGENTS.some((r) => r.id === 'kmno4') &&
         !/\b(kali|mangan|axit|clo|oxi(?! hóa))\b/i.test(`${I18N.vi.reg_kmno4} ${I18N.vi.reg_kmno4_desc} ${I18N.vi.alertMn2O7Hazard}`);
 
@@ -7520,7 +7521,7 @@
         (vIRoom.moles.IO3_aq || 0) > (vIRoom.moles.IO_aq || 0) * 4;
 
       const iupacHalOk =
-        STARTER_REAGENTS.length === 30 &&
+        STARTER_REAGENTS.length === 31 &&
         STARTER_REAGENTS.some((r) => r.id === 'br2') &&
         STARTER_REAGENTS.some((r) => r.id === 'i2') &&
         !/\b(brom|iot|clo|kali|natri|nhôm|sắt|axit)\b/i.test(`${I18N.vi.reg_br2} ${I18N.vi.reg_br2_desc} ${I18N.vi.reg_i2} ${I18N.vi.reg_i2_desc}`);
@@ -7636,7 +7637,7 @@
         (bSHNO3.moles.SO4_2_aq || 0) > 0.001;
 
       const iupacSulfOk =
-        STARTER_REAGENTS.length === 30 &&
+        STARTER_REAGENTS.length === 31 &&
         STARTER_REAGENTS.some((r) => r.id === 's') &&
         !/\b(lưu huỳnh|sunfua|hiđro|axit|oxi(?! hóa)|etanol)\b/i.test(`${I18N.vi.reg_s} ${I18N.vi.reg_s_desc}`);
 
@@ -8716,7 +8717,7 @@
       const regCr = STARTER_REAGENTS.find((r) => r.id === 'k2cr2o7');
       const regSi = STARTER_REAGENTS.find((r) => r.id === 'sio2');
       const catOk =
-        STARTER_REAGENTS.length === 30 &&
+        STARTER_REAGENTS.length === 31 &&
         oxides.length === 1 &&
         oxides[0].id === 'sio2' &&
         REAGENT_CATEGORIES.some((c) => c.id === 'oxide' && c.i18nKey === 'regCatOxide') &&
@@ -8908,7 +8909,7 @@
       const regA = STARTER_REAGENTS.find((r) => r.id === 'ch3cooh');
       const acids3 = STARTER_REAGENTS.filter((r) => r.category === 'acid');
       const regOrgOk =
-        STARTER_REAGENTS.length === 30 &&
+        STARTER_REAGENTS.length === 31 &&
         acids3.length === 3 &&
         Boolean(regE && regE.category === 'organic' && regE.perMl?.C2H5OH_l > 0.017) &&
         Boolean(regA && regA.category === 'organic' && regA.perMl?.CH3COOH_l > 0.017) &&
@@ -9723,6 +9724,102 @@
         'Prompt 60 invariants: Dual-hole rubber stopper (simultaneous Separatory Funnel + gas delivery tube with offset ports + CaC2+H2O->C2H2 collection + 1-hole/solid constraints) & Organic reagent category',
         dualHoleOk && holedDisconnOk && solidUnmountOk && orgCatOk,
         `dualHole=${dualHoleOk}(mode=${genFlask.stopperMode},portDx=${portMain ? (portMain.x - genFlask.x).toFixed(1) : 'n/a'},sepDx=${(sepFun.x - genFlask.x).toFixed(1)},C2H2=${(gasRecv.headspaceGasMoles?.C2H2_g || 0).toFixed(4)}), holedDisconn=${holedDisconnOk}, solidUnmount=${solidUnmountOk}, orgCat=${orgCatOk}`
+      );
+    }
+
+    // TEST 179: Prompt 61 — Funnel/Condenser Non-Overlap, Benzene Physical & Chemical Matrix, Halogen Derivatives, Alcohol/Phenol Preparations
+    {
+      // 1) Visual non-overlap: separatory_funnel + reflux liebig_condenser on round_flask_250
+      const simVis = new LabSimulation();
+      const fl = simVis.createApparatus('round_flask_250', 400, 320);
+      const cond = simVis.createApparatus('liebig_condenser', 400, 220);
+      cond.refluxMode = true;
+      cond.refluxVesselId = fl.id;
+      const sep = simVis.createApparatus('separatory_funnel', 400, 200);
+      simVis.mountSeparatoryFunnel(sep.id, fl.id);
+      simVis.step(0.05);
+      const visSepCondOk = Math.abs(sep.x - cond.x) >= 24 && sep.y < fl.y - (APPARATUS.round_flask_250.height / 2);
+
+      // 2) Benzene starter reagent + freezing/melting + I2 violet-pink + inertness to Na & KMnO4
+      const regBz = STARTER_REAGENTS.find((r) => r.id === 'benzene');
+      const bzSpecOk = Boolean(
+        regBz &&
+        regBz.bottleStyle?.glassMaterial === 'amber' &&
+        regBz.bottleStyle?.capColor === '#f8fafc' &&
+        regBz.category === 'organic' &&
+        Math.abs(SPECIES.C6H6_l.meltTempK - 278.68) < 0.01 &&
+        Math.abs(SPECIES.C6H6_l.boilTempK - 353.24) < 0.01
+      );
+      const simBzPhys = new LabSimulation();
+      const vBzF = simBzPhys.createApparatus('beaker_250', 220, 300);
+      vBzF.moles.C6H6_l = 0.2;
+      for (let i = 0; i < 6; i++) { vBzF.tempK = 270.15; simBzPhys.step(0.5); }
+      const bzFroze = (vBzF.moles.C6H6_s || 0) > 0.05;
+      for (let i = 0; i < 6; i++) { vBzF.tempK = 290.15; simBzPhys.step(0.5); }
+      const bzMelted = (vBzF.moles.C6H6_l || 0) > 0.15 && (vBzF.moles.C6H6_s || 0) < 0.01;
+
+      const vBzI2 = simBzPhys.createApparatus('beaker_250', 420, 300);
+      vBzI2.isStoppered = true;
+      vBzI2.moles.C6H6_l = 0.2;
+      vBzI2.moles.I2_s = 0.01;
+      vBzI2.moles.Na_s = 0.02;
+      vBzI2.moles.MnO4_aq = 0.01;
+      for (let i = 0; i < 5; i++) simBzPhys.step(0.5);
+      const bzColor = computeSolutionVisuals(vBzI2.moles, 0.02, null, 4.5, null, 0, { phaseFilter: 'organic_light' });
+      const bzInertAndViolet = bzColor.r > bzColor.g + 20 && bzColor.b > bzColor.g + 15 && vBzI2.moles.C6H6_l > 0.19 && vBzI2.moles.Na_s > 0.019;
+
+      // 3) Benzene reactions: Br2+Fe, Cl2+UV, Nitration, Friedel-Crafts, Fenton
+      const simBzRxn = new LabSimulation();
+      const vBrFe = simBzRxn.createApparatus('round_flask_250', 180, 300);
+      vBrFe.isStoppered = true; vBrFe.moles.C6H6_l = 0.1; vBrFe.moles.Br2_l = 0.1; vBrFe.moles.Fe_s = 0.05;
+      const vClUV = simBzRxn.createApparatus('round_flask_250', 320, 300);
+      vClUV.isStoppered = true; vClUV.moles.C6H6_l = 0.05; vClUV.moles.Cl2_g = 0.18; vClUV.uvExposureActive = true;
+      const vNit = simBzRxn.createApparatus('round_flask_250', 460, 300);
+      vNit.moles.C6H6_l = 0.1; vNit.moles.HNO3_l = 0.1; vNit.moles.H2SO4_l = 0.1;
+      const vFC = simBzRxn.createApparatus('round_flask_250', 600, 300);
+      vFC.moles.C6H6_l = 0.1; vFC.moles.CH3COCl_l = 0.1; vFC.moles.AlCl3_s = 0.05;
+      const vFen = simBzRxn.createApparatus('round_flask_250', 740, 300);
+      vFen.moles.C6H6_l = 0.1; vFen.moles.H2O2_aq = 0.1; vFen.moles.Fe2_aq = 0.01; vFen.moles.H2O_l = 0.5;
+      for (let i = 0; i < 8; i++) {
+        vBrFe.tempK = 323.15; vClUV.tempK = 303.15; vNit.tempK = 328.15; vFC.tempK = 303.15; vFen.tempK = 333.15;
+        simBzRxn.step(0.5);
+      }
+      const bzRxnOk =
+        (vBrFe.moles.C6H5Br_l || 0) > 0.004 &&
+        (vClUV.moles.C6H6Cl6_s || 0) > 0.02 &&
+        (vNit.moles.C6H5NO2_l || 0) > 0.05 &&
+        (vFC.moles.C6H5COCH3_l || 0) > 0.05 &&
+        (vFen.moles.C6H5OH_l || 0) > 0.03;
+
+      // 4) Halogen derivatives & preparations + Phenol
+      const simHal = new LabSimulation();
+      const vHyd = simHal.createApparatus('beaker_250', 180, 300);
+      vHyd.isStoppered = true; vHyd.moles.C2H5Br_l = 0.1; vHyd.moles.OH_aq = 0.15; vHyd.moles.H2O_l = 1.0;
+      const vZai = simHal.createApparatus('beaker_250', 320, 300);
+      vZai.isStoppered = true; vZai.moles.C2H5Br_l = 0.1; vZai.moles.OH_aq = 0.15; vZai.moles.C2H5OH_l = 0.5;
+      const vAryl = simHal.createApparatus('beaker_250', 460, 300);
+      vAryl.moles.C6H5Cl_l = 0.1; vAryl.moles.OH_aq = 0.2; vAryl.moles.H2O_l = 1.0;
+      const vWag = simHal.createApparatus('beaker_250', 600, 300);
+      vWag.isStoppered = true; vWag.moles.C2H4_g = 0.15; vWag.moles.MnO4_aq = 0.1; vWag.moles.H2O_l = 1.0;
+      const vPhBr = simHal.createApparatus('beaker_250', 740, 300);
+      vPhBr.moles.C6H5OH_l = 0.05; vPhBr.moles.Br2_aq = 0.18; vPhBr.moles.H2O_l = 1.0;
+      for (let i = 0; i < 8; i++) {
+        vHyd.tempK = 355.15; vZai.tempK = 355.15; vAryl.tempK = 353.15; vWag.tempK = 283.15; vPhBr.tempK = 298.15;
+        simHal.step(0.5);
+      }
+      const zaiC2H4 = (vZai.headspaceGasMoles?.C2H4_g || 0) + (vZai.escapedGasMoles?.C2H4_g || 0) + (vZai.moles.C2H4_g || 0);
+      const halAndPrepOk =
+        (vHyd.moles.C2H5OH_l || 0) > 0.004 &&
+        zaiC2H4 > 0.004 &&
+        (vAryl.moles.C6H5O_aq || 0) === 0 &&
+        (vWag.moles.C2H4OH_2_l || 0) > 0.05 &&
+        (vWag.moles.MnO2_s || 0) > 0.03 &&
+        (vPhBr.moles.C6H2Br3OH_s || 0) > 0.03;
+
+      assert(
+        'Prompt 61 invariants: Funnel/condenser non-overlap, Benzene physical/inertness/reactions, Halogen derivatives & Alcohol/Phenol preparations',
+        visSepCondOk && bzSpecOk && bzFroze && bzMelted && bzInertAndViolet && bzRxnOk && halAndPrepOk,
+        `vis=${visSepCondOk}(dx=${Math.abs(sep.x - cond.x).toFixed(1)}), bzSpec=${bzSpecOk}, freeze=${bzFroze}, melt=${bzMelted}, inertViolet=${bzInertAndViolet}, bzRxn=${bzRxnOk}(Br=${(vBrFe.moles.C6H5Br_l||0).toFixed(3)},UV=${(vClUV.moles.C6H6Cl6_s||0).toFixed(3)},Nit=${(vNit.moles.C6H5NO2_l||0).toFixed(3)},FC=${(vFC.moles.C6H5COCH3_l||0).toFixed(3)},Fen=${(vFen.moles.C6H5OH_l||0).toFixed(3)}), halPrep=${halAndPrepOk}(hyd=${(vHyd.moles.C2H5OH_l||0).toFixed(3)},zai=${zaiC2H4.toFixed(3)},wag=${(vWag.moles.C2H4OH_2_l||0).toFixed(3)},ph=${(vPhBr.moles.C6H2Br3OH_s||0).toFixed(3)})`
       );
     }
 

@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v4+build.26',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.1',
     toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
     quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
     quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -226,6 +226,8 @@ export const I18N = {
     reg_etoh_desc: 'Dung môi khan không màu dễ hút ẩm (0.789 g/cm³ · đs 78.37 °C · nc -114.1 °C · điểm chớp cháy 13 °C) · Tan vô hạn & co thể tích với H₂O; tác dụng Na/K/Mg(I₂), KMnO₄, K₂Cr₂O₇/H⁺, HNO₃ đặc, H₂SO₄ đặc (140 °C -> ete, 170 °C -> C₂H₄), HCl/ZnCl₂ & I₂/NaOH -> CHI₃↓ vàng',
     reg_ch3cooh: 'Acetic acid băng (CH₃COOH ~17.4 M)',
     reg_ch3cooh_desc: 'Dung dịch gần như khan không màu, đông đặc <16.6 °C (1.045 g/cm³ · đs 117.9 °C · pKa = 4.76) · Tác dụng Na/K (mạnh), Mg/Zn/Fe(t°), NaOH/NH₃, CaCO₃/CaC₂, ester hóa với C₂H₅OH (H₂SO₄ đặc 60–80 °C) & H₂O₂ -> CH₃COOOH',
+    reg_benzene: 'Benzene tinh khiết (C₆H₆ 100%)',
+    reg_benzene_desc: 'Chất lỏng không màu, mùi thơm đặc trưng, nhẹ hơn nước (0.874 g/cm³ · đđ 5.53 °C · đs 80.09 °C) · Hòa tan I₂ (tím hồng), S, Br₂ · Trơ với Na/K, KMnO₄, HCl, NaOH · Thế Br₂/Cl₂ (Fe, t°), cộng Cl₂/Br₂ (UV), nitro hóa HNO₃/H₂SO₄ (55 °C), Friedel–Crafts (AlCl₃), Fenton (H₂O₂/Fe²⁺)',
 
     // Workbench & Actions
     noSelection: 'Chưa chọn dụng cụ',
@@ -816,7 +818,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v4+build.26',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.1',
     toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
     quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
     quickPresetsHoldTitle: 'Quick Setup Presets (Hold F · Release to close)',
@@ -1031,6 +1033,8 @@ export const I18N = {
     reg_etoh_desc: 'Colorless hygroscopic anhydrous solvent (0.789 g/cm³ · bp 78.37 °C · mp -114.1 °C · flash pt 13 °C) · Miscible w/ H₂O (volume contraction); reacts w/ Na/K/Mg(I₂), KMnO₄, K₂Cr₂O₇/H⁺, conc. HNO₃, conc. H₂SO₄ (140 °C -> ether, 170 °C -> C₂H₄), HCl/ZnCl₂ & I₂/NaOH -> yellow CHI₃↓',
     reg_ch3cooh: 'Glacial Acetic Acid (CH₃COOH ~17.4 M)',
     reg_ch3cooh_desc: 'Colorless anhydrous weak acid freezing <16.6 °C (1.045 g/cm³ · bp 117.9 °C · pKa = 4.76) · Reacts w/ Na/K, Mg/Zn/Fe(heat), NaOH/NH₃, CaCO₃/CaC₂, esterifies C₂H₅OH (conc. H₂SO₄ 60–80 °C) & H₂O₂ -> CH₃COOOH',
+    reg_benzene: 'Pure Benzene (C₆H₆ 100%)',
+    reg_benzene_desc: 'Colorless aromatic nonpolar liquid, lighter than water (0.874 g/cm³ · mp 5.53 °C · bp 80.09 °C) · Dissolves I₂ (violet-pink), S, Br₂ · Inert to Na/K, KMnO₄, HCl, NaOH · Substitutes Br₂/Cl₂ (Fe), adds Cl₂/Br₂ (UV), nitrates (HNO₃/H₂SO₄ 55 °C), Friedel–Crafts (AlCl₃), Fenton (H₂O₂/Fe²⁺)',
 
     noSelection: 'No apparatus selected',
     selectVesselTip: 'Click any vessel on the bench, or drag apparatus & reagents directly onto the workbench.',

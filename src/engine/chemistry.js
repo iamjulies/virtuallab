@@ -5889,6 +5889,557 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
     }
   }
 
+  // ==================== PART 5: BENZENE, HALOGEN DERIVATIVES, & ALCOHOL/PHENOL PREPARATIONS ====================
+  const uvOn = Boolean(options?.uvLight || vessel.uvExposureActive);
+
+  // 5A. Benzene (C6H6_l) Reactions
+  if ((moles.C6H6_l || 0) > 1e-10 && orgMob > 0) {
+    const hasFeCat = (moles.Fe_s || 0) > 1e-8 || (moles.FeCl3_s || 0) > 1e-8 || (moles.FeBr3_s || 0) > 1e-8 || (moles.Fe3_aq || 0) > 1e-8 || (moles.Fe2_aq || 0) > 1e-8;
+    const hsGas = vessel.headspaceGasMoles || {};
+    const brSource = (moles.Br2_l || 0) > 1e-9 ? 'Br2_l' : (moles.Br2_g || 0) > 1e-9 ? 'Br2_g' : (hsGas.Br2_g || 0) > 1e-9 ? 'hs:Br2_g' : null;
+    const clSource = (moles.Cl2_g || 0) > 1e-9 ? 'Cl2_g' : (hsGas.Cl2_g || 0) > 1e-9 ? 'hs:Cl2_g' : null;
+    const getSrcAmt = (src) => (!src ? 0 : src.startsWith('hs:') ? (hsGas[src.slice(3)] || 0) : (moles[src] || 0));
+    const consumeSrc = (src, amt) => {
+      if (!src) return;
+      if (src.startsWith('hs:')) {
+        const k = src.slice(3);
+        hsGas[k] = Math.max(0, (hsGas[k] || 0) - amt);
+        if (hsGas[k] < 1e-13) delete hsGas[k];
+      } else {
+        consumeSpecies(src, amt);
+      }
+    };
+
+    // 5A-1. Electrophilic Bromination / Chlorination (Fe / FeX3 catalyst, 40–60 °C, NO UV)
+    if (hasFeCat && !uvOn && T >= 313.15) {
+      if (brSource) {
+        const dBzBr = Math.min(moles.C6H6_l, getSrcAmt(brSource)) * (1 - Math.exp(-0.85 * dt));
+        if (dBzBr > 1e-11) {
+          consumeSpecies('C6H6_l', dBzBr);
+          consumeSrc(brSource, dBzBr);
+          moles.C6H5Br_l = (moles.C6H5Br_l || 0) + dBzBr;
+          if ((moles.H2O_l || 0) > 1e-4) {
+            moles.H_aq = (moles.H_aq || 0) + dBzBr;
+            moles.Br_aq = (moles.Br_aq || 0) + dBzBr;
+          } else {
+            gasProduced.HBr_g = (gasProduced.HBr_g || 0) + dBzBr;
+          }
+          heatJ += dBzBr * 45000;
+          pushRxn('benzene_br2_fe', 'C₆H₆ + Br₂ —(Fe, 40–60 °C)→ C₆H₅Br + HBr↑', 'Brom hóa Benzene (xúc tác Fe, 40–60 °C) → Bromobenzene + HBr↑', 'Benzene bromination (Fe, 40–60 °C) → Bromobenzene + HBr↑', 'Xúc tác Fe/FeBr₃ phân cực Br₂ giúp thế H trên vòng Benzene tạo Bromobenzene và khí HBr.', 'Fe catalyst polarizes Br₂ for electrophilic substitution on Benzene yielding Bromobenzene and HBr.', dBzBr, true);
+        }
+      }
+      if (clSource) {
+        const dBzCl = Math.min(moles.C6H6_l, getSrcAmt(clSource)) * (1 - Math.exp(-0.92 * dt));
+        if (dBzCl > 1e-11) {
+          consumeSpecies('C6H6_l', dBzCl);
+          consumeSrc(clSource, dBzCl);
+          moles.C6H5Cl_l = (moles.C6H5Cl_l || 0) + dBzCl;
+          if ((moles.H2O_l || 0) > 1e-4) {
+            moles.H_aq = (moles.H_aq || 0) + dBzCl;
+            moles.Cl_aq = (moles.Cl_aq || 0) + dBzCl;
+          } else {
+            gasProduced.HCl_g = (gasProduced.HCl_g || 0) + dBzCl;
+          }
+          heatJ += dBzCl * 115000;
+          pushRxn('benzene_cl2_fe', 'C₆H₆ + Cl₂ —(Fe/FeCl₃, 40–60 °C)→ C₆H₅Cl + HCl↑', 'Clo hóa Benzene (xúc tác Fe/FeCl₃, 40–60 °C) → Chlorobenzene + HCl↑', 'Benzene chlorination (Fe/FeCl₃, 40–60 °C) → Chlorobenzene + HCl↑', 'Xúc tác FeCl₃ thế H trên vòng Benzene tạo Chlorobenzene và khí HCl.', 'FeCl₃-catalyzed chlorination of Benzene yields Chlorobenzene and HCl gas.', dBzCl, true);
+        }
+      }
+    }
+
+    // 5A-2. Radical UV Addition: C6H6 + 3Cl2 -> C6H6Cl6(s), C6H6 + 3Br2 -> C6H6Br6(s)
+    if (uvOn && !hasFeCat) {
+      if (clSource && moles[clSource] > 1e-9) {
+        const dAddCl = Math.min(moles.C6H6_l, moles[clSource] / 3) * (1 - Math.exp(-0.65 * dt));
+        if (dAddCl > 1e-11) {
+          consumeSpecies('C6H6_l', dAddCl);
+          consumeSpecies(clSource, 3 * dAddCl);
+          moles.C6H6Cl6_s = (moles.C6H6Cl6_s || 0) + dAddCl;
+          heatJ += dAddCl * 290000;
+          pushRxn('benzene_cl2_uv', 'C₆H₆ + 3Cl₂ —(UV)→ C₆H₆Cl₆(s)', 'Cộng gốc tự do Cl₂ vào Benzene dưới tia UV → Hexachlorocyclohexane', 'Benzene + 3Cl₂ (UV) → Hexachlorocyclohexane C₆H₆Cl₆(s)', 'Dưới ánh sáng UV, Benzene cộng hợp với 3Cl₂ phá vỡ hệ thơm tạo tinh thể trắng C₆H₆Cl₆.', 'Under UV irradiation, Benzene undergoes radical addition with 3Cl₂ to form white C₆H₆Cl₆ crystals.', dAddCl);
+        }
+      }
+      if (brSource && moles[brSource] > 1e-9) {
+        const dAddBr = Math.min(moles.C6H6_l, moles[brSource] / 3) * (1 - Math.exp(-0.45 * dt));
+        if (dAddBr > 1e-11) {
+          consumeSpecies('C6H6_l', dAddBr);
+          consumeSpecies(brSource, 3 * dAddBr);
+          moles.C6H6Br6_s = (moles.C6H6Br6_s || 0) + dAddBr;
+          heatJ += dAddBr * 220000;
+          pushRxn('benzene_br2_uv', 'C₆H₆ + 3Br₂ —(UV)→ C₆H₆Br₆(s)', 'Cộng gốc tự do Br₂ vào Benzene dưới tia UV → Hexabromocyclohexane', 'Benzene + 3Br₂ (UV) → Hexabromocyclohexane C₆H₆Br₆(s)', 'Dưới tia UV không có xúc tác Fe, Benzene cộng 3Br₂ tạo tinh thể C₆H₆Br₆.', 'Under UV without Fe, Benzene adds 3Br₂ to form C₆H₆Br₆ crystals.', dAddBr);
+        }
+      }
+    }
+
+    // 5A-3. Nitration: C6H6 + HNO3 -(H2SO4 conc, 50–60 °C)-> C6H5NO2(l) + H2O
+    const hasConcH2SO4 = (moles.H2SO4_l || 0) > 1e-6 || ((moles.HSO4_aq || 0) > 1e-4 && (moles.H_aq || 0) > 1e-4);
+    const hasNitric = (moles.HNO3_l || 0) > 1e-8 || ((moles.NO3_aq || 0) > 1e-6 && (moles.H_aq || 0) > 1e-5);
+    if (hasConcH2SO4 && hasNitric && T >= 323.15) {
+      const nNit = (moles.HNO3_l || 0) > 1e-8 ? moles.HNO3_l : Math.min(moles.NO3_aq || 0, moles.H_aq || 0);
+      const dNit = Math.min(moles.C6H6_l, nNit) * (1 - Math.exp(-0.78 * dt));
+      if (dNit > 1e-11) {
+        consumeSpecies('C6H6_l', dNit);
+        if ((moles.HNO3_l || 0) >= dNit) consumeSpecies('HNO3_l', dNit);
+        else { consumeSpecies('NO3_aq', dNit); consumeSpecies('H_aq', dNit); }
+        moles.C6H5NO2_l = (moles.C6H5NO2_l || 0) + dNit;
+        moles.H2O_l = (moles.H2O_l || 0) + dNit;
+        heatJ += dNit * 117000;
+        pushRxn('benzene_nitration', 'C₆H₆ + HNO₃ —(H₂SO₄ đặc, 50–60 °C)→ C₆H₅NO₂(l) + H₂O', 'Nitro hóa Benzene tạo Nitrobenzene (lỏng vàng nhạt, d = 1.20)', 'Benzene nitration (conc. H₂SO₄, 50–60 °C) → Nitrobenzene', 'Hỗn hợp HNO₃/H₂SO₄ đặc tạo tác nhân NO₂⁺ thế vào vòng Benzene sinh Nitrobenzene sánh vàng nhạt.', 'Mixed HNO₃/H₂SO₄ generates NO₂⁺ to nitrate Benzene into pale-yellow dense Nitrobenzene.', dNit);
+      }
+    }
+
+    // 5A-4. Sulfonation: C6H6 + H2SO4(conc) -(80–100 °C)-> C6H5SO3H(aq) + H2O
+    if ((moles.H2SO4_l || 0) > 1e-6 && !hasNitric && T >= 353.15) {
+      const dSulf = Math.min(moles.C6H6_l, moles.H2SO4_l) * (1 - Math.exp(-0.55 * dt));
+      if (dSulf > 1e-11) {
+        consumeSpecies('C6H6_l', dSulf);
+        consumeSpecies('H2SO4_l', dSulf);
+        moles.C6H5SO3H_aq = (moles.C6H5SO3H_aq || 0) + dSulf;
+        moles.H2O_l = (moles.H2O_l || 0) + dSulf;
+        heatJ += dSulf * 62000;
+        pushRxn('benzene_sulfonation', 'C₆H₆ + H₂SO₄(đặc) —(80–100 °C)→ C₆H₅SO₃H + H₂O', 'Sulfon hóa Benzene tạo Benzenesulfonic acid tan thành 1 pha đồng nhất', 'Benzene sulfonation (80–100 °C) → Benzenesulfonic acid', 'Đun Benzene với H₂SO₄ đặc 80–100 °C thu được Benzenesulfonic acid tan hoàn toàn trong pha nước.', 'Sulfonation of Benzene at 80–100 °C yields water-soluble Benzenesulfonic acid.', dSulf);
+      }
+    }
+
+    // 5A-5. Friedel–Crafts Acylation & Alkylation (anhydrous AlCl3_s, T >= 298.15 K)
+    if ((moles.AlCl3_s || 0) > 1e-8 && (moles.H2O_l || 0) < 0.02 && T >= 298.15) {
+      if ((moles.CH3COCl_l || 0) > 1e-9) {
+        const dFCac = Math.min(moles.C6H6_l, moles.CH3COCl_l) * (1 - Math.exp(-0.95 * dt));
+        if (dFCac > 1e-11) {
+          consumeSpecies('C6H6_l', dFCac);
+          consumeSpecies('CH3COCl_l', dFCac);
+          moles.C6H5COCH3_l = (moles.C6H5COCH3_l || 0) + dFCac;
+          gasProduced.HCl_g = (gasProduced.HCl_g || 0) + dFCac;
+          heatJ += dFCac * 88000;
+          pushRxn('benzene_fc_acylation', 'C₆H₆ + CH₃COCl —(AlCl₃ khan)→ C₆H₅COCH₃ + HCl↑', 'Acyl hóa Friedel–Crafts tạo Acetophenone', 'Friedel–Crafts acylation → Acetophenone + HCl↑', 'Xúc tác AlCl₃ khan thực hiện phản ứng thế acyl vào Benzene tạo Acetophenone và khí HCl.', 'Anhydrous AlCl₃ catalyzes Friedel–Crafts acylation of Benzene to Acetophenone and HCl gas.', dFCac, true);
+        }
+      }
+      if ((moles.C2H4_g || 0) > 1e-9) {
+        const dFCet = Math.min(moles.C6H6_l, moles.C2H4_g) * (1 - Math.exp(-0.72 * dt));
+        if (dFCet > 1e-11) {
+          consumeSpecies('C6H6_l', dFCet);
+          consumeSpecies('C2H4_g', dFCet);
+          moles.C6H5C2H5_l = (moles.C6H5C2H5_l || 0) + dFCet;
+          heatJ += dFCet * 105000;
+          pushRxn('benzene_fc_ethylene', 'C₆H₆ + C₂H₄ —(AlCl₃)→ C₆H₅C₂H₅', 'Alkyl hóa Benzene với Ethylene → Ethylbenzene', 'Friedel–Crafts alkylation: Benzene + C₂H₄ → Ethylbenzene', 'AlCl₃ xúc tác cộng Ethylene vào vòng Benzene tạo Ethylbenzene.', 'AlCl₃-catalyzed alkylation of Benzene with Ethylene forms Ethylbenzene.', dFCet);
+        }
+      }
+      const fcHalId = (moles.C2H5Cl_l || 0) > 1e-9 ? 'C2H5Cl_l' : (moles.C2H5Cl_g || 0) > 1e-9 ? 'C2H5Cl_g' : (moles.C2H5Br_l || 0) > 1e-9 ? 'C2H5Br_l' : null;
+      if (fcHalId) {
+        const dFChal = Math.min(moles.C6H6_l, moles[fcHalId]) * (1 - Math.exp(-0.82 * dt));
+        if (dFChal > 1e-11) {
+          consumeSpecies('C6H6_l', dFChal);
+          consumeSpecies(fcHalId, dFChal);
+          moles.C6H5C2H5_l = (moles.C6H5C2H5_l || 0) + dFChal;
+          const hxGas = fcHalId === 'C2H5Br_l' ? 'HBr_g' : 'HCl_g';
+          gasProduced[hxGas] = (gasProduced[hxGas] || 0) + dFChal;
+          heatJ += dFChal * 78000;
+          pushRxn('benzene_fc_alkyl', `C₆H₆ + ${fcHalId === 'C2H5Br_l' ? 'C₂H₅Br' : 'C₂H₅Cl'} —(AlCl₃)→ C₆H₅C₂H₅ + ${fcHalId === 'C2H5Br_l' ? 'HBr' : 'HCl'}↑`, 'Alkyl hóa Friedel–Crafts tạo Ethylbenzene', 'Friedel–Crafts alkylation → Ethylbenzene', 'Xúc tác AlCl₃ khan thế nhóm ethyl vào vòng Benzene giải phóng khí HX.', 'Anhydrous AlCl₃ catalyzes Friedel–Crafts alkylation to Ethylbenzene and HX gas.', dFChal, true);
+        }
+      }
+    }
+
+    // 5A-6. Hydrogenation: C6H6 + 3H2 -(Ni/Pt, 180 °C)-> C6H12(l)
+    const hasHydCat = (moles.Ni_s || 0) > 1e-8 || (moles.Pt_s || 0) > 1e-8;
+    if (hasHydCat && (moles.H2_g || 0) > 1e-9 && T >= 423.15) {
+      const dHyd = Math.min(moles.C6H6_l, moles.H2_g / 3) * (1 - Math.exp(-0.65 * dt));
+      if (dHyd > 1e-11) {
+        consumeSpecies('C6H6_l', dHyd);
+        consumeSpecies('H2_g', 3 * dHyd);
+        moles.C6H12_l = (moles.C6H12_l || 0) + dHyd;
+        heatJ += dHyd * 206000;
+        pushRxn('benzene_hydrogenation', 'C₆H₆ + 3H₂ —(Ni/Pt, 180 °C)→ C₆H₁₂', 'Hydro hóa Benzene → Cyclohexane', 'Benzene hydrogenation (Ni/Pt, 180 °C) → Cyclohexane', 'Benzene cộng 3H₂ trên xúc tác Ni/Pt ở 180 °C tạo Cyclohexane.', 'Catalytic hydrogenation of Benzene over Ni/Pt at 180 °C yields Cyclohexane.', dHyd);
+      }
+    }
+
+    // 5A-7. Fenton Hydroxylation (H2O2 + Fe2+, 50–70 °C) -> Phenol + H2O
+    if ((moles.H2O2_aq || 0) > 1e-7 && (moles.Fe2_aq || 0) > 1e-8 && T >= 323.15 && T <= 363.15) {
+      const dFen = Math.min(moles.C6H6_l, moles.H2O2_aq) * (1 - Math.exp(-0.48 * dt));
+      if (dFen > 1e-11) {
+        consumeSpecies('C6H6_l', dFen);
+        consumeSpecies('H2O2_aq', dFen);
+        moles.C6H5OH_l = (moles.C6H5OH_l || 0) + dFen;
+        moles.H2O_l = (moles.H2O_l || 0) + dFen;
+        heatJ += dFen * 195000;
+        pushRxn('benzene_fenton', 'C₆H₆ + H₂O₂ —(Fe²⁺, 50–70 °C)→ C₆H₅OH + H₂O', 'Oxi hóa Fenton Benzene bằng H₂O₂/Fe²⁺ → Phenol', 'Fenton oxidation: Benzene + H₂O₂ (Fe²⁺) → Phenol', 'Gốc tự do •OH từ hệ Fenton (Fe²⁺ + H₂O₂) hydroxyl hóa trực tiếp Benzene thành Phenol.', 'Fenton reagent (H₂O₂/Fe²⁺) hydroxylates Benzene directly to Phenol.', dFen);
+      }
+    }
+
+    // 5A-8. V2O5 Partial Oxidation (450 °C) & Pyrolysis to Biphenyl (650–800 °C) & Combustion
+    if ((moles.V2O5_s || 0) > 1e-8 && (moles.O2_g || 0) > 1e-9 && T >= 700.0) {
+      const dV2O5 = Math.min(moles.C6H6_l / 2, moles.O2_g / 9) * (1 - Math.exp(-0.55 * dt));
+      if (dV2O5 > 1e-11) {
+        consumeSpecies('C6H6_l', 2 * dV2O5);
+        consumeSpecies('O2_g', 9 * dV2O5);
+        moles.C4H2O3_s = (moles.C4H2O3_s || 0) + 2 * dV2O5;
+        gasProduced.CO2_g = (gasProduced.CO2_g || 0) + 4 * dV2O5;
+        gasProduced.H2O_g = (gasProduced.H2O_g || 0) + 4 * dV2O5;
+        heatJ += dV2O5 * 3650000;
+        pushRxn('benzene_v2o5_ox', '2C₆H₆ + 9O₂ —(V₂O₅, 450 °C)→ 2C₄H₂O₃ + 4CO₂↑ + 4H₂O↑', 'Oxi hóa xúc tác Benzene (V₂O₅, 450 °C) → Maleic anhydride', 'Benzene oxidation (V₂O₅, 450 °C) → Maleic anhydride', 'Oxi hóa chọn lọc Benzene trên xúc tác V₂O₅ ở 450 °C tạo Maleic anhydride.', 'Selective V₂O₅-catalyzed oxidation of Benzene at 450 °C yields Maleic anhydride.', dV2O5, true);
+      }
+    }
+    if (T >= 923.15 && (moles.O2_g || 0) < 1e-6) {
+      const dPyr = (moles.C6H6_l / 2) * (1 - Math.exp(-0.35 * dt));
+      if (dPyr > 1e-11) {
+        consumeSpecies('C6H6_l', 2 * dPyr);
+        moles.C12H10_s = (moles.C12H10_s || 0) + dPyr;
+        gasProduced.H2_g = (gasProduced.H2_g || 0) + dPyr;
+        heatJ -= dPyr * 18000;
+        pushRxn('benzene_pyrolysis', '2C₆H₆ —(650–800 °C)→ C₁₂H₁₀ + H₂↑', 'Nhiệt phân Benzene (650–800 °C) → Biphenyl + H₂↑', 'Benzene pyrolysis (650–800 °C) → Biphenyl + H₂↑', 'Nhiệt phân Benzene ở 650–800 °C ngưng tụ tạo Biphenyl và khí H₂.', 'High-temperature pyrolysis of Benzene yields Biphenyl and H₂ gas.', dPyr, true);
+      }
+    }
+  }
+
+  // 5A-9. Secondary nitration: C6H5NO2 + HNO3 -(H2SO4 conc, >= 90 °C)-> m-C6H4(NO2)2 + H2O
+  if ((moles.C6H5NO2_l || 0) > 1e-9 && ((moles.H2SO4_l || 0) > 1e-6 || (moles.HSO4_aq || 0) > 1e-4) && ((moles.HNO3_l || 0) > 1e-8 || ((moles.NO3_aq || 0) > 1e-6 && (moles.H_aq || 0) > 1e-5)) && T >= 363.15) {
+    const nNit2 = (moles.HNO3_l || 0) > 1e-8 ? moles.HNO3_l : Math.min(moles.NO3_aq || 0, moles.H_aq || 0);
+    const dNit2 = Math.min(moles.C6H5NO2_l, nNit2) * (1 - Math.exp(-0.42 * dt));
+    if (dNit2 > 1e-11) {
+      consumeSpecies('C6H5NO2_l', dNit2);
+      if ((moles.HNO3_l || 0) >= dNit2) consumeSpecies('HNO3_l', dNit2);
+      else { consumeSpecies('NO3_aq', dNit2); consumeSpecies('H_aq', dNit2); }
+      moles.C6H4_NO2_2_s = (moles.C6H4_NO2_2_s || 0) + dNit2;
+      moles.H2O_l = (moles.H2O_l || 0) + dNit2;
+      heatJ += dNit2 * 98000;
+      pushRxn('nitrobenzene_dinitro', 'C₆H₅NO₂ + HNO₃ —(H₂SO₄ đặc, ≥ 90 °C)→ m-C₆H₄(NO₂)₂ + H₂O', 'Nitro hóa tiếp Nitrobenzene ở ≥ 90 °C → m-Dinitrobenzene', 'Nitrobenzene nitration (≥ 90 °C) → m-Dinitrobenzene', 'Nhóm –NO₂ định hướng thế meta tạo tinh thể vàng m-Dinitrobenzene khi đun ≥ 90 °C.', 'The meta-directing –NO₂ group yields m-Dinitrobenzene crystals at ≥ 90 °C.', dNit2);
+    }
+  }
+
+  // 5B. Halogen Derivatives (C2H5Br, C2H5I, C2H5Cl, C6H5Br, C6H5Cl)
+  if (orgMob > 0) {
+    const alkylHalides = [
+      { id: 'C2H5Br_l', gasId: 'C2H5Br_g', ion: 'Br_aq', label: 'C₂H₅Br', name: 'Bromoethane', kScale: 1.0 },
+      { id: 'C2H5I_l', gasId: 'C2H5I_g', ion: 'I_aq', label: 'C₂H₅I', name: 'Iodoethane', kScale: 1.35 },
+      { id: 'C2H5Cl_l', gasId: 'C2H5Cl_g', ion: 'Cl_aq', label: 'C₂H₅Cl', name: 'Chloroethane', kScale: 0.65 },
+    ];
+    const isAlcoholicKOH = (moles.C2H5OH_l || 0) > 0.01 && ((moles.H2O_l || 0) < 0.05 || (moles.C2H5OH_l || 0) > (moles.H2O_l || 0));
+    const hsHal = vessel.headspaceGasMoles || {};
+
+    for (const hx of alkylHalides) {
+      const nLiqHx = moles[hx.id] || 0;
+      const nGasHx = hsHal[hx.gasId] || 0;
+      const nHx = nLiqHx + nGasHx;
+      if (nHx <= 1e-10) continue;
+      const consumeHx = (amt) => {
+        const fromLiq = Math.min(moles[hx.id] || 0, amt);
+        if (fromLiq > 0) consumeSpecies(hx.id, fromLiq);
+        const rem = amt - fromLiq;
+        if (rem > 1e-13 && hsHal[hx.gasId] > 0) {
+          hsHal[hx.gasId] = Math.max(0, hsHal[hx.gasId] - rem);
+          if (hsHal[hx.gasId] < 1e-13) delete hsHal[hx.gasId];
+        }
+      };
+
+      // 5B-1. Zaitsev elimination in alcoholic KOH/NaOH (70–100 °C) vs Hydrolysis in aqueous NaOH/KOH (70–90 °C)
+      if ((moles.OH_aq || 0) > 1e-6 && T >= 343.15) {
+        if (isAlcoholicKOH) {
+          const dElim = Math.min(nHx, moles.OH_aq) * (1 - Math.exp(-0.85 * hx.kScale * dt));
+          if (dElim > 1e-11) {
+            consumeHx(dElim);
+            consumeSpecies('OH_aq', dElim);
+            gasProduced.C2H4_g = (gasProduced.C2H4_g || 0) + dElim;
+            moles[hx.ion] = (moles[hx.ion] || 0) + dElim;
+            moles.H2O_l = (moles.H2O_l || 0) + dElim;
+            heatJ += dElim * 36000;
+            pushRxn(`rx_elim_${hx.id}`, `${hx.label} + OH⁻ —(C₂H₅OH, t°)→ C₂H₄↑ + ${hx.ion.replace('_aq', '⁻')} + H₂O`, `Tách HX ${hx.name} trong KOH/C₂H₅OH → Ethylene C₂H₄↑`, `Zaitsev elimination: ${hx.name} + OH⁻/EtOH → Ethylene C₂H₄↑`, 'Trong dung dịch kiềm/Ethanol đun nóng, dẫn xuất halogen tách HX tạo khí Ethylene.', 'In hot alcoholic alkali, ethyl halides undergo E2 elimination to Ethylene gas.', dElim, true);
+          }
+        } else if ((moles.H2O_l || 0) > 1e-4) {
+          const dHydHx = Math.min(nHx, moles.OH_aq) * (1 - Math.exp(-0.72 * hx.kScale * dt));
+          if (dHydHx > 1e-11) {
+            consumeHx(dHydHx);
+            consumeSpecies('OH_aq', dHydHx);
+            moles.C2H5OH_l = (moles.C2H5OH_l || 0) + dHydHx;
+            moles[hx.ion] = (moles[hx.ion] || 0) + dHydHx;
+            heatJ += dHydHx * 42000;
+            pushRxn(`rx_hyd_${hx.id}`, `${hx.label} + OH⁻ —(H₂O, 70–90 °C)→ C₂H₅OH + ${hx.ion.replace('_aq', '⁻')}`, `Thủy phân ${hx.name} trong NaOH/KOH loãng → Ethanol`, `Alkaline hydrolysis: ${hx.name} + OH⁻ → Ethanol`, 'Đun nóng dẫn xuất halogen với NaOH/KOH loãng thế –X bằng –OH tái tạo Ethanol.', 'Warm aqueous NaOH/KOH hydrolyzes ethyl halides back to Ethanol.', dHydHx);
+          }
+        }
+      }
+
+      // 5B-2. Williamson Ether Synthesis: C2H5O- + C2H5X -> (C2H5)2O + X-
+      if ((moles.C2H5O_aq || 0) > 1e-7) {
+        const dWill = Math.min(nHx, moles.C2H5O_aq) * (1 - Math.exp(-1.15 * hx.kScale * dt));
+        if (dWill > 1e-11) {
+          consumeSpecies(hx.id, dWill);
+          consumeSpecies('C2H5O_aq', dWill);
+          moles.C2H5OC2H5_l = (moles.C2H5OC2H5_l || 0) + dWill;
+          moles[hx.ion] = (moles[hx.ion] || 0) + dWill;
+          heatJ += dWill * 68000;
+          pushRxn(`williamson_${hx.id}`, `C₂H₅O⁻ + ${hx.label} → (C₂H₅)₂O + ${hx.ion.replace('_aq', '⁻')}`, `Tổng hợp Williamson từ ${hx.name} → Diethyl ether`, `Williamson ether synthesis: C₂H₅O⁻ + ${hx.label} → Diethyl ether`, 'Ion ethoxide thế nucleophil vào dẫn xuất halogen tạo Diethyl ether.', 'Nucleophilic substitution by ethoxide yields Diethyl ether.', dWill);
+        }
+      }
+
+      // 5B-3. Reaction with NH3 (T >= 323.15 K) -> C2H5NH2 + NH4+ + X-
+      if ((moles.NH3_aq || 0) > 1e-6 && T >= 323.15) {
+        const dAmn = Math.min(nHx, moles.NH3_aq / 2) * (1 - Math.exp(-0.55 * hx.kScale * dt));
+        if (dAmn > 1e-11) {
+          consumeSpecies(hx.id, dAmn);
+          consumeSpecies('NH3_aq', 2 * dAmn);
+          moles.C2H5NH2_aq = (moles.C2H5NH2_aq || 0) + dAmn;
+          moles.NH4_aq = (moles.NH4_aq || 0) + dAmn;
+          moles[hx.ion] = (moles[hx.ion] || 0) + dAmn;
+          heatJ += dAmn * 54000;
+          pushRxn(`rx_nh3_${hx.id}`, `${hx.label} + 2NH₃ —(t°)→ C₂H₅NH₂ + NH₄⁺ + ${hx.ion.replace('_aq', '⁻')}`, `${hx.name} phản ứng với NH₃ tạo Ethylamine`, `${hx.name} + 2NH₃ → Ethylamine + NH₄⁺`, 'NH₃ thế halogen tạo Ethylamine.', 'Ammonia substitutes halide to yield Ethylamine.', dAmn);
+        }
+      }
+
+      // 5B-4. Carboxylate esterification: CH3COO- + C2H5X -> CH3COOC2H5 + X-
+      if ((moles.CH3COO_aq || 0) > 1e-6 && T >= 333.15) {
+        const dEst = Math.min(nHx, moles.CH3COO_aq) * (1 - Math.exp(-0.48 * hx.kScale * dt));
+        if (dEst > 1e-11) {
+          consumeSpecies(hx.id, dEst);
+          consumeSpecies('CH3COO_aq', dEst);
+          moles.CH3COOC2H5_l = (moles.CH3COOC2H5_l || 0) + dEst;
+          moles[hx.ion] = (moles[hx.ion] || 0) + dEst;
+          heatJ += dEst * 32000;
+          pushRxn(`rx_ester_${hx.id}`, `CH₃COO⁻ + ${hx.label} —(t°)→ CH₃COOC₂H₅ + ${hx.ion.replace('_aq', '⁻')}`, `Tổng hợp Ethyl acetate từ ${hx.name} và muối Acetate`, `${hx.name} + CH₃COO⁻ → Ethyl acetate`, 'Ion acetate thế halogen tạo ester Ethyl acetate.', 'Acetate displaces halide yielding Ethyl acetate.', dEst);
+        }
+      }
+
+      // 5B-5. Grignard (Mg in dry Et2O) & Wurtz (Na in dry Et2O) & Zn/H+ reduction
+      if ((moles.C2H5OC2H5_l || 0) > 1e-4 && (moles.H2O_l || 0) < 0.005) {
+        if ((moles.Mg_s || 0) > 1e-9 && hx.id === 'C2H5Br_l') {
+          const dGrig = Math.min(nHx, moles.Mg_s) * (1 - Math.exp(-0.75 * dt));
+          if (dGrig > 1e-11) {
+            consumeSpecies('C2H5Br_l', dGrig);
+            consumeSpecies('Mg_s', dGrig);
+            moles.C2H5MgBr_l = (moles.C2H5MgBr_l || 0) + dGrig;
+            heatJ += dGrig * 145000;
+            pushRxn('grignard_etmgbr', 'C₂H₅Br + Mg —((C₂H₅)₂O khan)→ C₂H₅MgBr', 'Tổng hợp tác nhân Grignard C₂H₅MgBr trong Ether khan', 'Grignard reagent synthesis: C₂H₅Br + Mg → C₂H₅MgBr', 'Magnesium chèn vào liên kết C–Br trong Ether khan tạo Ethylmagnesium bromide.', 'Mg inserts into C–Br in anhydrous Diethyl ether to form Ethylmagnesium bromide.', dGrig);
+          }
+        }
+        if ((moles.Na_s || 0) > 1e-9) {
+          const dWurtz = Math.min(nHx / 2, moles.Na_s / 2) * (1 - Math.exp(-0.95 * hx.kScale * dt));
+          if (dWurtz > 1e-11) {
+            consumeSpecies(hx.id, 2 * dWurtz);
+            consumeSpecies('Na_s', 2 * dWurtz);
+            gasProduced.C4H10_g = (gasProduced.C4H10_g || 0) + dWurtz;
+            moles.Na_aq = (moles.Na_aq || 0) + 2 * dWurtz;
+            moles[hx.ion] = (moles[hx.ion] || 0) + 2 * dWurtz;
+            heatJ += dWurtz * 320000;
+            pushRxn(`wurtz_${hx.id}`, `2${hx.label} + 2Na —(Ether khan)→ C₄H₁₀↑ + 2Na⁺ + 2${hx.ion.replace('_aq', '⁻')}`, `Phản ứng Wurtz từ ${hx.name} + Na → Butane C₄H₁₀↑`, `Wurtz coupling: 2${hx.label} + 2Na → Butane C₄H₁₀↑`, 'Kim loại Na khử ghép 2 gốc ethyl trong Ether khan giải phóng khí Butane.', 'Sodium couples two ethyl halides in dry ether to evolve Butane gas.', dWurtz, true);
+          }
+        }
+      }
+      if ((moles.Zn_s || 0) > 1e-9 && ((moles.H_aq || 0) > 1e-5 || (moles.CH3COOH_l || 0) > 1e-5) && T >= 313.15) {
+        const acidAvail = (moles.H_aq || 0) > 1e-5 ? moles.H_aq : moles.CH3COOH_l;
+        const dRedHx = Math.min(nHx, moles.Zn_s, acidAvail) * (1 - Math.exp(-0.62 * hx.kScale * dt));
+        if (dRedHx > 1e-11) {
+          consumeSpecies(hx.id, dRedHx);
+          consumeSpecies('Zn_s', dRedHx);
+          if ((moles.H_aq || 0) >= dRedHx) consumeSpecies('H_aq', dRedHx);
+          else { consumeSpecies('CH3COOH_l', dRedHx); moles.CH3COO_aq = (moles.CH3COO_aq || 0) + dRedHx; }
+          gasProduced.C2H6_g = (gasProduced.C2H6_g || 0) + dRedHx;
+          moles.Zn2_aq = (moles.Zn2_aq || 0) + dRedHx;
+          moles[hx.ion] = (moles[hx.ion] || 0) + dRedHx;
+          heatJ += dRedHx * 110000;
+          pushRxn(`rx_red_zn_${hx.id}`, `${hx.label} + Zn + H⁺ → C₂H₆↑ + Zn²⁺ + ${hx.ion.replace('_aq', '⁻')}`, `Khử ${hx.name} bằng Zn/acid → Ethane C₂H₆↑`, `Reduction: ${hx.name} + Zn/H⁺ → Ethane C₂H₆↑`, 'Zn khử dẫn xuất halogen trong môi trường acid giải phóng khí Ethane.', 'Zn in acid reduces ethyl halides to Ethane gas.', dRedHx, true);
+        }
+      }
+    }
+
+    // Grignard hydrolysis: C2H5MgBr + H2O -> C2H6↑ + Mg2+ + OH- + Br-
+    if ((moles.C2H5MgBr_l || 0) > 1e-9 && (moles.H2O_l || 0) > 1e-5) {
+      const dGrigHyd = Math.min(moles.C2H5MgBr_l, moles.H2O_l) * (1 - Math.exp(-2.8 * dt));
+      if (dGrigHyd > 1e-11) {
+        consumeSpecies('C2H5MgBr_l', dGrigHyd);
+        consumeSpecies('H2O_l', dGrigHyd);
+        gasProduced.C2H6_g = (gasProduced.C2H6_g || 0) + dGrigHyd;
+        moles.Mg2_aq = (moles.Mg2_aq || 0) + dGrigHyd;
+        moles.OH_aq = (moles.OH_aq || 0) + dGrigHyd;
+        moles.Br_aq = (moles.Br_aq || 0) + dGrigHyd;
+        heatJ += dGrigHyd * 185000;
+        pushRxn('grignard_hydrolysis', 'C₂H₅MgBr + H₂O → C₂H₆↑ + Mg²⁺ + OH⁻ + Br⁻', 'Thủy phân tác nhân Grignard C₂H₅MgBr → Ethane C₂H₆↑', 'Grignard hydrolysis → Ethane C₂H₆↑', 'Nước thủy phân mãnh liệt C₂H₅MgBr giải phóng khí Ethane.', 'Water vigorously hydrolyzes Ethylmagnesium bromide to Ethane gas.', dGrigHyd, true);
+      }
+    }
+
+    // Aryl halide Dow hydrolysis ONLY at extreme T >= 573.15 K (300 °C)
+    if ((moles.C6H5Cl_l || 0) > 1e-9 && (moles.OH_aq || 0) > 1e-6 && T >= 573.15) {
+      const dDow = Math.min(moles.C6H5Cl_l, moles.OH_aq / 2) * (1 - Math.exp(-0.55 * dt));
+      if (dDow > 1e-11) {
+        consumeSpecies('C6H5Cl_l', dDow);
+        consumeSpecies('OH_aq', 2 * dDow);
+        moles.C6H5O_aq = (moles.C6H5O_aq || 0) + dDow;
+        moles.Cl_aq = (moles.Cl_aq || 0) + dDow;
+        moles.H2O_l = (moles.H2O_l || 0) + dDow;
+        heatJ += dDow * 75000;
+        pushRxn('dow_chlorobenzene', 'C₆H₅Cl + 2OH⁻ —(≥ 300 °C)→ C₆H₅O⁻ + Cl⁻ + H₂O', 'Thủy phân Chlorobenzene ở ≥ 300 °C → Phenoxide', 'Dow hydrolysis: Chlorobenzene + 2OH⁻ (≥ 300 °C) → Phenoxide', 'Aryl halide trơ ở ≤ 100 °C, chỉ thủy phân trong kiềm đặc ở ≥ 300 °C.', 'Aryl halides are inert ≤ 100 °C and only hydrolyze in alkali at ≥ 300 °C.', dDow);
+      }
+    }
+
+    // 5C. Preparations of Halogen Derivatives & Alcohols / Phenol
+    // 5C-1. 3C2H5OH + P_red + 1.5Br2 -> 3C2H5Br + H3PO3 (50-70 °C)
+    const brPrep = (moles.Br2_l || 0) > 1e-9 ? 'Br2_l' : (moles.Br2_g || 0) > 1e-9 ? 'Br2_g' : null;
+    if ((moles.C2H5OH_l || 0) > 1e-8 && (moles.P_red_s || 0) > 1e-8 && brPrep && T >= 323.15) {
+      const dPrepBr = Math.min(moles.C2H5OH_l / 3, moles.P_red_s, moles[brPrep] / 1.5) * (1 - Math.exp(-0.75 * dt));
+      if (dPrepBr > 1e-11) {
+        consumeSpecies('C2H5OH_l', 3 * dPrepBr);
+        consumeSpecies('P_red_s', dPrepBr);
+        consumeSpecies(brPrep, 1.5 * dPrepBr);
+        moles.C2H5Br_l = (moles.C2H5Br_l || 0) + 3 * dPrepBr;
+        moles.H3PO3_aq = (moles.H3PO3_aq || 0) + dPrepBr;
+        heatJ += dPrepBr * 240000;
+        pushRxn('prep_c2h5br_p_br2', '3C₂H₅OH + P(đỏ) + 1.5Br₂ —(50–70 °C)→ 3C₂H₅Br + H₃PO₃', 'Điều chế Bromoethane từ Ethanol + P(đỏ) + Br₂', 'Preparation of Bromoethane: EtOH + P(red) + Br₂', 'P đỏ và Br₂ tạo PBr₃ tại chỗ thế –OH Ethanol thành Bromoethane.', 'Red phosphorus + Br₂ converts Ethanol to Bromoethane in situ.', dPrepBr);
+      }
+    }
+    // 5C-2. 3C2H5OH + P_red + 1.5I2 -> 3C2H5I + H3PO3 (70-80 °C)
+    if ((moles.C2H5OH_l || 0) > 1e-8 && (moles.P_red_s || 0) > 1e-8 && (moles.I2_s || 0) > 1e-8 && T >= 343.15) {
+      const dPrepI = Math.min(moles.C2H5OH_l / 3, moles.P_red_s, moles.I2_s / 1.5) * (1 - Math.exp(-0.68 * dt));
+      if (dPrepI > 1e-11) {
+        consumeSpecies('C2H5OH_l', 3 * dPrepI);
+        consumeSpecies('P_red_s', dPrepI);
+        consumeSpecies('I2_s', 1.5 * dPrepI);
+        moles.C2H5I_l = (moles.C2H5I_l || 0) + 3 * dPrepI;
+        moles.H3PO3_aq = (moles.H3PO3_aq || 0) + dPrepI;
+        heatJ += dPrepI * 185000;
+        pushRxn('prep_c2h5i_p_i2', '3C₂H₅OH + P(đỏ) + 1.5I₂ —(70–80 °C)→ 3C₂H₅I + H₃PO₃', 'Điều chế Iodoethane từ Ethanol + P(đỏ) + I₂', 'Preparation of Iodoethane: EtOH + P(red) + I₂', 'P đỏ và I₂ thế nhóm –OH của Ethanol ở 70–80 °C tạo Iodoethane.', 'Red phosphorus + I₂ converts Ethanol to Iodoethane at 70–80 °C.', dPrepI);
+      }
+    }
+    // 5C-3. C2H5OH + HCl(conc) -(ZnCl2/Zn2+, 70-85 °C)-> C2H5Cl + H2O
+    if ((moles.C2H5OH_l || 0) > 1e-8 && (moles.H_aq || 0) > 1e-4 && (moles.Cl_aq || 0) > 1e-4 && ((moles.Zn2_aq || 0) > 1e-7 || (moles.ZnCl2_s || 0) > 1e-7) && T >= 343.15) {
+      const dPrepCl = Math.min(moles.C2H5OH_l, moles.H_aq, moles.Cl_aq) * (1 - Math.exp(-0.62 * dt));
+      if (dPrepCl > 1e-11) {
+        consumeSpecies('C2H5OH_l', dPrepCl);
+        consumeSpecies('H_aq', dPrepCl);
+        consumeSpecies('Cl_aq', dPrepCl);
+        gasProduced.C2H5Cl_g = (gasProduced.C2H5Cl_g || 0) + dPrepCl;
+        moles.H2O_l = (moles.H2O_l || 0) + dPrepCl;
+        heatJ += dPrepCl * 28000;
+        pushRxn('prep_c2h5cl_zncl2', 'C₂H₅OH + HCl(đặc) —(ZnCl₂, 70–85 °C)→ C₂H₅Cl↑ + H₂O', 'Điều chế Chloroethane từ Ethanol + HCl đặc (xúc tác ZnCl₂)', 'Preparation of Chloroethane: EtOH + HCl (ZnCl₂)', 'ZnCl₂ khan xúc tác thế –OH bằng Cl⁻ giải phóng khí Chloroethane (ngưng tụ < 12.3 °C).', 'ZnCl₂ catalyzes HCl substitution on Ethanol to evolve Chloroethane.', dPrepCl, true);
+      }
+    }
+
+    // 5C-4. Alkene/Alkyne + Br2: C2H4 + Br2 -> C2H4Br2; C2H2 + 2Br2 -> C2H2Br4
+    const brAdd = (moles.Br2_l || 0) > 1e-9 ? 'Br2_l' : (moles.Br2_aq || 0) > 1e-9 ? 'Br2_aq' : (moles.Br2_g || 0) > 1e-9 ? 'Br2_g' : null;
+    if ((moles.C2H4_g || 0) > 1e-9 && brAdd) {
+      const dC2H4Br = Math.min(moles.C2H4_g, moles[brAdd]) * (1 - Math.exp(-2.2 * dt));
+      if (dC2H4Br > 1e-11) {
+        consumeSpecies('C2H4_g', dC2H4Br);
+        consumeSpecies(brAdd, dC2H4Br);
+        moles.C2H4Br2_l = (moles.C2H4Br2_l || 0) + dC2H4Br;
+        heatJ += dC2H4Br * 122000;
+        pushRxn('c2h4_br2_add', 'C₂H₄ + Br₂ → BrCH₂–CH₂Br(l)', 'Cộng Br₂ vào Ethylene → 1,2-Dibromoethane (d = 2.18)', 'Ethylene + Br₂ → 1,2-Dibromoethane', 'Ethylene làm mất màu dung dịch Bromine tạo 1,2-Dibromoethane nặng chìm xuống đáy.', 'Ethylene decolorizes Bromine forming dense 1,2-Dibromoethane.', dC2H4Br);
+      }
+    }
+    if ((moles.C2H2_g || 0) > 1e-9 && brAdd) {
+      const dC2H2Br = Math.min(moles.C2H2_g, moles[brAdd] / 2) * (1 - Math.exp(-1.9 * dt));
+      if (dC2H2Br > 1e-11) {
+        consumeSpecies('C2H2_g', dC2H2Br);
+        consumeSpecies(brAdd, 2 * dC2H2Br);
+        moles.C2H2Br4_l = (moles.C2H2Br4_l || 0) + dC2H2Br;
+        heatJ += dC2H2Br * 235000;
+        pushRxn('c2h2_br2_add', 'C₂H₂ + 2Br₂ → Br₂CH–CHBr₂(l)', 'Cộng 2Br₂ vào Acetylene → 1,1,2,2-Tetrabromoethane', 'Acetylene + 2Br₂ → 1,1,2,2-Tetrabromoethane', 'Acetylene cộng 2 phân tử Br₂ tạo 1,1,2,2-Tetrabromoethane (d = 2.97).', 'Acetylene adds 2 equivalents of Br₂ to form 1,1,2,2-Tetrabromoethane.', dC2H2Br);
+      }
+    }
+
+    // 5C-5. Wagner oxidation: 3C2H4 + 2KMnO4 + 4H2O -(0–15 °C, cold dil)-> 3C2H4(OH)2 + 2MnO2↓ + 2KOH
+    if ((moles.C2H4_g || 0) > 1e-9 && (moles.MnO4_aq || 0) > 1e-7 && (moles.H2O_l || 0) > 1e-4 && T <= 293.15) {
+      const dWag = Math.min(moles.C2H4_g / 3, moles.MnO4_aq / 2, moles.H2O_l / 4) * (1 - Math.exp(-1.4 * dt));
+      if (dWag > 1e-11) {
+        consumeSpecies('C2H4_g', 3 * dWag);
+        consumeSpecies('MnO4_aq', 2 * dWag);
+        consumeSpecies('H2O_l', 4 * dWag);
+        moles.C2H4OH_2_l = (moles.C2H4OH_2_l || 0) + 3 * dWag;
+        moles.MnO2_s = (moles.MnO2_s || 0) + 2 * dWag;
+        moles.OH_aq = (moles.OH_aq || 0) + 2 * dWag;
+        heatJ += dWag * 410000;
+        pushRxn('wagner_glycol', '3C₂H₄ + 2MnO₄⁻ + 4H₂O —(0–15 °C)→ 3C₂H₄(OH)₂ + 2MnO₂↓ + 2OH⁻', 'Phản ứng Wagner: Ethylene + KMnO₄ lạnh → Ethylene glycol + MnO₂↓', 'Wagner oxidation: 3C₂H₄ + 2KMnO₄ + 4H₂O → 3 Ethylene glycol + 2MnO₂↓', 'KMnO₄ loãng lạnh oxi hóa Ethylene thành Ethylene glycol và kết tủa nâu đen MnO₂.', 'Cold dilute KMnO₄ oxidizes Ethylene to Ethylene glycol and brown-black MnO₂ precipitate.', dWag);
+      }
+    }
+
+    // 5C-6. Allyl alcohol: CH2=CHCHO + Zn + 2CH3COOH -(50–70 °C)-> CH2=CHCH2OH + Zn2+ + 2CH3COO-
+    if ((moles.CH2CHCHO_l || 0) > 1e-9 && (moles.Zn_s || 0) > 1e-9 && (moles.CH3COOH_l || 0) > 1e-8 && T >= 323.15) {
+      const dAllyl = Math.min(moles.CH2CHCHO_l, moles.Zn_s, moles.CH3COOH_l / 2) * (1 - Math.exp(-0.75 * dt));
+      if (dAllyl > 1e-11) {
+        consumeSpecies('CH2CHCHO_l', dAllyl);
+        consumeSpecies('Zn_s', dAllyl);
+        consumeSpecies('CH3COOH_l', 2 * dAllyl);
+        moles.CH2CHCH2OH_l = (moles.CH2CHCH2OH_l || 0) + dAllyl;
+        moles.Zn2_aq = (moles.Zn2_aq || 0) + dAllyl;
+        moles.CH3COO_aq = (moles.CH3COO_aq || 0) + 2 * dAllyl;
+        heatJ += dAllyl * 115000;
+        pushRxn('prep_allyl_alcohol', 'CH₂=CHCHO + Zn + 2CH₃COOH —(50–70 °C)→ CH₂=CHCH₂OH + Zn(CH₃COO)₂', 'Khử Acrolein bằng Zn/CH₃COOH → Allyl alcohol', 'Acrolein reduction (Zn/CH₃COOH) → Allyl alcohol', 'Hệ Zn + CH₃COOH khử chọn lọc nhóm –CHO của Acrolein thành Allyl alcohol.', 'Zn/CH₃COOH selectively reduces Acrolein to Allyl alcohol.', dAllyl);
+      }
+    }
+
+    // 5C-7. Butan-1-ol via Aldol-Crotonaldehyde: 2CH3CHO -> CH3CH=CHCHO + H2O; CH3CH=CHCHO + 2Zn + 4H+ -> C4H9OH + 2Zn2+
+    if ((moles.CH3CHO_l || 0) > 1e-8 && (moles.OH_aq || 0) > 1e-6 && T >= 343.15) {
+      const dAldol = (moles.CH3CHO_l / 2) * (1 - Math.exp(-0.55 * dt));
+      if (dAldol > 1e-11) {
+        consumeSpecies('CH3CHO_l', 2 * dAldol);
+        moles.CH3CHCHCHO_l = (moles.CH3CHCHCHO_l || 0) + dAldol;
+        moles.H2O_l = (moles.H2O_l || 0) + dAldol;
+        heatJ += dAldol * 42000;
+        pushRxn('aldol_crotonaldehyde', '2CH₃CHO —(NaOH loãng, t°)→ CH₃CH=CHCHO + H₂O', 'Ngưng tụ Aldol Acetaldehyde → Crotonaldehyde', 'Aldol condensation: 2CH₃CHO → Crotonaldehyde + H₂O', 'Acetaldehyde ngưng tụ và tách nước trong kiềm tạo Crotonaldehyde.', 'Base-catalyzed aldol condensation of Acetaldehyde yields Crotonaldehyde.', dAldol);
+      }
+    }
+    if ((moles.CH3CHCHCHO_l || 0) > 1e-9 && (moles.Zn_s || 0) > 1e-9 && (moles.H_aq || 0) > 1e-5 && T >= 333.15) {
+      const dBut = Math.min(moles.CH3CHCHCHO_l, moles.Zn_s / 2, moles.H_aq / 4) * (1 - Math.exp(-0.68 * dt));
+      if (dBut > 1e-11) {
+        consumeSpecies('CH3CHCHCHO_l', dBut);
+        consumeSpecies('Zn_s', 2 * dBut);
+        consumeSpecies('H_aq', 4 * dBut);
+        moles.C4H9OH_l = (moles.C4H9OH_l || 0) + dBut;
+        moles.Zn2_aq = (moles.Zn2_aq || 0) + 2 * dBut;
+        heatJ += dBut * 210000;
+        pushRxn('prep_butanol', 'CH₃CH=CHCHO + 2Zn + 4H⁺ —(60–80 °C)→ C₄H₉OH + 2Zn²⁺', 'Khử Crotonaldehyde → Butan-1-ol', 'Reduction of Crotonaldehyde → Butan-1-ol', 'Khử hoàn toàn Crotonaldehyde bằng Zn/H⁺ thu được Butan-1-ol.', 'Complete reduction of Crotonaldehyde yields Butan-1-ol.', dBut);
+      }
+    }
+
+    // 5C-8. Ethyl acetate alkaline saponification: CH3COOC2H5 + OH- -(>= 60 °C)-> CH3COO- + C2H5OH
+    if ((moles.CH3COOC2H5_l || 0) > 1e-9 && (moles.OH_aq || 0) > 1e-6 && T >= 333.15) {
+      const dSap = Math.min(moles.CH3COOC2H5_l, moles.OH_aq) * (1 - Math.exp(-0.82 * dt));
+      if (dSap > 1e-11) {
+        consumeSpecies('CH3COOC2H5_l', dSap);
+        consumeSpecies('OH_aq', dSap);
+        moles.CH3COO_aq = (moles.CH3COO_aq || 0) + dSap;
+        moles.C2H5OH_l = (moles.C2H5OH_l || 0) + dSap;
+        heatJ += dSap * 48000;
+        pushRxn('etoac_saponification', 'CH₃COOC₂H₅ + OH⁻ —(75 °C)→ CH₃COO⁻ + C₂H₅OH', 'Xà phòng hóa Ethyl acetate tái tạo Ethanol', 'Alkaline saponification of Ethyl acetate → CH₃COO⁻ + Ethanol', 'Đun Ethyl acetate với NaOH thủy phân hoàn toàn tái tạo Ethanol.', 'Hot NaOH saponifies Ethyl acetate to Acetate and Ethanol.', dSap);
+      }
+    }
+
+    // 5D. Phenol (C6H5OH_l / C6H5OH_s) Reactions
+    const phSrc = (moles.C6H5OH_l || 0) > 1e-9 ? 'C6H5OH_l' : (moles.C6H5OH_s || 0) > 1e-9 ? 'C6H5OH_s' : null;
+    if (phSrc) {
+      if ((moles.OH_aq || 0) > 1e-6) {
+        const dPhOH = Math.min(moles[phSrc], moles.OH_aq) * (1 - Math.exp(-2.8 * dt));
+        if (dPhOH > 1e-11) {
+          consumeSpecies(phSrc, dPhOH);
+          consumeSpecies('OH_aq', dPhOH);
+          moles.C6H5O_aq = (moles.C6H5O_aq || 0) + dPhOH;
+          moles.H2O_l = (moles.H2O_l || 0) + dPhOH;
+          heatJ += dPhOH * 32000;
+          pushRxn('phenol_naoh', 'C₆H₅OH + OH⁻ → C₆H₅O⁻ + H₂O', 'Phenol tan trong dung dịch kiềm tạo Phenoxide', 'Phenol + OH⁻ → Phenoxide + H₂O', 'Tính acid yếu của Phenol giúp tan hoàn toàn trong NaOH tạo muối Phenoxide.', 'Weakly acidic Phenol dissolves in NaOH forming soluble Phenoxide.', dPhOH);
+        }
+      }
+      if ((moles.Na_s || 0) > 1e-9) {
+        const dPhNa = Math.min(moles[phSrc], moles.Na_s) * (1 - Math.exp(-2.2 * dt));
+        if (dPhNa > 1e-11) {
+          consumeSpecies(phSrc, dPhNa);
+          consumeSpecies('Na_s', dPhNa);
+          moles.C6H5O_aq = (moles.C6H5O_aq || 0) + dPhNa;
+          moles.Na_aq = (moles.Na_aq || 0) + dPhNa;
+          gasProduced.H2_g = (gasProduced.H2_g || 0) + 0.5 * dPhNa;
+          heatJ += dPhNa * 155000;
+          pushRxn('phenol_na', 'C₆H₅OH + Na → C₆H₅ONa + ½H₂↑', 'Phenol tác dụng với Na giải phóng H₂↑', 'Phenol + Na → Sodium phenoxide + ½H₂↑', 'Kim loại Na khử H linh động của Phenol giải phóng khí H₂.', 'Sodium reacts with Phenol evolving H₂ gas.', dPhNa, true);
+        }
+      }
+      const brPh = (moles.Br2_aq || 0) > 1e-8 ? 'Br2_aq' : ((moles.Br2_l || 0) > 1e-8 && (moles.H2O_l || 0) > 1e-4) ? 'Br2_l' : null;
+      if (brPh) {
+        const dPhBr = Math.min(moles[phSrc], moles[brPh] / 3) * (1 - Math.exp(-3.4 * dt));
+        if (dPhBr > 1e-11) {
+          consumeSpecies(phSrc, dPhBr);
+          consumeSpecies(brPh, 3 * dPhBr);
+          moles.C6H2Br3OH_s = (moles.C6H2Br3OH_s || 0) + dPhBr;
+          moles.H_aq = (moles.H_aq || 0) + 3 * dPhBr;
+          moles.Br_aq = (moles.Br_aq || 0) + 3 * dPhBr;
+          heatJ += dPhBr * 165000;
+          pushRxn('phenol_br2_white_ppt', 'C₆H₅OH + 3Br₂(aq) → C₆H₂Br₃OH↓ (trắng) + 3HBr', 'Phenol + nước Bromine → kết tủa trắng 2,4,6-Tribromophenol', 'Phenol + 3Br₂(aq) → white 2,4,6-Tribromophenol↓ + 3HBr', 'Phản ứng đặc trưng nhận biết Phenol tạo ngay kết tủa trắng 2,4,6-Tribromophenol.', 'Characteristic Phenol test immediately yields white 2,4,6-Tribromophenol precipitate.', dPhBr);
+        }
+      }
+    }
+  }
+
   return heatJ;
 }
 
@@ -5924,6 +6475,9 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   H3PO2_aq: { H2O_g: 1.5, P_red_s: 0.5 },
   CrO5_aq: { Cr2O3_s: 0.5, O2_g: 1.75 },
   CH3COOOH_aq: { CH3COOH_s: 1, O2_g: 0.5 },
+  C6H5SO3H_aq: { C6H6_g: 1, SO3_g: 1 },
+  C6H5O_aq: { C6H5OH_s: 1 },
+  C2H5NH2_aq: { C2H5NH2_g: 1 },
 };
 
 export const DRY_SALT_PAIRINGS = [

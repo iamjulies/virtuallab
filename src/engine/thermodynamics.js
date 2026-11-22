@@ -896,6 +896,50 @@ export function stepVesselThermodynamics(
     }
   }
 
+  // Benzene freeze / melt transition at 5.53 C (278.68 K, dH_fus = 9870 J/mol)
+  const bzLiq = vessel.moles.C6H6_l || 0;
+  const bzSol = vessel.moles.C6H6_s || 0;
+  const tfBzK = 278.68;
+  if (newTempK < tfBzK && bzLiq > 1e-9) {
+    const freezeMolBz = Math.min(bzLiq, ((tfBzK - newTempK) * cTotal) / 9870);
+    if (freezeMolBz > 1e-12) {
+      vessel.moles.C6H6_l = Math.max(0, bzLiq - freezeMolBz);
+      if (vessel.moles.C6H6_l < 1e-13) delete vessel.moles.C6H6_l;
+      vessel.moles.C6H6_s = bzSol + freezeMolBz;
+      newTempK += (freezeMolBz * 9870) / cTotal;
+    }
+  } else if (newTempK > tfBzK && bzSol > 1e-9) {
+    const meltMolBz = Math.min(bzSol, ((newTempK - tfBzK) * cTotal) / 9870);
+    if (meltMolBz > 1e-12) {
+      vessel.moles.C6H6_s = Math.max(0, bzSol - meltMolBz);
+      if (vessel.moles.C6H6_s < 1e-13) delete vessel.moles.C6H6_s;
+      vessel.moles.C6H6_l = bzLiq + meltMolBz;
+      newTempK -= (meltMolBz * 9870) / cTotal;
+    }
+  }
+
+  // Phenol freeze / melt transition at 40.5 C (313.65 K, dH_fus = 11510 J/mol)
+  const phLiq = vessel.moles.C6H5OH_l || 0;
+  const phSol = vessel.moles.C6H5OH_s || 0;
+  const tfPhK = 313.65;
+  if (newTempK < tfPhK && phLiq > 1e-9) {
+    const freezeMolPh = Math.min(phLiq, ((tfPhK - newTempK) * cTotal) / 11510);
+    if (freezeMolPh > 1e-12) {
+      vessel.moles.C6H5OH_l = Math.max(0, phLiq - freezeMolPh);
+      if (vessel.moles.C6H5OH_l < 1e-13) delete vessel.moles.C6H5OH_l;
+      vessel.moles.C6H5OH_s = phSol + freezeMolPh;
+      newTempK += (freezeMolPh * 11510) / cTotal;
+    }
+  } else if (newTempK > tfPhK && phSol > 1e-9) {
+    const meltMolPh = Math.min(phSol, ((newTempK - tfPhK) * cTotal) / 11510);
+    if (meltMolPh > 1e-12) {
+      vessel.moles.C6H5OH_s = Math.max(0, phSol - meltMolPh);
+      if (vessel.moles.C6H5OH_s < 1e-13) delete vessel.moles.C6H5OH_s;
+      vessel.moles.C6H5OH_l = phLiq + meltMolPh;
+      newTempK -= (meltMolPh * 11510) / cTotal;
+    }
+  }
+
   // Regime 3: Freezing / melting solid-liquid phase clamp with cryoscopy & latent heat
   const phaseRes = updateFreezeMeltPhase(vessel, dt, newTempK, cTotal);
   newTempK = phaseRes.updatedTempK;
@@ -903,7 +947,7 @@ export function stepVesselThermodynamics(
   // Regime 4: Enthalpy of fusion latent-heat thermal arrest for meltable crystalline solids
   vessel._latentMeltedMap = vessel._latentMeltedMap || {};
   for (const [spId, n] of Object.entries(vessel.moles)) {
-    if (n <= 1e-9 || spId === 'H2O_s' || spId === 'Br2_s' || spId === 'CH3COOH_s') continue;
+    if (n <= 1e-9 || spId === 'H2O_s' || spId === 'Br2_s' || spId === 'CH3COOH_s' || spId === 'C6H6_s' || spId === 'C6H5OH_s') continue;
     const sp = SPECIES[spId];
     if (!sp || sp.phase !== 's' || !sp.meltTempK || sp.noMelt) continue;
     const dHFus = getSpeciesFusionHeatJ(sp);

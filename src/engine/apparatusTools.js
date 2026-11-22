@@ -1287,7 +1287,8 @@ export function syncDockedToolPositions(sim) {
       const vSpec = APPARATUS[v.typeId];
       const cSpec = APPARATUS.liebig_condenser;
       const halfW = (cSpec?.width || 152) / 2;
-      it.x = v.x;
+      const hasSepOnSame = sim.items.some((f) => f.kind === 'separatory_funnel' && !f.isBroken && f.mountedOnVesselId === v.id);
+      it.x = v.x + (hasSepOnSame ? 14 : 0);
       it.y = v.y - vSpec.height / 2 - halfW * 0.88;
       it.vy = 0;
       it.fallStartY = null;
@@ -1306,8 +1307,9 @@ export function syncDockedToolPositions(sim) {
       const vSpec = APPARATUS[v.typeId];
       const sfSpec = APPARATUS.separatory_funnel;
       const isDualHole = v.isStoppered && v.stopperMode === 'dual_hole';
-      it.x = v.x - (isDualHole || v.connectedTargetId ? 6 : 0);
-      it.y = v.y - vSpec.height / 2 - (sfSpec?.height || 174) * 0.36;
+      const hasRefluxOnSame = sim.items.some((c) => c.kind === 'condenser' && !c.isBroken && c.refluxMode && c.refluxVesselId === v.id);
+      it.x = v.x - (hasRefluxOnSame ? 18 : isDualHole || v.connectedTargetId ? 6 : 0);
+      it.y = v.y - vSpec.height / 2 - (sfSpec?.height || 196) * 0.56;
       it.vy = 0;
       it.fallStartY = null;
     }

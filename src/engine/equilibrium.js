@@ -345,6 +345,38 @@ export function computeSolutionVisuals(
     extraOpacity += Math.min(opMax, conc * opScale + opBase);
   }
 
+  // 1b. Nonpolar organic solvent extraction / dissolution optics (e.g. I2 in C6H6 -> violet-pink, S in C6H6 -> pale yellow, Nitrobenzene -> pale yellow)
+  if (phaseFilter === 'organic_light' || phaseFilter === 'all') {
+    const nBz = (moles.C6H6_l || 0) + (moles.C6H12_l || 0) + (moles.C6H5CH3_l || 0);
+    if (nBz > 1e-6) {
+      const nI2 = moles.I2_s || 0;
+      if (nI2 > 1e-8) {
+        const cI2 = Math.min(2.0, nI2 / liquidVolL);
+        const k = Math.min(2.2, cI2 * 8.5) * opticalPathCm * 0.25;
+        tr *= Math.exp(-0.12 * k);
+        tg *= Math.exp(-2.15 * k);
+        tb *= Math.exp(-0.22 * k);
+        extraOpacity += Math.min(0.42, k * 0.28);
+      }
+      const nS = moles.S_s || 0;
+      if (nS > 1e-7) {
+        const kS = Math.min(1.5, (nS / liquidVolL) * 4.0) * opticalPathCm * 0.2;
+        tr *= Math.exp(-0.04 * kS);
+        tg *= Math.exp(-0.10 * kS);
+        tb *= Math.exp(-1.15 * kS);
+        extraOpacity += Math.min(0.22, kS * 0.14);
+      }
+    }
+  }
+  if ((phaseFilter === 'organic_heavy' || phaseFilter === 'all') && (moles.C6H5NO2_l || 0) > 1e-6) {
+    const cNB = Math.min(10, (moles.C6H5NO2_l || 0) / liquidVolL);
+    const kNB = Math.min(1.6, cNB * 0.16) * opticalPathCm * 0.2;
+    tr *= Math.exp(-0.02 * kNB);
+    tg *= Math.exp(-0.08 * kNB);
+    tb *= Math.exp(-1.25 * kNB);
+    extraOpacity += Math.min(0.25, kNB * 0.18);
+  }
+
   // 2. Phenolphthalein indicator 4-state optics + irreversible C-C cleavage guard (aqueous only):
   const nPhen = phaseFilter === 'aq' || phaseFilter === 'all' ? moles.Phenolphthalein_aq || 0 : 0;
   let alphaPink = 0;

@@ -223,6 +223,19 @@ export const VOLATILE_LIQUID_PROPS = {
   PCl3_l: { group: 'organic_heavy', boilTempK: 349.25, dHVapJ: 30500, vaporSpeciesId: 'PCl3_g' },
   PBr3_l: { group: 'organic_heavy', boilTempK: 446.35, dHVapJ: 39700, vaporSpeciesId: 'PBr3_g' },
   HNO3_l: { group: 'aqueous', boilTempK: 356.15, dHVapJ: 39100, vaporSpeciesId: 'HNO3_g' },
+  C6H6_l: { group: 'organic_light', boilTempK: 353.24, dHVapJ: 30720, vaporSpeciesId: 'C6H6_g' },
+  C2H5I_l: { group: 'organic_heavy', boilTempK: 345.45, dHVapJ: 31900, vaporSpeciesId: 'C2H5I_g' },
+  C2H5Cl_l: { group: 'organic_light', boilTempK: 285.42, dHVapJ: 24650, vaporSpeciesId: 'C2H5Cl_g' },
+  C2H4Br2_l: { group: 'organic_heavy', boilTempK: 404.55, dHVapJ: 41700, vaporSpeciesId: 'C2H4Br2_g' },
+  C6H5Br_l: { group: 'organic_heavy', boilTempK: 429.15, dHVapJ: 44500, vaporSpeciesId: 'C6H5Br_g' },
+  C6H5Cl_l: { group: 'organic_heavy', boilTempK: 404.85, dHVapJ: 40970, vaporSpeciesId: 'C6H5Cl_g' },
+  C6H5NO2_l: { group: 'organic_heavy', boilTempK: 484.05, dHVapJ: 55000, vaporSpeciesId: 'C6H5NO2_g' },
+  C6H12_l: { group: 'organic_light', boilTempK: 353.88, dHVapJ: 33010, vaporSpeciesId: 'C6H12_g' },
+  C6H5OH_l: { group: 'organic_heavy', boilTempK: 454.95, dHVapJ: 57800, vaporSpeciesId: 'C6H5OH_g' },
+  C2H4OH_2_l: { group: 'aqueous', boilTempK: 470.45, dHVapJ: 65600, vaporSpeciesId: 'C2H4OH_2_g' },
+  CH2CHCHO_l: { group: 'aqueous', boilTempK: 325.65, dHVapJ: 28300, vaporSpeciesId: 'CH2CHCHO_g' },
+  CH2CHCH2OH_l: { group: 'aqueous', boilTempK: 370.25, dHVapJ: 40000, vaporSpeciesId: 'CH2CHCH2OH_g' },
+  C4H9OH_l: { group: 'organic_light', boilTempK: 390.85, dHVapJ: 52350, vaporSpeciesId: 'C4H9OH_g' },
 };
 
 /**
