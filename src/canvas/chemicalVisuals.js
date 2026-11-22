@@ -103,6 +103,50 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     const settledH = hasWater ? maxLayerH * (0.25 + 0.75 * settle) : maxLayerH;
 
     // Settled bed at bottom
+    if (sp.isPolymer) {
+      // Polymeric film, curled ribbons & entangled elastomeric chunks instead of fine mineral sediment
+      ctx.save();
+      const polyH = Math.min(26, 4.5 + Math.sqrt(massG) * 7.2);
+      const polyTop = bottom - accumulatedSedimentH - polyH;
+      ctx.fillStyle = sp.color || '#f8fafc';
+      ctx.strokeStyle = sp.highlightColor === '#ffffff' ? '#cbd5e1' : sp.highlightColor || '#cbd5e1';
+      ctx.globalAlpha = sp.settledAlpha ?? 0.92;
+      ctx.lineWidth = 1.6;
+      const strands = Math.min(18, Math.max(5, Math.round(5 + massG * 4.5)));
+      for (let k = 0; k < strands; k++) {
+        const yBase = polyTop + (polyH * (k + 0.5)) / strands;
+        const amp = 2.0 + seeded(k, 17) * 3.0;
+        const xOff = left + 4 + seeded(k, 31) * Math.max(8, width * 0.2);
+        const xEnd = right - 4 - seeded(k, 59) * Math.max(8, width * 0.2);
+        ctx.beginPath();
+        ctx.moveTo(xOff, yBase);
+        ctx.bezierCurveTo(
+          left + width * 0.33,
+          yBase - amp,
+          left + width * 0.66,
+          yBase + amp,
+          xEnd,
+          yBase - amp * 0.4
+        );
+        ctx.lineTo(xEnd, Math.min(bottom - accumulatedSedimentH, yBase + 3.2));
+        ctx.bezierCurveTo(
+          left + width * 0.66,
+          yBase + amp + 2.8,
+          left + width * 0.33,
+          yBase - amp + 2.8,
+          xOff,
+          yBase + 2.8
+        );
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
+      accumulatedSedimentH += polyH * 0.72;
+      continue;
+    }
+
+    // Settled bed at bottom
     ctx.save();
     ctx.fillStyle = sp.color;
     ctx.globalAlpha = sp.settledAlpha ?? 0.94;

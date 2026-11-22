@@ -141,6 +141,7 @@
     } from '../src/engine/gasNetwork.js';
     import { checkFlameLoopInteractions } from '../src/engine/apparatusTools.js';
     import { stepVesselSolidBodies } from '../src/engine/liquidSurfacePhysics.js';
+    import { runOrganicV5Tests } from './organic_v5_tests.js';
 
     const results = [];
     const details = [];
@@ -2478,7 +2479,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.5';
+      const expectedBuild = 'virlab_beta_v5+build.6';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -10042,6 +10043,8 @@
         `twoPhase=${startTwoPhase}, arrhRK2=${smoothArrhOk}(cold=${coldSoap.toFixed(4)},h0.5=${hotSoap05.toFixed(4)},h3.5=${hotSoap35.toFixed(4)}), emul=${emulOk}(rgb=${visSoap.r}/${visSoap.g}/${visSoap.b},oil=${stratStart.lightOrganicMl.toFixed(1)}->${stratMid.lightOrganicMl.toFixed(1)}), saltOut=${saltOutOk}(curd=${(vHot.moles.C17H33COONa_s||0).toFixed(4)}), revEq=${revEqOk}(yield=${(acYield*100).toFixed(1)}%)`
       );
     }
+
+    runOrganicV5Tests(assert);
 
     // Render test report
     const passed = results.filter(r => r.pass).length;

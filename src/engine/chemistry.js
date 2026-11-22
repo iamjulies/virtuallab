@@ -9,6 +9,7 @@ import {
   computePhaseStratification,
   computeSolidVolumeMl,
 } from './equilibrium.js';
+import { computeGeneralReactionRate, stepPropertyDrivenOrganic } from './organicEngine.js';
 
 /**
  * Arrhenius factor relative to 298.15 K: exp((-Ea / R) * (1/T - 1/298.15)).
@@ -206,6 +207,19 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
   const T = vessel.tempK;
   const stirBoost = vessel.stirTimer > 0 ? 3.2 : 1.0;
   const env = options.environment;
+
+  // Data-driven general & reversible organic reactions (supports 0 reactants when reversing & anhydrous volume)
+  if (rxn.type === 'general' || rxn.type === 'reversible') {
+    const stratNow = options._strat || computePhaseStratification(moles, T, APPARATUS[vessel.typeId] || {}, 0);
+    return computeGeneralReactionRate(
+      rxn,
+      vessel,
+      stratNow,
+      liquidVolL,
+      (id) => getReactantAvailableMol(vessel, id, env),
+      options
+    );
+  }
 
   // Check reactant availability across condensed + gas reservoirs
   for (const spId of Object.keys(rxn.reactants)) {
@@ -7400,6 +7414,8 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   CuC2H4O2_aq: { CuOH2_s: 1 },
   C17H33COO_aq: { C17H33COOH_g: 1 },
   C17H35COO_aq: { C17H35COOH_s: 1 },
+  Peptide_aq: { Peptide_s: 1 },
+  CuPeptide_aq: { CuOH2_s: 1, Peptide_s: 2 },
 };
 
 export const DRY_SALT_PAIRINGS = [
@@ -8510,31 +8526,8 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     ((vessel.moles.Cu_s || 0) > 1e-7 && ((vessel.moles.Zn_s || 0) > 1e-6 || Boolean(vessel.cathodicProtectedByZn))) ||
     Boolean(vessel.cathodicProtectedByZn);
 
-  // 1. Compute raw reaction extents
-  const rawExtents = [];
-  for (const rxn of REACTIONS) {
-    const rate = computeReactionRate(rxn, vessel, liquidVolL, options);
-    if (rate > 1e-13) {
-      rawExtents.push({ rxn, rate, rawDxi: rate * dt });
-    }
-  }
-
-  // 2. Compute total demand per reactant species for competitive clamping
-  const demand = {};
-  for (const item of rawExtents) {
-    for (const [spId, stoich] of Object.entries(item.rxn.reactants)) {
-      demand[spId] = (demand[spId] || 0) + stoich * item.rawDxi;
-    }
-  }
-
-  const scaleFactor = {};
+  // Helper to apply a finite extent delta (forward or reverse) without duplicating gas/air logic
   const env = options.environment;
-  for (const [spId, dem] of Object.entries(demand)) {
-    const avail = getReactantAvailableMol(vessel, spId, env);
-    scaleFactor[spId] = dem > avail && dem > 0 ? avail / dem : 1.0;
-  }
-
-  // 3. Apply clamped reaction steps
   let reactionHeatJ = 0;
   let naHeatGenJ = 0;
   let naH2ProducedMol = 0;
@@ -8542,19 +8535,12 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   let kH2ProducedMol = 0;
   const gasProduced = createZeroGasMap();
   const activeReactions = [];
+  const chemOpts = { ...options, _strat: strat };
 
-  for (const item of rawExtents) {
-    let minScale = 1.0;
-    for (const spId of Object.keys(item.rxn.reactants)) {
-      if (scaleFactor[spId] < minScale) {
-        minScale = scaleFactor[spId];
-      }
-    }
-    const dXi = item.rawDxi * minScale;
-    if (dXi <= 1e-15) continue;
-
-    // Subtract reactants (condensed or headspace gas + trapped O2 air)
-    for (const [spId, stoich] of Object.entries(item.rxn.reactants)) {
+  const applyReactionExtent = (rxn, dXi, isReverse = false) => {
+    const consumedMap = isReverse ? rxn.products : rxn.reactants;
+    const producedMap = isReverse ? rxn.reactants : rxn.products;
+    for (const [spId, stoich] of Object.entries(consumedMap)) {
       const sp = SPECIES[spId];
       const used = stoich * dXi;
       if (sp && sp.phase === 'g') {
@@ -8584,9 +8570,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
         if (vessel.moles[spId] < 1e-14) delete vessel.moles[spId];
       }
     }
-
-    // Add products
-    for (const [spId, stoich] of Object.entries(item.rxn.products)) {
+    for (const [spId, stoich] of Object.entries(producedMap)) {
       const sp = SPECIES[spId];
       if (sp && sp.phase === 'g') {
         gasProduced[spId] = (gasProduced[spId] || 0) + stoich * dXi;
@@ -8594,6 +8578,86 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
         vessel.moles[spId] = (vessel.moles[spId] || 0) + stoich * dXi;
       }
     }
+  };
+
+  // 0. Resolve kinetics.type === 'instant' independently so competing slow rates never distort scaleFactor
+  for (const rxn of REACTIONS) {
+    if (rxn.kinetics?.type !== 'instant') continue;
+    const rateInst = computeReactionRate(rxn, vessel, liquidVolL, chemOpts);
+    if (rateInst <= 0) continue;
+    let dXiInst = Infinity;
+    for (const [spId, stoich] of Object.entries(rxn.reactants)) {
+      const avail = getReactantAvailableMol(vessel, spId, env);
+      dXiInst = Math.min(dXiInst, avail / Math.max(1e-12, stoich));
+    }
+    if (!Number.isFinite(dXiInst) || dXiInst <= 1e-14) continue;
+    applyReactionExtent(rxn, dXiInst, false);
+    reactionHeatJ += -(rxn.deltaHJ || 0) * dXiInst;
+    activeReactions.push({
+      id: rxn.id,
+      equation: rxn.equation,
+      nameVi: rxn.nameVi,
+      nameEn: rxn.nameEn,
+      descVi: rxn.descVi,
+      descEn: rxn.descEn,
+      rateMolS: dXiInst / dt,
+      vigorousGas: !!rxn.vigorousGas,
+      dXi: dXiInst,
+    });
+  }
+
+  // 1. Compute raw reaction extents (forward & reverse for reversible types)
+  const rawExtents = [];
+  for (const rxn of REACTIONS) {
+    if (rxn.kinetics?.type === 'instant') continue;
+    const rate = computeReactionRate(rxn, vessel, liquidVolL, chemOpts);
+    if (rate > 1e-13) {
+      rawExtents.push({
+        rxn,
+        rate,
+        rawDxi: rate * dt,
+        isReverse: false,
+        consumedMap: rxn.reactants,
+        producedMap: rxn.products,
+      });
+    } else if (rate < -1e-13 && (rxn.type === 'reversible' || rxn.kinetics?.type === 'reversible')) {
+      rawExtents.push({
+        rxn,
+        rate: -rate,
+        rawDxi: (-rate) * dt,
+        isReverse: true,
+        consumedMap: rxn.products,
+        producedMap: rxn.reactants,
+      });
+    }
+  }
+
+  // 2. Compute total demand per consumed species for competitive clamping
+  const demand = {};
+  for (const item of rawExtents) {
+    for (const [spId, stoich] of Object.entries(item.consumedMap)) {
+      demand[spId] = (demand[spId] || 0) + stoich * item.rawDxi;
+    }
+  }
+
+  const scaleFactor = {};
+  for (const [spId, dem] of Object.entries(demand)) {
+    const avail = getReactantAvailableMol(vessel, spId, env);
+    scaleFactor[spId] = dem > avail && dem > 0 ? avail / dem : 1.0;
+  }
+
+  // 3. Apply clamped reaction steps
+  for (const item of rawExtents) {
+    let minScale = 1.0;
+    for (const spId of Object.keys(item.consumedMap)) {
+      if (scaleFactor[spId] < minScale) {
+        minScale = scaleFactor[spId];
+      }
+    }
+    const dXi = item.rawDxi * minScale;
+    if (dXi <= 1e-15) continue;
+
+    applyReactionExtent(item.rxn, dXi, item.isReverse);
 
     if (item.rxn.id === 'cuo_h2_reduction' && dXi > 1e-10) {
       if (!vessel.particleCounts) vessel.particleCounts = {};
@@ -8649,7 +8713,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
       vessel.particleCounts.Ag_s = Math.max(vessel.particleCounts.Ag_s || 0, 900);
       vessel.silverMirrorFrac = Math.min(1.0, (vessel.silverMirrorFrac || 0) + dXi * 180);
     }
-    const rxnHeat = -item.rxn.deltaHJ * dXi;
+    const rxnHeat = (item.isReverse ? 1 : -1) * (item.rxn.deltaHJ || 0) * dXi;
     if (item.rxn.id === 'na_water' || item.rxn.id === 'na_acid' || item.rxn.id === 'na_ice') {
       naHeatGenJ += rxnHeat;
       naH2ProducedMol += (item.rxn.products.H2_g || 0) * dXi;
@@ -8795,6 +8859,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     reactionHeatJ += stepPhosphorusChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
     reactionHeatJ += stepSiliconAndChromiumChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
     reactionHeatJ += stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduced, computeIceMobilityFactor(vessel), options);
+    reactionHeatJ += stepPropertyDrivenOrganic(vessel, strat, liquidVolL, dt, activeReactions, gasProduced, (id) => getReactantAvailableMol(vessel, id, env), options);
     stepLiquidLiquidPartition(vessel, strat, dt);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, liquidVolL, dt, activeReactions);
   } else {
@@ -8805,6 +8870,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     reactionHeatJ += stepPhosphorusChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
     reactionHeatJ += stepSiliconAndChromiumChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
     reactionHeatJ += stepOrganicChemistry(vessel, 0, dt, activeReactions, gasProduced, 0, options);
+    reactionHeatJ += stepPropertyDrivenOrganic(vessel, strat, 0, dt, activeReactions, gasProduced, (id) => getReactantAvailableMol(vessel, id, env), options);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, 0, dt, activeReactions);
   }
 

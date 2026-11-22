@@ -2,6 +2,10 @@
  * Chemical Species Database & Starter Pure Reagents.
  * Atomic weights derived consistently so mass conservation holds to machine precision.
  */
+import { HYDROCARBON_SPECIES } from './organic/hydrocarbons.js';
+import { OXYGEN_SPECIES } from './organic/oxygen_compounds.js';
+import { NITROGEN_BIO_SPECIES } from './organic/nitrogen_bio.js';
+
 const AW = {
   H: 1.00794,
   C: 12.0107,
@@ -4050,10 +4054,10 @@ export const SPECIES = {
   Ag2C2_s: { id: 'Ag2C2_s', formula: 'Ag₂C₂↓', name: 'Silver acetylide', phase: 's', isPrecipitate: true, molarMass: 2 * AW.Ag + 2 * AW.C, density: 4.50, cp: 88.0, noMelt: true, color: '#fef08a', highlightColor: '#fef9c3', visualType: 'yellow_precipitate', renderLayer: 'precipitate', renderOrder: 186 },
   C57H110O6_s: { id: 'C57H110O6_s', formula: '(C₁₇H₃₅COO)₃C₃H₅', name: 'Tristearin (Saturated fat)', phase: 's', molarMass: 57 * AW.C + 110 * AW.H + 6 * AW.O, density: 0.943, cp: 1750.0, meltTempK: 345.15, dHFusJ: 190000, color: '#fefce8', highlightColor: '#ffffff', visualType: 'white_powder', renderLayer: 'bottom', renderOrder: 186 },
   C17H35COOH_s: { id: 'C17H35COOH_s', formula: 'C₁₇H₃₅COOH', name: 'Stearic acid', phase: 's', isPrecipitate: true, molarMass: 18 * AW.C + 36 * AW.H + 2 * AW.O, density: 0.941, cp: 500.0, meltTempK: 342.45, dHFusJ: 61200, color: '#ffffff', highlightColor: '#f8fafc', visualType: 'white_crystal', renderLayer: 'precipitate', renderOrder: 186 },
-  PE_s: { id: 'PE_s', formula: '(–CH₂–CH₂–)ₙ', name: 'Polyethylene (PE)', phase: 's', isPrecipitate: true, molarMass: 2 * AW.C + 4 * AW.H, density: 0.940, cp: 65.0, meltTempK: 403.15, dHFusJ: 8200, color: '#f8fafc', highlightColor: '#ffffff', visualType: 'white_powder', renderLayer: 'precipitate', renderOrder: 186 },
-  PVC_s: { id: 'PVC_s', formula: '(–CH₂–CHCl–)ₙ', name: 'Polyvinyl chloride (PVC)', phase: 's', isPrecipitate: true, molarMass: 2 * AW.C + 3 * AW.H + AW.Cl, density: 1.380, cp: 72.0, meltTempK: 473.15, dHFusJ: 9500, color: '#f1f5f9', highlightColor: '#ffffff', visualType: 'white_powder', renderLayer: 'precipitate', renderOrder: 186 },
-  Buna_s: { id: 'Buna_s', formula: '(–CH₂–CH=CH–CH₂–)ₙ', name: 'Polybutadiene (Buna rubber)', phase: 's', isPrecipitate: true, molarMass: 4 * AW.C + 6 * AW.H, density: 0.910, cp: 108.0, noMelt: true, color: '#fef9c3', highlightColor: '#ffffff', visualType: 'white_powder', renderLayer: 'precipitate', renderOrder: 186 },
-  Novolac_s: { id: 'Novolac_s', formula: '(C₇H₆O)ₙ', name: 'Phenol-formaldehyde resin (Novolac)', phase: 's', isPrecipitate: true, molarMass: 7 * AW.C + 6 * AW.H + AW.O, density: 1.250, cp: 145.0, noMelt: true, color: '#f59e0b', highlightColor: '#fde68a', visualType: 'yellow_crystal', renderLayer: 'precipitate', renderOrder: 186 },
+  PE_s: { id: 'PE_s', formula: '(–CH₂–CH₂–)ₙ', name: 'Polyethylene (PE)', phase: 's', isPrecipitate: true, isPolymer: true, molarMass: 2 * AW.C + 4 * AW.H, density: 0.940, cp: 65.0, meltTempK: 403.15, dHFusJ: 8200, color: '#f8fafc', highlightColor: '#ffffff', visualType: 'white_powder', renderLayer: 'precipitate', renderOrder: 186 },
+  PVC_s: { id: 'PVC_s', formula: '(–CH₂–CHCl–)ₙ', name: 'Polyvinyl chloride (PVC)', phase: 's', isPrecipitate: true, isPolymer: true, molarMass: 2 * AW.C + 3 * AW.H + AW.Cl, density: 1.380, cp: 72.0, meltTempK: 473.15, dHFusJ: 9500, color: '#f1f5f9', highlightColor: '#ffffff', visualType: 'white_powder', renderLayer: 'precipitate', renderOrder: 186 },
+  Buna_s: { id: 'Buna_s', formula: '(–CH₂–CH=CH–CH₂–)ₙ', name: 'Polybutadiene (Buna rubber)', phase: 's', isPrecipitate: true, isPolymer: true, molarMass: 4 * AW.C + 6 * AW.H, density: 0.910, cp: 108.0, noMelt: true, color: '#fef9c3', highlightColor: '#ffffff', visualType: 'white_powder', renderLayer: 'precipitate', renderOrder: 186 },
+  Novolac_s: { id: 'Novolac_s', formula: '(C₇H₆O)ₙ', name: 'Phenol-formaldehyde resin (Novolac)', phase: 's', isPrecipitate: true, isPolymer: true, molarMass: 7 * AW.C + 6 * AW.H + AW.O, density: 1.250, cp: 145.0, noMelt: true, color: '#f59e0b', highlightColor: '#fde68a', visualType: 'yellow_crystal', renderLayer: 'precipitate', renderOrder: 186 },
   C17H33COONa_s: { id: 'C17H33COONa_s', formula: 'C₁₇H₃₃COONa↓', name: 'Sodium oleate (Soap curd)', phase: 's', isPrecipitate: true, isColloidal: true, molarMass: 18 * AW.C + 33 * AW.H + 2 * AW.O + AW.Na, density: 0.920, cp: 520.0, meltTempK: 505.15, dHFusJ: 28000, color: '#fef9c3', highlightColor: '#ffffff', visualType: 'white_precipitate', renderLayer: 'precipitate', renderOrder: 186 },
   C17H35COONa_s: { id: 'C17H35COONa_s', formula: 'C₁₇H₃₅COONa↓', name: 'Sodium stearate (Soap curd)', phase: 's', isPrecipitate: true, isColloidal: true, molarMass: 18 * AW.C + 35 * AW.H + 2 * AW.O + AW.Na, density: 0.940, cp: 540.0, meltTempK: 533.15, dHFusJ: 30000, color: '#ffffff', highlightColor: '#f8fafc', visualType: 'white_precipitate', renderLayer: 'precipitate', renderOrder: 186 },
   HCOONa_s: { id: 'HCOONa_s', formula: 'HCOONa', name: 'Sodium formate', phase: 's', molarMass: AW.C + AW.H + 2 * AW.O + AW.Na, density: 1.92, cp: 82.7, meltTempK: 526.15, color: '#f8fafc', highlightColor: '#ffffff', visualType: 'white_crystal', renderLayer: 'bottom', renderOrder: 184 },
@@ -5575,6 +5579,9 @@ export const SPECIES = {
     dHVapJ: 56000,
     color: '#f8fafc',
   },
+  ...HYDROCARBON_SPECIES,
+  ...OXYGEN_SPECIES,
+  ...NITROGEN_BIO_SPECIES,
 };
 
 /**
@@ -6797,8 +6804,25 @@ export function getSpeciesFusionHeatJ(sp) {
   return Math.max(1800, Math.round(sp.meltTempK * (isMetal ? 10.5 : 14.5)));
 }
 
+const ORGANIC_PROPERTY_METADATA = {
+  CH4_g: { atoms: { C: 1, H: 4 }, autoIgnitionK: 810.15, dHCombustJ: -890300, functionalGroups: { isAlkane: true, legacyHandled: true } },
+  C2H4_g: { atoms: { C: 2, H: 4 }, autoIgnitionK: 723.15, dHCombustJ: -1411000, functionalGroups: { isAlkene: true, legacyHandled: true } },
+  C2H2_g: { atoms: { C: 2, H: 2 }, autoIgnitionK: 578.15, dHCombustJ: -1300000, functionalGroups: { hasTripleBondTerminal: true, legacyHandled: true } },
+  CH3OH_l: { atoms: { C: 1, H: 4, O: 1 }, autoIgnitionK: 658.15, dHCombustJ: -726000, functionalGroups: { isPrimaryAlcohol: true, legacyHandled: true } },
+  C2H5OH_l: { atoms: { C: 2, H: 6, O: 1 }, autoIgnitionK: 636.15, dHCombustJ: -1367000, functionalGroups: { isPrimaryAlcohol: true, legacyHandled: true } },
+  CH3COOH_l: { atoms: { C: 2, H: 4, O: 2 }, autoIgnitionK: 736.15, dHCombustJ: -874000, functionalGroups: { isCarboxylicAcid: true, legacyHandled: true } },
+  C3H5OH_3_l: { atoms: { C: 3, H: 8, O: 3 }, autoIgnitionK: 643.15, dHCombustJ: -1655000, functionalGroups: { hasVicinalDiol: true, legacyHandled: true } },
+  HCHO_aq: { atoms: { C: 1, H: 2, O: 1 }, functionalGroups: { hasAldehydeGroup: true, legacyHandled: true } },
+  CH3CHO_l: { atoms: { C: 2, H: 4, O: 1 }, autoIgnitionK: 458.15, dHCombustJ: -1167000, functionalGroups: { hasAldehydeGroup: true, legacyHandled: true } },
+  C6H6_l: { atoms: { C: 6, H: 6 }, autoIgnitionK: 771.15, dHCombustJ: -3268000, functionalGroups: { isArene: true, legacyHandled: true } },
+};
+
 for (const sp of Object.values(SPECIES)) {
   if (sp && sp.phase === 's' && sp.meltTempK && !sp.noMelt && !sp.dHFusJ) {
     sp.dHFusJ = getSpeciesFusionHeatJ(sp);
+  }
+  const meta = sp && ORGANIC_PROPERTY_METADATA[sp.id];
+  if (meta) {
+    Object.assign(sp, meta);
   }
 }

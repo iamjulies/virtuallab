@@ -2,6 +2,9 @@
  * Reaction Network Rules for virlab_beta_v1.
  * Every reaction operates on moles (mol), temperature (K), and aqueous concentrations (mol/L).
  */
+import { HYDROCARBON_REACTIONS } from './organic/hydrocarbons.js';
+import { OXYGEN_REACTIONS } from './organic/oxygen_compounds.js';
+import { NITROGEN_BIO_REACTIONS } from './organic/nitrogen_bio.js';
 
 export const REACTIONS = [
   // =========================================================
@@ -5358,4 +5361,7 @@ export const REACTIONS = [
     eaJ: 6000,
     deltaHJ: -98000,
   },
+  ...HYDROCARBON_REACTIONS,
+  ...OXYGEN_REACTIONS,
+  ...NITROGEN_BIO_REACTIONS,
 ];

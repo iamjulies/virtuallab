@@ -1,0 +1,118 @@
+/**
+ * Oxygenated Organic Compounds Module (Alcohols, Esters, Alkoxides).
+ * Pure ES module supplying species metadata & data-driven reversible / instant kinetics.
+ */
+
+const AW = {
+  H: 1.00794,
+  C: 12.0107,
+  O: 15.9994,
+  Na: 22.98977,
+};
+
+export const OXYGEN_SPECIES = {
+  C3H7OH_l: {
+    id: 'C3H7OH_l',
+    formula: 'CH₃CH₂CH₂OH',
+    name: 'Propan-1-ol',
+    phase: 'l',
+    liquidGroup: 'water_miscible_organic',
+    molarMass: 3 * AW.C + 8 * AW.H + AW.O,
+    density: 0.8035,
+    cp: 143.9,
+    meltTempK: 146.95,
+    boilTempK: 370.35,
+    dHVapJ: 47450,
+    vaporPressureAtm298: 0.028,
+    color: '#f8fafc',
+    atoms: { C: 3, H: 8, O: 1 },
+    autoIgnitionK: 685.15,
+    dHCombustJ: -2021000,
+    functionalGroups: { isPrimaryAlcohol: true },
+  },
+  CH3COOC3H7_l: {
+    id: 'CH3COOC3H7_l',
+    formula: 'CH₃COOC₃H₇',
+    name: 'Propyl acetate',
+    phase: 'l',
+    liquidGroup: 'light_organic',
+    molarMass: 5 * AW.C + 10 * AW.H + 2 * AW.O,
+    density: 0.888,
+    cp: 196.0,
+    meltTempK: 178.15,
+    boilTempK: 374.75,
+    dHVapJ: 39700,
+    vaporPressureAtm298: 0.044,
+    partitionKow: 17.5,
+    color: '#fefce8',
+    atoms: { C: 5, H: 10, O: 2 },
+    autoIgnitionK: 723.15,
+    dHCombustJ: -3110000,
+    functionalGroups: { isEster: true },
+  },
+  NaC3H7O_s: {
+    id: 'NaC3H7O_s',
+    formula: 'C₃H₇ONa',
+    name: 'Sodium propoxide',
+    phase: 's',
+    molarMass: 3 * AW.C + 7 * AW.H + AW.O + AW.Na,
+    density: 1.05,
+    cp: 108.0,
+    noMelt: true,
+    color: '#f8fafc',
+    highlightColor: '#ffffff',
+    visualType: 'white_powder',
+    renderLayer: 'bottom',
+    renderOrder: 184,
+    atoms: { C: 3, H: 7, O: 1, Na: 1 },
+  },
+};
+
+export const OXYGEN_REACTIONS = [
+  {
+    id: 'propyl_acetate_reversible',
+    equation: 'CH₃COOH + C₃H₇OH ⇌(H⁺, t°) CH₃COOC₃H₇ + H₂O',
+    type: 'reversible',
+    nameVi: 'Este hóa / Thủy phân thuận nghịch Propyl acetate',
+    nameEn: 'Reversible Fischer esterification / hydrolysis of Propyl acetate',
+    descVi: 'Phản ứng thuận nghịch đạt cân bằng (Kc ≈ 4.0) dưới xúc tác acid H⁺; diễn ra theo cả hai chiều thuận và nghịch.',
+    descEn: 'Acid-catalyzed reversible esterification / hydrolysis equilibrating dynamically around Kc ≈ 4.0 in both directions.',
+    reactants: { CH3COOH_l: 1, C3H7OH_l: 1 },
+    products: { CH3COOC3H7_l: 1, H2O_l: 1 },
+    catalysts: ['H_aq'],
+    catalystOrder: 1,
+    conditions: {
+      minTempK: 295,
+      allowAnhydrous: true,
+    },
+    kinetics: {
+      type: 'reversible',
+      k298: 0.045,
+      eaJ: 46000,
+      Kc298: 4.0,
+      deltaHJ: -3800,
+      orders: { CH3COOH_l: 1, C3H7OH_l: 1 },
+      reverseOrders: { CH3COOC3H7_l: 1, H2O_l: 1 },
+    },
+    deltaHJ: -3800,
+  },
+  {
+    id: 'nac3h7o_instant_hydrolysis',
+    equation: 'C₃H₇ONa(s) + H₂O(l) → C₃H₇OH(l) + Na⁺(aq) + OH⁻(aq)',
+    type: 'general',
+    nameVi: 'Thủy phân tức thời Sodium propoxide trong nước',
+    nameEn: 'Instant hydrolysis of Sodium propoxide forming Propan-1-ol and NaOH',
+    descVi: 'Sodium propoxide bị thủy phân hoàn toàn và tức thì khi gặp nước giải phóng kiềm mạnh.',
+    descEn: 'Sodium propoxide undergoes instantaneous hydrolysis in water yielding Propan-1-ol and strong base.',
+    reactants: { NaC3H7O_s: 1, H2O_l: 1 },
+    products: { C3H7OH_l: 1, Na_aq: 1, OH_aq: 1 },
+    conditions: {
+      minTempK: 265,
+      allowAnhydrous: false,
+    },
+    kinetics: {
+      type: 'instant',
+    },
+    deltaHJ: -65000,
+  },
+];
