@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.8',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.9',
     toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
     quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
     quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -839,7 +839,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.8',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.9',
     toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
     quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
     quickPresetsHoldTitle: 'Guided Experiments (Hold F · Release to close)',

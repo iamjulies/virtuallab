@@ -10,6 +10,8 @@ import { computeBeerLambertReading } from '../src/engine/analyticalTools.js';
 import { renderColorimeter, renderPhConductometer, renderTlcPlate } from '../src/canvas/toolRenderer.js';
 import { PRESET_MENU_ITEMS } from '../src/data/presets.js';
 import { I18N } from '../src/data/i18n.js';
+import { InspectorPanel } from '../src/ui/inspectorPanel.js';
+import { renderRetortClampJaw } from '../src/canvas/vesselRenderer.js';
 
 export function runOrganicV5Tests(assert) {
   // TEST 184: Prompt 66 — Modular Organic Architecture, Reversible Zero-Reactant/Anhydrous Solver,
@@ -404,6 +406,77 @@ export function runOrganicV5Tests(assert) {
       'Prompt 68 invariants: Guided presets registry & 1-click organic/analytical benches, 4x adaptive sub-stepping, volatile vapor stopper_pop & cooling suck-back',
       presetsOk && adaptiveOk && popped && suckBackOk,
       `presets=${presetsOk}, adaptive=${adaptiveOk}(calm=${vCalm.lastAdaptiveSubsteps},vig=${vVig.lastAdaptiveSubsteps}), pop=${popped}(p=${(vSeal.internalPressureBar||0).toFixed(2)}), suck=${suckBackOk}(H2O:${waterBeforeCool.toFixed(2)}->${(vGen.moles.H2O_l||0).toFixed(2)},p=${(vGen.internalPressureBar||0).toFixed(2)},air=${airAfterHeat.toFixed(4)})`
+    );
+  }
+
+  // TEST 187: Prompt 69 — Colorimeter Wavelength Sync + Immediate Recalc, Probe Clamping to Retort Stand,
+  // Clamp Jaw Fit & Presets Suspended Immersion
+  {
+    const sim69 = new LabSimulation();
+    sim69.setupPreset('starch_colorimetry');
+    const col = sim69.items.find((i) => i.kind === 'colorimeter');
+    const standCol = sim69.items.find((i) => i.kind === 'stand');
+    sim69.step(0.5);
+    const colYAfterStep = col.y;
+    const clampedColOk = Boolean(
+      APPARATUS.colorimeter.supportsClamp &&
+      APPARATUS.ph_conductometer.supportsClamp &&
+      APPARATUS.tlc_plate.supportsClamp &&
+      APPARATUS.colorimeter.neckRadius <= 8 &&
+      col.clampedToId === standCol?.id &&
+      col.contactVesselId != null &&
+      col.measuredAbsorbance > 0.2 &&
+      Math.abs(col.y - colYAfterStep) < 1
+    );
+
+    // Mount InspectorPanel in headless DOM to verify wavelength switch syncs UI, clears history, & recalculates A immediately
+    const hostDiv = document.createElement('div');
+    document.body.appendChild(hostDiv);
+    const tVi69 = (k) => I18N.vi[k] || k;
+    const insp = new InspectorPanel(hostDiv, sim69, () => tVi69, { getLabsMeta: () => null });
+    sim69.selectedId = col.id;
+    insp.update('vi', true);
+    const sig590 = insp.getStructureSignature(tVi69, 'vi');
+    const wlBtn420 = hostDiv.querySelector('.col-wl-btn[data-wl="420"]');
+    const colBeforeAbs = col.measuredAbsorbance;
+    wlBtn420?.click();
+    insp.update('vi');
+    const sig420 = insp.getStructureSignature(tVi69, 'vi');
+    const wlLabelAfter = hostDiv.querySelector('#live-col-wl')?.textContent?.trim();
+    const btn420Highlighted = hostDiv.querySelector('.col-wl-btn[data-wl="420"]')?.className?.includes('sky-500');
+    const hasClampBtn = Boolean(hostDiv.querySelector('#ins-toggle-clamp'));
+    const syncOk =
+      sig590 !== sig420 &&
+      col.wavelengthNm === 420 &&
+      wlLabelAfter === '420 nm' &&
+      Boolean(btn420Highlighted) &&
+      hasClampBtn &&
+      col.measuredAbsorbance < colBeforeAbs;
+    document.body.removeChild(hostDiv);
+
+    // Verify titration_probe clamps ph_conductometer onto stand cleanly without falling
+    sim69.setupPreset('titration_probe');
+    const phProbe = sim69.items.find((i) => i.kind === 'ph_conductometer');
+    sim69.step(0.5);
+    const clampedPhOk = Boolean(phProbe?.clampedToId) && phProbe?.contactVesselId != null && phProbe?.measuredPH != null;
+
+    // Verify miniature clamp jaw renders cleanly without throwing
+    const jCanvas = document.createElement('canvas');
+    jCanvas.width = 160;
+    jCanvas.height = 160;
+    const jCtx = jCanvas.getContext('2d');
+    let jawRenderOk = true;
+    try {
+      const stand2 = sim69.items.find((i) => i.id === phProbe.clampedToId);
+      renderRetortClampJaw(jCtx, stand2, phProbe, true);
+    } catch {
+      jawRenderOk = false;
+    }
+
+    assert(
+      'Prompt 69 invariants: Colorimeter wavelength UI/Canvas sync & instant recalc, probe supportsClamp + wide reach + sleek jaws, clamped starch_colorimetry & titration_probe presets',
+      clampedColOk && syncOk && clampedPhOk && jawRenderOk,
+      `colClamp=${clampedColOk}(A=${(col.measuredAbsorbance||0).toFixed(2)},cl=${col.clampedToId}), sync=${syncOk}(wl=${wlLabelAfter},hi=${btn420Highlighted},btn=${hasClampBtn}), phClamp=${clampedPhOk}(pH=${phProbe?.measuredPH?.toFixed(2)}), jaw=${jawRenderOk}`
     );
   }
 }

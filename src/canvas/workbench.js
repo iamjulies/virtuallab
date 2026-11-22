@@ -1085,8 +1085,9 @@ export class LabWorkbenchCanvas {
       const sSpec = APPARATUS.retort_stand;
       const standTop = stand.y - sSpec.height / 2 - (stand.extendPx || 0);
       const targetX = getStandGeometry(stand).clampTargetX(item.kind);
-      const distX = Math.abs(item.x - targetX);
-      const maxPullDist = item.kind === 'gas_syringe' ? 88 : item.kind === 'burette' || item.kind === 'condenser' ? 68 : 58;
+      const isProbeTool = item.kind === 'ph_conductometer' || item.kind === 'colorimeter' || item.kind === 'tlc_plate';
+      const distX = isProbeTool ? Math.abs(item.x - stand.x) : Math.abs(item.x - targetX);
+      const maxPullDist = isProbeTool ? 125 : item.kind === 'gas_syringe' ? 88 : item.kind === 'burette' || item.kind === 'condenser' ? 68 : 58;
       if (distX <= maxPullDist && item.y >= standTop + 8 && item.y <= BENCH_FLOOR_Y - 10) {
         return stand;
       }

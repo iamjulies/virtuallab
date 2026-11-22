@@ -322,15 +322,20 @@ export function applyPresetScenario(sim, presetName, floorY = 482) {
       beaker.moles = { H2O_l: 2.5, H_aq: 0.025, Cl_aq: 0.025, Phenolphthalein_aq: 1e-4 };
       const stirBar = sim.createApparatus('stir_bar', 490, floorY - 8);
       sim.insertStirBarIntoVessel(stirBar.id, beaker.id, 600);
-      sim.createApparatus('ph_conductometer', 300, beaker.y - 42);
+      const probeStand = sim.createApparatus('retort_stand', 180, floorY - APPARATUS.retort_stand.height / 2 + 2);
+      probeStand.flippedX = true;
+      const phProbe = sim.createApparatus('ph_conductometer', 274, beaker.y - 54);
+      sim.attachToStand(phProbe.id, probeStand.id);
       sim.selectedId = burette.id;
     } else if (presetName === 'starch_colorimetry') {
-      const burner = sim.createApparatus('burner', 340, floorY - APPARATUS.burner.height / 2 + 2);
+      const burner = sim.createApparatus('burner', 260, floorY - APPARATUS.burner.height / 2 + 2);
       sim.setBurnerFlame(burner.id, 1);
-      const beaker = sim.createApparatus('beaker_250', 340, burner.y - APPARATUS.burner.height / 2 + 10 - APPARATUS.beaker_250.height / 2);
-      beaker.moles = { H2O_l: 2.5, Starch_aq: 0.02, I2_aq: 0.008 };
-      const col = sim.createApparatus('colorimeter', 340, beaker.y - 40);
+      const beaker = sim.createApparatus('beaker_250', 260, burner.y - APPARATUS.burner.height / 2 + 10 - APPARATUS.beaker_250.height / 2);
+      beaker.moles = { H2O_l: 2.5, Starch_aq: 0.005, I2_aq: 0.000008 };
+      const stand = sim.createApparatus('retort_stand', 365, floorY - APPARATUS.retort_stand.height / 2 + 2);
+      const col = sim.createApparatus('colorimeter', 268, beaker.y - 45);
       col.wavelengthNm = 590;
+      sim.attachToStand(col.id, stand.id);
       sim.selectedId = col.id;
     } else {
       // 'starter' default bench: Scale + Beaker 250 mL + Burner + Erlenmeyer 250 mL

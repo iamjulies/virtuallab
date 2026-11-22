@@ -23,7 +23,7 @@ import {
   computeTubingGeometry,
 } from '../engine/gasNetwork.js';
 import { computeWashBottleStreamArc } from '../engine/apparatusTools.js';
-import { COLORIMETER_WAVELENGTHS } from '../engine/analyticalTools.js';
+import { COLORIMETER_WAVELENGTHS, stepAnalyticalInstruments } from '../engine/analyticalTools.js';
 import { computeCaOOptimizationScore } from '../engine/chemistry.js';
 import { soundEngine } from '../audio/soundEngine.js';
 import { downloadCompositionXlsx } from '../storage/xlsxExport.js';
@@ -501,6 +501,16 @@ export class InspectorPanel {
     }
     if (item.kind === 'bath') {
       return `bath|${item.id}|${item.isBroken ? 1 : 0}|${item.bathMode || 'ice'}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'colorimeter') {
+      return `col|${item.id}|${item.wavelengthNm || 525}|${item.clampedToId || ''}|${standCount}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'ph_conductometer') {
+      return `phc|${item.id}|${item.clampedToId || ''}|${standCount}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'tlc_plate') {
+      const spIds = (item.spots || []).map((s) => s.id).join(',');
+      return `tlc|${item.id}|${item.clampedToId || ''}|${spIds}|${standCount}|${langCode}|${logLen}`;
     }
     return `other|${item.id}|${langCode}|${logLen}`;
   }
@@ -1278,6 +1288,7 @@ export class InspectorPanel {
     } else if (item.kind === 'ph_conductometer') {
       const phTxt = item.measuredPH != null ? item.measuredPH.toFixed(2) : '—';
       const ecTxt = item.measuredConductivity != null ? `${item.measuredConductivity.toFixed(2)} mS/cm` : '—';
+      const stands = this.sim.items.filter((i) => i.kind === 'stand');
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
@@ -1298,13 +1309,23 @@ export class InspectorPanel {
             </div>
             <canvas id="analytical-chart" width="270" height="104" class="w-full h-24 rounded border border-theme/50"></canvas>
           </div>
-          <button type="button" id="ins-phc-reset" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetCurve')}</button>
+          <div class="flex flex-wrap gap-1.5">
+            ${
+              stands.length > 0 || item.clampedToId
+                ? `<button type="button" id="ins-toggle-clamp" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t(
+                    item.clampedToId ? 'actionUnclampStand' : 'actionClampStand'
+                  )}</button>`
+                : ''
+            }
+            <button type="button" id="ins-phc-reset" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetCurve')}</button>
+          </div>
         </div>
       `;
     } else if (item.kind === 'colorimeter') {
       const wl = item.wavelengthNm || 525;
       const aVal = item.measuredAbsorbance ?? 0;
       const tVal = item.measuredTransmittance ?? 100;
+      const stands = this.sim.items.filter((i) => i.kind === 'stand');
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
@@ -1320,8 +1341,8 @@ export class InspectorPanel {
           </div>
           <div class="grid grid-cols-5 gap-1">
             ${COLORIMETER_WAVELENGTHS.map(
-              (w) => `<button type="button" class="col-wl-btn py-1 rounded border text-[11px] font-mono ${
-                wl === w ? 'border-accent bg-accent/20 text-accent font-bold' : 'border-theme bg-surface text-muted'
+              (w) => `<button type="button" class="col-wl-btn py-1.5 rounded border text-[11px] font-mono ${
+                wl === w ? 'border-sky-500 bg-sky-500/20 text-sky-400 font-bold' : 'border-theme bg-surface text-muted'
               }" data-wl="${w}">${w}</button>`
             ).join('')}
           </div>
@@ -1332,12 +1353,22 @@ export class InspectorPanel {
             </div>
             <canvas id="analytical-chart" width="270" height="104" class="w-full h-24 rounded border border-theme/50"></canvas>
           </div>
-          <button type="button" id="ins-col-reset" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetCurve')}</button>
+          <div class="flex flex-wrap gap-1.5">
+            ${
+              stands.length > 0 || item.clampedToId
+                ? `<button type="button" id="ins-toggle-clamp" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t(
+                    item.clampedToId ? 'actionUnclampStand' : 'actionClampStand'
+                  )}</button>`
+                : ''
+            }
+            <button type="button" id="ins-col-reset" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetCurve')}</button>
+          </div>
         </div>
       `;
     } else if (item.kind === 'tlc_plate') {
       const spots = item.spots || [];
       const sfPct = ((item.solventFront || 0) * 100).toFixed(0);
+      const stands = this.sim.items.filter((i) => i.kind === 'stand');
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
@@ -1365,7 +1396,16 @@ export class InspectorPanel {
                     .join('')
             }
           </div>
-          <button type="button" id="ins-tlc-reset" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionWashTlcPlate')}</button>
+          <div class="flex flex-wrap gap-1.5">
+            ${
+              stands.length > 0 || item.clampedToId
+                ? `<button type="button" id="ins-toggle-clamp" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t(
+                    item.clampedToId ? 'actionUnclampStand' : 'actionClampStand'
+                  )}</button>`
+                : ''
+            }
+            <button type="button" id="ins-tlc-reset" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionWashTlcPlate')}</button>
+          </div>
         </div>
       `;
     } else if (item.kind === 'dc_power') {
@@ -2773,30 +2813,54 @@ export class InspectorPanel {
         item.tipColor = item.stripKind === 'universal' ? '#eab308' : '#8b5cf6';
         this.sim.emitChange();
       });
-    } else if (item.kind === 'ph_conductometer') {
-      this.drawAnalyticalChart(item);
-      this.container.querySelector('#ins-phc-reset')?.addEventListener('click', () => {
-        item.history = [];
-        this.sim.emitChange();
-      });
-    } else if (item.kind === 'colorimeter') {
-      this.drawAnalyticalChart(item);
-      this.container.querySelectorAll('.col-wl-btn').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          item.wavelengthNm = Number(btn.dataset.wl) || 525;
+    } else if (item.kind === 'ph_conductometer' || item.kind === 'colorimeter' || item.kind === 'tlc_plate') {
+      const bindProbeClamp = () => {
+        this.container.querySelector('#ins-toggle-clamp')?.addEventListener('click', () => {
+          soundEngine.playClampClick();
+          if (item.clampedToId) {
+            this.sim.detachFromStand(item.id);
+          } else {
+            const stands = this.sim.items.filter((i) => i.kind === 'stand');
+            if (stands.length > 0) {
+              const nearest = stands.reduce((best, s) =>
+                Math.abs(s.x - item.x) < Math.abs(best.x - item.x) ? s : best
+              );
+              if (Math.abs(item.x - nearest.x) > 125) {
+                item.x = getStandGeometry(nearest).clampTargetX(item.kind);
+              }
+              this.sim.attachToStand(item.id, nearest.id);
+            }
+          }
+        });
+      };
+      bindProbeClamp();
+      if (item.kind === 'ph_conductometer') {
+        this.drawAnalyticalChart(item);
+        this.container.querySelector('#ins-phc-reset')?.addEventListener('click', () => {
+          item.history = [];
           this.sim.emitChange();
         });
-      });
-      this.container.querySelector('#ins-col-reset')?.addEventListener('click', () => {
-        item.history = [];
-        this.sim.emitChange();
-      });
-    } else if (item.kind === 'tlc_plate') {
-      this.container.querySelector('#ins-tlc-reset')?.addEventListener('click', () => {
-        item.solventFront = 0;
-        item.spots = [];
-        this.sim.emitChange();
-      });
+      } else if (item.kind === 'colorimeter') {
+        this.drawAnalyticalChart(item);
+        this.container.querySelectorAll('.col-wl-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            item.wavelengthNm = Number(btn.dataset.wl) || 525;
+            item.history = [];
+            stepAnalyticalInstruments(this.sim, item, 0.05);
+            this.sim.emitChange();
+          });
+        });
+        this.container.querySelector('#ins-col-reset')?.addEventListener('click', () => {
+          item.history = [];
+          this.sim.emitChange();
+        });
+      } else if (item.kind === 'tlc_plate') {
+        this.container.querySelector('#ins-tlc-reset')?.addEventListener('click', () => {
+          item.solventFront = 0;
+          item.spots = [];
+          this.sim.emitChange();
+        });
+      }
     } else if (item.kind === 'dc_power') {
       this.container.querySelector('#dc-voltage-slider')?.addEventListener('input', (e) => {
         this.sim.setDcPowerState(item.id, { voltageV: Number(e.target.value) });
@@ -3211,8 +3275,10 @@ export class InspectorPanel {
     if (item.kind === 'colorimeter') {
       const aEl = this.container.querySelector('#live-col-abs');
       const tEl = this.container.querySelector('#live-col-trans');
+      const wlEl = this.container.querySelector('#live-col-wl');
       if (aEl) aEl.textContent = (item.measuredAbsorbance ?? 0).toFixed(3);
       if (tEl) tEl.textContent = `${(item.measuredTransmittance ?? 100).toFixed(1)}% T`;
+      if (wlEl) wlEl.textContent = `${item.wavelengthNm || 525} nm`;
       this.drawAnalyticalChart(item);
       return;
     }

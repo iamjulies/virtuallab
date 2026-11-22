@@ -901,7 +901,7 @@ export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
   ctx.fillRect(rodSide > 0 ? rodX + 8 : rodX - 14, attachY - 3, 6, 6);
 
   // Horizontal stainless clamp extension rod (stops cleanly at barrel/neck grip edge)
-  const jawRadius = isSyr ? (spec.barrelH || 54) / 2 + 2 : Math.max(13, (spec.neckRadius || 16) + 2);
+  const jawRadius = isSyr ? (spec.barrelH || 54) / 2 + 2 : Math.max(6, (spec.neckRadius || 16) + 2);
   const armEndX = isSyr ? attachX : attachX + (rodX >= attachX ? jawRadius : -jawRadius);
   ctx.strokeStyle = '#94a3b8';
   ctx.lineWidth = 4;
