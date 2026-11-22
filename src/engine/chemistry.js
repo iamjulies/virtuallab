@@ -6793,6 +6793,446 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
         pushRxn('benzoate_acidify', 'C₆H₅COO⁻ + H⁺ → C₆H₅COOH↓ (trắng)', 'Acid hóa Benzoate kết tinh Benzoic acid trắng', 'Acidification of Benzoate → white Benzoic acid↓', 'Acid hóa muối Benzoate kết tủa tinh thể trắng Benzoic acid.', 'Acidifying Benzoate precipitates white Benzoic acid crystals.', dBzAcid);
       }
     }
+
+    // ==================== PART 7: PROMPT 63 — METHANOL, FORMIC, POLYOLS, HCHO, LIPIDS & HYDROCARBONS ====================
+    const hs63 = vessel.headspaceGasMoles || {};
+    const getG = (id) => (moles[id] || 0) + (hs63[id] || 0);
+    const takeG = (id, amt) => {
+      const mUse = Math.min(moles[id] || 0, amt);
+      if (mUse > 0) consumeSpecies(id, mUse);
+      const rem = amt - mUse;
+      if (rem > 1e-13 && hs63[id] > 0) {
+        hs63[id] = Math.max(0, hs63[id] - rem);
+        if (hs63[id] < 1e-13) delete hs63[id];
+      }
+    };
+
+    // 7A. Methanol (CH3OH_l): + Na/K, + CuO(280 C)->HCHO, + HCOOH/CH3COOH (H2SO4 conc)
+    if ((moles.CH3OH_l || 0) > 1e-9) {
+      if ((moles.Na_s || 0) > 1e-9 && (moles.H2O_l || 0) < 0.02) {
+        const dMeNa = Math.min(moles.CH3OH_l, moles.Na_s) * (1 - Math.exp(-3.2 * dt));
+        if (dMeNa > 1e-11) {
+          consumeSpecies('CH3OH_l', dMeNa); consumeSpecies('Na_s', dMeNa);
+          moles.CH3O_aq = (moles.CH3O_aq || 0) + dMeNa; moles.Na_aq = (moles.Na_aq || 0) + dMeNa;
+          gasProduced.H2_g = (gasProduced.H2_g || 0) + 0.5 * dMeNa; heatJ += dMeNa * 185000;
+          pushRxn('meoh_na', 'CH₃OH + Na → CH₃ONa + ½H₂↑', 'Methanol tác dụng với Na giải phóng H₂↑', 'Methanol + Na → Sodium methoxide + ½H₂↑', 'Na thế H nhóm –OH trong Methanol giải phóng khí H₂.', 'Sodium reacts with Methanol evolving H₂ gas.', dMeNa, true);
+        }
+      }
+      if ((moles.CuO_s || 0) > 1e-9 && T >= 523.15) {
+        const dMeCuO = Math.min(moles.CH3OH_l, moles.CuO_s) * (1 - Math.exp(-1.2 * dt));
+        if (dMeCuO > 1e-11) {
+          consumeSpecies('CH3OH_l', dMeCuO); consumeSpecies('CuO_s', dMeCuO);
+          gasProduced.HCHO_g = (gasProduced.HCHO_g || 0) + dMeCuO; moles.Cu_s = (moles.Cu_s || 0) + dMeCuO;
+          gasProduced.H2O_g = (gasProduced.H2O_g || 0) + dMeCuO; heatJ += dMeCuO * 35000;
+          pushRxn('meoh_cuo', 'CH₃OH + CuO —(250–300 °C)→ HCHO↑ + Cu↓ + H₂O↑', 'Oxi hóa Methanol bằng CuO nóng → Formaldehyde + Cu đỏ', 'Methanol + hot CuO → Formaldehyde + Cu↓', 'CuO oxi hóa Methanol ở 250–300 °C thành khí HCHO và đồng đỏ.', 'Hot CuO oxidizes Methanol vapor to Formaldehyde and metallic Cu.', dMeCuO, true);
+        }
+      }
+      if ((moles.HCOOH_l || 0) > 1e-9 && ((moles.H2SO4_l || 0) > 1e-6 || (moles.HSO4_aq || 0) > 1e-4) && T >= 323.15) {
+        const dEstMF = Math.min(moles.CH3OH_l, moles.HCOOH_l) * (1 - Math.exp(-0.92 * dt));
+        if (dEstMF > 1e-11) {
+          consumeSpecies('CH3OH_l', dEstMF); consumeSpecies('HCOOH_l', dEstMF);
+          moles.HCOOCH3_l = (moles.HCOOCH3_l || 0) + dEstMF; moles.H2O_l = (moles.H2O_l || 0) + dEstMF;
+          pushRxn('ester_methyl_formate', 'HCOOH + CH₃OH ⇌ HCOOCH₃ + H₂O', 'Ester hóa HCOOH + CH₃OH → Methyl formate', 'Esterification: Formic acid + Methanol → Methyl formate', 'Đun HCOOH với CH₃OH có xúc tác H₂SO₄ đặc tạo ester Methyl formate.', 'Fischer esterification of Formic acid with Methanol forms Methyl formate.', dEstMF);
+        }
+      }
+    }
+
+    // 7B. Formic acid (HCOOH_l) & Formate Esters (HCOOCH3_l, HCOOC2H5_l): Acidic + Dehydration CO↑ + Tollens + Cu(OH)2 + Br2
+    if ((moles.HCOOH_l || 0) > 1e-9) {
+      // Dehydration by conc H2SO4 (no excess water): HCOOH -(conc H2SO4, >= 333 K)-> CO↑ + H2O
+      if ((moles.H2SO4_l || 0) > 1e-6 && (moles.H2O_l || 0) < 0.08 && T >= 333.15) {
+        const dDehF = Math.min(moles.HCOOH_l, moles.H2SO4_l) * (1 - Math.exp(-1.4 * dt));
+        if (dDehF > 1e-11) {
+          consumeSpecies('HCOOH_l', dDehF);
+          gasProduced.CO_g = (gasProduced.CO_g || 0) + dDehF; moles.H2O_l = (moles.H2O_l || 0) + dDehF; heatJ += dDehF * 28000;
+          pushRxn('hcooh_h2so4_co', 'HCOOH —(H₂SO₄ đặc, 60–90 °C)→ CO(g)↑ + H₂O', 'Tách nước Formic acid bằng H₂SO₄ đặc điều chế khí CO↑', 'Formic acid dehydration (conc. H₂SO₄) → CO(g)↑', 'H₂SO₄ đặc hút nước phân hủy Formic acid tạo khí CO tinh khiết.', 'Conc. H₂SO₄ dehydrates Formic acid to pure CO gas.', dDehF, true);
+        }
+      }
+      if ((moles.AgNH3_2_aq || 0) > 1e-7 && (moles.OH_aq || 0) > 1e-7 && T >= 313.15) {
+        const dFTol = Math.min(moles.HCOOH_l, moles.AgNH3_2_aq / 2, moles.OH_aq / 2) * (1 - Math.exp(-1.25 * dt));
+        if (dFTol > 1e-11) {
+          consumeSpecies('HCOOH_l', dFTol); consumeSpecies('AgNH3_2_aq', 2 * dFTol); consumeSpecies('OH_aq', 2 * dFTol);
+          moles.CO3_2_aq = (moles.CO3_2_aq || 0) + dFTol; moles.NH4_aq = (moles.NH4_aq || 0) + 2 * dFTol;
+          moles.Ag_s = (moles.Ag_s || 0) + 2 * dFTol; moles.NH3_aq = (moles.NH3_aq || 0) + 2 * dFTol; moles.H2O_l = (moles.H2O_l || 0) + 2 * dFTol;
+          pushRxn('hcooh_tollens', 'HCOOH + 2[Ag(NH₃)₂]⁺ + 2OH⁻ → (NH₄)₂CO₃ + 2Ag↓ + 2NH₃ + 2H₂O', 'Tráng bạc Formic acid → 2Ag↓', 'Formic acid Tollens silver mirror → 2Ag↓', 'Nhóm –CHO trong Formic acid tham gia phản ứng tráng gương tạo 2Ag↓.', 'Formic acid reduces Tollens reagent to a silver mirror (2Ag↓).', dFTol);
+        }
+      } else if ((moles.CuOH2_s || 0) > 1e-8 && (moles.OH_aq || 0) > 1e-6 && T >= 333.15) {
+        const dFCu = Math.min(moles.HCOOH_l, moles.CuOH2_s / 2, moles.OH_aq / 2) * (1 - Math.exp(-1.1 * dt));
+        if (dFCu > 1e-11) {
+          consumeSpecies('HCOOH_l', dFCu); consumeSpecies('CuOH2_s', 2 * dFCu); consumeSpecies('OH_aq', 2 * dFCu);
+          moles.Cu2O_s = (moles.Cu2O_s || 0) + dFCu; moles.CO3_2_aq = (moles.CO3_2_aq || 0) + dFCu; moles.H2O_l = (moles.H2O_l || 0) + 3 * dFCu;
+          pushRxn('hcooh_cuoh2_hot', 'HCOOH + 2Cu(OH)₂ + 2OH⁻ —(t°)→ Cu₂O↓ (đỏ gạch) + CO₃²⁻ + 3H₂O', 'Formic acid khử Cu(OH)₂ đun nóng → Cu₂O đỏ gạch', 'Formic acid + hot Cu(OH)₂/OH⁻ → red Cu₂O↓', 'Formic acid khử Cu(OH)₂ khi đun nóng tạo kết tủa đỏ gạch Cu₂O↓.', 'Hot Cu(OH)₂ oxidizes Formic acid forming brick-red Cu₂O precipitate.', dFCu);
+        }
+      } else if ((moles.OH_aq || 0) > 1e-6) {
+        const dNF = Math.min(moles.HCOOH_l, moles.OH_aq) * (1 - Math.exp(-3.4 * dt));
+        if (dNF > 1e-11) {
+          consumeSpecies('HCOOH_l', dNF); consumeSpecies('OH_aq', dNF);
+          moles.HCOO_aq = (moles.HCOO_aq || 0) + dNF; moles.H2O_l = (moles.H2O_l || 0) + dNF; heatJ += dNF * 56000;
+          pushRxn('hcooh_oh', 'HCOOH + OH⁻ → HCOO⁻ + H₂O', 'Trung hòa Formic acid bằng kiềm', 'Formic acid + OH⁻ → Formate + H₂O', 'Formic acid trung hòa nhanh dung dịch kiềm.', 'Formic acid neutralizes alkali to Formate.', dNF);
+        }
+      } else if ((moles.CaCO3_s || 0) > 1e-8 && (moles.H2O_l || 0) > 1e-4) {
+        const dCF = Math.min(moles.HCOOH_l / 2, moles.CaCO3_s) * (1 - Math.exp(-1.8 * dt));
+        if (dCF > 1e-11) {
+          consumeSpecies('HCOOH_l', 2 * dCF); consumeSpecies('CaCO3_s', dCF);
+          moles.HCOO_aq = (moles.HCOO_aq || 0) + 2 * dCF; moles.Ca2_aq = (moles.Ca2_aq || 0) + dCF;
+          gasProduced.CO2_g = (gasProduced.CO2_g || 0) + dCF; moles.H2O_l = (moles.H2O_l || 0) + dCF;
+          pushRxn('hcooh_caco3', '2HCOOH + CaCO₃ → Ca(HCOO)₂ + CO₂↑ + H₂O', 'Formic acid + CaCO₃ → CO₂↑', 'Formic acid + CaCO₃ → CO₂↑', 'Formic acid (pKa 3.75) giải phóng mạnh khí CO₂ từ CaCO₃.', 'Formic acid evolves CO₂ gas briskly from CaCO₃.', dCF, true);
+        }
+      }
+      if ((moles.C2H5OH_l || 0) > 1e-9 && ((moles.H2SO4_l || 0) > 1e-6 || (moles.HSO4_aq || 0) > 1e-4) && T >= 323.15) {
+        const dEstEF = Math.min(moles.HCOOH_l, moles.C2H5OH_l) * (1 - Math.exp(-0.88 * dt));
+        if (dEstEF > 1e-11) {
+          consumeSpecies('HCOOH_l', dEstEF); consumeSpecies('C2H5OH_l', dEstEF);
+          moles.HCOOC2H5_l = (moles.HCOOC2H5_l || 0) + dEstEF; moles.H2O_l = (moles.H2O_l || 0) + dEstEF;
+          pushRxn('ester_ethyl_formate', 'HCOOH + C₂H₅OH ⇌ HCOOC₂H₅ + H₂O', 'Ester hóa HCOOH + C₂H₅OH → Ethyl formate', 'Esterification: Formic acid + Ethanol → Ethyl formate', 'Tạo ester Ethyl formate có mùi thơm nhẹ.', 'Esterification yields Ethyl formate.', dEstEF);
+        }
+      }
+      const brFm = (moles.Br2_aq || 0) > 1e-8 ? 'Br2_aq' : (moles.Br2_l || 0) > 1e-8 ? 'Br2_l' : null;
+      if (brFm) {
+        const dFBr = Math.min(moles.HCOOH_l, moles[brFm]) * (1 - Math.exp(-1.2 * dt));
+        if (dFBr > 1e-11) {
+          consumeSpecies('HCOOH_l', dFBr); consumeSpecies(brFm, dFBr);
+          gasProduced.CO2_g = (gasProduced.CO2_g || 0) + dFBr; moles.H_aq = (moles.H_aq || 0) + 2 * dFBr; moles.Br_aq = (moles.Br_aq || 0) + 2 * dFBr;
+          pushRxn('hcooh_br2', 'HCOOH + Br₂ → CO₂↑ + 2HBr', 'Formic acid làm mất màu nước Bromine', 'Formic acid + Br₂ → CO₂↑ + 2HBr', 'Formic acid khử được nước Bromine tạo CO₂↑ và HBr.', 'Formic acid decolorizes Bromine water liberating CO₂.', dFBr, true);
+        }
+      }
+    }
+
+    // Formate esters (HCOOCH3 / HCOOC2H5): saponification + Tollens + Cu(OH)2
+    for (const fe of [{ id: 'HCOOCH3_l', alc: 'CH3OH_l', label: 'HCOOCH₃' }, { id: 'HCOOC2H5_l', alc: 'C2H5OH_l', label: 'HCOOC₂H₅' }]) {
+      const nFe = moles[fe.id] || 0;
+      if (nFe <= 1e-10) continue;
+      if ((moles.AgNH3_2_aq || 0) > 1e-7 && (moles.OH_aq || 0) > 1e-7 && T >= 313.15) {
+        const dFeT = Math.min(nFe, moles.AgNH3_2_aq / 2, moles.OH_aq / 2) * (1 - Math.exp(-0.85 * dt));
+        if (dFeT > 1e-11) {
+          consumeSpecies(fe.id, dFeT); consumeSpecies('AgNH3_2_aq', 2 * dFeT); consumeSpecies('OH_aq', 2 * dFeT);
+          moles.CO3_2_aq = (moles.CO3_2_aq || 0) + dFeT; moles[fe.alc] = (moles[fe.alc] || 0) + dFeT;
+          moles.Ag_s = (moles.Ag_s || 0) + 2 * dFeT; moles.NH4_aq = (moles.NH4_aq || 0) + 2 * dFeT; moles.NH3_aq = (moles.NH3_aq || 0) + 2 * dFeT;
+          pushRxn(`tollens_${fe.id}`, `${fe.label} + 2[Ag(NH₃)₂]⁺ + 2OH⁻ → 2Ag↓ + ${fe.alc === 'CH3OH_l' ? 'CH₃OH' : 'C₂H₅OH'}`, `Ester formate ${fe.label} tráng bạc tạo 2Ag↓`, `${fe.label} undergoes Tollens silver mirror reaction`, 'Ester của Formic acid có nhóm H–COO– nên tham gia phản ứng tráng gương.', 'Formate esters preserve the –CHO motif and yield a silver mirror.', dFeT);
+        }
+      } else if ((moles.OH_aq || 0) > 1e-6 && T >= 323.15) {
+        const dFeS = Math.min(nFe, moles.OH_aq) * (1 - Math.exp(-1.1 * dt));
+        if (dFeS > 1e-11) {
+          consumeSpecies(fe.id, dFeS); consumeSpecies('OH_aq', dFeS);
+          moles.HCOO_aq = (moles.HCOO_aq || 0) + dFeS; moles[fe.alc] = (moles[fe.alc] || 0) + dFeS;
+          pushRxn(`sap_${fe.id}`, `${fe.label} + OH⁻ → HCOO⁻ + ${fe.alc === 'CH3OH_l' ? 'CH₃OH' : 'C₂H₅OH'}`, `Xà phòng hóa ${fe.label}`, `Alkaline hydrolysis of ${fe.label}`, 'Thủy phân ester formate trong kiềm tạo Formate và alcohol.', 'Alkali hydrolyzes formate ester to Formate and alcohol.', dFeS);
+        }
+      }
+    }
+
+    // 7C. Polyols (Ethylene glycol C2H4OH_2_l & Glycerol C3H5OH_3_l): Cu(OH)2 deep blue complex, Na, HNO3/H2SO4 -> Nitroglycerin
+    for (const pol of [{ id: 'C3H5OH_3_l', name: 'Glycerol', formula: 'C₃H₅(OH)₃', h2Stoich: 1.5 }, { id: 'C2H4OH_2_l', name: 'Ethylene glycol', formula: 'C₂H₄(OH)₂', h2Stoich: 1.0 }]) {
+      const nPol = moles[pol.id] || 0;
+      if (nPol <= 1e-10) continue;
+      if ((moles.CuOH2_s || 0) > 1e-9 && (moles.OH_aq || 0) < 1e-5 || ((moles.CuOH2_s || 0) > 1e-9 && T <= 325.15)) {
+        const dCuPol = Math.min(nPol / 2, moles.CuOH2_s) * (1 - Math.exp(-2.2 * dt));
+        if (dCuPol > 1e-11) {
+          consumeSpecies(pol.id, 2 * dCuPol); consumeSpecies('CuOH2_s', dCuPol);
+          moles.CuC2H4O2_aq = (moles.CuC2H4O2_aq || 0) + dCuPol; moles.H2O_l = (moles.H2O_l || 0) + 2 * dCuPol;
+          heatJ += dCuPol * 22000;
+          pushRxn(`polyol_cuoh2_${pol.id}`, `2${pol.formula} + Cu(OH)₂ → [Cu(Polyol)₂]²⁻ (xanh lam thẫm) + 2H₂O`, `${pol.name} hòa tan Cu(OH)₂ tạo phức xanh lam thẫm`, `${pol.name} dissolves Cu(OH)₂ → deep azure complex`, 'Phản ứng đặc trưng nhận biết polyalcohol có nhóm –OH kề nhau hòa tan Cu(OH)₂ thành dung dịch xanh lam thẫm.', 'Vicinal –OH groups in polyalcohols dissolve blue Cu(OH)₂ into a deep royal-blue complex.', dCuPol);
+        }
+      }
+      if ((moles.Na_s || 0) > 1e-9 && (moles.H2O_l || 0) < 0.02) {
+        const dPolNa = Math.min(nPol, moles.Na_s / (2 * pol.h2Stoich)) * (1 - Math.exp(-2.6 * dt));
+        if (dPolNa > 1e-11) {
+          consumeSpecies(pol.id, dPolNa); consumeSpecies('Na_s', 2 * pol.h2Stoich * dPolNa);
+          moles.Na_aq = (moles.Na_aq || 0) + 2 * pol.h2Stoich * dPolNa; moles.C2H5O_aq = (moles.C2H5O_aq || 0) + dPolNa;
+          gasProduced.H2_g = (gasProduced.H2_g || 0) + pol.h2Stoich * dPolNa; heatJ += dPolNa * 260000;
+          pushRxn(`polyol_na_${pol.id}`, `${pol.formula} + ${2 * pol.h2Stoich}Na → Muối alkoxide + ${pol.h2Stoich}H₂↑`, `${pol.name} tác dụng với Na giải phóng H₂↑`, `${pol.name} + Na → H₂↑`, 'Na khử các nguyên tử H nhóm –OH của polyalcohol giải phóng khí H₂.', 'Sodium displaces H from all –OH groups evolving H₂.', dPolNa, true);
+        }
+      }
+      if (pol.id === 'C3H5OH_3_l' && (moles.H2SO4_l || 0) > 1e-6 && ((moles.HNO3_l || 0) > 1e-7 || ((moles.NO3_aq || 0) > 1e-5 && (moles.H_aq || 0) > 1e-5)) && T <= 303.15) {
+        const nNitG = (moles.HNO3_l || 0) > 1e-7 ? moles.HNO3_l : Math.min(moles.NO3_aq || 0, moles.H_aq || 0);
+        const dNg = Math.min(nPol, nNitG / 3) * (1 - Math.exp(-0.95 * dt));
+        if (dNg > 1e-11) {
+          consumeSpecies('C3H5OH_3_l', dNg);
+          if ((moles.HNO3_l || 0) >= 3 * dNg) consumeSpecies('HNO3_l', 3 * dNg);
+          else { consumeSpecies('NO3_aq', 3 * dNg); consumeSpecies('H_aq', 3 * dNg); }
+          moles.C3H5_ONO2_3_l = (moles.C3H5_ONO2_3_l || 0) + dNg; moles.H2O_l = (moles.H2O_l || 0) + 3 * dNg; heatJ += dNg * 145000;
+          pushRxn('glycerol_nitroglycerin', 'C₃H₅(OH)₃ + 3HNO₃ —(H₂SO₄ đặc, < 25 °C)→ C₃H₅(ONO₂)₃ + 3H₂O', 'Ester hóa Glycerol + HNO₃(đặc)/H₂SO₄ → Nitroglycerin', 'Glycerol nitration → Nitroglycerin + 3H₂O', 'Tạo lớp dầu nặng màu vàng nhạt Nitroglycerin (d = 1.60 g/cm³).', 'Esterification with mixed HNO₃/H₂SO₄ yields dense Nitroglycerin oil.', dNg);
+        }
+      }
+      if (pol.id === 'C3H5OH_3_l' && ((moles.H2SO4_l || 0) > 1e-6 || (moles.KHSO4_s || 0) > 1e-6) && T >= 453.15) {
+        const dDehG = nPol * (1 - Math.exp(-0.85 * dt));
+        if (dDehG > 1e-11) {
+          consumeSpecies('C3H5OH_3_l', dDehG);
+          moles.CH2CHCHO_l = (moles.CH2CHCHO_l || 0) + dDehG; gasProduced.H2O_g = (gasProduced.H2O_g || 0) + 2 * dDehG;
+          pushRxn('glycerol_acrolein', 'C₃H₅(OH)₃ —(H₂SO₄/KHSO₄, 180–200 °C)→ CH₂=CHCHO + 2H₂O↑', 'Tách nước Glycerol → Acrolein', 'Glycerol dehydration → Acrolein', 'Đun Glycerol với chất hút nước ở 180–200 °C thu được Acrolein mùi hăng cay.', 'Dehydration of Glycerol at 180–200 °C produces Acrolein.', dDehG, true);
+        }
+      }
+    }
+
+    // 7D. Formaldehyde (HCHO_aq / HCHO_g) & Aldehyde Br2/H2 reactions
+    const nHcho = (moles.HCHO_aq || 0) + getG('HCHO_g');
+    if (nHcho > 1e-9) {
+      const takeHcho = (amt) => {
+        const fromAq = Math.min(moles.HCHO_aq || 0, amt);
+        if (fromAq > 0) consumeSpecies('HCHO_aq', fromAq);
+        if (amt - fromAq > 1e-13) takeG('HCHO_g', amt - fromAq);
+      };
+      // 1:4 Silver Mirror Test!
+      if ((moles.AgNH3_2_aq || 0) > 1e-7 && (moles.OH_aq || 0) > 1e-7 && T >= 313.15) {
+        const dHchoAg = Math.min(nHcho, moles.AgNH3_2_aq / 4, moles.OH_aq / 4) * (1 - Math.exp(-1.15 * dt));
+        if (dHchoAg > 1e-11) {
+          takeHcho(dHchoAg); consumeSpecies('AgNH3_2_aq', 4 * dHchoAg); consumeSpecies('OH_aq', 4 * dHchoAg);
+          moles.CO3_2_aq = (moles.CO3_2_aq || 0) + dHchoAg; moles.NH4_aq = (moles.NH4_aq || 0) + 2 * dHchoAg;
+          moles.NH3_aq = (moles.NH3_aq || 0) + 6 * dHchoAg; moles.Ag_s = (moles.Ag_s || 0) + 4 * dHchoAg; moles.H2O_l = (moles.H2O_l || 0) + 3 * dHchoAg;
+          heatJ += dHchoAg * 210000;
+          pushRxn('hcho_tollens_4ag', 'HCHO + 4[Ag(NH₃)₂]OH → (NH₄)₂CO₃ + 4Ag↓ + 6NH₃ + 2H₂O', 'Tráng gương Formaldehyde tỉ lệ 1 : 4 tạo 4Ag↓', 'Formaldehyde Tollens (1:4 ratio) → 4Ag↓', 'Formaldehyde là aldehyde duy nhất cho phản ứng tráng bạc tỉ lệ mol 1 : 4.', 'Formaldehyde uniquely undergoes 4-electron Tollens oxidation yielding 4 Ag per HCHO.', dHchoAg);
+        }
+      }
+      // Cannizzaro in strong alkali: 2HCHO + OH- -> HCOO- + CH3OH
+      const cOHCann = (moles.OH_aq || 0) / Math.max(0.005, liquidVolL);
+      if (cOHCann >= 1.2 && (moles.H2O_l || 0) > 1e-4 && (moles.CuOH2_s || 0) < 1e-7 && (moles.AgNH3_2_aq || 0) < 1e-7) {
+        const dCan = Math.min(nHcho / 2, moles.OH_aq) * (1 - Math.exp(-0.85 * dt));
+        if (dCan > 1e-11) {
+          takeHcho(2 * dCan); consumeSpecies('OH_aq', dCan);
+          moles.HCOO_aq = (moles.HCOO_aq || 0) + dCan; moles.CH3OH_l = (moles.CH3OH_l || 0) + dCan; heatJ += dCan * 48000;
+          pushRxn('hcho_cannizzaro', '2HCHO + OH⁻(đặc) → HCOO⁻ + CH₃OH', 'Phản ứng Cannizzaro tự oxi hóa khử Formaldehyde', 'Cannizzaro disproportionation: 2HCHO + OH⁻ → HCOO⁻ + CH₃OH', 'Trong kiềm đặc, Formaldehyde tự oxi hóa khử thành Formate và Methanol.', 'Concentrated alkali triggers Cannizzaro disproportionation of HCHO.', dCan);
+        }
+      }
+      // Phenol-Formaldehyde Novolac Resin (80-100 C, H+ or OH-)
+      const phResSrc = (moles.C6H5OH_l || 0) > 1e-9 ? 'C6H5OH_l' : (moles.C6H5OH_s || 0) > 1e-9 ? 'C6H5OH_s' : null;
+      if (phResSrc && T >= 353.15 && ((moles.H_aq || 0) > 1e-5 || (moles.OH_aq || 0) > 1e-5)) {
+        const dNov = Math.min(nHcho, moles[phResSrc]) * (1 - Math.exp(-0.78 * dt));
+        if (dNov > 1e-11) {
+          takeHcho(dNov); consumeSpecies(phResSrc, dNov);
+          moles.Novolac_s = (moles.Novolac_s || 0) + dNov; moles.H2O_l = (moles.H2O_l || 0) + dNov;
+          pushRxn('phenol_formaldehyde_resin', 'nC₆H₅OH + nHCHO —(H⁺/OH⁻, 90 °C)→ Nhựa Novolac + nH₂O', 'Trùng ngưng Phenol + Formaldehyde → nhựa Novolac', 'Phenol-formaldehyde polycondensation → Novolac resin', 'Trùng ngưng Phenol và Formaldehyde tạo nhựa nhiệt rắn màu hổ phách.', 'Acid/base-catalyzed condensation forms amber Phenol-formaldehyde resin.', dNov);
+        }
+      }
+      // HCHO + Br2(aq) + H2O -> CO2/HCOOH + 2HBr; HCHO + H2 -(Ni, 120 C)-> CH3OH
+      const brAld0 = (moles.Br2_aq || 0) > 1e-8 ? 'Br2_aq' : (moles.Br2_l || 0) > 1e-8 ? 'Br2_l' : null;
+      if (brAld0 && (moles.H2O_l || 0) > 1e-4) {
+        const dHBr = Math.min(nHcho, moles[brAld0], moles.H2O_l) * (1 - Math.exp(-1.4 * dt));
+        if (dHBr > 1e-11) {
+          takeHcho(dHBr); consumeSpecies(brAld0, dHBr); consumeSpecies('H2O_l', dHBr);
+          moles.HCOOH_l = (moles.HCOOH_l || 0) + dHBr; moles.H_aq = (moles.H_aq || 0) + 2 * dHBr; moles.Br_aq = (moles.Br_aq || 0) + 2 * dHBr;
+          pushRxn('hcho_br2', 'HCHO + Br₂ + H₂O → HCOOH + 2HBr', 'Formaldehyde làm mất màu nước Bromine', 'Formaldehyde + Br₂ + H₂O → Formic acid + 2HBr', 'Nước Bromine oxi hóa HCHO thành Formic acid.', 'Bromine water oxidizes HCHO to Formic acid.', dHBr);
+        }
+      }
+      if (((moles.Ni_s || 0) > 1e-8 || (moles.Pt_s || 0) > 1e-8) && getG('H2_g') > 1e-8 && T >= 373.15) {
+        const dMeHyd = Math.min(nHcho, getG('H2_g')) * (1 - Math.exp(-0.92 * dt));
+        if (dMeHyd > 1e-11) {
+          takeHcho(dMeHyd); takeG('H2_g', dMeHyd); moles.CH3OH_l = (moles.CH3OH_l || 0) + dMeHyd;
+          pushRxn('hcho_h2_meoh', 'HCHO + H₂ —(Ni, t°)→ CH₃OH', 'Khử HCHO bằng H₂/Ni → Methanol', 'Hydrogenation of Formaldehyde → Methanol', 'Cộng H₂ vào nhóm C=O tạo Methanol.', 'Hydrogenation of Formaldehyde yields Methanol.', dMeHyd);
+        }
+      }
+    }
+    if ((moles.CH3CHO_l || 0) > 1e-9) {
+      const brAld1 = (moles.Br2_aq || 0) > 1e-8 ? 'Br2_aq' : (moles.Br2_l || 0) > 1e-8 ? 'Br2_l' : null;
+      if (brAld1 && (moles.H2O_l || 0) > 1e-4) {
+        const dAcBr = Math.min(moles.CH3CHO_l, moles[brAld1], moles.H2O_l) * (1 - Math.exp(-1.2 * dt));
+        if (dAcBr > 1e-11) {
+          consumeSpecies('CH3CHO_l', dAcBr); consumeSpecies(brAld1, dAcBr); consumeSpecies('H2O_l', dAcBr);
+          moles.CH3COOH_l = (moles.CH3COOH_l || 0) + dAcBr; moles.H_aq = (moles.H_aq || 0) + 2 * dAcBr; moles.Br_aq = (moles.Br_aq || 0) + 2 * dAcBr;
+          pushRxn('ch3cho_br2', 'CH₃CHO + Br₂ + H₂O → CH₃COOH + 2HBr', 'Acetaldehyde làm mất màu nước Bromine', 'Acetaldehyde + Br₂ + H₂O → Acetic acid + 2HBr', 'Aldehyde làm mất màu nước Bromine chuyển thành acid tương ứng.', 'Bromine water oxidizes Acetaldehyde to Acetic acid.', dAcBr);
+        }
+      }
+      if (((moles.Ni_s || 0) > 1e-8 || (moles.Pt_s || 0) > 1e-8) && getG('H2_g') > 1e-8 && T >= 373.15) {
+        const dEtHyd = Math.min(moles.CH3CHO_l, getG('H2_g')) * (1 - Math.exp(-0.92 * dt));
+        if (dEtHyd > 1e-11) {
+          consumeSpecies('CH3CHO_l', dEtHyd); takeG('H2_g', dEtHyd); moles.C2H5OH_l = (moles.C2H5OH_l || 0) + dEtHyd;
+          pushRxn('ch3cho_h2_etoh', 'CH₃CHO + H₂ —(Ni, t°)→ C₂H₅OH', 'Hydro hóa Acetaldehyde → Ethanol', 'Acetaldehyde hydrogenation → Ethanol', 'Cộng H₂ trên xúc tác Ni khử Acetaldehyde thành Ethanol.', 'Catalytic hydrogenation reduces Acetaldehyde to Ethanol.', dEtHyd);
+        }
+      }
+    }
+
+    // 7E. Lipids / Triglycerides (Triolein C57H104O6_l & Tristearin C57H110O6_s): Saponification, Acid Hydrolysis, Hydrogenation, Br2 Decolorization
+    if ((moles.C57H104O6_l || 0) > 1e-9) {
+      if ((moles.OH_aq || 0) > 1e-6 && T >= 343.15) {
+        const dSapL = Math.min(moles.C57H104O6_l, moles.OH_aq / 3) * (1 - Math.exp(-0.85 * dt));
+        if (dSapL > 1e-11) {
+          consumeSpecies('C57H104O6_l', dSapL); consumeSpecies('OH_aq', 3 * dSapL);
+          moles.C3H5OH_3_l = (moles.C3H5OH_3_l || 0) + dSapL; moles.C17H33COO_aq = (moles.C17H33COO_aq || 0) + 3 * dSapL;
+          pushRxn('triolein_saponification', '(C₁₇H₃₃COO)₃C₃H₅ + 3OH⁻ —(t°)→ C₃H₅(OH)₃ + 3C₁₇H₃₃COO⁻', 'Xà phòng hóa Triolein tạo Glycerol & muối Oleate (xà phòng)', 'Saponification of Triolein → Glycerol + 3 Oleate soap', 'Đun chất béo lỏng với dung dịch kiềm thu được xà phòng và Glycerol.', 'Alkaline saponification of Triolein produces Glycerol and Oleate soap.', dSapL);
+        }
+      } else if ((moles.H_aq || 0) > 1e-5 && (moles.H2O_l || 0) > 1e-4 && T >= 353.15) {
+        const dHydL = Math.min(moles.C57H104O6_l, moles.H2O_l / 3) * (1 - Math.exp(-0.55 * dt));
+        if (dHydL > 1e-11) {
+          consumeSpecies('C57H104O6_l', dHydL); consumeSpecies('H2O_l', 3 * dHydL);
+          moles.C3H5OH_3_l = (moles.C3H5OH_3_l || 0) + dHydL; moles.C17H33COOH_l = (moles.C17H33COOH_l || 0) + 3 * dHydL;
+          pushRxn('triolein_acid_hyd', '(C₁₇H₃₃COO)₃C₃H₅ + 3H₂O ⇌(H⁺, t°) C₃H₅(OH)₃ + 3C₁₇H₃₃COOH', 'Thủy phân Triolein trong môi trường acid', 'Acid hydrolysis of Triolein → Glycerol + 3 Oleic acid', 'Thủy phân thuận nghịch chất béo trong acid tạo Glycerol và Oleic acid.', 'Acid hydrolysis yields Glycerol and Oleic acid.', dHydL);
+        }
+      }
+      if (((moles.Ni_s || 0) > 1e-8 || (moles.Pt_s || 0) > 1e-8) && getG('H2_g') > 1e-8 && T >= 423.15) {
+        const dHard = Math.min(moles.C57H104O6_l, getG('H2_g') / 3) * (1 - Math.exp(-0.78 * dt));
+        if (dHard > 1e-11) {
+          consumeSpecies('C57H104O6_l', dHard); takeG('H2_g', 3 * dHard);
+          moles.C57H110O6_s = (moles.C57H110O6_s || 0) + dHard; heatJ += dHard * 355000;
+          pushRxn('triolein_hardening', '(C₁₇H₃₃COO)₃C₃H₅ + 3H₂ —(Ni, 175 °C)→ (C₁₇H₃₅COO)₃C₃H₅(s)', 'Hydro hóa chất béo lỏng Triolein → Tristearin rắn (bơ nhân tạo)', 'Fat hardening: Triolein + 3H₂ (Ni) → solid Tristearin', 'Cộng H₂ vào gốc acid không no biến dầu thực vật lỏng thành mỡ rắn Tristearin.', 'Catalytic hydrogenation converts liquid vegetable oil into solid Tristearin fat.', dHard);
+        }
+      }
+      const brLip = (moles.Br2_aq || 0) > 1e-8 ? 'Br2_aq' : (moles.Br2_l || 0) > 1e-8 ? 'Br2_l' : null;
+      if (brLip) {
+        const dBrL = Math.min(moles.C57H104O6_l, moles[brLip] / 3) * (1 - Math.exp(-1.5 * dt));
+        if (dBrL > 1e-11) {
+          consumeSpecies('C57H104O6_l', dBrL); consumeSpecies(brLip, 3 * dBrL);
+          pushRxn('triolein_br2', '(C₁₇H₃₃COO)₃C₃H₅ + 3Br₂ → Cộng Br₂ mất màu', 'Chất béo không no Triolein làm mất màu nước Bromine', 'Unsaturated Triolein decolorizes Bromine', 'Liên kết C=C trong gốc oleate cộng Br₂ làm mất màu dung dịch Bromine.', 'C=C bonds in Triolein rapidly decolorize Bromine.', dBrL);
+        }
+      }
+    }
+    if ((moles.C57H110O6_s || 0) > 1e-9 && (moles.OH_aq || 0) > 1e-6 && T >= 343.15) {
+      const dSapS = Math.min(moles.C57H110O6_s, moles.OH_aq / 3) * (1 - Math.exp(-0.75 * dt));
+      if (dSapS > 1e-11) {
+        consumeSpecies('C57H110O6_s', dSapS); consumeSpecies('OH_aq', 3 * dSapS);
+        moles.C3H5OH_3_l = (moles.C3H5OH_3_l || 0) + dSapS; moles.C17H35COO_aq = (moles.C17H35COO_aq || 0) + 3 * dSapS;
+        pushRxn('tristearin_saponification', '(C₁₇H₃₅COO)₃C₃H₅ + 3OH⁻ —(t°)→ C₃H₅(OH)₃ + 3C₁₇H₃₅COO⁻', 'Xà phòng hóa Tristearin → Sodium stearate + Glycerol', 'Saponification of Tristearin → Glycerol + 3 Stearate soap', 'Đun Tristearin với kiềm tạo xà phòng rắn Stearate và Glycerol.', 'Alkaline saponification of Tristearin yields hard Stearate soap.', dSapS);
+      }
+    }
+
+    // 7F. Hydrocarbons: Alkane (CH4, C2H6, C4H10), Alkene (C2H4, C3H6), Alkyne (C2H2, C3H4), Alkadiene (C4H6)
+    // Alkane halogenation & cracking / pyrolysis
+    if (getG('CH4_g') > 1e-9) {
+      if (getG('Cl2_g') > 1e-9 && (uvOn || T >= 523.15)) {
+        const dChCl = Math.min(getG('CH4_g'), getG('Cl2_g')) * (1 - Math.exp(-0.95 * dt));
+        if (dChCl > 1e-11) {
+          takeG('CH4_g', dChCl); takeG('Cl2_g', dChCl);
+          gasProduced.CH3Cl_g = (gasProduced.CH3Cl_g || 0) + dChCl; gasProduced.HCl_g = (gasProduced.HCl_g || 0) + dChCl; heatJ += dChCl * 102000;
+          pushRxn('ch4_cl2_uv', 'CH₄ + Cl₂ —(UV / t°)→ CH₃Cl + HCl↑', 'Thế Cl₂ vào Methane dưới ánh sáng UV → Chloromethane', 'Methane radical chlorination (UV) → CH₃Cl + HCl↑', 'Dưới tia UV hoặc 250–400 °C, Methane thế H bằng Cl₂ tạo Chloromethane và HCl.', 'UV light initiates radical chlorination of Methane to Chloromethane.', dChCl, true);
+        }
+      }
+      if (T >= 1673.15) {
+        const dChPyr = (getG('CH4_g') / 2) * (1 - Math.exp(-0.85 * dt));
+        if (dChPyr > 1e-11) {
+          takeG('CH4_g', 2 * dChPyr); gasProduced.C2H2_g = (gasProduced.C2H2_g || 0) + dChPyr; gasProduced.H2_g = (gasProduced.H2_g || 0) + 3 * dChPyr;
+          pushRxn('ch4_1500_c2h2', '2CH₄ —(1500 °C, làm lạnh nhanh)→ C₂H₂ + 3H₂↑', 'Nhiệt phân Methane ở 1500 °C → Acetylene + 3H₂↑', 'Methane pyrolysis (1500 °C, quench) → Acetylene + 3H₂↑', 'Nung nhanh CH₄ ở 1500 °C rồi làm lạnh nhanh thu được khí Acetylene.', 'Rapid quenching of Methane pyrolysis at 1500 °C produces Acetylene.', dChPyr, true);
+        }
+      }
+    }
+    if (getG('C4H10_g') > 1e-9 && T >= 723.15 && (moles.Al2O3_s || moles.Cr2O3_s)) {
+      const dCrk = getG('C4H10_g') * (1 - Math.exp(-0.72 * dt));
+      if (dCrk > 1e-11) {
+        takeG('C4H10_g', dCrk);
+        if (T >= 853.15) {
+          gasProduced.C4H6_g = (gasProduced.C4H6_g || 0) + dCrk; gasProduced.H2_g = (gasProduced.H2_g || 0) + 2 * dCrk;
+          pushRxn('c4h10_dehyd_buta', 'C₄H₁₀ —(Cr₂O₃/Al₂O₃, 600 °C)→ C₄H₆ + 2H₂↑', 'Đehidro hóa Butane → Buta-1,3-diene + 2H₂↑', 'Butane dehydrogenation (600 °C) → Buta-1,3-diene', 'Đehidro hóa Butane ở 550–650 °C điều chế Buta-1,3-diene.', 'Catalytic dehydrogenation of Butane yields Buta-1,3-diene.', dCrk, true);
+        } else {
+          gasProduced.C2H4_g = (gasProduced.C2H4_g || 0) + dCrk; gasProduced.C2H6_g = (gasProduced.C2H6_g || 0) + dCrk;
+          pushRxn('c4h10_cracking', 'C₄H₁₀ —(xt, 500 °C)→ C₂H₄ + C₂H₆', 'Cracking Butane → Ethylene + Ethane', 'Butane cracking (500 °C) → C₂H₄ + C₂H₆', 'Phản ứng bẻ gãy mạch carbon tạo Ethylene và Ethane.', 'Thermal/catalytic cracking of Butane yields Ethylene and Ethane.', dCrk, true);
+        }
+      }
+    }
+
+    // Alkene (C2H4_g) reactions: hydrogenation, polymerization PE, Br2 addition (already in 5C-4), Wagner (5C-5), vicinal dihalide Zn debromination
+    if ((moles.C2H4Br2_l || 0) > 1e-9 && (moles.Zn_s || 0) > 1e-9 && ((moles.C2H5OH_l || 0) > 1e-5 || (moles.CH3COOH_l || 0) > 1e-5) && T >= 323.15) {
+      const dDebr = Math.min(moles.C2H4Br2_l, moles.Zn_s) * (1 - Math.exp(-1.1 * dt));
+      if (dDebr > 1e-11) {
+        consumeSpecies('C2H4Br2_l', dDebr); consumeSpecies('Zn_s', dDebr);
+        gasProduced.C2H4_g = (gasProduced.C2H4_g || 0) + dDebr; moles.Zn2_aq = (moles.Zn2_aq || 0) + dDebr; moles.Br_aq = (moles.Br_aq || 0) + 2 * dDebr;
+        pushRxn('c2h4br2_zn_ethene', 'BrCH₂–CH₂Br + Zn —(EtOH, t°)→ C₂H₄↑ + ZnBr₂', 'Tách Br₂ từ 1,2-Dibromoethane bằng Zn → Ethylene', 'Debromination: C₂H₄Br₂ + Zn → Ethylene↑ + ZnBr₂', 'Bột Zn tách 2 nguyên tử Bromine liền kề tái tạo nối đôi C=C.', 'Zinc powder debrominates vicinal dibromide back to Ethylene.', dDebr, true);
+      }
+    }
+    if (getG('C2H4_g') > 1e-9) {
+      if (((moles.Ni_s || 0) > 1e-8 || (moles.Pt_s || 0) > 1e-8 || (moles.Pd_s || 0) > 1e-8) && getG('H2_g') > 1e-9 && (T >= 373.15 || moles.Pt_s || moles.Pd_s)) {
+        const dEthH = Math.min(getG('C2H4_g'), getG('H2_g')) * (1 - Math.exp(-1.2 * dt));
+        if (dEthH > 1e-11) {
+          takeG('C2H4_g', dEthH); takeG('H2_g', dEthH); gasProduced.C2H6_g = (gasProduced.C2H6_g || 0) + dEthH; heatJ += dEthH * 136000;
+          pushRxn('c2h4_h2_ethane', 'C₂H₄ + H₂ —(Ni/Pt, t°)→ C₂H₆', 'Hydro hóa Ethylene → Ethane', 'Ethylene hydrogenation → Ethane', 'Ethylene cộng 1H₂ trên xúc tác Ni/Pt tạo Ethane.', 'Catalytic hydrogenation converts Ethylene to Ethane.', dEthH, true);
+        }
+      }
+      if ((moles.H2O_l || 0) > 1e-4 && (moles.H_aq || 0) > 1e-4 && T >= 343.15 && (moles.MnO4_aq || 0) < 1e-7) {
+        const dEtHyd = Math.min(getG('C2H4_g'), moles.H2O_l) * (1 - Math.exp(-0.55 * dt));
+        if (dEtHyd > 1e-11) {
+          takeG('C2H4_g', dEtHyd); consumeSpecies('H2O_l', dEtHyd); moles.C2H5OH_l = (moles.C2H5OH_l || 0) + dEtHyd;
+          pushRxn('c2h4_h2o_etoh', 'C₂H₄ + H₂O —(H⁺, t°)→ C₂H₅OH', 'Hợp nước Ethylene (xúc tác H⁺) → Ethanol', 'Acid-catalyzed hydration of Ethylene → Ethanol', 'Cộng nước vào Ethylene trong môi trường acid thu được Ethanol.', 'Acid-catalyzed hydration of Ethylene yields Ethanol.', dEtHyd);
+        }
+      }
+    }
+
+    // Alkyne (C2H2_g): AgNO3/NH3 -> Ag2C2↓ yellow, Kucherov Hg2+ -> CH3CHO, Trimerization 600 C -> C6H6, Dimerization CuCl/NH4Cl -> C4H4, KMnO4 -> C2O4^2- + MnO2↓, + H2 -> C2H4/C2H6
+    if (getG('C2H2_g') > 1e-9) {
+      if ((moles.AgNH3_2_aq || 0) > 1e-7 && (moles.OH_aq || 0) > 1e-7) {
+        const dAgAc = Math.min(getG('C2H2_g'), moles.AgNH3_2_aq / 2, moles.OH_aq / 2) * (1 - Math.exp(-2.6 * dt));
+        if (dAgAc > 1e-11) {
+          takeG('C2H2_g', dAgAc); consumeSpecies('AgNH3_2_aq', 2 * dAgAc); consumeSpecies('OH_aq', 2 * dAgAc);
+          moles.Ag2C2_s = (moles.Ag2C2_s || 0) + dAgAc; moles.NH3_aq = (moles.NH3_aq || 0) + 4 * dAgAc; moles.H2O_l = (moles.H2O_l || 0) + 2 * dAgAc;
+          heatJ += dAgAc * 125000;
+          pushRxn('c2h2_ag2c2', 'C₂H₂ + 2[Ag(NH₃)₂]OH → Ag₂C₂↓ (vàng nhạt) + 4NH₃ + 2H₂O', 'Acetylene + AgNO₃/NH₃ → kết tủa vàng nhạt Ag₂C₂↓', 'Acetylene + Tollens/Ag(NH₃)₂⁺ → yellow Ag₂C₂↓', 'Thế 2 nguyên tử H linh động ở nối ba đầu mạch bằng ion Ag⁺ tạo kết tủa vàng nhạt Bạc acetylide.', 'Terminal alkyne H atoms are replaced by Ag⁺ forming pale-yellow Silver acetylide↓.', dAgAc);
+        }
+      }
+      if ((moles.MnO4_aq || 0) > 1e-7 && (moles.H2O_l || 0) > 1e-4) {
+        const dAcKm = Math.min(getG('C2H2_g') / 3, moles.MnO4_aq / 8) * (1 - Math.exp(-1.4 * dt));
+        if (dAcKm > 1e-11) {
+          takeG('C2H2_g', 3 * dAcKm); consumeSpecies('MnO4_aq', 8 * dAcKm);
+          moles.C2O4_2_aq = (moles.C2O4_2_aq || 0) + 3 * dAcKm; moles.MnO2_s = (moles.MnO2_s || 0) + 8 * dAcKm;
+          moles.OH_aq = (moles.OH_aq || 0) + 2 * dAcKm; moles.H2O_l = (moles.H2O_l || 0) + 2 * dAcKm;
+          pushRxn('c2h2_kmno4', '3C₂H₂ + 8MnO₄⁻ → 3C₂O₄²⁻ + 8MnO₂↓ + 2OH⁻ + 2H₂O', 'Oxi hóa Acetylene bằng KMnO₄ → Oxalate + MnO₂↓', 'Acetylene + KMnO₄ → Oxalate + 8MnO₂↓', 'Acetylene làm mất màu tím KMnO₄ ngay ở nhiệt độ phòng tạo kết tủa nâu đen MnO₂ và muối Oxalate.', 'Acetylene immediately decolorizes KMnO₄ forming brown-black MnO₂↓ and Oxalate.', dAcKm);
+        }
+      }
+      if (T >= 873.15 && (moles.C_s || 0) > 1e-8) {
+        const dTrim = (getG('C2H2_g') / 3) * (1 - Math.exp(-0.92 * dt));
+        if (dTrim > 1e-11) {
+          takeG('C2H2_g', 3 * dTrim); moles.C6H6_l = (moles.C6H6_l || 0) + dTrim; heatJ += dTrim * 600000;
+          pushRxn('c2h2_trimer_benzene', '3C₂H₂ —(C hoạt tính, 600 °C)→ C₆H₆', 'Trime hóa Acetylene → Benzene', 'Acetylene trimerization (C, 600 °C) → Benzene', 'Dẫn Acetylene qua than hoạt tính nung ở 600 °C đóng vòng thơm tạo Benzene.', 'Trimerization over hot activated carbon at 600 °C produces Benzene.', dTrim);
+        }
+      }
+      if ((moles.CuCl_s || 0) > 1e-8 && (moles.NH4_aq || 0) > 1e-6 && T >= 343.15) {
+        const dDim = (getG('C2H2_g') / 2) * (1 - Math.exp(-0.78 * dt));
+        if (dDim > 1e-11) {
+          takeG('C2H2_g', 2 * dDim); gasProduced.C4H4_g = (gasProduced.C4H4_g || 0) + dDim;
+          pushRxn('c2h2_dimer_vinylacetylene', '2C₂H₂ —(CuCl/NH₄Cl, 80 °C)→ CH≡C–CH=CH₂', 'Đime hóa Acetylene → Vinylacetylene C₄H₄', 'Acetylene dimerization → Vinylacetylene', 'Xúc tác CuCl/NH₄Cl ở 80 °C đime hóa Acetylene thành Vinylacetylene.', 'CuCl/NH₄Cl catalyzes Acetylene dimerization to Vinylacetylene.', dDim, true);
+        }
+      }
+      if (((moles.Ni_s || 0) > 1e-8 || (moles.Pt_s || 0) > 1e-8) && getG('H2_g') > 1e-9 && T >= 373.15) {
+        const dAcH2 = Math.min(getG('C2H2_g'), getG('H2_g') / 2) * (1 - Math.exp(-1.1 * dt));
+        if (dAcH2 > 1e-11) {
+          takeG('C2H2_g', dAcH2); takeG('H2_g', 2 * dAcH2); gasProduced.C2H6_g = (gasProduced.C2H6_g || 0) + dAcH2; heatJ += dAcH2 * 310000;
+          pushRxn('c2h2_2h2_ethane', 'C₂H₂ + 2H₂ —(Ni, t°)→ C₂H₆', 'Hydro hóa hoàn toàn Acetylene → Ethane', 'Full hydrogenation: C₂H₂ + 2H₂ → Ethane', 'Xúc tác Ni cộng 2H₂ tạo alkane Ethane.', 'Ni-catalyzed full hydrogenation converts Acetylene to Ethane.', dAcH2, true);
+        }
+      }
+      if ((moles.Cu_s || 0) > 1e-7 && (moles.CuCl_s || 0) > 1e-9 && (moles.H2O_l || 0) > 1e-4 && (moles.H_aq || 0) > 1e-4 && T >= 333.15) {
+        const dKuc = Math.min(getG('C2H2_g'), moles.H2O_l) * (1 - Math.exp(-0.85 * dt));
+        if (dKuc > 1e-11) {
+          takeG('C2H2_g', dKuc); consumeSpecies('H2O_l', dKuc); moles.CH3CHO_l = (moles.CH3CHO_l || 0) + dKuc;
+          pushRxn('kucherov_c2h2', 'C₂H₂ + H₂O —(xt H⁺, t°)→ CH₃CHO', 'Hợp nước Kucherov Acetylene → Acetaldehyde', 'Kucherov hydration: C₂H₂ + H₂O → Acetaldehyde', 'Phản ứng Kucherov cộng nước vào Acetylene tạo Acetaldehyde.', 'Hydration of Acetylene gives Acetaldehyde.', dKuc);
+        }
+      }
+    }
+    if ((moles.Ag2C2_s || 0) > 1e-9 && (moles.H_aq || 0) > 1e-5) {
+      const dAgAcid = Math.min(moles.Ag2C2_s, moles.H_aq / 2) * (1 - Math.exp(-2.8 * dt));
+      if (dAgAcid > 1e-11) {
+        consumeSpecies('Ag2C2_s', dAgAcid); consumeSpecies('H_aq', 2 * dAgAcid);
+        moles.Ag_aq = (moles.Ag_aq || 0) + 2 * dAgAcid; gasProduced.C2H2_g = (gasProduced.C2H2_g || 0) + dAgAcid;
+        pushRxn('ag2c2_acid_regen', 'Ag₂C₂↓ + 2H⁺ → 2Ag⁺ + C₂H₂↑', 'Hòa tan Ag₂C₂ bằng acid tái tạo Acetylene↑', 'Acid dissolves Ag₂C₂ regenerating C₂H₂↑', 'HCl hoặc HNO₃ hòa tan kết tủa Ag₂C₂ giải phóng lại khí Acetylene.', 'Mineral acid dissolves Silver acetylide regenerating Acetylene gas.', dAgAcid, true);
+      }
+    }
+
+    // Alkadiene (Buta-1,3-diene C4H6_g): + Br2 -> C4H6Br2 (1,2 at <=253 K vs 1,4 at >=293 K), + C2H4 (Diels-Alder >=453 K -> C6H10_l), + Na -> Buna_s, + 2H2 (Ni)-> C4H10
+    if (getG('C4H6_g') > 1e-9) {
+      const brDiene = (moles.Br2_l || 0) > 1e-9 ? 'Br2_l' : (moles.Br2_aq || 0) > 1e-9 ? 'Br2_aq' : null;
+      if (brDiene) {
+        const dDiBr = Math.min(getG('C4H6_g'), moles[brDiene]) * (1 - Math.exp(-1.8 * dt));
+        if (dDiBr > 1e-11) {
+          takeG('C4H6_g', dDiBr); consumeSpecies(brDiene, dDiBr);
+          moles.C4H6Br2_l = (moles.C4H6Br2_l || 0) + dDiBr;
+          const modeLabel = T < 253.15 ? '1,2 (kiểm soát động học, -80 °C)' : '1,4 (kiểm soát nhiệt động, ≥ 25 °C)';
+          pushRxn('c4h6_br2_12_14', `C₄H₆ + Br₂ → C₄H₆Br₂ (${modeLabel})`, `Cộng Br₂ vào Buta-1,3-diene kiểu ${modeLabel}`, `Buta-1,3-diene + Br₂ (${T < 253.15 ? '1,2-adduct' : '1,4-adduct'})`, 'Buta-1,3-diene ưu tiên cộng 1,2 ở nhiệt độ rất thấp và cộng 1,4 ở nhiệt độ thường/nóng.', 'Buta-1,3-diene favors 1,2-addition at cryo temperatures and 1,4-addition at ≥ 25 °C.', dDiBr);
+        }
+      }
+      if ((moles.Na_s || 0) > 1e-8 && T >= 323.15 && (moles.H2O_l || 0) < 0.02) {
+        const dBuna = getG('C4H6_g') * (1 - Math.exp(-0.75 * dt));
+        if (dBuna > 1e-11) {
+          takeG('C4H6_g', dBuna); moles.Buna_s = (moles.Buna_s || 0) + dBuna;
+          pushRxn('c4h6_buna_rubber', 'nCH₂=CH–CH=CH₂ —(Na, t°)→ (–CH₂–CH=CH–CH₂–)ₙ (Cao su Buna)', 'Trùng hợp 1,4 Buta-1,3-diene (xúc tác Na) → cao su Buna', '1,4-Polymerization (Na) → Buna rubber', 'Kim loại Na xúc tác trùng hợp 1,4 Buta-1,3-diene tạo cao su Buna đàn hồi.', 'Sodium-initiated 1,4-polymerization yields elastic Buna rubber.', dBuna);
+        }
+      }
+      if (getG('C2H4_g') > 1e-9 && T >= 453.15) {
+        const dDA = Math.min(getG('C4H6_g'), getG('C2H4_g')) * (1 - Math.exp(-0.68 * dt));
+        if (dDA > 1e-11) {
+          takeG('C4H6_g', dDA); takeG('C2H4_g', dDA); moles.C6H10_l = (moles.C6H10_l || 0) + dDA;
+          pushRxn('c4h6_diels_alder', 'C₄H₆ + C₂H₄ —(200 °C)→ C₆H₁₀ (Cyclohexene)', 'Cộng đóng vòng Diels–Alder → Cyclohexene', 'Diels–Alder [4+2] cycloaddition → Cyclohexene', 'Dien liên hợp cộng đóng vòng [4+2] với Ethylene tạo vòng 6 cạnh Cyclohexene.', '[4+2] Diels–Alder cycloaddition yields Cyclohexene.', dDA);
+        }
+      }
+      if (((moles.Ni_s || 0) > 1e-8 || (moles.Pt_s || 0) > 1e-8) && getG('H2_g') > 1e-9 && T >= 373.15) {
+        const dDiH = Math.min(getG('C4H6_g'), getG('H2_g') / 2) * (1 - Math.exp(-1.1 * dt));
+        if (dDiH > 1e-11) {
+          takeG('C4H6_g', dDiH); takeG('H2_g', 2 * dDiH); gasProduced.C4H10_g = (gasProduced.C4H10_g || 0) + dDiH;
+          pushRxn('c4h6_2h2_butane', 'C₄H₆ + 2H₂ —(Ni, t°)→ C₄H₁₀', 'Hydro hóa hoàn toàn Buta-1,3-diene → Butane', 'Full hydrogenation of Buta-1,3-diene → Butane', 'Cộng 2H₂ tạo Butane.', 'Complete hydrogenation yields Butane.', dDiH, true);
+        }
+      }
+    }
   }
 
   return heatJ;
@@ -6838,6 +7278,11 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   C6H5SO3_aq: { C6H5SO3Na_s: 1 },
   CH2CHCOO_aq: { CH2CHCOOH_g: 1 },
   CH3CHCHCOO_aq: { CH3CHCHCOOH_s: 1 },
+  HCHO_aq: { HCHO_g: 1 },
+  CH3O_aq: { CH3OH_g: 1 },
+  CuC2H4O2_aq: { CuOH2_s: 1 },
+  C17H33COO_aq: { C17H33COOH_g: 1 },
+  C17H35COO_aq: { C17H35COOH_s: 1 },
 };
 
 export const DRY_SALT_PAIRINGS = [

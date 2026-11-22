@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.2',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.3',
     toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
     quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
     quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -228,6 +228,16 @@ export const I18N = {
     reg_ch3cooh_desc: 'Dung dịch gần như khan không màu, đông đặc <16.6 °C (1.045 g/cm³ · đs 117.9 °C · pKa = 4.76) · Tác dụng Na/K (mạnh), Mg/Zn/Fe(t°), NaOH/NH₃, CaCO₃/CaC₂, ester hóa với C₂H₅OH (H₂SO₄ đặc 60–80 °C) & H₂O₂ -> CH₃COOOH',
     reg_benzene: 'Benzene tinh khiết (C₆H₆ 100%)',
     reg_benzene_desc: 'Chất lỏng không màu, mùi thơm đặc trưng, nhẹ hơn nước (0.874 g/cm³ · đđ 5.53 °C · đs 80.09 °C) · Hòa tan I₂ (tím hồng), S, Br₂ · Trơ với Na/K, KMnO₄, HCl, NaOH · Thế Br₂/Cl₂ (Fe, t°), cộng Cl₂/Br₂ (UV), nitro hóa HNO₃/H₂SO₄ (55 °C), Friedel–Crafts (AlCl₃), Fenton (H₂O₂/Fe²⁺)',
+    reg_methanol: 'Methanol tinh khiết (CH₃OH 100%)',
+    reg_methanol_desc: 'Ancol đơn chức nhẹ nhất (0.792 g/cm³ · đs 64.7 °C) · Tác dụng Na/K tạo CH₃ONa + H₂↑, oxi hóa CuO nóng → HCHO, ester hóa HCOOH → HCOOCH₃',
+    reg_hcooh: 'Formic acid (HCOOH 100%)',
+    reg_hcooh_desc: 'Carboxylic acid mạnh nhất dãy no (1.220 g/cm³ · đs 100.8 °C · pKa 3.75) · Tách nước H₂SO₄ đặc → CO↑, tham gia tráng bạc 2Ag↓, khử Cu(OH)₂ → Cu₂O↓ & mất màu Br₂',
+    reg_glycerol: 'Glycerol (C₃H₅(OH)₃ 100%)',
+    reg_glycerol_desc: 'Polyalcohol sánh nhớt có 3 nhóm –OH kề nhau (1.261 g/cm³ · đđ 18.2 °C) · Hòa tan Cu(OH)₂ tạo phức xanh lam thẫm, nitro hóa tạo Nitroglycerin, tách nước → Acrolein',
+    reg_hcho_37: 'Dung dịch Formaldehyde (HCHO 37% Formalin)',
+    reg_hcho_37_desc: 'Aldehyde đơn giản nhất · Tráng bạc tỉ lệ 1 : 4 tạo 4Ag↓, Cannizzaro với NaOH đặc → HCOO⁻ + CH₃OH, trùng ngưng Phenol → nhựa Novolac',
+    reg_triolein: 'Triolein / Dầu thực vật ((C₁₇H₃₃COO)₃C₃H₅)',
+    reg_triolein_desc: 'Chất béo lỏng không no nhẹ hơn nước (0.915 g/cm³) · Xà phòng hóa NaOH → Glycerol + xà phòng Oleate, cộng H₂/Ni → Tristearin rắn, làm mất màu Br₂',
 
     // Workbench & Actions
     noSelection: 'Chưa chọn dụng cụ',
@@ -818,7 +828,7 @@ export const I18N = {
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.2',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.3',
     toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
     quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
     quickPresetsHoldTitle: 'Quick Setup Presets (Hold F · Release to close)',
@@ -1035,6 +1045,16 @@ export const I18N = {
     reg_ch3cooh_desc: 'Colorless anhydrous weak acid freezing <16.6 °C (1.045 g/cm³ · bp 117.9 °C · pKa = 4.76) · Reacts w/ Na/K, Mg/Zn/Fe(heat), NaOH/NH₃, CaCO₃/CaC₂, esterifies C₂H₅OH (conc. H₂SO₄ 60–80 °C) & H₂O₂ -> CH₃COOOH',
     reg_benzene: 'Pure Benzene (C₆H₆ 100%)',
     reg_benzene_desc: 'Colorless aromatic nonpolar liquid, lighter than water (0.874 g/cm³ · mp 5.53 °C · bp 80.09 °C) · Dissolves I₂ (violet-pink), S, Br₂ · Inert to Na/K, KMnO₄, HCl, NaOH · Substitutes Br₂/Cl₂ (Fe), adds Cl₂/Br₂ (UV), nitrates (HNO₃/H₂SO₄ 55 °C), Friedel–Crafts (AlCl₃), Fenton (H₂O₂/Fe²⁺)',
+    reg_methanol: 'Pure Methanol (CH₃OH 100%)',
+    reg_methanol_desc: 'Simplest alcohol (0.792 g/cm³ · bp 64.7 °C) · Reacts with Na/K → H₂↑, hot CuO → Formaldehyde, esterifies Formic acid → Methyl formate',
+    reg_hcooh: 'Formic Acid (HCOOH 100%)',
+    reg_hcooh_desc: 'Strongest aliphatic carboxylic acid (1.220 g/cm³ · bp 100.8 °C · pKa 3.75) · Dehydrates w/ conc. H₂SO₄ → CO↑, gives Tollens 2Ag↓, reduces hot Cu(OH)₂ → Cu₂O↓ & Br₂',
+    reg_glycerol: 'Glycerol (C₃H₅(OH)₃ 100%)',
+    reg_glycerol_desc: 'Viscous triol with vicinal –OH groups (1.261 g/cm³ · mp 18.2 °C) · Dissolves Cu(OH)₂ into deep azure complex, nitrates to Nitroglycerin, dehydrates to Acrolein',
+    reg_hcho_37: 'Formalin / Formaldehyde (HCHO 37%)',
+    reg_hcho_37_desc: 'Simplest aldehyde · 1:4 Tollens silver mirror (4Ag↓), Cannizzaro in conc. NaOH → Formate + Methanol, Phenol condensation → Novolac resin',
+    reg_triolein: 'Triolein / Vegetable Oil ((C₁₇H₃₃COO)₃C₃H₅)',
+    reg_triolein_desc: 'Liquid unsaturated triglyceride (0.915 g/cm³) · Saponifies w/ NaOH → Glycerol + Oleate soap, hydrogenates w/ H₂/Ni → solid Tristearin, decolorizes Br₂',
 
     noSelection: 'No apparatus selected',
     selectVesselTip: 'Click any vessel on the bench, or drag apparatus & reagents directly onto the workbench.',

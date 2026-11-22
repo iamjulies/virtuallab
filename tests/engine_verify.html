@@ -1910,7 +1910,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 31 &&
+          STARTER_REAGENTS.length === 36 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2478,7 +2478,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.2';
+      const expectedBuild = 'virlab_beta_v5+build.3';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2539,11 +2539,16 @@
         Boolean(I18N.vi.condRefluxToggle && I18N.en.condRefluxToggle) &&
         Boolean(I18N.vi.regCatOrganic && I18N.en.regCatOrganic) &&
         Boolean(I18N.vi.reg_benzene && I18N.en.reg_benzene) &&
+        Boolean(I18N.vi.reg_methanol && I18N.en.reg_methanol) &&
+        Boolean(I18N.vi.reg_hcooh && I18N.en.reg_hcooh) &&
+        Boolean(I18N.vi.reg_glycerol && I18N.en.reg_glycerol) &&
+        Boolean(I18N.vi.reg_hcho_37 && I18N.en.reg_hcho_37) &&
+        Boolean(I18N.vi.reg_triolein && I18N.en.reg_triolein) &&
         Boolean(I18N.vi.stopperModeDualHole && I18N.en.stopperModeDualHole);
       assert(
-        'Build virlab_beta_v5+build.1 parity: All 40 apparatus & 31 starter reagents translated in VI/EN, Prompt 61 Benzene, Halogen Derivatives & Alcohol/Phenol Preparations parity enforced',
+        'Build virlab_beta_v5+build.3 parity: All 40 apparatus & 36 starter reagents translated in VI/EN, Prompt 63 Methanol, Formic, Glycerol, Formaldehyde, Lipids & Hydrocarbons parity enforced',
         APPARATUS_ORDER.length === 40 &&
-          STARTER_REAGENTS.length === 31 &&
+          STARTER_REAGENTS.length === 36 &&
           !APPARATUS.clay_triangle &&
           !APPARATUS.crucible_tongs &&
           allTranslated &&
@@ -7407,7 +7412,7 @@
       const mno2AcidOk = Math.abs((bMnColdAcid.moles.MnO2_s || 0) - 0.01) < 1e-6 && cl2HotTot > 0.002 && (bMnHotHCl.moles.Mn2_aq || 0) > 0.002;
 
       const iupacKmno4Ok =
-        STARTER_REAGENTS.length === 31 &&
+        STARTER_REAGENTS.length === 36 &&
         STARTER_REAGENTS.some((r) => r.id === 'kmno4') &&
         !/\b(kali|mangan|axit|clo|oxi(?! hóa))\b/i.test(`${I18N.vi.reg_kmno4} ${I18N.vi.reg_kmno4_desc} ${I18N.vi.alertMn2O7Hazard}`);
 
@@ -7521,7 +7526,7 @@
         (vIRoom.moles.IO3_aq || 0) > (vIRoom.moles.IO_aq || 0) * 4;
 
       const iupacHalOk =
-        STARTER_REAGENTS.length === 31 &&
+        STARTER_REAGENTS.length === 36 &&
         STARTER_REAGENTS.some((r) => r.id === 'br2') &&
         STARTER_REAGENTS.some((r) => r.id === 'i2') &&
         !/\b(brom|iot|clo|kali|natri|nhôm|sắt|axit)\b/i.test(`${I18N.vi.reg_br2} ${I18N.vi.reg_br2_desc} ${I18N.vi.reg_i2} ${I18N.vi.reg_i2_desc}`);
@@ -7637,7 +7642,7 @@
         (bSHNO3.moles.SO4_2_aq || 0) > 0.001;
 
       const iupacSulfOk =
-        STARTER_REAGENTS.length === 31 &&
+        STARTER_REAGENTS.length === 36 &&
         STARTER_REAGENTS.some((r) => r.id === 's') &&
         !/\b(lưu huỳnh|sunfua|hiđro|axit|oxi(?! hóa)|etanol)\b/i.test(`${I18N.vi.reg_s} ${I18N.vi.reg_s_desc}`);
 
@@ -8717,7 +8722,7 @@
       const regCr = STARTER_REAGENTS.find((r) => r.id === 'k2cr2o7');
       const regSi = STARTER_REAGENTS.find((r) => r.id === 'sio2');
       const catOk =
-        STARTER_REAGENTS.length === 31 &&
+        STARTER_REAGENTS.length === 36 &&
         oxides.length === 1 &&
         oxides[0].id === 'sio2' &&
         REAGENT_CATEGORIES.some((c) => c.id === 'oxide' && c.i18nKey === 'regCatOxide') &&
@@ -8909,7 +8914,7 @@
       const regA = STARTER_REAGENTS.find((r) => r.id === 'ch3cooh');
       const acids3 = STARTER_REAGENTS.filter((r) => r.category === 'acid');
       const regOrgOk =
-        STARTER_REAGENTS.length === 31 &&
+        STARTER_REAGENTS.length === 36 &&
         acids3.length === 3 &&
         Boolean(regE && regE.category === 'organic' && regE.perMl?.C2H5OH_l > 0.017) &&
         Boolean(regA && regA.category === 'organic' && regA.perMl?.CH3COOH_l > 0.017) &&
@@ -9871,6 +9876,58 @@
         'Prompt 62 invariants: Oxalic/Acrylic/Crotonic acid preps, Picric/Catechol/CO2-Phenoxide, Toluene cold-inert/hot-KMnO4->Benzoic/UV-BenzylBr, & Carboxylic+CaCO3->CO2',
         oxOk && acrOk && picOk && catOk62 && co2PhOk && tolOk && caCarbOk,
         `ox=${oxOk}(${(vOx.moles.H2C2O4_s||0).toFixed(3)}), acr=${acrOk}(${(vAcr.moles.CH2CHCOO_aq||0).toFixed(3)}), pic=${picOk}(${(vPic.moles.C6H2_NO2_3OH_s||0).toFixed(3)}), cat=${catOk62}(${(vCat.moles.C6H4OH_2_s||0).toFixed(3)}), co2Ph=${co2PhOk}(${(vCo2Ph.moles.C6H5OH_l||0).toFixed(3)}), tol=${tolOk}(hotBz=${(vTolHot.moles.C6H5COOH_s||0).toFixed(3)},uvBr=${(vTolUV.moles.C6H5CH2Br_l||0).toFixed(3)}), caCarb=${caCarbOk}`
+      );
+    }
+
+    // TEST 181: Prompt 63 — Methanol, Formic Acid, Polyols (Cu(OH)2/Nitroglycerin), Formaldehyde (4Ag/Cannizzaro/Novolac), Lipids (Triolein/Tristearin) & Hydrocarbons (Alkane/Alkene/Alkyne/Alkadiene)
+    {
+      const sim63 = new LabSimulation();
+      // 1) Formic acid dehydration with conc H2SO4 -> CO↑, and Tollens -> 2Ag↓
+      const vFco = sim63.createApparatus('beaker_250', 120, 300);
+      vFco.isStoppered = true; vFco.moles.HCOOH_l = 0.08; vFco.moles.H2SO4_l = 0.1;
+      const vFTol = sim63.createApparatus('beaker_250', 220, 300);
+      vFTol.moles.HCOOH_l = 0.05; vFTol.moles.AgNH3_2_aq = 0.12; vFTol.moles.OH_aq = 0.12; vFTol.moles.H2O_l = 0.5;
+      // 2) Glycerol + Cu(OH)2 -> deep blue complex CuC2H4O2_aq
+      const vGly = sim63.createApparatus('beaker_250', 320, 300);
+      vGly.moles.C3H5OH_3_l = 0.2; vGly.moles.CuOH2_s = 0.05; vGly.moles.H2O_l = 0.3;
+      // 3) HCHO Tollens 1:4 ratio (4Ag per HCHO) & Cannizzaro
+      const vHcho4 = sim63.createApparatus('beaker_250', 420, 300);
+      vHcho4.moles.HCHO_aq = 0.02; vHcho4.moles.AgNH3_2_aq = 0.10; vHcho4.moles.OH_aq = 0.10; vHcho4.moles.H2O_l = 0.5;
+      const vCann = sim63.createApparatus('beaker_250', 520, 300);
+      vCann.moles.HCHO_aq = 0.10; vCann.moles.OH_aq = 0.15; vCann.moles.H2O_l = 0.05;
+      // 4) Triolein saponification & catalytic hardening -> Tristearin(s)
+      const vSap = sim63.createApparatus('round_flask_250', 620, 300);
+      vSap.moles.C57H104O6_l = 0.04; vSap.moles.OH_aq = 0.15; vSap.moles.H2O_l = 0.5;
+      const vHard = sim63.createApparatus('round_flask_250', 720, 300);
+      vHard.isStoppered = true; vHard.moles.C57H104O6_l = 0.04; vHard.moles.H2_g = 0.15; vHard.moles.Ni_s = 0.05;
+      // 5) Hydrocarbons: CH4 + Cl2(UV) -> CH3Cl; C2H2 + AgNH3_2 -> Ag2C2↓; C4H6 + Na -> Buna_s
+      const vCh4 = sim63.createApparatus('round_flask_250', 820, 300);
+      vCh4.isStoppered = true; vCh4.moles.CH4_g = 0.08; vCh4.moles.Cl2_g = 0.08; vCh4.uvExposureActive = true;
+      const vAcAg = sim63.createApparatus('beaker_250', 920, 300);
+      vAcAg.isStoppered = true; vAcAg.moles.C2H2_g = 0.05; vAcAg.moles.AgNH3_2_aq = 0.12; vAcAg.moles.OH_aq = 0.12; vAcAg.moles.H2O_l = 0.5;
+      const vBuna = sim63.createApparatus('round_flask_250', 1020, 300);
+      vBuna.isStoppered = true; vBuna.moles.C4H6_g = 0.06; vBuna.moles.Na_s = 0.05;
+
+      for (let i = 0; i < 8; i++) {
+        vFco.tempK = 348.15; vFTol.tempK = 323.15; vGly.tempK = 298.15; vHcho4.tempK = 323.15; vCann.tempK = 313.15;
+        vSap.tempK = 353.15; vHard.tempK = 448.15; vCh4.tempK = 298.15; vAcAg.tempK = 298.15; vBuna.tempK = 343.15;
+        sim63.step(0.5);
+      }
+
+      const coOk = ((vFco.headspaceGasMoles?.CO_g || 0) + (vFco.escapedGasMoles?.CO_g || 0)) > 0.02;
+      const fTolOk = (vFTol.moles.Ag_s || 0) > 0.03;
+      const glyCuOk = (vGly.moles.CuC2H4O2_aq || 0) > 0.02;
+      const hcho4Ok = (vHcho4.moles.Ag_s || 0) > 0.050; // 1:4 stoichiometry exceeds 2*0.02=0.04!
+      const cannOk = (vCann.moles.CH3OH_l || 0) > 0.015 && (vCann.moles.HCOO_aq || 0) > 0.015;
+      const lipOk = (vSap.moles.C17H33COO_aq || 0) > 0.05 && (vSap.moles.C3H5OH_3_l || 0) > 0.015 && (vHard.moles.C57H110O6_s || 0) > 0.015;
+      const ch4Ok = ((vCh4.headspaceGasMoles?.CH3Cl_g || 0) + (vCh4.escapedGasMoles?.CH3Cl_g || 0)) > 0.02;
+      const acAgOk = (vAcAg.moles.Ag2C2_s || 0) > 0.02;
+      const bunaOk = (vBuna.moles.Buna_s || 0) > 0.02;
+
+      assert(
+        'Prompt 63 invariants: Formic CO/2Ag, Glycerol-Cu(OH)2 azure complex, HCHO 1:4 Tollens & Cannizzaro, Triolein soap/hardening, CH4+Cl2(UV), C2H2->Ag2C2↓, & C4H6->Buna rubber',
+        coOk && fTolOk && glyCuOk && hcho4Ok && cannOk && lipOk && ch4Ok && acAgOk && bunaOk,
+        `co=${coOk}, fTol=${fTolOk}, glyCu=${glyCuOk}, hcho4=${hcho4Ok}(Ag=${(vHcho4.moles.Ag_s||0).toFixed(3)}), cann=${cannOk}, lip=${lipOk}(soap=${(vSap.moles.C17H33COO_aq||0).toFixed(3)},fat=${(vHard.moles.C57H110O6_s||0).toFixed(3)}), ch4=${ch4Ok}, ag2c2=${acAgOk}(${(vAcAg.moles.Ag2C2_s||0).toFixed(3)}), buna=${bunaOk}(${(vBuna.moles.Buna_s||0).toFixed(3)})`
       );
     }
 
