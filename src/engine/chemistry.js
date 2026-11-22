@@ -6835,6 +6835,34 @@ function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, gasProduc
           pushRxn('ester_methyl_formate', 'HCOOH + CH₃OH ⇌ HCOOCH₃ + H₂O', 'Ester hóa HCOOH + CH₃OH → Methyl formate', 'Esterification: Formic acid + Methanol → Methyl formate', 'Đun HCOOH với CH₃OH có xúc tác H₂SO₄ đặc tạo ester Methyl formate.', 'Fischer esterification of Formic acid with Methanol forms Methyl formate.', dEstMF);
         }
       }
+      // Prepare HCHO / HCOOH from CH3OH via K2Cr2O7/H+ or KMnO4/H+
+      if ((moles.Cr2O7_2_aq || 0) > 1e-7 && (moles.H_aq || 0) > 1e-5 && T >= 323.15) {
+        if (T >= 348.15) {
+          const dMeCrF = Math.min(moles.CH3OH_l / 3, moles.Cr2O7_2_aq / 2, moles.H_aq / 16) * (1 - Math.exp(-0.92 * dt));
+          if (dMeCrF > 1e-11) {
+            consumeSpecies('CH3OH_l', 3 * dMeCrF); consumeSpecies('Cr2O7_2_aq', 2 * dMeCrF); consumeSpecies('H_aq', 16 * dMeCrF);
+            moles.HCOOH_l = (moles.HCOOH_l || 0) + 3 * dMeCrF; moles.Cr3_aq = (moles.Cr3_aq || 0) + 4 * dMeCrF; moles.H2O_l = (moles.H2O_l || 0) + 11 * dMeCrF;
+            heatJ += dMeCrF * 650000;
+            pushRxn('meoh_cr2o7_hcooh', '3CH₃OH + 2Cr₂O₇²⁻ + 16H⁺ —(75–90 °C)→ 3HCOOH + 4Cr³⁺ + 11H₂O', 'Oxi hóa mạnh Methanol (K₂Cr₂O₇/H⁺) → Formic acid HCOOH', 'Strong oxidation of Methanol (Cr₂O₇²⁻/H⁺) → Formic acid', 'Oxi hóa Methanol ở nhiệt độ cao bằng K₂Cr₂O₇/H₂SO₄ điều chế Formic acid.', 'Vigorous dichromate oxidation converts Methanol directly to Formic acid.', dMeCrF);
+          }
+        } else {
+          const dMeCrH = Math.min(moles.CH3OH_l / 3, moles.Cr2O7_2_aq, moles.H_aq / 8) * (1 - Math.exp(-1.15 * dt));
+          if (dMeCrH > 1e-11) {
+            consumeSpecies('CH3OH_l', 3 * dMeCrH); consumeSpecies('Cr2O7_2_aq', dMeCrH); consumeSpecies('H_aq', 8 * dMeCrH);
+            moles.HCHO_aq = (moles.HCHO_aq || 0) + 3 * dMeCrH; moles.Cr3_aq = (moles.Cr3_aq || 0) + 2 * dMeCrH; moles.H2O_l = (moles.H2O_l || 0) + 7 * dMeCrH;
+            heatJ += dMeCrH * 380000;
+            pushRxn('meoh_cr2o7_hcho', '3CH₃OH + Cr₂O₇²⁻ + 8H⁺ —(50–60 °C)→ 3HCHO + 2Cr³⁺ + 7H₂O', 'Oxi hóa nhẹ Methanol (K₂Cr₂O₇/H⁺) → Formaldehyde HCHO', 'Mild oxidation of Methanol (Cr₂O₇²⁻/H⁺) → Formaldehyde', 'Oxi hóa nhẹ Methanol ở 50–60 °C tạo Formaldehyde HCHO.', 'Controlled dichromate oxidation of Methanol at 50–60 °C yields Formaldehyde.', dMeCrH);
+          }
+        }
+      } else if ((moles.MnO4_aq || 0) > 1e-7 && (moles.H_aq || 0) > 1e-5 && T >= 323.15) {
+        const dMeMn = Math.min(moles.CH3OH_l / 5, moles.MnO4_aq / 4, moles.H_aq / 12) * (1 - Math.exp(-1.2 * dt));
+        if (dMeMn > 1e-11) {
+          consumeSpecies('CH3OH_l', 5 * dMeMn); consumeSpecies('MnO4_aq', 4 * dMeMn); consumeSpecies('H_aq', 12 * dMeMn);
+          moles.HCOOH_l = (moles.HCOOH_l || 0) + 5 * dMeMn; moles.Mn2_aq = (moles.Mn2_aq || 0) + 4 * dMeMn; moles.H2O_l = (moles.H2O_l || 0) + 11 * dMeMn;
+          heatJ += dMeMn * 920000;
+          pushRxn('meoh_kmno4_hcooh', '5CH₃OH + 4MnO₄⁻ + 12H⁺ —(t°)→ 5HCOOH + 4Mn²⁺ + 11H₂O', 'Oxi hóa Methanol bằng KMnO₄/H⁺ → Formic acid HCOOH', 'Methanol + KMnO₄/H⁺ → Formic acid', 'KMnO₄ trong môi trường acid oxi hóa Methanol thành Formic acid.', 'Acidic permanganate oxidizes Methanol to Formic acid.', dMeMn);
+        }
+      }
     }
 
     // 7B. Formic acid (HCOOH_l) & Formate Esters (HCOOCH3_l, HCOOC2H5_l): Acidic + Dehydration CO↑ + Tollens + Cu(OH)2 + Br2

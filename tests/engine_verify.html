@@ -1910,7 +1910,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 36 &&
+          STARTER_REAGENTS.length === 34 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2478,7 +2478,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.3';
+      const expectedBuild = 'virlab_beta_v5+build.4';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2540,15 +2540,13 @@
         Boolean(I18N.vi.regCatOrganic && I18N.en.regCatOrganic) &&
         Boolean(I18N.vi.reg_benzene && I18N.en.reg_benzene) &&
         Boolean(I18N.vi.reg_methanol && I18N.en.reg_methanol) &&
-        Boolean(I18N.vi.reg_hcooh && I18N.en.reg_hcooh) &&
         Boolean(I18N.vi.reg_glycerol && I18N.en.reg_glycerol) &&
-        Boolean(I18N.vi.reg_hcho_37 && I18N.en.reg_hcho_37) &&
         Boolean(I18N.vi.reg_triolein && I18N.en.reg_triolein) &&
         Boolean(I18N.vi.stopperModeDualHole && I18N.en.stopperModeDualHole);
       assert(
-        'Build virlab_beta_v5+build.3 parity: All 40 apparatus & 36 starter reagents translated in VI/EN, Prompt 63 Methanol, Formic, Glycerol, Formaldehyde, Lipids & Hydrocarbons parity enforced',
+        'Build virlab_beta_v5+build.4 parity: All 40 apparatus & 34 starter reagents translated in VI/EN, Prompt 64 Funnel Stem/Reflux Alignment, HCHO/HCOOH Removal & MeOH/Glycerol Liquid Rendering parity enforced',
         APPARATUS_ORDER.length === 40 &&
-          STARTER_REAGENTS.length === 36 &&
+          STARTER_REAGENTS.length === 34 &&
           !APPARATUS.clay_triangle &&
           !APPARATUS.crucible_tongs &&
           allTranslated &&
@@ -7412,7 +7410,7 @@
       const mno2AcidOk = Math.abs((bMnColdAcid.moles.MnO2_s || 0) - 0.01) < 1e-6 && cl2HotTot > 0.002 && (bMnHotHCl.moles.Mn2_aq || 0) > 0.002;
 
       const iupacKmno4Ok =
-        STARTER_REAGENTS.length === 36 &&
+        STARTER_REAGENTS.length === 34 &&
         STARTER_REAGENTS.some((r) => r.id === 'kmno4') &&
         !/\b(kali|mangan|axit|clo|oxi(?! hóa))\b/i.test(`${I18N.vi.reg_kmno4} ${I18N.vi.reg_kmno4_desc} ${I18N.vi.alertMn2O7Hazard}`);
 
@@ -7526,7 +7524,7 @@
         (vIRoom.moles.IO3_aq || 0) > (vIRoom.moles.IO_aq || 0) * 4;
 
       const iupacHalOk =
-        STARTER_REAGENTS.length === 36 &&
+        STARTER_REAGENTS.length === 34 &&
         STARTER_REAGENTS.some((r) => r.id === 'br2') &&
         STARTER_REAGENTS.some((r) => r.id === 'i2') &&
         !/\b(brom|iot|clo|kali|natri|nhôm|sắt|axit)\b/i.test(`${I18N.vi.reg_br2} ${I18N.vi.reg_br2_desc} ${I18N.vi.reg_i2} ${I18N.vi.reg_i2_desc}`);
@@ -7642,7 +7640,7 @@
         (bSHNO3.moles.SO4_2_aq || 0) > 0.001;
 
       const iupacSulfOk =
-        STARTER_REAGENTS.length === 36 &&
+        STARTER_REAGENTS.length === 34 &&
         STARTER_REAGENTS.some((r) => r.id === 's') &&
         !/\b(lưu huỳnh|sunfua|hiđro|axit|oxi(?! hóa)|etanol)\b/i.test(`${I18N.vi.reg_s} ${I18N.vi.reg_s_desc}`);
 
@@ -8722,7 +8720,7 @@
       const regCr = STARTER_REAGENTS.find((r) => r.id === 'k2cr2o7');
       const regSi = STARTER_REAGENTS.find((r) => r.id === 'sio2');
       const catOk =
-        STARTER_REAGENTS.length === 36 &&
+        STARTER_REAGENTS.length === 34 &&
         oxides.length === 1 &&
         oxides[0].id === 'sio2' &&
         REAGENT_CATEGORIES.some((c) => c.id === 'oxide' && c.i18nKey === 'regCatOxide') &&
@@ -8914,7 +8912,7 @@
       const regA = STARTER_REAGENTS.find((r) => r.id === 'ch3cooh');
       const acids3 = STARTER_REAGENTS.filter((r) => r.category === 'acid');
       const regOrgOk =
-        STARTER_REAGENTS.length === 36 &&
+        STARTER_REAGENTS.length === 34 &&
         acids3.length === 3 &&
         Boolean(regE && regE.category === 'organic' && regE.perMl?.C2H5OH_l > 0.017) &&
         Boolean(regA && regA.category === 'organic' && regA.perMl?.CH3COOH_l > 0.017) &&
@@ -9928,6 +9926,66 @@
         'Prompt 63 invariants: Formic CO/2Ag, Glycerol-Cu(OH)2 azure complex, HCHO 1:4 Tollens & Cannizzaro, Triolein soap/hardening, CH4+Cl2(UV), C2H2->Ag2C2↓, & C4H6->Buna rubber',
         coOk && fTolOk && glyCuOk && hcho4Ok && cannOk && lipOk && ch4Ok && acAgOk && bunaOk,
         `co=${coOk}, fTol=${fTolOk}, glyCu=${glyCuOk}, hcho4=${hcho4Ok}(Ag=${(vHcho4.moles.Ag_s||0).toFixed(3)}), cann=${cannOk}, lip=${lipOk}(soap=${(vSap.moles.C17H33COO_aq||0).toFixed(3)},fat=${(vHard.moles.C57H110O6_s||0).toFixed(3)}), ch4=${ch4Ok}, ag2c2=${acAgOk}(${(vAcAg.moles.Ag2C2_s||0).toFixed(3)}), buna=${bunaOk}(${(vBuna.moles.Buna_s||0).toFixed(3)})`
+      );
+    }
+
+    // TEST 182: Prompt 64 — Extended Funnel Stem Alignment into Dual-Hole Stopper, Removal of HCHO/HCOOH from Starter Shelf (Prep from CH3OH), & Pure MeOH/Glycerol Liquid Volume Rendering
+    {
+      // 1) Funnel stem reaches straight into dual-hole stopper bore while pear bulb clears reflux condenser jacket
+      const sim64 = new LabSimulation();
+      const erl = sim64.createApparatus('erlenmeyer_250', 400, 360);
+      const cond = sim64.createApparatus('liebig_condenser', 400, 220);
+      cond.refluxMode = true;
+      cond.refluxVesselId = erl.id;
+      const sep = sim64.createApparatus('separatory_funnel', 400, 180);
+      sim64.mountSeparatoryFunnel(sep.id, erl.id);
+      sim64.step(0.05);
+      const sfSpec = APPARATUS.separatory_funnel;
+      const rimTop = erl.y - APPARATUS.erlenmeyer_250.height / 2;
+      const funnelStemTipY = sep.y + sfSpec.height / 2 - 2;
+      const funnelTaperEndY = (sep.y - sfSpec.height / 2) + 114;
+      const condTopY = cond.y - (APPARATUS.liebig_condenser.width / 2);
+      const funnelAlignOk =
+        sfSpec.height >= 260 &&
+        Math.abs(sep.x - erl.x + 8) < 1.5 &&
+        Math.abs(sep.x - cond.x) >= 24 &&
+        funnelStemTipY >= rimTop + 4 &&
+        funnelTaperEndY < condTopY;
+
+      // 2) HCHO and HCOOH removed from STARTER_REAGENTS, both preparable from CH3OH
+      const noDirectHchoHcooh =
+        STARTER_REAGENTS.length === 34 &&
+        !STARTER_REAGENTS.some((r) => r.id === 'hcho_37' || r.id === 'hcooh') &&
+        Boolean(SPECIES.HCHO_aq && SPECIES.HCOOH_l);
+      const vPrepAld = sim64.createApparatus('round_flask_250', 180, 300);
+      vPrepAld.moles.CH3OH_l = 0.3; vPrepAld.moles.Cr2O7_2_aq = 0.08; vPrepAld.moles.H_aq = 0.6; vPrepAld.moles.H2O_l = 0.4;
+      const vPrepAcid = sim64.createApparatus('round_flask_250', 620, 300);
+      vPrepAcid.moles.CH3OH_l = 0.3; vPrepAcid.moles.Cr2O7_2_aq = 0.12; vPrepAcid.moles.H_aq = 1.0; vPrepAcid.moles.H2O_l = 0.4;
+      for (let i = 0; i < 6; i++) {
+        vPrepAld.tempK = 330.15;
+        vPrepAcid.tempK = 355.15;
+        sim64.step(0.5);
+      }
+      const prepFromMeohOk = (vPrepAld.moles.HCHO_aq || 0) > 0.05 && (vPrepAcid.moles.HCOOH_l || 0) > 0.04;
+
+      // 3) Pure MeOH & Glycerol render non-zero liquid volume & stratification!
+      const vMe = sim64.createApparatus('beaker_250', 220, 460);
+      vMe.moles.CH3OH_l = 1.0; // ~40.5 mL pure methanol
+      const vGl = sim64.createApparatus('beaker_250', 580, 460);
+      vGl.moles.C3H5OH_3_l = 0.5; // ~36.5 mL pure glycerol
+      sim64.step(0.05);
+      const meVolMl = computeAqueousVolumeL(vMe.moles, 298.15) * 1000;
+      const glVolMl = computeAqueousVolumeL(vGl.moles, 298.15) * 1000;
+      const stratMe = computePhaseStratification(vMe.moles, 298.15, APPARATUS.beaker_250, 0);
+      const stratGl = computePhaseStratification(vGl.moles, 298.15, APPARATUS.beaker_250, 0);
+      const liqVisualOk =
+        meVolMl > 35 && meVolMl < 45 && stratMe.totalLiqMl > 35 &&
+        glVolMl > 32 && glVolMl < 42 && stratGl.totalLiqMl > 32;
+
+      assert(
+        'Prompt 64 invariants: Funnel stem penetrates stopper bore cleanly beside condenser, HCHO/HCOOH removed from shelf & synthesized from CH3OH, pure MeOH & Glycerol liquid volumes render properly',
+        funnelAlignOk && noDirectHchoHcooh && prepFromMeohOk && liqVisualOk,
+        `funnel=${funnelAlignOk}(stemY=${funnelStemTipY.toFixed(1)}>=${(rimTop+4).toFixed(1)},taper=${funnelTaperEndY.toFixed(1)}<condTop=${condTopY.toFixed(1)},dx=${Math.abs(sep.x-cond.x).toFixed(1)}), shelf=${noDirectHchoHcooh}(n=${STARTER_REAGENTS.length}), prep=${prepFromMeohOk}(HCHO=${(vPrepAld.moles.HCHO_aq||0).toFixed(3)},HCOOH=${(vPrepAcid.moles.HCOOH_l||0).toFixed(3)}), liq=${liqVisualOk}(meMl=${meVolMl.toFixed(1)},glMl=${glVolMl.toFixed(1)})`
       );
     }
 

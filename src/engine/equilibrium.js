@@ -9,34 +9,36 @@ import { SPECIES } from '../data/species.js';
  */
 export function computeAqueousVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
   if (!moles) return 0;
-  const nH2O = Math.max(0, moles.H2O_l || 0);
-  const nEtOH = Math.max(0, moles.C2H5OH_l || 0);
-  const nAcOH = Math.max(0, moles.CH3COOH_l || 0);
-  const nH2SO4L = Math.max(0, moles.H2SO4_l || 0);
-  const nHNO3L = Math.max(0, moles.HNO3_l || 0);
-  const nMn2O7L = Math.max(0, moles.Mn2O7_l || 0);
-  if (nH2O <= 1e-12 && nEtOH <= 1e-12 && nAcOH <= 1e-12 && nH2SO4L <= 1e-12 && nHNO3L <= 1e-12 && nMn2O7L <= 1e-12) return 0;
-
   const T = Number.isFinite(tempK) ? Math.max(155, Math.min(800, tempK)) : CONSTANTS.T_STD_K;
   const rho = waterDensityGPerMl(T);
-  const waterVolMl = (nH2O * SPECIES.H2O_l.molarMass) / rho;
-  const etohVolMl = (nEtOH * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density;
-  const acohVolMl = nAcOH > 1e-12 ? (nAcOH * SPECIES.CH3COOH_l.molarMass) / SPECIES.CH3COOH_l.density : 0;
-  const h2so4VolMl = nH2SO4L > 1e-12 ? (nH2SO4L * SPECIES.H2SO4_l.molarMass) / SPECIES.H2SO4_l.density : 0;
-  const hno3VolMl = nHNO3L > 1e-12 ? (nHNO3L * SPECIES.HNO3_l.molarMass) / SPECIES.HNO3_l.density : 0;
-  const mn2o7VolMl = nMn2O7L > 1e-12 ? (nMn2O7L * SPECIES.Mn2O7_l.molarMass) / SPECIES.Mn2O7_l.density : 0;
-  // Ethanol-water mixtures exhibit ~3.5% excess volume contraction
-  const mixFactor = nH2O > 1e-9 && nEtOH > 1e-9 ? 0.965 : 1.0;
-  const solventVolMl = (waterVolMl + etohVolMl) * mixFactor + acohVolMl + h2so4VolMl + hno3VolMl + mn2o7VolMl;
+  const nH2O = Math.max(0, moles.H2O_l || 0);
+  const waterVolMl = nH2O > 1e-12 ? (nH2O * SPECIES.H2O_l.molarMass) / rho : 0;
+  const waterKg = (nH2O * SPECIES.H2O_l.molarMass) / 1000;
+
+  let alcoholVolMl = 0;
+  let otherAqLiqVolMl = 0;
+  let solventKg = waterKg;
+  let hasAlcohol = false;
 
   let diluteVolDeltaMl = 0;
   let totalSoluteMoles = 0;
   let totalSoluteMassG = 0;
 
   for (const [id, n] of Object.entries(moles)) {
-    if (!Number.isFinite(n) || n <= 0) continue;
+    if (!Number.isFinite(n) || n <= 1e-12) continue;
+    if (id === 'H2O_l') continue;
     const sp = SPECIES[id];
-    if (sp && sp.phase === 'aq') {
+    if (!sp) continue;
+    if (sp.phase === 'l' && (sp.liquidGroup || 'aqueous') === 'aqueous' && sp.density > 0) {
+      const volMl = (n * sp.molarMass) / sp.density;
+      if (id === 'C2H5OH_l' || id === 'CH3OH_l') {
+        alcoholVolMl += volMl;
+        hasAlcohol = true;
+      } else {
+        otherAqLiqVolMl += volMl;
+      }
+      solventKg += (n * sp.molarMass) / 1000;
+    } else if (sp.phase === 'aq') {
       totalSoluteMoles += n;
       totalSoluteMassG += n * sp.molarMass;
       if (typeof sp.partialMolarVolMl === 'number') {
@@ -45,11 +47,13 @@ export function computeAqueousVolumeL(moles, tempK = CONSTANTS.T_STD_K) {
     }
   }
 
+  if (waterVolMl <= 0 && alcoholVolMl <= 0 && otherAqLiqVolMl <= 0) return 0;
+
+  // Alcohol-water mixtures (EtOH/MeOH + H2O) exhibit ~3.5% excess volume contraction
+  const mixFactor = nH2O > 1e-9 && hasAlcohol ? 0.965 : 1.0;
+  const solventVolMl = (waterVolMl + alcoholVolMl) * mixFactor + otherAqLiqVolMl;
+
   // Smoothly blend toward positive effective solute volume (~m/2.25) at high molality
-  const waterKg = (nH2O * SPECIES.H2O_l.molarMass) / 1000;
-  const etohKg = (nEtOH * SPECIES.C2H5OH_l.molarMass) / 1000;
-  const acohKg = (nAcOH * SPECIES.CH3COOH_l.molarMass) / 1000;
-  const solventKg = waterKg + etohKg + acohKg;
   const molality = solventKg > 1e-9 ? totalSoluteMoles / solventKg : 0;
   const highConcWeight = molality / (molality + 4.0);
   const concVolDeltaMl = totalSoluteMassG / 2.25;

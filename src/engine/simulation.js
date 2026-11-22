@@ -1359,7 +1359,7 @@ export class LabSimulation {
         }
       } else if (item.kind === 'separatory_funnel' && sup.kind === 'vessel' && !sup.isShattered && !sup.isInverted) {
         const rimTop = sup.y - supSpec.height / 2;
-        const candY = rimTop - spec.height * 0.56;
+        const candY = rimTop - spec.height * 0.464;
         if (dx <= 28 && (alreadyOnSup || item.y <= rimTop + 14) && candY < bestCenterY) {
           bestCenterY = candY;
           bestSupport = sup;
