@@ -314,6 +314,15 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
   const hasWater = (moles.H2O_l || 0) > 1e-7 && (liquidVolL || 0) > 1e-6;
   let heatJ = 0;
 
+  // Dissociate Glucose Cu(II) chelate back above 70 °C so warm Cu2O redox proceeds cleanly
+  if (T >= 343.15 && (moles.CuGlc2_aq || 0) > 1e-8) {
+    const dRel = moles.CuGlc2_aq * (1 - Math.exp(-2.8 * dt));
+    moles.CuGlc2_aq = Math.max(0, moles.CuGlc2_aq - dRel);
+    if (moles.CuGlc2_aq < 1e-13) delete moles.CuGlc2_aq;
+    moles.CuOH2_s = (moles.CuOH2_s || 0) + dRel;
+    moles.Glucose_aq = (moles.Glucose_aq || 0) + 2 * dRel;
+  }
+
   for (const spId of Object.keys(moles)) {
     const sp = SPECIES[spId];
     const fg = sp?.functionalGroups;
@@ -389,6 +398,104 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
           rateMolS: dAlkBr / dt,
           dXi: dAlkBr,
         });
+      }
+    }
+    // 3. Property-driven Polyol Cu(OH)2 room-T azure chelation (hasVicinalDiol: Glucose, Sucrose)
+    const polyolMap = { Glucose_aq: 'CuGlc2_aq', Sucrose_aq: 'CuSuc2_aq' };
+    if (fg.hasVicinalDiol && !fg.legacyHandled && hasWater && polyolMap[spId] && (moles.CuOH2_s || 0) > 1e-8 && (moles.OH_aq || 0) > 1e-6 && T < 343.15) {
+      const chelateId = polyolMap[spId];
+      const dPoly = Math.min(moles.CuOH2_s, (moles[spId] || 0) / 2) * (1 - Math.exp(-1.9 * dt));
+      if (dPoly > 1e-11) {
+        moles.CuOH2_s = Math.max(0, moles.CuOH2_s - dPoly);
+        if (moles.CuOH2_s < 1e-13) delete moles.CuOH2_s;
+        moles[spId] = Math.max(0, moles[spId] - 2 * dPoly);
+        if (moles[spId] < 1e-13) delete moles[spId];
+        moles[chelateId] = (moles[chelateId] || 0) + dPoly;
+        heatJ += dPoly * 18000;
+        activeReactions.push({
+          id: `cu_diol_${spId}`,
+          equation: `2 ${sp.formula} + Cu(OH)₂ → ${SPECIES[chelateId].formula} (xanh lam)`,
+          nameVi: `${sp.name} hòa tan Cu(OH)₂ tạo phức xanh lam`,
+          nameEn: `${sp.name} chelates Cu(OH)₂ forming azure blue polyol complex`,
+          descVi: 'Các nhóm –OH liền kề hòa tan kết tủa Cu(OH)₂ ở nhiệt độ phòng tạo phức xanh lam thẫm.',
+          descEn: 'Vicinal hydroxyl groups dissolve Cu(OH)₂ at room temperature into a deep azure complex.',
+          rateMolS: dPoly / dt,
+          dXi: dPoly,
+        });
+      }
+    }
+
+    // Dissociate Glucose Cu(II) chelate back above 70 °C so warm Cu2O redox proceeds cleanly
+    if (spId === 'CuGlc2_aq' && T >= 343.15 && (moles.CuGlc2_aq || 0) > 1e-8) {
+      const dRel = moles.CuGlc2_aq * (1 - Math.exp(-2.8 * dt));
+      moles.CuGlc2_aq = Math.max(0, moles.CuGlc2_aq - dRel);
+      if (moles.CuGlc2_aq < 1e-13) delete moles.CuGlc2_aq;
+      moles.CuOH2_s = (moles.CuOH2_s || 0) + dRel;
+      moles.Glucose_aq = (moles.Glucose_aq || 0) + 2 * dRel;
+    }
+
+    // 4. Property-driven Aldehyde oxidation: Tollens Ag(NH3)2+ -> Ag mirror & Hot Cu(OH)2 -> Cu2O brick-red
+    const aldProductMap = { Glucose_aq: 'Gluconate_aq', C2H5CHO_l: 'C2H5COO_aq', C6H5CHO_l: 'C6H5COO_aq' };
+    if (fg.hasAldehydeGroup && !fg.legacyHandled && aldProductMap[spId]) {
+      const prodSalt = aldProductMap[spId];
+      const spCur = moles[spId] || 0;
+      // 4a. Tollens silver mirror reaction
+      if (hasWater && (moles.AgNH3_2_aq || 0) > 1e-8 && (moles.OH_aq || 0) > 1e-7 && T >= 295 && spCur > 1e-9) {
+        const kTol = T >= 323.15 ? 1.8 : 0.35;
+        const dTol = Math.min(spCur, moles.AgNH3_2_aq / 2, moles.OH_aq / 3) * (1 - Math.exp(-kTol * dt));
+        if (dTol > 1e-11) {
+          moles[spId] = Math.max(0, spCur - dTol);
+          if (moles[spId] < 1e-13) delete moles[spId];
+          moles.AgNH3_2_aq = Math.max(0, moles.AgNH3_2_aq - 2 * dTol);
+          if (moles.AgNH3_2_aq < 1e-13) delete moles.AgNH3_2_aq;
+          moles.OH_aq = Math.max(0, moles.OH_aq - 3 * dTol);
+          if (moles.OH_aq < 1e-13) delete moles.OH_aq;
+          moles[prodSalt] = (moles[prodSalt] || 0) + dTol;
+          moles.Ag_s = (moles.Ag_s || 0) + 2 * dTol;
+          moles.NH3_aq = (moles.NH3_aq || 0) + 4 * dTol;
+          moles.H2O_l = (moles.H2O_l || 0) + 2 * dTol;
+          if (!vessel.particleCounts) vessel.particleCounts = {};
+          vessel.particleCounts.Ag_s = Math.max(vessel.particleCounts.Ag_s || 0, 900);
+          vessel.silverMirrorFrac = Math.min(1.0, (vessel.silverMirrorFrac || 0) + dTol * 160);
+          heatJ += dTol * 92000;
+          activeReactions.push({
+            id: `tollens_${spId}`,
+            equation: `${sp.formula} + 2[Ag(NH₃)₂]⁺ + 3OH⁻ → ${SPECIES[prodSalt].formula} + 2Ag↓ + 4NH₃ + 2H₂O`,
+            nameVi: `Tráng bạc ${sp.name} tạo lớp Ag sáng bóng`,
+            nameEn: `Tollens silver mirror test on ${sp.name} yielding Ag↓`,
+            descVi: 'Nhóm –CHO khử phức bạc amoniac tạo lớp bạc sáng bám thành bình.',
+            descEn: 'Aldehyde functional group reduces Tollens reagent depositing metallic Ag.',
+            rateMolS: dTol / dt,
+            dXi: dTol,
+          });
+        }
+      }
+      // 4b. Warm Cu(OH)2 reduction >= 70 C -> brick-red Cu2O↓
+      const spLeft = moles[spId] || 0;
+      if (hasWater && T >= 343.15 && (moles.CuOH2_s || 0) > 1e-8 && (moles.OH_aq || 0) > 1e-7 && spLeft > 1e-9) {
+        const dCuRed = Math.min(spLeft, moles.CuOH2_s / 2, moles.OH_aq) * (1 - Math.exp(-1.4 * dt));
+        if (dCuRed > 1e-11) {
+          moles[spId] = Math.max(0, spLeft - dCuRed);
+          if (moles[spId] < 1e-13) delete moles[spId];
+          moles.CuOH2_s = Math.max(0, moles.CuOH2_s - 2 * dCuRed);
+          if (moles.CuOH2_s < 1e-13) delete moles.CuOH2_s;
+          moles.OH_aq = Math.max(0, moles.OH_aq - dCuRed);
+          if (moles.OH_aq < 1e-13) delete moles.OH_aq;
+          moles[prodSalt] = (moles[prodSalt] || 0) + dCuRed;
+          moles.Cu2O_s = (moles.Cu2O_s || 0) + dCuRed;
+          moles.H2O_l = (moles.H2O_l || 0) + 3 * dCuRed;
+          heatJ += dCuRed * 68000;
+          activeReactions.push({
+            id: `cu2o_${spId}`,
+            equation: `${sp.formula} + 2Cu(OH)₂ + OH⁻ —(t°)→ ${SPECIES[prodSalt].formula} + Cu₂O↓ (đỏ gạch) + 3H₂O`,
+            nameVi: `${sp.name} khử Cu(OH)₂ đun nóng tạo kết tủa Cu₂O đỏ gạch`,
+            nameEn: `Hot reduction of Cu(OH)₂ by ${sp.name} yielding brick-red Cu₂O↓`,
+            descVi: 'Khi đun nóng >= 70 °C trong kiềm, nhóm –CHO khử Cu(II) xuống Cu₂O đỏ gạch.',
+            descEn: 'Heating above 70 °C drives aldehyde reduction of Cu(OH)₂ to brick-red Cu₂O↓.',
+            rateMolS: dCuRed / dt,
+            dXi: dCuRed,
+          });
+        }
       }
     }
   }

@@ -23,6 +23,7 @@ import {
   computeTubingGeometry,
 } from '../engine/gasNetwork.js';
 import { computeWashBottleStreamArc } from '../engine/apparatusTools.js';
+import { COLORIMETER_WAVELENGTHS } from '../engine/analyticalTools.js';
 import { computeCaOOptimizationScore } from '../engine/chemistry.js';
 import { soundEngine } from '../audio/soundEngine.js';
 import { downloadCompositionXlsx } from '../storage/xlsxExport.js';
@@ -1272,6 +1273,99 @@ export class InspectorPanel {
             </span>
           </div>
           <button type="button" id="ins-strip-reset" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetStrip')}</button>
+        </div>
+      `;
+    } else if (item.kind === 'ph_conductometer') {
+      const phTxt = item.measuredPH != null ? item.measuredPH.toFixed(2) : '—';
+      const ecTxt = item.measuredConductivity != null ? `${item.measuredConductivity.toFixed(2)} mS/cm` : '—';
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t('eq_ph_conductometer')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${APPARATUS.ph_conductometer.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="grid grid-cols-2 gap-2 p-2.5 rounded-lg border border-theme bg-slate-950 font-mono text-center">
+            <div><div class="text-[10px] text-slate-400">pH</div><div class="text-lg font-bold text-emerald-400" id="live-phc-ph">${phTxt}</div></div>
+            <div><div class="text-[10px] text-slate-400">${langCode === 'en' ? 'Conductivity' : 'Độ dẫn σ'}</div><div class="text-sm font-bold text-sky-400 mt-1" id="live-phc-ec">${ecTxt}</div></div>
+          </div>
+          <div class="p-2 rounded-lg border border-theme bg-surface">
+            <div class="text-[11px] text-muted mb-1 flex justify-between">
+              <span>${langCode === 'en' ? 'Titration / Time Curve' : 'Đường chuẩn độ pH / σ'}</span>
+              <span class="font-mono" id="live-phc-pts">${(item.history || []).length} pts</span>
+            </div>
+            <canvas id="analytical-chart" width="270" height="104" class="w-full h-24 rounded border border-theme/50"></canvas>
+          </div>
+          <button type="button" id="ins-phc-reset" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetCurve')}</button>
+        </div>
+      `;
+    } else if (item.kind === 'colorimeter') {
+      const wl = item.wavelengthNm || 525;
+      const aVal = item.measuredAbsorbance ?? 0;
+      const tVal = item.measuredTransmittance ?? 100;
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t('eq_colorimeter')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${APPARATUS.colorimeter.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="grid grid-cols-2 gap-2 p-2.5 rounded-lg border border-theme bg-slate-950 font-mono text-center">
+            <div><div class="text-[10px] text-slate-400">Absorbance (A)</div><div class="text-lg font-bold text-amber-400" id="live-col-abs">${aVal.toFixed(3)}</div></div>
+            <div><div class="text-[10px] text-slate-400">Transmittance</div><div class="text-sm font-bold text-emerald-400 mt-1" id="live-col-trans">${tVal.toFixed(1)}% T</div></div>
+          </div>
+          <div class="grid grid-cols-5 gap-1">
+            ${COLORIMETER_WAVELENGTHS.map(
+              (w) => `<button type="button" class="col-wl-btn py-1 rounded border text-[11px] font-mono ${
+                wl === w ? 'border-accent bg-accent/20 text-accent font-bold' : 'border-theme bg-surface text-muted'
+              }" data-wl="${w}">${w}</button>`
+            ).join('')}
+          </div>
+          <div class="p-2 rounded-lg border border-theme bg-surface">
+            <div class="text-[11px] text-muted mb-1 flex justify-between">
+              <span>${langCode === 'en' ? 'Beer–Lambert Kinetics A(t)' : 'Động học quang A(t)'}</span>
+              <span class="font-mono" id="live-col-wl">${wl} nm</span>
+            </div>
+            <canvas id="analytical-chart" width="270" height="104" class="w-full h-24 rounded border border-theme/50"></canvas>
+          </div>
+          <button type="button" id="ins-col-reset" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetCurve')}</button>
+        </div>
+      `;
+    } else if (item.kind === 'tlc_plate') {
+      const spots = item.spots || [];
+      const sfPct = ((item.solventFront || 0) * 100).toFixed(0);
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t('eq_tlc_plate')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${APPARATUS.tlc_plate.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs font-mono flex justify-between">
+            <span class="text-muted">${langCode === 'en' ? 'Solvent Front:' : 'Mặt dung môi:'}</span>
+            <strong id="live-tlc-sf">${sfPct}%</strong>
+          </div>
+          <div class="flex flex-col gap-1 max-h-40 overflow-y-auto text-xs" id="live-tlc-spots">
+            ${
+              spots.length === 0
+                ? `<div class="text-muted italic">${langCode === 'en' ? 'Dip TLC plate into an organic mixture to separate spots' : 'Nhúng bản mỏng vào cốc chứa chất hữu cơ để chạy sắc ký'}</div>`
+                : spots
+                    .map(
+                      (sp) => `<div class="flex items-center justify-between p-1.5 rounded border border-theme/60 bg-surface">
+                        <span class="flex items-center gap-1.5 truncate"><span class="w-2.5 h-2.5 rounded-full inline-block shrink-0" style="background:${sp.color}"></span><strong class="font-mono">${sp.formula}</strong>${sp.uvActive ? ' <span class="text-[10px] text-emerald-400">UV</span>' : ''}</span>
+                        <span class="font-mono text-sky-400 shrink-0">R<sub>f</sub>=${sp.rf.toFixed(2)}</span>
+                      </div>`
+                    )
+                    .join('')
+            }
+          </div>
+          <button type="button" id="ins-tlc-reset" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionWashTlcPlate')}</button>
         </div>
       `;
     } else if (item.kind === 'dc_power') {
@@ -2679,6 +2773,30 @@ export class InspectorPanel {
         item.tipColor = item.stripKind === 'universal' ? '#eab308' : '#8b5cf6';
         this.sim.emitChange();
       });
+    } else if (item.kind === 'ph_conductometer') {
+      this.drawAnalyticalChart(item);
+      this.container.querySelector('#ins-phc-reset')?.addEventListener('click', () => {
+        item.history = [];
+        this.sim.emitChange();
+      });
+    } else if (item.kind === 'colorimeter') {
+      this.drawAnalyticalChart(item);
+      this.container.querySelectorAll('.col-wl-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          item.wavelengthNm = Number(btn.dataset.wl) || 525;
+          this.sim.emitChange();
+        });
+      });
+      this.container.querySelector('#ins-col-reset')?.addEventListener('click', () => {
+        item.history = [];
+        this.sim.emitChange();
+      });
+    } else if (item.kind === 'tlc_plate') {
+      this.container.querySelector('#ins-tlc-reset')?.addEventListener('click', () => {
+        item.solventFront = 0;
+        item.spots = [];
+        this.sim.emitChange();
+      });
     } else if (item.kind === 'dc_power') {
       this.container.querySelector('#dc-voltage-slider')?.addEventListener('input', (e) => {
         this.sim.setDcPowerState(item.id, { voltageV: Number(e.target.value) });
@@ -3079,6 +3197,43 @@ export class InspectorPanel {
       return;
     }
 
+    if (item.kind === 'ph_conductometer') {
+      const phEl = this.container.querySelector('#live-phc-ph');
+      const ecEl = this.container.querySelector('#live-phc-ec');
+      const ptsEl = this.container.querySelector('#live-phc-pts');
+      if (phEl) phEl.textContent = item.measuredPH != null ? item.measuredPH.toFixed(2) : '—';
+      if (ecEl) ecEl.textContent = item.measuredConductivity != null ? `${item.measuredConductivity.toFixed(2)} mS/cm` : '—';
+      if (ptsEl) ptsEl.textContent = `${(item.history || []).length} pts`;
+      this.drawAnalyticalChart(item);
+      return;
+    }
+
+    if (item.kind === 'colorimeter') {
+      const aEl = this.container.querySelector('#live-col-abs');
+      const tEl = this.container.querySelector('#live-col-trans');
+      if (aEl) aEl.textContent = (item.measuredAbsorbance ?? 0).toFixed(3);
+      if (tEl) tEl.textContent = `${(item.measuredTransmittance ?? 100).toFixed(1)}% T`;
+      this.drawAnalyticalChart(item);
+      return;
+    }
+
+    if (item.kind === 'tlc_plate') {
+      const sfEl = this.container.querySelector('#live-tlc-sf');
+      const spotsEl = this.container.querySelector('#live-tlc-spots');
+      if (sfEl) sfEl.textContent = `${((item.solventFront || 0) * 100).toFixed(0)}%`;
+      if (spotsEl && (item.spots || []).length > 0) {
+        spotsEl.innerHTML = (item.spots || [])
+          .map(
+            (sp) => `<div class="flex items-center justify-between p-1.5 rounded border border-theme/60 bg-surface">
+              <span class="flex items-center gap-1.5 truncate"><span class="w-2.5 h-2.5 rounded-full inline-block shrink-0" style="background:${sp.color}"></span><strong class="font-mono">${sp.formula}</strong>${sp.uvActive ? ' <span class="text-[10px] text-emerald-400">UV</span>' : ''}</span>
+              <span class="font-mono text-sky-400 shrink-0">R<sub>f</sub>=${sp.rf.toFixed(2)}</span>
+            </div>`
+          )
+          .join('');
+      }
+      return;
+    }
+
     if (item.kind === 'gas_syringe') {
       const volMl = computeSyringeTotalVolumeMl(item, this.sim.environment);
       const totalGasMol = sumAllGasMoles(item.gasMoles);
@@ -3257,6 +3412,83 @@ export class InspectorPanel {
     const solBodyEl = this.container.querySelector('#sp-sol-body');
     if (solBodyEl) {
       solBodyEl.innerHTML = buildSolidRowsHtml(item, t);
+    }
+  }
+
+  drawAnalyticalChart(item) {
+    const canvas = this.container.querySelector('#analytical-chart');
+    if (!canvas || !item) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const hist = item.history || [];
+    if (hist.length < 2) {
+      ctx.fillStyle = this.isDark ? '#64748b' : '#94a3b8';
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(item.kind === 'colorimeter' ? 'A(t)' : 'pH / σ', w / 2, h / 2 + 4);
+      return;
+    }
+
+    ctx.strokeStyle = this.isDark ? 'rgba(148,163,184,0.12)' : 'rgba(15,23,42,0.08)';
+    ctx.lineWidth = 1;
+    for (let g = 1; g <= 3; g++) {
+      const gy = (h * g) / 4;
+      ctx.beginPath();
+      ctx.moveTo(0, gy);
+      ctx.lineTo(w, gy);
+      ctx.stroke();
+    }
+
+    const padX = 8;
+    const padY = 8;
+    if (item.kind === 'ph_conductometer') {
+      const useVol = (hist[hist.length - 1].ml || 0) > (hist[0].ml || 0) + 0.05;
+      const xMin = useVol ? hist[0].ml : hist[0].t;
+      const xMax = Math.max(xMin + 0.1, useVol ? hist[hist.length - 1].ml : hist[hist.length - 1].t);
+      const maxK = Math.max(1, ...hist.map((p) => p.kappa || 0));
+
+      // pH curve (emerald)
+      ctx.strokeStyle = '#34d399';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      hist.forEach((pt, idx) => {
+        const xv = useVol ? pt.ml : pt.t;
+        const px = padX + ((xv - xMin) / (xMax - xMin)) * (w - padX * 2);
+        const py = h - padY - (Math.max(0, Math.min(14, pt.pH ?? 7)) / 14) * (h - padY * 2);
+        if (idx === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+
+      // Conductivity curve (sky blue)
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      hist.forEach((pt, idx) => {
+        const xv = useVol ? pt.ml : pt.t;
+        const px = padX + ((xv - xMin) / (xMax - xMin)) * (w - padX * 2);
+        const py = h - padY - ((pt.kappa || 0) / maxK) * (h - padY * 2);
+        if (idx === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    } else if (item.kind === 'colorimeter') {
+      const tMin = hist[0].t;
+      const tMax = Math.max(tMin + 0.2, hist[hist.length - 1].t);
+      const maxA = Math.max(0.2, ...hist.map((p) => p.A || 0));
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      hist.forEach((pt, idx) => {
+        const px = padX + ((pt.t - tMin) / (tMax - tMin)) * (w - padX * 2);
+        const py = h - padY - ((pt.A || 0) / maxA) * (h - padY * 2);
+        if (idx === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
     }
   }
 

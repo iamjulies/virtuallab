@@ -791,6 +791,35 @@ export class LabSimulation {
         contactLabel: '',
         tiltAngle: 0,
       });
+    } else if (spec.kind === 'ph_conductometer') {
+      Object.assign(base, {
+        contactVesselId: null,
+        contactLabel: '',
+        measuredPH: null,
+        measuredConductivity: null,
+        history: [],
+        tiltAngle: 0,
+      });
+    } else if (spec.kind === 'colorimeter') {
+      Object.assign(base, {
+        contactVesselId: null,
+        contactLabel: '',
+        wavelengthNm: 525,
+        measuredAbsorbance: 0,
+        measuredTransmittance: 100,
+        history: [],
+        tiltAngle: 0,
+      });
+    } else if (spec.kind === 'tlc_plate') {
+      Object.assign(base, {
+        contactVesselId: null,
+        contactLabel: '',
+        solventFront: 0,
+        eluentStrength: 0.35,
+        spots: [],
+        isDeveloping: false,
+        tiltAngle: 0,
+      });
     }
 
     this.items.push(base);
@@ -3447,6 +3476,9 @@ export class LabSimulation {
       if (target) target.moles[spId] = (target.moles[spId] || 0) + d;
     }
     b.dispensedMl = (b.dispensedMl || 0) + actualMl;
+    if (target) {
+      target.buretteDeliveredMl = (target.buretteDeliveredMl || 0) + actualMl;
+    }
     const vis = computeSolutionVisuals(b.moles, liqL, computePH(b.moles, liqL, b.tempK), 2.0, b.phenBleachFrac || 0, b.phenIrrevFrac || 0);
     const tSpec = target ? APPARATUS[target.typeId] : null;
     const stopY = target && tSpec ? target.y - tSpec.height * 0.22 : SIM_BENCH_FLOOR_Y;

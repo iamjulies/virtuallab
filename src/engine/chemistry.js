@@ -7416,6 +7416,21 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   C17H35COO_aq: { C17H35COOH_s: 1 },
   Peptide_aq: { Peptide_s: 1 },
   CuPeptide_aq: { CuOH2_s: 1, Peptide_s: 2 },
+  C2H5COO_aq: { C2H5COOH_l: 1 },
+  C15H31COO_aq: { C15H31COOH_s: 1 },
+  CH3NH2_aq: { CH3NH2_g: 1 },
+  CH3NH3_aq: { CH3NH2_g: 1, H_aq: 1 },
+  C6H5NH3_aq: { C6H5NH2_l: 1, H_aq: 1 },
+  Glycine_aq: { Glycine_s: 1 },
+  Glycinium_aq: { Glycine_s: 1, H_aq: 1 },
+  Glycinate_aq: { Glycine_s: 1 },
+  Glucose_aq: { Glucose_s: 1 },
+  Gluconate_aq: { Glucose_s: 1 },
+  CuGlc2_aq: { CuOH2_s: 1, Glucose_s: 2 },
+  Sucrose_aq: { Sucrose_s: 1 },
+  CuSuc2_aq: { CuOH2_s: 1, Sucrose_s: 2 },
+  Starch_aq: { Starch_s: 1 },
+  StarchI2_aq: { Starch_s: 1, I2_s: 1 },
 };
 
 export const DRY_SALT_PAIRINGS = [

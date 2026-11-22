@@ -802,6 +802,45 @@ export const APPARATUS = {
     height: 22,
     fragilityDropPx: Infinity,
   },
+  ph_conductometer: {
+    id: 'ph_conductometer',
+    kind: 'ph_conductometer',
+    category: 'titration',
+    breakable: false,
+    flippable: false,
+    i18nKey: 'eq_ph_conductometer',
+    isoStandard: 'Digital pH / EC Dual Probe (pH 0–14 · mS/cm)',
+    materialSpec: 'Glass pH Electrode + Pt Conductivity Cell',
+    width: 54,
+    height: 158,
+    fragilityDropPx: Infinity,
+  },
+  colorimeter: {
+    id: 'colorimeter',
+    kind: 'colorimeter',
+    category: 'titration',
+    breakable: false,
+    flippable: false,
+    i18nKey: 'eq_colorimeter',
+    isoStandard: 'LED Beer–Lambert Colorimeter (420–635 nm, b=1 cm)',
+    materialSpec: 'Optical Dip Probe + Photodiode Array',
+    width: 64,
+    height: 152,
+    fragilityDropPx: Infinity,
+  },
+  tlc_plate: {
+    id: 'tlc_plate',
+    kind: 'tlc_plate',
+    category: 'titration',
+    breakable: false,
+    flippable: false,
+    i18nKey: 'eq_tlc_plate',
+    isoStandard: 'Silica Gel 60 F254 TLC Plate (2.5×7.5 cm)',
+    materialSpec: 'UV-254 Fluorescent Silica Aluminum Backing',
+    width: 42,
+    height: 112,
+    fragilityDropPx: Infinity,
+  },
 
   // --- Group 4: Mechanics & Surface Area ---
   mortar_pestle: {
@@ -1170,6 +1209,9 @@ export const APPARATUS_ORDER = [
   'flame_loop',
   'litmus_paper',
   'ph_strip',
+  'ph_conductometer',
+  'colorimeter',
+  'tlc_plate',
   'phen_cotton',
   'stir_bar',
   'dc_power',
@@ -1304,6 +1346,12 @@ export function getProbeTipPos(item) {
   }
   if (item.kind === 'thermometer') {
     const tip = rotatePointAround(item.x, item.y + 68, item.x, item.y, item.tiltAngle || 0);
+    return { x: tip.x, y: tip.y, dir };
+  }
+  if (item.kind === 'ph_conductometer' || item.kind === 'colorimeter' || item.kind === 'tlc_plate') {
+    const spec = APPARATUS[item.typeId];
+    const halfH = (spec?.height || 140) * 0.5 - 6;
+    const tip = rotatePointAround(item.x, item.y + halfH, item.x, item.y, item.tiltAngle || 0);
     return { x: tip.x, y: tip.y, dir };
   }
   return { x: item.x, y: item.y, dir };

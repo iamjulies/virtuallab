@@ -5,7 +5,7 @@
 export const I18N = {
   vi: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.6',
+    appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.7',
     toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
     quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
     quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -825,10 +825,18 @@ export const I18N = {
     sepDropHint: 'Kéo phễu lên cổ bình đun để nhỏ giọt (hệ kín/hở), hoặc mở khóa xả riêng lớp dưới vào bình hứng.',
     logSepFunnelShake: '🫧 Đã lắc trộn Phễu chiết quả lê và để lắng tách lớp theo tỉ trọng pha.',
     logSepFunnelInterface: '⏹️ Khóa Phễu chiết quả lê tự động đóng gọn đúng ranh giới 2 lớp lỏng!',
+    eq_ph_conductometer: 'Đầu dò pH & Độ dẫn điện',
+    eq_ph_conductometer_desc: 'Đo pH điện tử, độ dẫn điện (mS/cm) và tự động vẽ đường cong chuẩn độ theo thời gian thực',
+    eq_colorimeter: 'Máy đo quang UV-Vis',
+    eq_colorimeter_desc: 'Đo độ hấp thụ quang A (Định luật Beer–Lambert) ở 420–635 nm để theo dõi động học mất màu',
+    eq_tlc_plate: 'Bản mỏng Sắc ký lớp mỏng (TLC)',
+    eq_tlc_plate_desc: 'Bản silica gel F254 nhúng vào dung môi hữu cơ để tách và xác định giá trị Rf (phát sáng dưới đèn UV)',
+    actionResetCurve: '🗑️ Xóa đường đồ thị',
+    actionWashTlcPlate: '🧼 Rửa / Làm sạch bản mỏng TLC',
   },
   en: {
     appTitle: 'ChemLab Studio',
-    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.6',
+    appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.7',
     toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
     quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
     quickPresetsHoldTitle: 'Quick Setup Presets (Hold F · Release to close)',
@@ -1640,5 +1648,13 @@ export const I18N = {
     sepDropHint: 'Mount on a flask neck for dropwise addition (open/closed system), or drain the settled bottom phase into a receiver.',
     logSepFunnelShake: '🫧 Shook Pear-Shaped Separatory Funnel and settled density-stratified liquid phases.',
     logSepFunnelInterface: '⏹️ Separatory funnel stopcock auto-closed cleanly at the liquid-liquid interface!',
+    eq_ph_conductometer: 'Digital pH / Conductivity Meter',
+    eq_ph_conductometer_desc: 'Dual probe measuring real-time pH, ionic conductivity (mS/cm), and plotting live titration curves',
+    eq_colorimeter: 'Beer–Lambert Colorimeter',
+    eq_colorimeter_desc: 'Optical dip probe measuring absorbance (420–635 nm) and reaction kinetics over time',
+    eq_tlc_plate: 'TLC Silica Plate',
+    eq_tlc_plate_desc: 'Silica gel 60 F254 chromatography plate separating organic analytes by Rf (UV-254 active)',
+    actionResetCurve: '🗑️ Clear Curve Data',
+    actionWashTlcPlate: '🧼 Clean / Reset TLC Plate',
   }
 };

@@ -11,6 +11,7 @@ import {
 import { computeHeatCapacityJK } from './thermodynamics.js';
 import { stepVesselChemistry } from './chemistry.js';
 import { NON_STEAM_GASES, routeGasPacketToTarget } from './gasNetwork.js';
+import { stepAnalyticalInstruments } from './analyticalTools.js';
 
 const UNIVERSAL_PH_COLORS = [
   '#dc2626', // 0-1
@@ -1413,6 +1414,8 @@ export function stepApparatusTools(sim, dt, realDeltaSec) {
       stepIronSpoon(sim, it, dt);
     } else if (it.kind === 'thermometer') {
       checkThermometerInteractions(sim, it, dt);
+    } else if (it.kind === 'ph_conductometer' || it.kind === 'colorimeter' || it.kind === 'tlc_plate') {
+      stepAnalyticalInstruments(sim, it, realDeltaSec);
     } else if (it.kind === 'vessel') {
       if ((it.magStirRpm || 0) > 0 && it.hasStirBar && !it.isFrozenSolid) {
         it.stirTimer = Math.max(it.stirTimer || 0, 0.35);

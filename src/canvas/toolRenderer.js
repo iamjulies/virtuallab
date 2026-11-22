@@ -1848,6 +1848,206 @@ export function renderThermometer(ctx, item, isSelected, isDark, langCode = 'vi'
   ctx.restore();
 }
 
+export function renderPhConductometer(ctx, item, isSelected, isDark, langCode = 'vi') {
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const spec = APPARATUS.ph_conductometer || { width: 54, height: 158 };
+  const h = spec.height;
+  const topY = y - h / 2 + 4;
+  const headH = 44;
+  const stemBot = y + h / 2 - 6;
+
+  ctx.save();
+  drawSelectionGlow(ctx, isSelected, false);
+
+  // Digital handheld LCD head
+  ctx.fillStyle = isDark ? '#1e293b' : '#f1f5f9';
+  ctx.strokeStyle = isSelected ? '#3b82f6' : '#475569';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.roundRect(x - 25, topY, 50, headH, 7);
+  ctx.fill();
+  ctx.stroke();
+
+  // Backlit screen
+  ctx.fillStyle = item.contactVesselId ? '#064e3b' : '#0f172a';
+  ctx.beginPath();
+  ctx.roundRect(x - 21, topY + 6, 42, 30, 4);
+  ctx.fill();
+
+  const phStr = item.measuredPH != null ? `pH ${item.measuredPH.toFixed(2)}` : 'pH --.-';
+  const ecStr = item.measuredConductivity != null ? `${item.measuredConductivity.toFixed(1)} mS` : '-- mS';
+  ctx.fillStyle = '#34d399';
+  ctx.font = '700 9.5px ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(phStr, x, topY + 19);
+  ctx.fillStyle = '#38bdf8';
+  ctx.font = '600 8.5px ui-monospace, monospace';
+  ctx.fillText(ecStr, x, topY + 31);
+
+  // Glass electrode shaft & platinum sensing bulb
+  ctx.fillStyle = isDark ? 'rgba(226, 232, 240, 0.16)' : 'rgba(255, 255, 255, 0.85)';
+  ctx.strokeStyle = isSelected ? '#3b82f6' : pal.glassStroke;
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.roundRect(x - 4.5, topY + headH, 9, stemBot - (topY + headH), 4);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = '#0ea5e9';
+  ctx.beginPath();
+  ctx.arc(x, stemBot, 5.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  drawLabelPill(ctx, x, topY - 10, `${item.label} · ${phStr}`, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : pal.badgeBorder,
+    font: '700 9.5px ui-monospace, monospace',
+    height: 16,
+    itemId: item.id,
+  });
+  ctx.restore();
+}
+
+export function renderColorimeter(ctx, item, isSelected, isDark) {
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const spec = APPARATUS.colorimeter || { width: 64, height: 152 };
+  const h = spec.height;
+  const topY = y - h / 2 + 4;
+  const bodyH = 48;
+  const tipBot = y + h / 2 - 6;
+  const wl = item.wavelengthNm || 525;
+  const ledCol = wl <= 440 ? '#818cf8' : wl <= 490 ? '#38bdf8' : wl <= 550 ? '#22c55e' : wl <= 605 ? '#f59e0b' : '#ef4444';
+
+  ctx.save();
+  drawSelectionGlow(ctx, isSelected, false);
+
+  // Compact Beer-Lambert instrument body
+  ctx.fillStyle = isDark ? '#1e293b' : '#e2e8f0';
+  ctx.strokeStyle = isSelected ? '#3b82f6' : '#475569';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.roundRect(x - 29, topY, 58, bodyH, 8);
+  ctx.fill();
+  ctx.stroke();
+
+  // Digital screen
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath();
+  ctx.roundRect(x - 24, topY + 6, 48, 34, 4);
+  ctx.fill();
+
+  const aVal = item.measuredAbsorbance ?? 0;
+  ctx.fillStyle = ledCol;
+  ctx.font = '700 8.5px ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`λ=${wl}nm`, x, topY + 17);
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = '700 10px ui-monospace, monospace';
+  ctx.fillText(`A=${aVal.toFixed(2)}`, x, topY + 32);
+
+  // Fiber-optic dip probe & cuvette slot
+  ctx.fillStyle = '#334155';
+  ctx.strokeStyle = isSelected ? '#3b82f6' : '#64748b';
+  ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  ctx.roundRect(x - 5, topY + bodyH, 10, tipBot - (topY + bodyH) - 10, 3);
+  ctx.fill();
+  ctx.stroke();
+
+  // Open U-shaped optical cuvette path (b = 1 cm) illuminated by LED beam
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(x - 9, tipBot - 14, 18, 14);
+  ctx.fillStyle = ledCol;
+  ctx.globalAlpha = 0.72;
+  ctx.fillRect(x - 5, tipBot - 8, 10, 3);
+  ctx.globalAlpha = 1;
+
+  drawLabelPill(ctx, x, topY - 10, `${item.label} · A=${aVal.toFixed(2)}`, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : ledCol,
+    font: '700 9.5px ui-monospace, monospace',
+    height: 16,
+    itemId: item.id,
+  });
+  ctx.restore();
+}
+
+export function renderTlcPlate(ctx, item, isSelected, isDark, uvLight = false) {
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const spec = APPARATUS.tlc_plate || { width: 42, height: 112 };
+  const pw = 34;
+  const ph = spec.height - 8;
+  const left = x - pw / 2;
+  const topY = y - ph / 2;
+  const botY = y + ph / 2;
+  const originY = botY - 14;
+  const maxRun = ph - 24;
+  const sfFrac = Math.max(0, Math.min(1, item.solventFront || 0));
+  const sfY = originY - sfFrac * maxRun;
+
+  ctx.save();
+  drawSelectionGlow(ctx, isSelected, false);
+
+  // Silica gel F254 plate background (fluoresces green under UV-254 light)
+  ctx.fillStyle = uvLight ? '#16a34a' : '#f8fafc';
+  ctx.strokeStyle = isSelected ? '#3b82f6' : uvLight ? '#4ade80' : '#94a3b8';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(left, topY, pw, ph, 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Capillary solvent rise shading from origin up to solvent front
+  if (sfFrac > 0.02) {
+    ctx.fillStyle = uvLight ? 'rgba(20, 83, 45, 0.35)' : 'rgba(186, 230, 253, 0.42)';
+    ctx.fillRect(left + 1, sfY, pw - 2, botY - sfY - 1);
+    ctx.strokeStyle = uvLight ? '#86efac' : '#0284c7';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 2]);
+    ctx.beginPath();
+    ctx.moveTo(left + 2, sfY);
+    ctx.lineTo(left + pw - 2, sfY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Pencil baseline
+  ctx.strokeStyle = uvLight ? '#dcfce7' : '#64748b';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(left + 3, originY);
+  ctx.lineTo(left + pw - 3, originY);
+  ctx.stroke();
+
+  // Separated chromatographic analyte spots (y = originY - min(rf, sfFrac) * maxRun)
+  const spots = item.spots || [];
+  spots.forEach((sp, idx) => {
+    const laneCount = Math.min(3, Math.max(1, spots.length));
+    const laneX = left + 8 + ((idx % laneCount) / Math.max(1, laneCount - 1)) * (pw - 16);
+    const curRf = Math.min(sp.rf, sfFrac);
+    const sy = originY - curRf * maxRun;
+    ctx.fillStyle = uvLight && sp.uvActive ? '#052e16' : sp.color || '#38bdf8';
+    ctx.globalAlpha = uvLight && sp.uvActive ? 0.88 : 0.78;
+    ctx.beginPath();
+    ctx.ellipse(spots.length === 1 ? x : laneX, sy, 3.6, 2.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  drawLabelPill(ctx, x, topY - 10, `${item.label} · TLC (${spots.length})`, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : uvLight ? '#22c55e' : pal.badgeBorder,
+    font: '700 9.5px ui-monospace, monospace',
+    height: 16,
+    itemId: item.id,
+  });
+  ctx.restore();
+}
+
 export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFromVessel = null) {
   const pal = getThemePalette(isDark);
   const { x, y } = item;

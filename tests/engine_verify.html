@@ -2479,7 +2479,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.6';
+      const expectedBuild = 'virlab_beta_v5+build.7';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2543,10 +2543,13 @@
         Boolean(I18N.vi.reg_methanol && I18N.en.reg_methanol) &&
         Boolean(I18N.vi.reg_glycerol && I18N.en.reg_glycerol) &&
         Boolean(I18N.vi.reg_triolein && I18N.en.reg_triolein) &&
-        Boolean(I18N.vi.stopperModeDualHole && I18N.en.stopperModeDualHole);
+        Boolean(I18N.vi.stopperModeDualHole && I18N.en.stopperModeDualHole) &&
+        Boolean(I18N.vi.eq_ph_conductometer && I18N.en.eq_ph_conductometer) &&
+        Boolean(I18N.vi.eq_colorimeter && I18N.en.eq_colorimeter) &&
+        Boolean(I18N.vi.eq_tlc_plate && I18N.en.eq_tlc_plate);
       assert(
-        'Build virlab_beta_v5+build.4 parity: All 40 apparatus & 34 starter reagents translated in VI/EN, Prompt 64 Funnel Stem/Reflux Alignment, HCHO/HCOOH Removal & MeOH/Glycerol Liquid Rendering parity enforced',
-        APPARATUS_ORDER.length === 40 &&
+        'Build virlab_beta_v5+build.7 parity: All 43 apparatus & 34 starter reagents translated in VI/EN, Analytical Trio + Organic Ecosystem parity enforced',
+        APPARATUS_ORDER.length === 43 &&
           STARTER_REAGENTS.length === 34 &&
           !APPARATUS.clay_triangle &&
           !APPARATUS.crucible_tongs &&
