@@ -10,6 +10,7 @@
 import { CONSTANTS } from '../data/constants.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { SPECIES } from '../data/species.js';
+import { computePH } from './equilibrium.js';
 
 /**
  * Resolve appropriate effective reaction volume (L) for general/reversible organic steps,
@@ -330,15 +331,50 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
   const moles = vessel.moles;
   const T = vessel.tempK || CONSTANTS.T_STD_K;
   const hasWater = (moles.H2O_l || 0) > 1e-7 && (liquidVolL || 0) > 1e-6;
+  const gasProduced = options.gasProduced || null;
   let heatJ = 0;
 
-  // Dissociate Glucose Cu(II) chelate back above 70 °C so warm Cu2O redox proceeds cleanly
-  if (T >= 343.15 && (moles.CuGlc2_aq || 0) > 1e-8) {
-    const dRel = moles.CuGlc2_aq * (1 - Math.exp(-2.8 * dt));
-    moles.CuGlc2_aq = Math.max(0, moles.CuGlc2_aq - dRel);
-    if (moles.CuGlc2_aq < 1e-13) delete moles.CuGlc2_aq;
-    moles.CuOH2_s = (moles.CuOH2_s || 0) + dRel;
-    moles.Glucose_aq = (moles.Glucose_aq || 0) + 2 * dRel;
+  // Dissociate polyol Cu(II) chelates above 70 °C so warm Cu2O redox proceeds cleanly
+  for (const [chelateId, sugarId] of [
+    ['CuGlc2_aq', 'Glucose_aq'],
+    ['CuFrc2_aq', 'Fructose_aq'],
+    ['CuMalt2_aq', 'Maltose_aq'],
+  ]) {
+    if (T >= 343.15 && (moles[chelateId] || 0) > 1e-8) {
+      const dRel = moles[chelateId] * (1 - Math.exp(-2.8 * dt));
+      moles[chelateId] = Math.max(0, moles[chelateId] - dRel);
+      if (moles[chelateId] < 1e-13) delete moles[chelateId];
+      moles.CuOH2_s = (moles.CuOH2_s || 0) + dRel;
+      moles[sugarId] = (moles[sugarId] || 0) + 2 * dRel;
+    }
+  }
+
+  // Reversible alkaline Glucose <-> Fructose isomerization & Fructose reducing tests (no Br2 oxidation)
+  if (hasWater && (moles.OH_aq || 0) > 1e-4) {
+    const nGlc = moles.Glucose_aq || 0;
+    const nFrc = moles.Fructose_aq || 0;
+    if (nGlc > 1e-9 || nFrc > 1e-9) {
+      const eqFrc = (nGlc + nFrc) * 0.42;
+      const diff = eqFrc - nFrc;
+      const kIso = T >= 323.15 ? 1.4 : 0.75;
+      const dIso = Math.sign(diff) * Math.min(Math.abs(diff), 0.35 * (nGlc + nFrc)) * (1 - Math.exp(-kIso * dt));
+      if (Math.abs(dIso) > 1e-11) {
+        moles.Glucose_aq = Math.max(0, nGlc - dIso);
+        moles.Fructose_aq = Math.max(0, nFrc + dIso);
+        if (moles.Glucose_aq < 1e-13) delete moles.Glucose_aq;
+        if (moles.Fructose_aq < 1e-13) delete moles.Fructose_aq;
+        activeReactions.push({
+          id: 'glucose_fructose_isomerize',
+          equation: 'Glucose ⇌ Fructose (OH⁻)',
+          nameVi: 'Đồng phân hóa thuận nghịch Glucose ⇌ Fructose trong kiềm',
+          nameEn: 'Alkaline Glucose ⇌ Fructose isomerization (Lobry de Bruyn)',
+          descVi: 'Trong môi trường kiềm, Fructose chuyển hóa một phần sang Glucose nên vẫn tráng bạc và khử Cu(OH)₂.',
+          descEn: 'In alkaline medium, Fructose tautomerizes to Glucose giving positive Tollens & Fehling tests.',
+          rateMolS: Math.abs(dIso) / dt,
+          dXi: Math.abs(dIso),
+        });
+      }
+    }
   }
 
   for (const spId of Object.keys(moles)) {
@@ -418,8 +454,8 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
         });
       }
     }
-    // 3. Property-driven Polyol Cu(OH)2 room-T azure chelation (hasVicinalDiol: Glucose, Sucrose)
-    const polyolMap = { Glucose_aq: 'CuGlc2_aq', Sucrose_aq: 'CuSuc2_aq' };
+    // 3. Property-driven Polyol Cu(OH)2 room-T azure chelation (hasVicinalDiol: Glucose, Fructose, Maltose, Sucrose)
+    const polyolMap = { Glucose_aq: 'CuGlc2_aq', Fructose_aq: 'CuFrc2_aq', Maltose_aq: 'CuMalt2_aq', Sucrose_aq: 'CuSuc2_aq' };
     if (fg.hasVicinalDiol && !fg.legacyHandled && hasWater && polyolMap[spId] && (moles.CuOH2_s || 0) > 1e-8 && (moles.OH_aq || 0) > 1e-6 && T < 343.15) {
       const chelateId = polyolMap[spId];
       const dPoly = Math.min(moles.CuOH2_s, (moles[spId] || 0) / 2) * (1 - Math.exp(-1.9 * dt));
@@ -443,19 +479,36 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
       }
     }
 
-    // Dissociate Glucose Cu(II) chelate back above 70 °C so warm Cu2O redox proceeds cleanly
-    if (spId === 'CuGlc2_aq' && T >= 343.15 && (moles.CuGlc2_aq || 0) > 1e-8) {
-      const dRel = moles.CuGlc2_aq * (1 - Math.exp(-2.8 * dt));
-      moles.CuGlc2_aq = Math.max(0, moles.CuGlc2_aq - dRel);
-      if (moles.CuGlc2_aq < 1e-13) delete moles.CuGlc2_aq;
-      moles.CuOH2_s = (moles.CuOH2_s || 0) + dRel;
-      moles.Glucose_aq = (moles.Glucose_aq || 0) + 2 * dRel;
-    }
+    // Dissociate polyol Cu(II) chelates at warm temperature (duplicate-safe guard skipped if already handled above)
 
-    // 4. Property-driven Aldehyde oxidation: Tollens Ag(NH3)2+ -> Ag mirror & Hot Cu(OH)2 -> Cu2O brick-red
-    const aldProductMap = { Glucose_aq: 'Gluconate_aq', C2H5CHO_l: 'C2H5COO_aq', C6H5CHO_l: 'C6H5COO_aq' };
+    // 4. Property-driven Aldehyde & Reducing Sugar oxidation: Tollens Ag(NH3)2+, Hot Cu(OH)2 -> Cu2O, & Glucose + Br2(aq)
+    const aldProductMap = { Glucose_aq: 'Gluconate_aq', Maltose_aq: 'Gluconate_aq', C2H5CHO_l: 'C2H5COO_aq', C6H5CHO_l: 'C6H5COO_aq' };
     if (fg.hasAldehydeGroup && !fg.legacyHandled && aldProductMap[spId]) {
       const prodSalt = aldProductMap[spId];
+      // 4c. Aqueous Bromine oxidation (Glucose/Maltose decolorizes Br2(aq), whereas Fructose does NOT!)
+      if (hasWater && (moles.Br2_aq || 0) > 1e-8 && !fg.noBr2Oxidation && (moles[spId] || 0) > 1e-9) {
+        const dBrOx = Math.min(moles[spId], moles.Br2_aq) * (1 - Math.exp(-0.95 * dt));
+        if (dBrOx > 1e-11) {
+          moles[spId] = Math.max(0, moles[spId] - dBrOx);
+          if (moles[spId] < 1e-13) delete moles[spId];
+          moles.Br2_aq = Math.max(0, moles.Br2_aq - dBrOx);
+          if (moles.Br2_aq < 1e-13) delete moles.Br2_aq;
+          moles[prodSalt] = (moles[prodSalt] || 0) + dBrOx;
+          moles.H_aq = (moles.H_aq || 0) + 2 * dBrOx;
+          moles.Br_aq = (moles.Br_aq || 0) + 2 * dBrOx;
+          heatJ += dBrOx * 62000;
+          activeReactions.push({
+            id: `ald_br2_${spId}`,
+            equation: `${sp.formula} + Br₂(aq) + H₂O → ${SPECIES[prodSalt].formula} + 2H⁺ + 2Br⁻`,
+            nameVi: `${sp.name} làm mất màu nước Bromine`,
+            nameEn: `${sp.name} decolorizes aqueous Bromine water`,
+            descVi: 'Nhóm –CHO bị nước Bromine oxi hóa (dùng phân biệt Glucose với Fructose không phản ứng).',
+            descEn: 'Aldehyde –CHO reduces aqueous Bromine (distinguishing Glucose from unreactive Fructose).',
+            rateMolS: dBrOx / dt,
+            dXi: dBrOx,
+          });
+        }
+      }
       const spCur = moles[spId] || 0;
       // 4a. Tollens silver mirror reaction
       if (hasWater && (moles.AgNH3_2_aq || 0) > 1e-8 && (moles.OH_aq || 0) > 1e-7 && T >= 295 && spCur > 1e-9) {
@@ -518,6 +571,456 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
     }
   }
 
+  // ==================== Prompt 77: Cellulose, Amine/Diazonium, Amino Acids, Protein & Bell-Curve Enzymes ====================
+  const phCur = hasWater ? computePH(moles, liquidVolL, T) ?? 7.0 : 7.0;
+  const effV = Math.max(1e-5, liquidVolL || 0);
+  const cHCur = (moles.H_aq || 0) / effV;
+
+  // 5. Mild acid hydrolysis of Starch -> Maltose (323–348 K or mild [H+] < 0.35 M)
+  if (hasWater && (moles.Starch_aq || 0) > 1e-8 && (moles.H_aq || 0) > 1e-4 && cHCur < 0.35 && T >= 323.15 && T < 348.15) {
+    const dMalt = Math.min(moles.Starch_aq / 2, moles.H2O_l) * (1 - Math.exp(-0.22 * dt));
+    if (dMalt > 1e-11) {
+      moles.Starch_aq = Math.max(0, moles.Starch_aq - 2 * dMalt);
+      if (moles.Starch_aq < 1e-13) delete moles.Starch_aq;
+      moles.H2O_l = Math.max(0, moles.H2O_l - dMalt);
+      moles.Maltose_aq = (moles.Maltose_aq || 0) + dMalt;
+      activeReactions.push({
+        id: 'starch_mild_maltose',
+        equation: '2 (C₆H₁₀O₅)ₙ + n H₂O —(H⁺ loãng)→ n C₁₂H₂₂O₁₁ (Maltose)',
+        nameVi: 'Thủy phân không hoàn toàn Tinh bột tạo Maltose',
+        nameEn: 'Partial Starch hydrolysis yielding Maltose',
+        descVi: 'Thủy phân nhẹ tinh bột thu được disaccharide Maltose có tính khử.',
+        descEn: 'Mild hydrolysis cleaves Starch chains into reducing disaccharide Maltose.',
+        rateMolS: dMalt / dt,
+        dXi: dMalt,
+      });
+    }
+  }
+
+  // 6. Cellulose reactions: Schweizer dissolution, Strong acid -> Glucose, Conc. HNO3/H2SO4 -> Cellulose trinitrate
+  if ((moles.Cellulose_s || 0) > 1e-8) {
+    if (hasWater && (moles.CuNH3_4_2_aq || 0) > 1e-7 && (moles.OH_aq || 0) > 1e-7) {
+      const dSchw = Math.min(moles.Cellulose_s, moles.CuNH3_4_2_aq, moles.OH_aq / 2) * (1 - Math.exp(-0.95 * dt));
+      if (dSchw > 1e-11) {
+        moles.Cellulose_s = Math.max(0, moles.Cellulose_s - dSchw);
+        if (moles.Cellulose_s < 1e-13) delete moles.Cellulose_s;
+        moles.CuNH3_4_2_aq = Math.max(0, moles.CuNH3_4_2_aq - dSchw);
+        moles.OH_aq = Math.max(0, moles.OH_aq - 2 * dSchw);
+        if (moles.CuNH3_4_2_aq < 1e-13) delete moles.CuNH3_4_2_aq;
+        if (moles.OH_aq < 1e-13) delete moles.OH_aq;
+        moles.CuCellulose_aq = (moles.CuCellulose_aq || 0) + dSchw;
+        moles.H2O_l = (moles.H2O_l || 0) + 2 * dSchw;
+        heatJ += dSchw * 22000;
+        activeReactions.push({
+          id: 'cellulose_schweizer',
+          equation: 'Cellulose + [Cu(NH₃)₄](OH)₂ → [Cu(NH₃)₄](Cellulose) (xanh thẫm)',
+          nameVi: 'Hòa tan Cellulose trong nước Schweizer tạo dung dịch xanh thẫm nhớt',
+          nameEn: 'Cellulose dissolution in Schweizer reagent ([Cu(NH₃)₄](OH)₂)',
+          descVi: 'Cellulose không tan trong nước thường nhưng tan đặc trưng trong nước Schweizer.',
+          descEn: 'Schweizer reagent dissolves insoluble Cellulose into a viscous deep-blue complex.',
+          rateMolS: dSchw / dt,
+          dXi: dSchw,
+        });
+      }
+    }
+    if (hasWater && cHCur >= 0.4 && T >= 363.15 && !((moles.NO3_aq || 0) > 0.05 && (moles.H2SO4_l || 0) > 0.02)) {
+      const dCellHyd = Math.min(moles.Cellulose_s, moles.H2O_l) * (1 - Math.exp(-0.28 * dt));
+      if (dCellHyd > 1e-11) {
+        moles.Cellulose_s = Math.max(0, moles.Cellulose_s - dCellHyd);
+        moles.H2O_l = Math.max(0, moles.H2O_l - dCellHyd);
+        if (moles.Cellulose_s < 1e-13) delete moles.Cellulose_s;
+        moles.Glucose_aq = (moles.Glucose_aq || 0) + dCellHyd;
+        activeReactions.push({
+          id: 'cellulose_acid_glucose',
+          equation: '(C₆H₁₀O₅)ₙ + n H₂O —(H⁺ đặc, t°)→ n C₆H₁₂O₆ (Glucose)',
+          nameVi: 'Thủy phân Cellulose trong acid mạnh đun nóng → Glucose',
+          nameEn: 'Hot strong-acid hydrolysis of Cellulose → Glucose',
+          descVi: 'Đun nóng Cellulose với acid mạnh H₂SO₄/HCl cắt mạch hoàn toàn thành Glucose.',
+          descEn: 'Hot mineral acid completely hydrolyzes Cellulose polymer into Glucose.',
+          rateMolS: dCellHyd / dt,
+          dXi: dCellHyd,
+        });
+      }
+    }
+    const nNitCell = (moles.HNO3_l || 0) > 1e-7 ? moles.HNO3_l : (moles.NO3_aq || 0) > 0.02 && cHCur >= 1.5 ? Math.min(moles.NO3_aq, moles.H_aq) : 0;
+    const hasConcH2SO4Cell = (moles.H2SO4_l || 0) > 1e-6 || (moles.HSO4_aq || 0) > 0.01;
+    if (nNitCell > 1e-6 && hasConcH2SO4Cell && (moles.Cellulose_s || 0) > 1e-9) {
+      const dNC = Math.min(moles.Cellulose_s, nNitCell / 3) * (1 - Math.exp(-1.25 * dt));
+      if (dNC > 1e-11) {
+        moles.Cellulose_s = Math.max(0, moles.Cellulose_s - dNC);
+        if (moles.Cellulose_s < 1e-13) delete moles.Cellulose_s;
+        if ((moles.HNO3_l || 0) >= 3 * dNC) {
+          moles.HNO3_l = Math.max(0, moles.HNO3_l - 3 * dNC);
+          if (moles.HNO3_l < 1e-13) delete moles.HNO3_l;
+        } else {
+          moles.NO3_aq = Math.max(0, moles.NO3_aq - 3 * dNC);
+          moles.H_aq = Math.max(0, moles.H_aq - 3 * dNC);
+          if (moles.NO3_aq < 1e-13) delete moles.NO3_aq;
+          if (moles.H_aq < 1e-13) delete moles.H_aq;
+        }
+        moles.CelluloseNitrate_s = (moles.CelluloseNitrate_s || 0) + dNC;
+        moles.H2O_l = (moles.H2O_l || 0) + 3 * dNC;
+        heatJ += dNC * 95000;
+        activeReactions.push({
+          id: 'cellulose_trinitrate',
+          equation: '[C₆H₇O₂(OH)₃]ₙ + 3n HNO₃ —(H₂SO₄ đặc)→ [C₆H₇O₂(ONO₂)₃]ₙ + 3n H₂O',
+          nameVi: 'Nitrat hóa Cellulose tạo Cellulose trinitrate (bông thuốc súng)',
+          nameEn: 'Nitration of Cellulose into Cellulose trinitrate (Guncotton)',
+          descVi: 'Hỗn hợp HNO₃/H₂SO₄ đặc ester hóa 3 nhóm –OH tạo Cellulose trinitrate dễ cháy nổ.',
+          descEn: 'Mixed HNO₃/H₂SO₄ converts Cellulose into flammable Cellulose trinitrate.',
+          rateMolS: dNC / dt,
+          dXi: dNC,
+        });
+      }
+    }
+  }
+
+  // 7. Amine + HNO2 (NO2- + H+): CH3NH2 -> CH3OH + N2↑; Aniline @ 0-5 °C -> Diazonium vs >10 °C -> Phenol + N2↑; Azo coupling
+  if (hasWater && (moles.NO2_aq || 0) > 1e-7 && (moles.H_aq || 0) > 1e-7) {
+    const ch3Key = (moles.CH3NH2_aq || 0) > 1e-8 ? 'CH3NH2_aq' : (moles.CH3NH3_aq || 0) > 1e-8 ? 'CH3NH3_aq' : null;
+    if (ch3Key) {
+      const needH = ch3Key === 'CH3NH2_aq' ? 2 : 1;
+      const dAlip = Math.min(moles[ch3Key], moles.NO2_aq, moles.H_aq / needH) * (1 - Math.exp(-1.4 * dt));
+      if (dAlip > 1e-11) {
+        moles[ch3Key] = Math.max(0, moles[ch3Key] - dAlip);
+        moles.NO2_aq = Math.max(0, moles.NO2_aq - dAlip);
+        moles.H_aq = Math.max(0, moles.H_aq - needH * dAlip);
+        if (moles[ch3Key] < 1e-13) delete moles[ch3Key];
+        if (moles.NO2_aq < 1e-13) delete moles.NO2_aq;
+        if (moles.H_aq < 1e-13) delete moles.H_aq;
+        moles.CH3OH_l = (moles.CH3OH_l || 0) + dAlip;
+        moles.H2O_l = (moles.H2O_l || 0) + dAlip;
+        if (gasProduced) gasProduced.N2_g = (gasProduced.N2_g || 0) + dAlip;
+        else moles.N2_g = (moles.N2_g || 0) + dAlip;
+        heatJ += dAlip * 145000;
+        activeReactions.push({
+          id: 'ch3nh2_hno2_n2',
+          equation: 'CH₃NH₂ + HNO₂ → CH₃OH + N₂↑ + H₂O',
+          nameVi: 'Methylamine tác dụng HNO₂ sủi bọt khí N₂ không màu',
+          nameEn: 'Methylamine + HNO₂ → Methanol + N₂↑ + H₂O',
+          descVi: 'Amine béo phản ứng với HNO₂ (NaNO₂ + HCl) giải phóng ngay khí N₂ không màu.',
+          descEn: 'Aliphatic amine reacts with nitrous acid releasing colorless N₂ gas bubbles.',
+          rateMolS: dAlip / dt,
+          dXi: dAlip,
+          vigorousGas: true,
+        });
+      }
+    }
+
+    const anKey = (moles.C6H5NH3_aq || 0) > 1e-8 ? 'C6H5NH3_aq' : (moles.C6H5NH2_l || 0) > 1e-8 ? 'C6H5NH2_l' : null;
+    if (anKey && T <= 281.15) {
+      const needH = anKey === 'C6H5NH2_l' ? 2 : 1;
+      const dDiaz = Math.min(moles[anKey], moles.NO2_aq, moles.H_aq / needH) * (1 - Math.exp(-1.2 * dt));
+      if (dDiaz > 1e-11) {
+        moles[anKey] = Math.max(0, moles[anKey] - dDiaz);
+        moles.NO2_aq = Math.max(0, moles.NO2_aq - dDiaz);
+        moles.H_aq = Math.max(0, moles.H_aq - needH * dDiaz);
+        if (moles[anKey] < 1e-13) delete moles[anKey];
+        if (moles.NO2_aq < 1e-13) delete moles.NO2_aq;
+        if (moles.H_aq < 1e-13) delete moles.H_aq;
+        moles.C6H5N2Cl_aq = (moles.C6H5N2Cl_aq || 0) + dDiaz;
+        moles.H2O_l = (moles.H2O_l || 0) + 2 * dDiaz;
+        heatJ += dDiaz * 68000;
+        activeReactions.push({
+          id: 'aniline_diazotization_cold',
+          equation: 'C₆H₅NH₂ + HNO₂ + HCl —(0–5 °C)→ [C₆H₅N₂⁺]Cl⁻ + 2H₂O',
+          nameVi: 'Diazo hóa Aniline ở 0–5 °C tạo muối Benzenediazonium chloride',
+          nameEn: 'Cold (0–5 °C) diazotization of Aniline → Benzenediazonium chloride',
+          descVi: 'Làm lạnh bằng nước đá 0–5 °C ổn định muối diazonium [C₆H₅N₂⁺]Cl⁻ để thực hiện phản ứng ghép đôi phẩm azo.',
+          descEn: 'Ice-bath cooling (0–5 °C) stabilizes Benzenediazonium salt without N₂ decomposition.',
+          rateMolS: dDiaz / dt,
+          dXi: dDiaz,
+        });
+      }
+    } else if (anKey && T > 283.15) {
+      const needH = anKey === 'C6H5NH2_l' ? 2 : 1;
+      const dDiazHot = Math.min(moles[anKey], moles.NO2_aq, moles.H_aq / needH) * (1 - Math.exp(-1.1 * dt));
+      if (dDiazHot > 1e-11) {
+        moles[anKey] = Math.max(0, moles[anKey] - dDiazHot);
+        moles.NO2_aq = Math.max(0, moles.NO2_aq - dDiazHot);
+        moles.H_aq = Math.max(0, moles.H_aq - needH * dDiazHot);
+        if (moles[anKey] < 1e-13) delete moles[anKey];
+        if (moles.NO2_aq < 1e-13) delete moles.NO2_aq;
+        if (moles.H_aq < 1e-13) delete moles.H_aq;
+        moles.C6H5OH_s = (moles.C6H5OH_s || 0) + dDiazHot;
+        moles.H_aq = (moles.H_aq || 0) + (needH === 2 ? dDiazHot : 0);
+        if (gasProduced) gasProduced.N2_g = (gasProduced.N2_g || 0) + dDiazHot;
+        else moles.N2_g = (moles.N2_g || 0) + dDiazHot;
+        moles.H2O_l = (moles.H2O_l || 0) + dDiazHot;
+        heatJ += dDiazHot * 132000;
+        activeReactions.push({
+          id: 'aniline_hno2_warm_phenol',
+          equation: 'C₆H₅NH₂ + HNO₂ —(>10 °C)→ C₆H₅OH + N₂↑ + H₂O',
+          nameVi: 'Aniline + HNO₂ ở >10 °C phân hủy thành Phenol + N₂↑',
+          nameEn: 'Warm Aniline + HNO₂ (>10 °C) decomposes to Phenol + N₂↑',
+          descVi: 'Không giữ lạnh 0–5 °C làm muối diazonium kém bền phân hủy ngay thành Phenol và khí N₂↑.',
+          descEn: 'Above 10 °C, diazonium decomposes rapidly into Phenol and N₂ gas.',
+          rateMolS: dDiazHot / dt,
+          dXi: dDiazHot,
+          vigorousGas: true,
+        });
+      }
+    }
+  }
+
+  // Diazonium decomposition when warmed > 10 °C & Azo coupling with Phenol / Aniline
+  if ((moles.C6H5N2Cl_aq || 0) > 1e-8) {
+    const phenPartner = (moles.C6H5O_aq || 0) > 1e-8 ? 'C6H5O_aq' : (moles.C6H5OH_s || 0) > 1e-8 ? 'C6H5OH_s' : (moles.C6H5OH_l || 0) > 1e-8 ? 'C6H5OH_l' : (moles.C6H5NH2_l || 0) > 1e-8 ? 'C6H5NH2_l' : null;
+    if (phenPartner && (phenPartner === 'C6H5O_aq' || (moles.OH_aq || 0) > 1e-7 || phenPartner === 'C6H5NH2_l')) {
+      const dAzo = Math.min(moles.C6H5N2Cl_aq, moles[phenPartner]) * (1 - Math.exp(-2.6 * dt));
+      if (dAzo > 1e-11) {
+        moles.C6H5N2Cl_aq = Math.max(0, moles.C6H5N2Cl_aq - dAzo);
+        moles[phenPartner] = Math.max(0, moles[phenPartner] - dAzo);
+        if (moles.C6H5N2Cl_aq < 1e-13) delete moles.C6H5N2Cl_aq;
+        if (moles[phenPartner] < 1e-13) delete moles[phenPartner];
+        moles.AzoDye_s = (moles.AzoDye_s || 0) + dAzo;
+        moles.H_aq = (moles.H_aq || 0) + dAzo;
+        moles.Cl_aq = (moles.Cl_aq || 0) + dAzo;
+        heatJ += dAzo * 85000;
+        activeReactions.push({
+          id: 'azo_coupling_dye',
+          equation: '[C₆H₅N₂⁺]Cl⁻ + C₆H₅OH/C₆H₅NH₂ → Phẩm nhuộm Azo↓ (cam đỏ)',
+          nameVi: 'Ghép đôi diazo tạo phẩm nhuộm Azo màu cam đỏ rực rỡ',
+          nameEn: 'Azo coupling of Diazonium with Phenol/Aniline yielding vivid orange-red Azo dye↓',
+          descVi: 'Ion diazonium ghép đôi với vòng thơm giàu electron tạo kết tủa phẩm nhuộm Azo màu cam đỏ.',
+          descEn: 'Electrophilic aromatic azo coupling forms intensely colored orange-red Azo dye.',
+          rateMolS: dAzo / dt,
+          dXi: dAzo,
+        });
+      }
+    } else if (hasWater && T > 283.15 && (moles.C6H5N2Cl_aq || 0) > 1e-8) {
+      const kDec = 0.35 + Math.min(3.5, (T - 283.15) * 0.14);
+      const dDec = Math.min(moles.C6H5N2Cl_aq, moles.H2O_l) * (1 - Math.exp(-kDec * dt));
+      if (dDec > 1e-11) {
+        moles.C6H5N2Cl_aq = Math.max(0, moles.C6H5N2Cl_aq - dDec);
+        moles.H2O_l = Math.max(0, moles.H2O_l - dDec);
+        if (moles.C6H5N2Cl_aq < 1e-13) delete moles.C6H5N2Cl_aq;
+        moles.C6H5OH_s = (moles.C6H5OH_s || 0) + dDec;
+        moles.H_aq = (moles.H_aq || 0) + dDec;
+        moles.Cl_aq = (moles.Cl_aq || 0) + dDec;
+        if (gasProduced) gasProduced.N2_g = (gasProduced.N2_g || 0) + dDec;
+        else moles.N2_g = (moles.N2_g || 0) + dDec;
+        heatJ += dDec * 72000;
+        activeReactions.push({
+          id: 'diazonium_thermal_decomp',
+          equation: '[C₆H₅N₂⁺]Cl⁻ + H₂O —(>10 °C)→ C₆H₅OH + N₂↑ + H⁺ + Cl⁻',
+          nameVi: 'Phân hủy nhiệt muối Diazonium (>10 °C) → Phenol + N₂↑',
+          nameEn: 'Thermal hydrolysis of Benzenediazonium chloride (>10 °C) → Phenol + N₂↑',
+          descVi: 'Khi nhiệt độ vượt >10 °C, muối Benzenediazonium chloride bị thủy phân giải phóng khí N₂ tạo Phenol.',
+          descEn: 'Warming above 10 °C hydrolyzes Benzenediazonium to Phenol and N₂ gas.',
+          rateMolS: dDec / dt,
+          dXi: dDec,
+          vigorousGas: true,
+        });
+      }
+    }
+  }
+
+  // 8. Amino acid Esterification (with EtOH + HCl/H+) & Condensation -> Peptide & Peptide Hydrolysis
+  if ((moles.C2H5OH_l || 0) > 1e-5 && (moles.H_aq || 0) > 1e-5 && (moles.Cl_aq || 0) > 1e-5 && T >= 328.15) {
+    for (const [aaId, estId, lbl] of [
+      ['Glycine_aq', 'GlyEthylEster_aq', 'Glycine'],
+      ['Glycinium_aq', 'GlyEthylEster_aq', 'Glycine'],
+      ['Alanine_aq', 'AlaEthylEster_aq', 'Alanine'],
+      ['Alaninium_aq', 'AlaEthylEster_aq', 'Alanine'],
+    ]) {
+      if ((moles[aaId] || 0) > 1e-9) {
+        const dAe = Math.min(moles[aaId], moles.C2H5OH_l, moles.Cl_aq) * (1 - Math.exp(-0.72 * dt));
+        if (dAe > 1e-11) {
+          moles[aaId] = Math.max(0, moles[aaId] - dAe);
+          moles.C2H5OH_l = Math.max(0, moles.C2H5OH_l - dAe);
+          moles.Cl_aq = Math.max(0, moles.Cl_aq - dAe);
+          if (aaId.endsWith('aq') && !aaId.includes('ium')) moles.H_aq = Math.max(0, moles.H_aq - dAe);
+          if (moles[aaId] < 1e-13) delete moles[aaId];
+          moles[estId] = (moles[estId] || 0) + dAe;
+          moles.H2O_l = (moles.H2O_l || 0) + dAe;
+          activeReactions.push({
+            id: `aa_ester_${aaId}`,
+            equation: `${lbl} + C₂H₅OH + HCl → Cl⁻⁺H₃N–R–COOC₂H₅ + H₂O`,
+            nameVi: `Ester hóa ${lbl} với Ethanol / HCl`,
+            nameEn: `HCl-catalyzed esterification of ${lbl} with Ethanol`,
+            descVi: 'Nhóm –COOH của amino acid phản ứng với Ethanol tạo muối ester.',
+            descEn: 'Amino acid esterifies cleanly with Ethanol in HCl medium.',
+            rateMolS: dAe / dt,
+            dXi: dAe,
+          });
+        }
+      }
+    }
+  }
+  if ((moles.Glycine_s || 0) > 2e-8 && T >= 453.15) {
+    const dCond = (moles.Glycine_s / 2) * (1 - Math.exp(-0.55 * dt));
+    if (dCond > 1e-11) {
+      moles.Glycine_s = Math.max(0, moles.Glycine_s - 2 * dCond);
+      if (moles.Glycine_s < 1e-13) delete moles.Glycine_s;
+      moles.Peptide_s = (moles.Peptide_s || 0) + dCond;
+      moles.H2O_l = (moles.H2O_l || 0) + dCond;
+      activeReactions.push({
+        id: 'glycine_polycondense',
+        equation: 'n H₂N–CH₂–COOH —(t°)→ Polypeptide + n H₂O',
+        nameVi: 'Trùng ngưng Glycine tạo liên kết peptide',
+        nameEn: 'Thermal peptide condensation of Glycine',
+        descVi: 'Đun nóng amino acid tách nước hình thành liên kết peptide –CO–NH–.',
+        descEn: 'Dehydration condensation builds peptide bonds between amino acids.',
+        rateMolS: dCond / dt,
+        dXi: dCond,
+      });
+    }
+  }
+  if (hasWater && (moles.Peptide_aq || 0) > 1e-8 && ((moles.H_aq || 0) > 1e-4 || (moles.OH_aq || 0) > 1e-4) && T >= 343.15) {
+    const isAlkPep = (moles.OH_aq || 0) > (moles.H_aq || 0);
+    const dPepHyd = Math.min(moles.Peptide_aq, moles.H2O_l) * (1 - Math.exp(-0.48 * dt));
+    if (dPepHyd > 1e-11) {
+      moles.Peptide_aq = Math.max(0, moles.Peptide_aq - dPepHyd);
+      moles.H2O_l = Math.max(0, moles.H2O_l - dPepHyd);
+      if (moles.Peptide_aq < 1e-13) delete moles.Peptide_aq;
+      if (isAlkPep) {
+        const dUseOH = Math.min(moles.OH_aq, 2 * dPepHyd);
+        moles.OH_aq = Math.max(0, moles.OH_aq - dUseOH);
+        moles.Glycinate_aq = (moles.Glycinate_aq || 0) + 2 * dPepHyd;
+      } else {
+        moles.Glycine_aq = (moles.Glycine_aq || 0) + 2 * dPepHyd;
+      }
+      activeReactions.push({
+        id: 'peptide_hydrolysis',
+        equation: 'Polypeptide + H₂O —(H⁺/OH⁻, t°)→ Amino acid tự do',
+        nameVi: 'Thủy phân Peptide thu lại Amino acid tự do',
+        nameEn: 'Acid/alkaline hydrolysis of Polypeptide to free Amino acids',
+        descVi: 'Cắt đứt liên kết peptide –CO–NH– trong acid/kiềm đun nóng.',
+        descEn: 'Hot acid or alkali hydrolyzes peptide bonds cleanly.',
+        rateMolS: dPepHyd / dt,
+        dXi: dPepHyd,
+      });
+    }
+  }
+
+  // 9. Protein (Albumin) Coagulation (>65 °C, acid/base, heavy metals) & Xanthoproteic HNO3 yellow
+  const hasConcHno3X = (moles.HNO3_l || 0) > 1e-7 || ((moles.NO3_aq || 0) > 0.01 && cHCur >= 0.8);
+  if (hasConcHno3X && ((moles.Albumin_aq || 0) > 1e-9 || (moles.AlbuminCoagulated_s || 0) > 1e-9)) {
+    const srcAlb = (moles.Albumin_aq || 0) > 1e-9 ? 'Albumin_aq' : 'AlbuminCoagulated_s';
+    const nNitX = (moles.HNO3_l || 0) > 1e-7 ? moles.HNO3_l : Math.min(moles.NO3_aq || 0, moles.H_aq || 0);
+    const dXan = Math.min(moles[srcAlb], nNitX) * (1 - Math.exp(-1.5 * dt));
+    if (dXan > 1e-11) {
+      moles[srcAlb] = Math.max(0, moles[srcAlb] - dXan);
+      if (moles[srcAlb] < 1e-13) delete moles[srcAlb];
+      if ((moles.HNO3_l || 0) >= dXan) moles.HNO3_l = Math.max(0, moles.HNO3_l - dXan);
+      else {
+        moles.NO3_aq = Math.max(0, moles.NO3_aq - dXan);
+        moles.H_aq = Math.max(0, moles.H_aq - dXan);
+      }
+      moles.AlbuminXantho_s = (moles.AlbuminXantho_s || 0) + dXan;
+      moles.H2O_l = (moles.H2O_l || 0) + dXan;
+      heatJ += dXan * 45000;
+      activeReactions.push({
+        id: 'albumin_xanthoproteic',
+        equation: 'Albumin + HNO₃ → Kết tủa vàng Xanthoproteic↓',
+        nameVi: 'Phản ứng màu Xanthoproteic: Albumin + HNO₃ → kết tủa vàng',
+        nameEn: 'Xanthoproteic test: Albumin + conc. HNO₃ → yellow precipitate↓',
+        descVi: 'Vòng thơm trong phân tử Protein bị nitro hóa bởi HNO₃ tạo kết tủa màu vàng đặc trưng.',
+        descEn: 'Nitration of aromatic residues in Albumin yields bright yellow Xanthoproteic precipitate.',
+        rateMolS: dXan / dt,
+        dXi: dXan,
+      });
+    }
+  } else if ((moles.Albumin_aq || 0) > 1e-9) {
+    const isBiuretConditions = (moles.OH_aq || 0) > 1e-4 && ((moles.CuOH2_s || 0) > 1e-8 || (moles.Cu2_aq || 0) > 1e-8);
+    const heavyMetalCoag = (!isBiuretConditions && ((moles.Cu2_aq || 0) > 1e-4 || (moles.Ag_aq || 0) > 1e-4));
+    const heatCoag = T > 338.15; // > 65 °C
+    const extremePhCoag = phCur < 2.2 || (!isBiuretConditions && phCur > 12.2);
+    if (heatCoag || heavyMetalCoag || extremePhCoag) {
+      const kCoag = heatCoag ? 1.8 : 1.4;
+      const dCoag = moles.Albumin_aq * (1 - Math.exp(-kCoag * dt));
+      if (dCoag > 1e-11) {
+        moles.Albumin_aq = Math.max(0, moles.Albumin_aq - dCoag);
+        if (moles.Albumin_aq < 1e-13) delete moles.Albumin_aq;
+        moles.AlbuminCoagulated_s = (moles.AlbuminCoagulated_s || 0) + dCoag;
+        activeReactions.push({
+          id: 'albumin_coagulation',
+          equation: 'Albumin(aq) —(>65 °C / Acid / Cu²⁺, Ag⁺)→ Albumin↓ (đông tụ)',
+          nameVi: 'Đông tụ không thuận nghịch Protein (Albumin↓ trắng đục)',
+          nameEn: 'Irreversible Protein (Albumin) coagulation precipitate↓',
+          descVi: 'Dưới tác dụng nhiệt (>65 °C), acid/base mạnh hoặc ion kim loại nặng, Albumin đông tụ trắng không tan lại.',
+          descEn: 'Heat (>65 °C), strong acid/base, or heavy metal ions irreversibly coagulate Albumin.',
+          rateMolS: dCoag / dt,
+          dXi: dCoag,
+        });
+      }
+    }
+  }
+
+  // 10. Enzyme Bell-Shaped Activity Curve (Optimum ~35–42 °C, pH 6–8; Irreversible Denaturation >75 °C or extreme pH)
+  const enzymeActFactor = Math.exp(-Math.pow((T - 311.15) / 14.0, 2)) * Math.exp(-Math.pow((phCur - 7.0) / 1.9, 2));
+  const isEnzymeDenature = T > 348.15 || phCur < 2.2 || phCur > 11.4;
+  for (const [enzAq, enzDen, enzName] of [
+    ['Amylase_aq', 'AmylaseDenatured_s', 'Amylase'],
+    ['Catalase_aq', 'CatalaseDenatured_s', 'Catalase'],
+  ]) {
+    if ((moles[enzAq] || 0) > 1e-10 && isEnzymeDenature) {
+      const dDen = moles[enzAq] * (1 - Math.exp(-2.2 * dt));
+      if (dDen > 1e-12) {
+        moles[enzAq] = Math.max(0, moles[enzAq] - dDen);
+        if (moles[enzAq] < 1e-13) delete moles[enzAq];
+        moles[enzDen] = (moles[enzDen] || 0) + dDen;
+        activeReactions.push({
+          id: `denature_${enzAq}`,
+          equation: `${enzName}(aq) —(>75 °C / pH khắc nghiệt)→ ${enzName}↓ (mất hoạt tính)`,
+          nameVi: `Biến tính mất hoàn toàn hoạt tính Enzyme ${enzName}`,
+          nameEn: `Irreversible thermal/pH denaturation of ${enzName} enzyme`,
+          descVi: 'Ở nhiệt độ > 75 °C hoặc pH quá acid/kiềm, cấu trúc không gian enzyme bị phá hủy vĩnh viễn.',
+          descEn: 'Above 75 °C or at extreme pH, enzyme tertiary structure denatures permanently.',
+          rateMolS: dDen / dt,
+          dXi: dDen,
+        });
+      }
+    }
+  }
+
+  if (hasWater && !isEnzymeDenature && enzymeActFactor > 0.03) {
+    if ((moles.Amylase_aq || 0) > 1e-9 && (moles.Starch_aq || 0) > 1e-8) {
+      const kEnzSt = 2.8 * enzymeActFactor;
+      const dEnzM = Math.min(moles.Starch_aq / 2, moles.H2O_l) * (1 - Math.exp(-kEnzSt * dt));
+      if (dEnzM > 1e-11) {
+        moles.Starch_aq = Math.max(0, moles.Starch_aq - 2 * dEnzM);
+        moles.H2O_l = Math.max(0, moles.H2O_l - dEnzM);
+        if (moles.Starch_aq < 1e-13) delete moles.Starch_aq;
+        moles.Maltose_aq = (moles.Maltose_aq || 0) + dEnzM;
+        activeReactions.push({
+          id: 'amylase_starch_maltose',
+          equation: 'Tinh bột + H₂O —(Amylase, ~37 °C)→ Maltose',
+          nameVi: 'Enzyme Amylase thủy phân Tinh bột thành Maltose',
+          nameEn: 'Amylase-catalyzed hydrolysis of Starch into Maltose',
+          descVi: `Hoạt tính Amylase hiện tại ${(enzymeActFactor * 100).toFixed(0)}% (tối ưu quanh 37–40 °C, pH 7).`,
+          descEn: `Amylase catalytic activity at ${(enzymeActFactor * 100).toFixed(0)}% (bell optimum ~38 °C, pH 7).`,
+          rateMolS: dEnzM / dt,
+          dXi: dEnzM,
+        });
+      }
+    }
+    if ((moles.Catalase_aq || 0) > 1e-9 && (moles.H2O2_aq || 0) > 1e-7) {
+      const kCatH2 = 6.5 * enzymeActFactor;
+      const dCatE = (moles.H2O2_aq / 2) * (1 - Math.exp(-kCatH2 * dt));
+      if (dCatE > 1e-11) {
+        moles.H2O2_aq = Math.max(0, moles.H2O2_aq - 2 * dCatE);
+        if (moles.H2O2_aq < 1e-13) delete moles.H2O2_aq;
+        moles.H2O_l = (moles.H2O_l || 0) + 2 * dCatE;
+        if (gasProduced) gasProduced.O2_g = (gasProduced.O2_g || 0) + dCatE;
+        else moles.O2_g = (moles.O2_g || 0) + dCatE;
+        heatJ += dCatE * 196000;
+        activeReactions.push({
+          id: 'catalase_h2o2_o2',
+          equation: '2H₂O₂ —(Catalase, ~37 °C)→ 2H₂O + O₂↑',
+          nameVi: 'Enzyme Catalase phân hủy H₂O₂ giải phóng O₂↑ cực nhanh',
+          nameEn: 'Catalase enzymatic decomposition: 2H₂O₂ → 2H₂O + O₂↑',
+          descVi: `Hoạt tính Catalase ${(enzymeActFactor * 100).toFixed(0)}% theo đường cong hình chuông (T, pH).`,
+          descEn: `Catalase activity at ${(enzymeActFactor * 100).toFixed(0)}% following T/pH bell curve.`,
+          rateMolS: dCatE / dt,
+          dXi: dCatE,
+          vigorousGas: true,
+        });
+      }
+    }
+  }
+
   return heatJ;
 }
 
@@ -527,6 +1030,6 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
 export function stepPropertyDrivenOrganic(vessel, strat, liquidVolL, dt, activeReactions, gasProduced, getMolFn, options = {}) {
   let heatJ = 0;
   heatJ += stepGeneralOrganicCombustion(vessel, dt, activeReactions, gasProduced, getMolFn, options);
-  heatJ += stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeReactions, options);
+  heatJ += stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeReactions, { ...options, gasProduced });
   return heatJ;
 }

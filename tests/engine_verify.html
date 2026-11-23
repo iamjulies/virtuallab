@@ -1911,7 +1911,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 34 &&
+          STARTER_REAGENTS.length === 42 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2479,7 +2479,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.16';
+      const expectedBuild = 'virlab_beta_v5+build.17';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2563,7 +2563,7 @@
       assert(
         'Build virlab_beta_v5+build.7 parity: All 43 apparatus & 34 starter reagents translated in VI/EN, Analytical Trio + Organic Ecosystem parity enforced',
         APPARATUS_ORDER.length === 44 &&
-          STARTER_REAGENTS.length === 34 &&
+          STARTER_REAGENTS.length === 42 &&
           !APPARATUS.clay_triangle &&
           !APPARATUS.crucible_tongs &&
           allTranslated &&
@@ -7427,7 +7427,7 @@
       const mno2AcidOk = Math.abs((bMnColdAcid.moles.MnO2_s || 0) - 0.01) < 1e-6 && cl2HotTot > 0.002 && (bMnHotHCl.moles.Mn2_aq || 0) > 0.002;
 
       const iupacKmno4Ok =
-        STARTER_REAGENTS.length === 34 &&
+        STARTER_REAGENTS.length === 42 &&
         STARTER_REAGENTS.some((r) => r.id === 'kmno4') &&
         !/\b(kali|mangan|axit|clo|oxi(?! hóa))\b/i.test(`${I18N.vi.reg_kmno4} ${I18N.vi.reg_kmno4_desc} ${I18N.vi.alertMn2O7Hazard}`);
 
@@ -7541,7 +7541,7 @@
         (vIRoom.moles.IO3_aq || 0) > (vIRoom.moles.IO_aq || 0) * 4;
 
       const iupacHalOk =
-        STARTER_REAGENTS.length === 34 &&
+        STARTER_REAGENTS.length === 42 &&
         STARTER_REAGENTS.some((r) => r.id === 'br2') &&
         STARTER_REAGENTS.some((r) => r.id === 'i2') &&
         !/\b(brom|iot|clo|kali|natri|nhôm|sắt|axit)\b/i.test(`${I18N.vi.reg_br2} ${I18N.vi.reg_br2_desc} ${I18N.vi.reg_i2} ${I18N.vi.reg_i2_desc}`);
@@ -7657,7 +7657,7 @@
         (bSHNO3.moles.SO4_2_aq || 0) > 0.001;
 
       const iupacSulfOk =
-        STARTER_REAGENTS.length === 34 &&
+        STARTER_REAGENTS.length === 42 &&
         STARTER_REAGENTS.some((r) => r.id === 's') &&
         !/\b(lưu huỳnh|sunfua|hiđro|axit|oxi(?! hóa)|etanol)\b/i.test(`${I18N.vi.reg_s} ${I18N.vi.reg_s_desc}`);
 
@@ -8737,7 +8737,7 @@
       const regCr = STARTER_REAGENTS.find((r) => r.id === 'k2cr2o7');
       const regSi = STARTER_REAGENTS.find((r) => r.id === 'sio2');
       const catOk =
-        STARTER_REAGENTS.length === 34 &&
+        STARTER_REAGENTS.length === 42 &&
         oxides.length === 1 &&
         oxides[0].id === 'sio2' &&
         REAGENT_CATEGORIES.some((c) => c.id === 'oxide' && c.i18nKey === 'regCatOxide') &&
@@ -8929,7 +8929,7 @@
       const regA = STARTER_REAGENTS.find((r) => r.id === 'ch3cooh');
       const acids3 = STARTER_REAGENTS.filter((r) => r.category === 'acid');
       const regOrgOk =
-        STARTER_REAGENTS.length === 34 &&
+        STARTER_REAGENTS.length === 42 &&
         acids3.length === 3 &&
         Boolean(regE && regE.category === 'organic' && regE.perMl?.C2H5OH_l > 0.017) &&
         Boolean(regA && regA.category === 'organic' && regA.perMl?.CH3COOH_l > 0.017) &&
@@ -9972,7 +9972,7 @@
 
       // 2) HCHO and HCOOH removed from STARTER_REAGENTS, both preparable from CH3OH
       const noDirectHchoHcooh =
-        STARTER_REAGENTS.length === 34 &&
+        STARTER_REAGENTS.length === 42 &&
         !STARTER_REAGENTS.some((r) => r.id === 'hcho_37' || r.id === 'hcooh') &&
         Boolean(SPECIES.HCHO_aq && SPECIES.HCOOH_l);
       const vPrepAld = sim64.createApparatus('round_flask_250', 180, 300);

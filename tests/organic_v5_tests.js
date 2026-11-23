@@ -3,7 +3,7 @@
  */
 import { APP_VERSION_TAG, CONSTANTS } from '../src/data/constants.js';
 import { APPARATUS, APPARATUS_ORDER } from '../src/data/apparatus.js';
-import { SPECIES } from '../src/data/species.js';
+import { SPECIES, STARTER_REAGENTS } from '../src/data/species.js';
 import { LabSimulation } from '../src/engine/simulation.js';
 import { stepVesselChemistry } from '../src/engine/chemistry.js';
 import { computePhaseStratification, computeSolutionVisuals, computeLiquidVolumeL, computePH, computeVesselAroma } from '../src/engine/equilibrium.js';
@@ -1455,6 +1455,183 @@ export function runOrganicV5Tests(assert) {
       'Prompt 76 invariants: phenFlags soapSaltedOutCake sync, full UV–Vis (220–750 nm) + UV arene scan, FT-IR (4000->400 cm^-1 %T) saponification/esterification/H2O-subtract/amine doublet & Light/Dark UI render',
       phenFlagSyncOk && uvScanOk && irSaponificationOk && irEsterificationOk && waterToggleOk && amineDoubletOk && uiRenderOk,
       `phenSync=${phenFlagSyncOk}, uvScan=${uvScanOk}(MnLmax=${uvMnO4.lambdaMaxNm},PhMax=${uvPhenol.lambdaMaxNm}), irSap=${irSaponificationOk}(est:${esterTBefore.toFixed(1)}->${esterTAfter.toFixed(1)},coo:${cooTAfter.toFixed(1)}), irEst=${irEsterificationOk}(oh:${ohInitT.toFixed(1)}->${ohFinalT.toFixed(1)},est:${estPeakFinalT.toFixed(1)}), h2oSub=${waterToggleOk}, amine=${amineDoubletOk}, ui=${uiRenderOk}`
+    );
+  }
+
+  // TEST 195: Prompt 77 — Closed Organic Bridges, Shelf Biologicals & Carbohydrates, Diazonium/Azo, Amino Acid/Protein/Enzyme Bell Curve & Synthetic Fibers/Adhesives
+  {
+    const sim77 = new LabSimulation();
+
+    // 1) Closed Synthesis Bridges (Toluene from MeOH->CH3Cl->Benzene/AlCl3, Styrene->PS, Aniline Bechamp + H2/Ni, CH3NH2, VCM->PVC, Buna-S + Vulcanization)
+    const vMeCl = sim77.createApparatus('round_flask_250', 140, 434);
+    vMeCl.isStoppered = true;
+    vMeCl.moles = { CH3OH_l: 0.1, H_aq: 0.15, Cl_aq: 0.15, ZnCl2_s: 0.02, H2O_l: 0.2 };
+    const vFcTol = sim77.createApparatus('round_flask_250', 260, 434);
+    vFcTol.isStoppered = true;
+    vFcTol.moles = { C6H6_l: 0.1, CH3Cl_g: 0.06, AlCl3_s: 0.02 };
+    const simEb = new LabSimulation();
+    simEb.setAtmosphereMode('inert');
+    const vEbSty = simEb.createApparatus('quartz_tube', 380, 434);
+    const vEbRecv = simEb.createApparatus('round_flask_250', 520, 434);
+    vEbSty.isStoppered = true;
+    vEbSty.leftStoppered = true;
+    vEbSty.rightStoppered = true;
+    vEbSty.stopperMode = 'holed';
+    vEbSty.connectedPortSide = 'right';
+    vEbSty.connectedTargetId = vEbRecv.id;
+    vEbRecv.connectedFromId = vEbSty.id;
+    vEbSty.moles = { C6H5C2H5_l: 0.025, Fe2O3_s: 0.02 };
+    const vBech = sim77.createApparatus('beaker_250', 500, 434);
+    vBech.moles = { C6H5NO2_l: 0.04, Fe_s: 0.15, H_aq: 0.35, Cl_aq: 0.35, H2O_l: 2.0 };
+    const vPvc = sim77.createApparatus('round_flask_250', 620, 434);
+    vPvc.isStoppered = true;
+    vPvc.moles = { C2H2_g: 0.08, HCl_g: 0.08, HgCl2_s: 0.01 };
+    const vBunaS = sim77.createApparatus('beaker_250', 740, 434);
+    vBunaS.moles = { C4H6_g: 0.06, C8H8_l: 0.06, Na_s: 0.015 };
+    const vVulc = sim77.createApparatus('beaker_250', 860, 434);
+    vVulc.moles = { Buna_S_s: 0.05, S_s: 0.05 };
+
+    for (let i = 0; i < 8; i++) {
+      vMeCl.tempK = 355.15;
+      vFcTol.tempK = 310.15;
+      vEbSty.tempK = 873.15;
+      vBech.tempK = 345.15;
+      vPvc.tempK = 423.15;
+      vBunaS.tempK = 343.15;
+      vVulc.tempK = 423.15;
+      sim77.step(0.4);
+    }
+    for (let i = 0; i < 16; i++) {
+      vEbSty.tempK = 873.15;
+      simEb.step(0.2);
+    }
+    // Alkalinize Bechamp Anilinium salt -> oily Aniline
+    vBech.moles.OH_aq = 0.25;
+    vBech.moles.Na_aq = 0.25;
+    sim77.step(0.2);
+
+    const brgOk =
+      ((vMeCl.headspaceGasMoles?.CH3Cl_g || 0) + (vMeCl.escapedGasMoles?.CH3Cl_g || 0) + (vMeCl.moles.CH3Cl_g || 0)) > 0.02 &&
+      (vFcTol.moles.C6H5CH3_l || 0) > 0.02 &&
+      ((vEbSty.moles.PS_s || 0) + (vEbRecv.moles.C8H8_l || 0) + (vEbRecv.headspaceGasMoles?.C8H8_g || 0) + (vEbSty.headspaceGasMoles?.C8H8_g || 0) + (vEbRecv.escapedGasMoles?.C8H8_g || 0)) > 0.01 &&
+      ((vEbRecv.escapedGasMoles?.H2_g || 0) + (vEbRecv.headspaceGasMoles?.H2_g || 0) + (vEbSty.escapedGasMoles?.H2_g || 0)) > 0.01 &&
+      (vBech.moles.C6H5NH2_l || 0) > 0.015 &&
+      (vPvc.moles.PVC_s || 0) > 0.005 &&
+      (vBunaS.moles.Buna_S_s || 0) > 0.02 &&
+      (vVulc.moles.Vulcanized_Rubber_s || 0) > 0.01;
+
+    // 2) Shelf bio reagents + Carbohydrates (Glucose vs Fructose Br2, Maltose, Cellulose + Schweizer + Trinitrate)
+    const shelfOk = ['nano2', 'glucose', 'fructose', 'sucrose', 'starch', 'cellulose', 'glycine', 'albumin'].every((id) =>
+      STARTER_REAGENTS.some((r) => r.id === id)
+    );
+    const vGlcBr = sim77.createApparatus('beaker_250', 140, 434);
+    vGlcBr.moles = { H2O_l: 4.0, Glucose_aq: 0.04, Br2_aq: 0.02 };
+    const vFrcBr = sim77.createApparatus('beaker_250', 260, 434);
+    vFrcBr.moles = { H2O_l: 4.0, Fructose_aq: 0.04, Br2_aq: 0.02 };
+    const vFrcTol = sim77.createApparatus('beaker_250', 380, 434);
+    vFrcTol.moles = { H2O_l: 4.0, Fructose_aq: 0.04, AgNH3_2_aq: 0.06, OH_aq: 0.08 };
+    const vSchw = sim77.createApparatus('beaker_250', 500, 434);
+    vSchw.moles = { H2O_l: 4.0, Cellulose_s: 0.04, CuNH3_4_2_aq: 0.06, OH_aq: 0.14 };
+    const vNitCel = sim77.createApparatus('beaker_250', 620, 434);
+    vNitCel.moles = { H2O_l: 0.5, Cellulose_s: 0.02, NO3_aq: 0.15, H_aq: 0.15, H2SO4_l: 0.1 };
+    const vMaltS = sim77.createApparatus('beaker_250', 740, 434);
+    vMaltS.moles = { H2O_l: 4.0, Starch_aq: 0.05, H_aq: 0.008, Cl_aq: 0.008 };
+
+    for (let i = 0; i < 8; i++) {
+      vFrcTol.tempK = 330.15;
+      vMaltS.tempK = 335.15;
+      sim77.step(0.4);
+    }
+    const carb77Ok =
+      (vGlcBr.moles.Br2_aq || 0) < (vFrcBr.moles.Br2_aq || 0) * 0.35 &&
+      (vGlcBr.moles.Glucose_aq || 0) < 0.032 &&
+      (vFrcBr.moles.Fructose_aq || 0) > 0.039 &&
+      (vFrcTol.moles.Ag_s || 0) > 0.005 &&
+      (vSchw.moles.CuCellulose_aq || 0) > 0.015 &&
+      (vNitCel.moles.CelluloseNitrate_s || 0) > 0.008 &&
+      (vMaltS.moles.Maltose_aq || 0) > 0.005;
+
+    // 3) Amine + HNO2: CH3NH2 -> N2, Aniline 0-5 °C -> Diazonium -> Azo dye vs >10 °C -> Phenol + N2↑
+    const vColdDiaz = sim77.createApparatus('beaker_250', 140, 400);
+    vColdDiaz.moles = { H2O_l: 4.0, C6H5NH3_aq: 0.04, Cl_aq: 0.08, NO2_aq: 0.04, H_aq: 0.06 };
+    const vWarmDiaz = sim77.createApparatus('beaker_250', 260, 400);
+    vWarmDiaz.moles = { H2O_l: 4.0, C6H5NH3_aq: 0.04, Cl_aq: 0.08, NO2_aq: 0.04, H_aq: 0.06 };
+    for (let i = 0; i < 6; i++) {
+      vColdDiaz.tempK = 276.15; // 3 °C ice bath
+      vWarmDiaz.tempK = 305.15; // 32 °C > 10 °C
+      stepVesselChemistry(vColdDiaz, 0.4, { environment: sim77.environment });
+      stepVesselChemistry(vWarmDiaz, 0.4, { environment: sim77.environment });
+    }
+    const diazFormedCold = vColdDiaz.moles.C6H5N2Cl_aq || 0;
+    vColdDiaz.moles.Na_aq = (vColdDiaz.moles.Na_aq || 0) + 0.06;
+    vColdDiaz.moles.OH_aq = 0.04;
+    vColdDiaz.moles.C6H5O_aq = 0.03;
+    for (let i = 0; i < 3; i++) {
+      vColdDiaz.tempK = 276.15;
+      stepVesselChemistry(vColdDiaz, 0.4, { environment: sim77.environment });
+    }
+    const diazOk =
+      diazFormedCold > 0.025 &&
+      (vColdDiaz.moles.AzoDye_s || 0) > 0.015 &&
+      (vWarmDiaz.moles.C6H5OH_s || 0) > 0.015 &&
+      (vWarmDiaz.moles.C6H5N2Cl_aq || 0) < 0.005;
+
+    // 4) Amino acid pH/Litmus (Glu red < Gly/Ala purple < Lys blue), Protein coagulation/Xanthoproteic & Enzyme Bell Curve
+    const pGlu = computePH({ H2O_l: 5.5, Glutamic_aq: 0.02 }, 0.1, 298.15);
+    const pGly = computePH({ H2O_l: 5.5, Glycine_aq: 0.02 }, 0.1, 298.15);
+    const pAla = computePH({ H2O_l: 5.5, Alanine_aq: 0.02 }, 0.1, 298.15);
+    const pLys = computePH({ H2O_l: 5.5, Lysine_aq: 0.02 }, 0.1, 298.15);
+    const aaPhOk = pGlu < 4.5 && pGly > 5.2 && pGly < 6.8 && pAla > 5.2 && pAla < 6.8 && pLys > 8.5;
+
+    const vAlbHeat = sim77.createApparatus('beaker_250', 380, 434);
+    vAlbHeat.moles = { H2O_l: 4.0, Albumin_aq: 0.03 };
+    const vAlbXan = sim77.createApparatus('beaker_250', 500, 434);
+    vAlbXan.moles = { H2O_l: 1.5, Albumin_aq: 0.03, NO3_aq: 0.12, H_aq: 0.12 };
+    const vEnzOpt = sim77.createApparatus('beaker_250', 620, 434);
+    vEnzOpt.moles = { H2O_l: 4.0, H2O2_aq: 0.04, Catalase_aq: 0.002 };
+    const vEnzBoil = sim77.createApparatus('beaker_250', 740, 434);
+    vEnzBoil.moles = { H2O_l: 4.0, H2O2_aq: 0.04, Catalase_aq: 0.002 };
+    for (let i = 0; i < 6; i++) {
+      vAlbHeat.tempK = 350.15; // > 65 °C
+      vEnzOpt.tempK = 311.15; // 38 °C optimum
+      vEnzBoil.tempK = 358.15; // > 75 °C denatures!
+      sim77.step(0.35);
+    }
+    const bio77Ok =
+      aaPhOk &&
+      (vAlbHeat.moles.AlbuminCoagulated_s || 0) > 0.02 &&
+      (vAlbXan.moles.AlbuminXantho_s || 0) > 0.02 &&
+      (vEnzOpt.moles.H2O2_aq || 0) < 0.005 &&
+      (vEnzBoil.moles.CatalaseDenatured_s || 0) > 0.001 &&
+      (vEnzBoil.moles.H2O2_aq || 0) > 0.035;
+
+    // 5) Synthetic Fibers & 2-Component Adhesives (Nylon-6,6 two-phase, Nylon-6, PAN, UF, Epoxy exothermic curing)
+    const vNy66 = sim77.createApparatus('beaker_250', 140, 434);
+    vNy66.moles = { H2O_l: 3.0, HexamethyleneDiamine_aq: 0.03, AdipoylChloride_l: 0.03 };
+    const vEpoxy = sim77.createApparatus('beaker_250', 260, 434);
+    vEpoxy.moles = { EpoxyResin_l: 0.04, EpoxyHardener_l: 0.04 };
+    vEpoxy.tempK = 298.15;
+    const epoxyT0 = vEpoxy.tempK;
+    const vPan = sim77.createApparatus('beaker_250', 380, 434);
+    vPan.moles = { Acrylonitrile_l: 0.04 };
+    const vUf = sim77.createApparatus('beaker_250', 500, 434);
+    vUf.moles = { H2O_l: 2.0, Urea_s: 0.04, HCHO_aq: 0.04 };
+    for (let i = 0; i < 8; i++) {
+      vPan.tempK = 348.15;
+      vUf.tempK = 333.15;
+      sim77.step(0.4);
+    }
+    const poly77Ok =
+      (vNy66.moles.Nylon66_s || 0) > 0.012 &&
+      (vEpoxy.moles.EpoxyPolymer_s || 0) > 0.015 &&
+      vEpoxy.tempK > epoxyT0 + 0.5 &&
+      (vPan.moles.PAN_s || 0) > 0.015 &&
+      (vUf.moles.UF_Resin_s || 0) > 0.01;
+
+    assert(
+      'Prompt 77 invariants: organic bridges (MeOH->MeCl->Toluene, Styrene->PS, Aniline, VCM->PVC, Buna-S/vulc), shelf bio & Glu/Frc/Maltose/Cellulose, Diazonium 0-5C vs >10C + Azo, AA pH/Albumin/Bell Enzyme & Nylon-6,6/PAN/UF/Epoxy',
+      brgOk && shelfOk && carb77Ok && diazOk && bio77Ok && poly77Ok,
+      `brg=${brgOk}, shelf=${shelfOk}, carb=${carb77Ok}, diaz=${diazOk}(cold=${diazFormedCold.toFixed(3)},azo=${(vColdDiaz.moles.AzoDye_s||0).toFixed(3)},hotPh=${(vWarmDiaz.moles.C6H5OH_s||0).toFixed(3)}), bio=${bio77Ok}(pH:${pGlu.toFixed(1)}/${pGly.toFixed(1)}/${pLys.toFixed(1)},enzOptH2O2=${(vEnzOpt.moles.H2O2_aq||0).toFixed(3)},enzBoilH2O2=${(vEnzBoil.moles.H2O2_aq||0).toFixed(3)}), poly=${poly77Ok}`
     );
   }
 }
