@@ -98,11 +98,8 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     const massG = n * sp.molarMass;
     const settle = vessel.precipitateSettle?.[spId] ?? 0.35;
 
-    // Salted-out soap curds (RCOONa, density ~0.92-0.94 < water/brine) float as an upper white cake!
-    const isFloatingSoap =
-      (spId === 'C17H33COONa_s' || spId === 'C17H35COONa_s' || spId === 'C15H31COONa_s') &&
-      hasWater &&
-      surfaceY < bottom - 8;
+    // Salted-out soap curds (isSoapSolid: true on SPECIES, density ~0.92-0.94 < water/brine) float as an upper white cake!
+    const isFloatingSoap = Boolean(sp.isSoapSolid) && hasWater && surfaceY < bottom - 8;
     if (isFloatingSoap) {
       ctx.save();
       const cakeH = Math.min(18, 4.2 + Math.sqrt(massG) * 3.8);

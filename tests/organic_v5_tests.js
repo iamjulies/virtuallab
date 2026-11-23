@@ -781,4 +781,125 @@ export function runOrganicV5Tests(assert) {
       `bump=${bumpingOk}(no:${(tubeNoChips.bumpingSurgeFrac||0).toFixed(2)},with:${(tubeWithChips.bumpingSurgeFrac||0).toFixed(2)}), ren=${chipRenderOk}, palm=${tripalmOk}(salt=${(vPalm.moles.C15H31COONa_s||0).toFixed(3)}), koh=${kohGelOk}, estConc=${esterConcOk}(et:${(vConcEt.moles.CH3COOC2H5_l||0).toFixed(3)}/${(vDilEt.moles.CH3COOC2H5_l||0).toFixed(3)},iso:${(vIsoConc.moles.CH3COOC5H11_l||0).toFixed(3)}/${(vIsoDil.moles.CH3COOC5H11_l||0).toFixed(3)}), aroma=${aromaOk}`
     );
   }
+
+  // TEST 190: Prompt 72 — General Property-Driven Lipid & Soap Architecture
+  // Verifies brand-new fats declared only via SPECIES metadata (Trilinolein db=6, Tributyrin C4 short-chain,
+  // and a synthetic mixed-acyl glyceride with acylChains 2:1) run every engine & visual path automatically!
+  {
+    const sim72 = new LabSimulation();
+
+    // 1) Trilinolein (C57H98O6_l, db=6) added ONLY via SPECIES metadata: floats, saponifies with emulsion/foam,
+    //    salts out floating C17H31COONa_s cake, renders on Canvas, consumes 6 Br2 & 6 H2 -> Tristearin!
+    const vTrilin = sim72.createApparatus('beaker_250', 120, 434);
+    vTrilin.moles = { C57H98O6_l: 0.01, Na_aq: 0.20, OH_aq: 0.20, H2O_l: 1.1, C2H5OH_l: 0.08 };
+    const stratInitL = computePhaseStratification(vTrilin.moles, 298.15, APPARATUS.beaker_250, 0);
+    for (let i = 0; i < 32; i++) {
+      vTrilin.tempK = 358.15;
+      vTrilin.stirTimer = 4;
+      sim72.step(0.5);
+    }
+    const visLinEmul = computeSolutionVisuals(
+      vTrilin.moles,
+      computeLiquidVolumeL(vTrilin.moles, vTrilin.tempK),
+      12,
+      4,
+      0,
+      0,
+      { phaseFilter: 'aq' }
+    );
+    const foamTrilinOk = (vTrilin.soapFoamMl || 0) > 1.0 && (vTrilin.moles.C17H31COO_aq || 0) > 0.025;
+    vTrilin.moles.Na_aq = (vTrilin.moles.Na_aq || 0) + 0.55;
+    vTrilin.moles.Cl_aq = 0.55;
+    for (let i = 0; i < 6; i++) {
+      vTrilin.tempK = 328.15;
+      sim72.step(0.4);
+    }
+    const c72 = document.createElement('canvas');
+    c72.width = 160;
+    c72.height = 200;
+    let linRenderOk = true;
+    try {
+      renderVesselSolids(c72.getContext('2d'), vTrilin, { left: 20, right: 140, top: 20, bottom: 180, width: 120 }, true, 75);
+    } catch {
+      linRenderOk = false;
+    }
+    const trilinOk =
+      stratInitL.lightOrganicMl > 5 &&
+      visLinEmul.r > 205 &&
+      foamTrilinOk &&
+      linRenderOk &&
+      vTrilin.soapSaltedOutCake === true &&
+      (vTrilin.moles.C17H31COONa_s || 0) > 0.015;
+
+    // 2) Short-chain Tributyrin (C15H26O6_l, C4, saltOutNaId=null): saponifies fast, minimal foam/emulsion, zero soap cake with NaCl!
+    const vTrib = sim72.createApparatus('beaker_250', 500, 434);
+    vTrib.moles = { C15H26O6_l: 0.015, Na_aq: 0.45, OH_aq: 0.15, Cl_aq: 0.30, H2O_l: 1.2 };
+    for (let i = 0; i < 20; i++) {
+      vTrib.tempK = 353.15;
+      sim72.step(0.5);
+    }
+    const tributOk =
+      (vTrib.moles.C3H7COO_aq || 0) > 0.04 &&
+      (vTrib.moles.C3H5OH_3_l || 0) > 0.013 &&
+      (vTrib.soapFoamMl || 0) < 1.0 &&
+      vTrib.soapSaltedOutCake === false;
+
+    // 1b) Unsaturation stoichiometry db=6 on Trilinolein: 6 mol Br2 consumed vs 3 for Triolein; 6 H2 -> Tristearin
+    const vBrLin = sim72.createApparatus('beaker_250', 260, 434);
+    vBrLin.moles = { C57H98O6_l: 0.01, Br2_l: 0.08, H2O_l: 0 };
+    const vHydLin = sim72.createApparatus('round_flask_250', 380, 418);
+    vHydLin.isStoppered = true;
+    vHydLin.sealedAirO2Moles = 0;
+    vHydLin.moles = { C57H98O6_l: 0.01, Ni_s: 0.01, H2O_l: 0 };
+    vHydLin.headspaceGasMoles = { H2_g: 0.08 };
+    for (let i = 0; i < 14; i++) {
+      vBrLin.tempK = 305.15;
+      stepVesselChemistry(vBrLin, 0.4, { environment: sim72.environment });
+      vHydLin.tempK = 448.15;
+      stepVesselChemistry(vHydLin, 0.4, { environment: sim72.environment });
+    }
+    const unsat6Ok =
+      (vBrLin.moles.C57H98O6_l || 0) < 1e-4 &&
+      (vBrLin.moles.Br2_l || 0) > 0.015 &&
+      (vBrLin.moles.Br2_l || 0) < 0.025 && // 0.08 - 6*0.01 = 0.020!
+      (vHydLin.moles.C57H110O6_s || 0) > 0.009 &&
+      (vHydLin.headspaceGasMoles.H2_g || 0) > 0.015 &&
+      (vHydLin.headspaceGasMoles.H2_g || 0) < 0.025; // 0.08 - 6*0.01 = 0.020!
+
+    // 3) Synthetic mixed-chain triglyceride registered at runtime via acylChains (2 Oleate + 1 Stearate)
+    SPECIES.__TEST_MIXED_FAT_l = {
+      id: '__TEST_MIXED_FAT_l',
+      formula: '(C₁₇H₃₃COO)₂(C₁₇H₃₅COO)C₃H₅',
+      name: 'Dioleostearin (Mixed fat)',
+      phase: 'l',
+      liquidGroup: 'organic_light',
+      isFat: true,
+      alcoholId: 'C3H5OH_3_l',
+      acylChains: [
+        { acidId: 'C17H33COOH_l', soapIonId: 'C17H33COO_aq', soapNaId: 'C17H33COONa_s', count: 2 },
+        { acidId: 'C17H35COOH_s', soapIonId: 'C17H35COO_aq', soapNaId: 'C17H35COONa_s', count: 1 },
+      ],
+      emulsifyPower: 1.0,
+      molarMass: 887.4,
+      density: 0.92,
+      cp: 1850,
+    };
+    const vMixed = sim72.createApparatus('beaker_250', 620, 300);
+    vMixed.moles = { __TEST_MIXED_FAT_l: 0.01, Na_aq: 0.12, OH_aq: 0.12, H2O_l: 1.4, C2H5OH_l: 0.08 };
+    for (let i = 0; i < 18; i++) {
+      vMixed.tempK = 358.15;
+      vMixed.stirTimer = 4;
+      stepVesselChemistry(vMixed, 0.5, { environment: sim72.environment });
+    }
+    const ole = vMixed.moles.C17H33COO_aq || 0;
+    const ste = vMixed.moles.C17H35COO_aq || 0;
+    delete SPECIES.__TEST_MIXED_FAT_l;
+    const mixedOk = ole > 0.018 && ste > 0.009 && Math.abs(ole / Math.max(1e-6, ste) - 2.0) < 0.08;
+
+    assert(
+      'Prompt 72 invariants: Zero-hardcode SPECIES-driven lipid/soap engine (Trilinolein db=6 + Br2/H2 + floating linoleate cake, short-chain Tributyrin no cake/low foam, runtime acylChains 2:1 mixed lipid)',
+      trilinOk && unsat6Ok && tributOk && mixedOk,
+      `trilin=${trilinOk}(cake=${(vTrilin.moles.C17H31COONa_s||0).toFixed(3)},foam=${(vTrilin.soapFoamMl||0).toFixed(1)}), unsat6=${unsat6Ok}(brRem=${(vBrLin.moles.Br2_l||0).toFixed(3)},ste=${(vHydLin.moles.C57H110O6_s||0).toFixed(3)},h2=${(vHydLin.headspaceGasMoles.H2_g||0).toFixed(3)}), tribut=${tributOk}(but=${(vTrib.moles.C3H7COO_aq||0).toFixed(3)},foam=${(vTrib.soapFoamMl||0).toFixed(1)}), mixed=${mixedOk}(${ole.toFixed(4)}/${ste.toFixed(4)})`
+    );
+  }
 }

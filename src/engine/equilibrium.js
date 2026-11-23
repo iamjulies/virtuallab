@@ -434,11 +434,22 @@ export function computeSolutionVisuals(
     }
   }
 
-  // 3b. Soap micelle / emulsion opalescence (milky homogeneous solution during lipid saponification)
-  const nSoapMol = (moles.C17H33COO_aq || 0) + (moles.C17H35COO_aq || 0) + (moles.C15H31COO_aq || 0);
+  // 3b. Soap micelle / emulsion opalescence (property-driven via sp.isSoapIon & sp.isFat)
+  let nSoapMol = 0;
+  let hasOilLeft = false;
+  for (const [id, n] of Object.entries(moles)) {
+    if (!n || n <= 1e-10) continue;
+    const sp = SPECIES[id];
+    if (!sp) continue;
+    if (sp.isSoapIon) {
+      const str = sp.emulsifyStrength ?? (sp.soapChainLength != null && sp.soapChainLength < 10 ? 0.08 : 1.0);
+      nSoapMol += n * str;
+    } else if (sp.isFat && n > 1e-6 && (sp.emulsifyPower ?? 1.0) > 0.05) {
+      hasOilLeft = true;
+    }
+  }
   if (nSoapMol > 1e-5 && (phaseFilter === 'aq' || phaseFilter === 'aqueous' || phaseFilter === 'all')) {
     const cSoap = nSoapMol / Math.max(1e-4, liquidVolL);
-    const hasOilLeft = (moles.C57H104O6_l || 0) > 1e-6 || (moles.C57H110O6_s || 0) > 1e-6 || (moles.C51H98O6_s || 0) > 1e-6;
     const wSoap = Math.min(hasOilLeft ? 0.68 : 0.42, cSoap / (cSoap + 0.16));
     if (wSoap > 0.02) {
       r = Math.round(r * (1 - wSoap) + 244 * wSoap);
@@ -705,7 +716,14 @@ export function computePhaseStratification(moles, tempK = CONSTANTS.T_STD_K, ves
   let aqBonusVolMl = 0;
   let aqBonusMassG = 0;
 
-  const nSoapStrat = (moles.C17H33COO_aq || 0) + (moles.C17H35COO_aq || 0) + (moles.C15H31COO_aq || 0);
+  let nSoapStrat = 0;
+  for (const [id, n] of Object.entries(moles)) {
+    if (!Number.isFinite(n) || n <= 1e-12) continue;
+    const sp = SPECIES[id];
+    if (sp?.isSoapIon) {
+      nSoapStrat += n * (sp.emulsifyStrength ?? (sp.soapChainLength != null && sp.soapChainLength < 10 ? 0.08 : 1.0));
+    }
+  }
   const cSoapStrat = aqVolL > 1e-5 ? nSoapStrat / aqVolL : 0;
   const lipidEmulsifyFrac = nSoapStrat > 1e-5 && aqVolMl > 0.5 ? Math.min(0.95, Math.max(0, (cSoapStrat - 0.04) / 0.25)) : 0;
   const aqIonicSalt = ((moles.Na_aq || 0) + (moles.Cl_aq || 0) + 2 * (moles.Ca2_aq || 0)) / Math.max(1e-4, aqVolL);
@@ -723,11 +741,13 @@ export function computePhaseStratification(moles, tempK = CONSTANTS.T_STD_K, ves
     if (lg === 'organic_light' && sp.density > 0) {
       const mG = n * sp.molarMass;
       const vMl = mG / sp.density;
-      if (id === 'C57H104O6_l' && lipidEmulsifyFrac > 0.01) {
-        aqBonusMassG += mG * lipidEmulsifyFrac;
-        aqBonusVolMl += vMl * lipidEmulsifyFrac;
-        lightMassG += mG * (1 - lipidEmulsifyFrac);
-        lightVolMl += vMl * (1 - lipidEmulsifyFrac);
+      const emulPow = sp.isFat ? (sp.emulsifyPower ?? 1.0) : 0;
+      if (emulPow > 0.05 && lipidEmulsifyFrac > 0.01) {
+        const effFrac = Math.min(0.95, lipidEmulsifyFrac * emulPow);
+        aqBonusMassG += mG * effFrac;
+        aqBonusVolMl += vMl * effFrac;
+        lightMassG += mG * (1 - effFrac);
+        lightVolMl += vMl * (1 - effFrac);
       } else if (id === 'CH3COOC2H5_l' && !esterSaltedOut && estSolMol > 1e-6 && aqVolMl > 0.5) {
         const dissolvedFrac = Math.min(0.65, estSolMol / Math.max(1e-9, n));
         aqBonusMassG += mG * dissolvedFrac;
@@ -1217,13 +1237,12 @@ export function computeVesselAroma(vessel) {
   if (nPungentAcid >= 0.005) {
     return { kind: 'vinegar', key: 'aromaVinegar', tone: 'text-amber-300 border-amber-500/40 bg-amber-500/10' };
   }
-  const nSoapTot =
-    (m.C17H33COO_aq || 0) +
-    (m.C17H35COO_aq || 0) +
-    (m.C15H31COO_aq || 0) +
-    (m.C17H33COONa_s || 0) +
-    (m.C17H35COONa_s || 0) +
-    (m.C15H31COONa_s || 0);
+  let nSoapTot = 0;
+  for (const [id, n] of Object.entries(m)) {
+    if (n > 1e-10 && (SPECIES[id]?.isSoapIon || SPECIES[id]?.isSoapSolid)) {
+      nSoapTot += n;
+    }
+  }
   if (vessel.saponificationComplete || nSoapTot >= 0.005) {
     return { kind: 'soapy_clean', key: 'aromaSoapyClean', tone: 'text-sky-300 border-sky-400/40 bg-sky-400/10' };
   }

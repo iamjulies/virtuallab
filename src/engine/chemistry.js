@@ -1977,8 +1977,6 @@ export const DRY_SALT_PAIRINGS = [
   ['Mn2_aq', 3, 'PO4_3_aq', 2, 'Mn3PO4_2_s', 1, false],
   ['Na_aq', 2, 'SiO3_2_aq', 1, 'Na2SiO3_s', 1, false],
   ['K_aq', 2, 'SiO3_2_aq', 1, 'K2SiO3_s', 1, false],
-  ['Na_aq', 1, 'C17H33COO_aq', 1, 'C17H33COONa_s', 1, false],
-  ['Na_aq', 1, 'C17H35COO_aq', 1, 'C17H35COONa_s', 1, false],
   ['Ca2_aq', 1, 'SiO3_2_aq', 1, 'CaSiO3_s', 1, false],
   ['H_aq', 2, 'SiO3_2_aq', 1, 'H2SiO3_s', 1, false],
   ['K_aq', 2, 'Cr2O7_2_aq', 1, 'K2Cr2O7_s', 1, false],
@@ -2000,6 +1998,9 @@ export const DRY_SALT_PAIRINGS = [
   ['Na_aq', 1, 'HCOO_aq', 1, 'HCOONa_s', 1, false],
   ['K_aq', 1, 'HCOO_aq', 1, 'HCOOK_s', 1, false],
   ['H_aq', 1, 'HCOO_aq', 1, 'CO_g', 1, true],
+  ...Object.values(SPECIES)
+    .filter((sp) => sp?.isSoapIon && (sp.saltOutNaId || sp.drySolidId) && SPECIES[sp.saltOutNaId || sp.drySolidId])
+    .map((sp) => ['Na_aq', 1, sp.id, 1, sp.saltOutNaId || sp.drySolidId, 1, false]),
 ];
 
 /**
@@ -2090,6 +2091,16 @@ export function enforceDryPhaseBoundary(vessel) {
     gasProduced.H2O_g += xNh4;
     if (moles.NH4_aq < 1e-13) delete moles.NH4_aq;
     if (moles.OH_aq < 1e-13) delete moles.OH_aq;
+  }
+
+  // Property-driven soap crystallization upon dry evaporation (Na+ + isSoapIon -> saltOutNaId || drySolidId)
+  if ((moles.Na_aq || 0) > 0) {
+    for (const [id, n] of Object.entries(moles)) {
+      const sp = SPECIES[id];
+      const dryTarget = sp?.isSoapIon ? (sp.saltOutNaId || sp.drySolidId) : null;
+      if (!dryTarget || !SPECIES[dryTarget] || n <= 0) continue;
+      pairToProduct('Na_aq', 1, id, 1, dryTarget, 1, false);
+    }
   }
 
   // Ca(HCO3)2 decomposition cleanly at dry boundary -> CaCO3(s) + H2O(g) + CO2(g)
