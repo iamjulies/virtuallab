@@ -435,10 +435,10 @@ export function computeSolutionVisuals(
   }
 
   // 3b. Soap micelle / emulsion opalescence (milky homogeneous solution during lipid saponification)
-  const nSoapMol = (moles.C17H33COO_aq || 0) + (moles.C17H35COO_aq || 0);
+  const nSoapMol = (moles.C17H33COO_aq || 0) + (moles.C17H35COO_aq || 0) + (moles.C15H31COO_aq || 0);
   if (nSoapMol > 1e-5 && (phaseFilter === 'aq' || phaseFilter === 'aqueous' || phaseFilter === 'all')) {
     const cSoap = nSoapMol / Math.max(1e-4, liquidVolL);
-    const hasOilLeft = (moles.C57H104O6_l || 0) > 1e-6 || (moles.C57H110O6_s || 0) > 1e-6;
+    const hasOilLeft = (moles.C57H104O6_l || 0) > 1e-6 || (moles.C57H110O6_s || 0) > 1e-6 || (moles.C51H98O6_s || 0) > 1e-6;
     const wSoap = Math.min(hasOilLeft ? 0.68 : 0.42, cSoap / (cSoap + 0.16));
     if (wSoap > 0.02) {
       r = Math.round(r * (1 - wSoap) + 244 * wSoap);
@@ -446,6 +446,27 @@ export function computeSolutionVisuals(
       b = Math.round(b * (1 - wSoap) + 230 * wSoap);
       alpha = Math.min(0.90, alpha + wSoap * 0.44);
     }
+  }
+
+  // 3c. Overheated esterification yellow-amber charring & boiled-dry saponification scorching tint
+  const estAmber = Math.max(0, Math.min(1, options.esterOverheatFrac || 0));
+  if (estAmber > 0.04) {
+    const wAmb = Math.min(0.84, estAmber * 0.85);
+    const targetR = estAmber < 0.45 ? 245 : 146;
+    const targetG = estAmber < 0.45 ? 196 : 64;
+    const targetB = estAmber < 0.45 ? 66 : 14;
+    r = Math.round(r * (1 - wAmb) + targetR * wAmb);
+    g = Math.round(g * (1 - wAmb) + targetG * wAmb);
+    b = Math.round(b * (1 - wAmb) + targetB * wAmb);
+    alpha = Math.min(0.92, alpha + wAmb * 0.36);
+  }
+  const scorchFrac = Math.max(0, Math.min(1, options.soapScorchFrac || 0));
+  if (scorchFrac > 0.04 && (phaseFilter === 'aq' || phaseFilter === 'aqueous' || phaseFilter === 'all')) {
+    const wSc = Math.min(0.86, scorchFrac * 0.85);
+    r = Math.round(r * (1 - wSc) + 120 * wSc);
+    g = Math.round(g * (1 - wSc) + 53 * wSc);
+    b = Math.round(b * (1 - wSc) + 15 * wSc);
+    alpha = Math.min(0.95, alpha + wSc * 0.42);
   }
 
   return {
@@ -684,9 +705,15 @@ export function computePhaseStratification(moles, tempK = CONSTANTS.T_STD_K, ves
   let aqBonusVolMl = 0;
   let aqBonusMassG = 0;
 
-  const nSoapStrat = (moles.C17H33COO_aq || 0) + (moles.C17H35COO_aq || 0);
+  const nSoapStrat = (moles.C17H33COO_aq || 0) + (moles.C17H35COO_aq || 0) + (moles.C15H31COO_aq || 0);
   const cSoapStrat = aqVolL > 1e-5 ? nSoapStrat / aqVolL : 0;
   const lipidEmulsifyFrac = nSoapStrat > 1e-5 && aqVolMl > 0.5 ? Math.min(0.95, Math.max(0, (cSoapStrat - 0.04) / 0.25)) : 0;
+  const aqIonicSalt = ((moles.Na_aq || 0) + (moles.Cl_aq || 0) + 2 * (moles.Ca2_aq || 0)) / Math.max(1e-4, aqVolL);
+  const esterSaltedOut = aqIonicSalt >= 2.2;
+  const cEtAq = (moles.C2H5OH_l || 0) / Math.max(1e-4, aqVolL);
+  const estSolMol = aqVolMl > 0.5
+    ? Math.max(0, (0.65 + 1.8 * Math.min(4, cEtAq)) * Math.exp(-0.42 * aqIonicSalt) * aqVolL)
+    : 0;
 
   for (const [id, n] of Object.entries(moles)) {
     if (!Number.isFinite(n) || n <= 1e-12) continue;
@@ -701,6 +728,12 @@ export function computePhaseStratification(moles, tempK = CONSTANTS.T_STD_K, ves
         aqBonusVolMl += vMl * lipidEmulsifyFrac;
         lightMassG += mG * (1 - lipidEmulsifyFrac);
         lightVolMl += vMl * (1 - lipidEmulsifyFrac);
+      } else if (id === 'CH3COOC2H5_l' && !esterSaltedOut && estSolMol > 1e-6 && aqVolMl > 0.5) {
+        const dissolvedFrac = Math.min(0.65, estSolMol / Math.max(1e-9, n));
+        aqBonusMassG += mG * dissolvedFrac;
+        aqBonusVolMl += vMl * dissolvedFrac;
+        lightMassG += mG * (1 - dissolvedFrac);
+        lightVolMl += vMl * (1 - dissolvedFrac);
       } else {
         lightMassG += mG;
         lightVolMl += vMl;

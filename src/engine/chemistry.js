@@ -2154,7 +2154,10 @@ export function stepLiquidLiquidPartition(vessel, strat, dt) {
 
     const agitate = (vessel.magStirRpm || 0) > 0 || (vessel.stirTimer || 0) > 0 ? 4.2 : 1.0;
     const kPart = Math.min(8.5, Math.max(0.15, 0.045 * Math.max(1, strat.interfaceAreaCm2 || 15) * agitate));
-    const nOrgEq = nTot * ((sp.partitionKow * vOrgL) / (vAqL + sp.partitionKow * vOrgL));
+    // Setschenow salting-out effect: high ionic strength (NaCl / CaCl2 brine) drives organics cleanly into upper organic layer
+    const saltIonic = ((vessel.moles.Na_aq || 0) + (vessel.moles.Cl_aq || 0) + 2 * (vessel.moles.Ca2_aq || 0)) / Math.max(0.01, vAqL);
+    const effKow = sp.partitionKow * (1 + Math.min(3.5, 0.35 * saltIonic));
+    const nOrgEq = nTot * ((effKow * vOrgL) / (vAqL + effKow * vOrgL));
     const nextOrg = nOrgEq + (nOrg - nOrgEq) * Math.exp(-kPart * dt);
     const clampedOrg = Math.max(0, Math.min(nTot, nextOrg));
     const clampedAq = Math.max(0, nTot - clampedOrg);

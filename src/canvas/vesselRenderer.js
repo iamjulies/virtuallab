@@ -1980,7 +1980,12 @@ export function renderVessel(ctx, vessel, opts) {
       spec.opticalPathCm,
       vessel.phenBleachFrac,
       vessel.phenIrrevFrac || 0,
-      { phaseFilter: 'all', suspensionLevel: vessel.suspensionLevel || 0 }
+      {
+        phaseFilter: 'all',
+        suspensionLevel: vessel.suspensionLevel || 0,
+        soapScorchFrac: vessel.soapScorchFrac || 0,
+        esterOverheatFrac: vessel.esterOverheatFrac || 0,
+      }
     );
 
     if (vessel.isInverted) {
@@ -2031,6 +2036,8 @@ export function renderVessel(ctx, vessel, opts) {
             {
               phaseFilter: layer.phaseKey,
               suspensionLevel: layer.phaseKey === 'aqueous' ? (vessel.suspensionLevel || 0) : 0,
+              soapScorchFrac: vessel.soapScorchFrac || 0,
+              esterOverheatFrac: vessel.esterOverheatFrac || 0,
             }
           );
           ctx.fillStyle = layVis.css;
@@ -2109,6 +2116,8 @@ export function renderVessel(ctx, vessel, opts) {
             {
               phaseFilter: layer.phaseKey,
               suspensionLevel: layer.phaseKey === 'aqueous' ? (vessel.suspensionLevel || 0) : 0,
+              soapScorchFrac: vessel.soapScorchFrac || 0,
+              esterOverheatFrac: vessel.esterOverheatFrac || 0,
             }
           );
           ctx.fillStyle = layVis.css;
@@ -2244,6 +2253,33 @@ export function renderVessel(ctx, vessel, opts) {
         ctx.stroke();
         ctx.restore();
       }
+    }
+
+    // Durable white soap lather foam column during warm / stirred saponification
+    if ((vessel.soapFoamMl || 0) > 0.3 && !vessel.isInverted && !vessel.isFrozenSolid) {
+      const sFoamTopY = Math.max(top - 4, volumeMlToY(liqMl + solMl + vessel.soapFoamMl));
+      const sFoamH = Math.max(2, surfaceY - sFoamTopY);
+      ctx.save();
+      const sGrad = ctx.createLinearGradient(0, surfaceY, 0, sFoamTopY);
+      sGrad.addColorStop(0, 'rgba(241, 245, 249, 0.58)');
+      sGrad.addColorStop(0.55, 'rgba(248, 250, 252, 0.74)');
+      sGrad.addColorStop(1, 'rgba(255, 255, 255, 0.88)');
+      ctx.fillStyle = sGrad;
+      ctx.fillRect(x - w / 2, sFoamTopY, w, sFoamH + 2.5);
+      const sCount = Math.min(42, Math.max(8, Math.round(sFoamH * 1.1)));
+      for (let c = 0; c < sCount; c++) {
+        const cx = x - w * 0.44 + (((c * 67 + 13) % 100) / 100) * w * 0.88;
+        const cy = sFoamTopY + 1.5 + (((c * 113 + 31) % 100) / 100) * Math.max(2, sFoamH - 3);
+        const cr = 1.4 + ((c * 19) % 3) * 0.85;
+        ctx.beginPath();
+        ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(203, 213, 225, 0.62)';
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
+      }
+      ctx.restore();
     }
 
     // Exp 20: Pickering Colloidal Foam column (Cu(OH)2 floc + O2 microbubbles, rose-lavender with Phenolphthalein)

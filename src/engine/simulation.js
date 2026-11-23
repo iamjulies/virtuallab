@@ -2485,6 +2485,15 @@ export class LabSimulation {
     v.crystallizeTriggered = false;
     v.pickeringFoamMl = 0;
     v.pickeringOverflowActive = false;
+    v.soapFoamMl = 0;
+    v.soapScorchFrac = 0;
+    v.soapScorched = false;
+    v.soapConcPassivated = false;
+    v.soapEarlySalted = false;
+    v.soapSaltedOutCake = false;
+    v.saponificationComplete = false;
+    v.esterOverheatFrac = 0;
+    v.esterPurified = false;
     v.naWakeTrail = [];
     v.kWakeTrail = [];
     v.phenBleachFrac = 0;
@@ -2623,10 +2632,26 @@ export class LabSimulation {
           const dilutionExtent = Math.min(1, nH2OExisting / (nNH3Added * 16 + 0.1));
           dilutionHeatJ += 3400 * nNH3Added * dilutionExtent;
         }
-      } else if (reg.id === 'h2o' && (v.moles.H2SO4_l || 0) >= 0.04) {
-        if (amt >= 1.5) {
+      } else if (
+        (v.moles.H2SO4_l || 0) >= 0.04 &&
+        (v.moles.H2O_l || 0) < (v.moles.H2SO4_l || 0) * 2.5 &&
+        amt >= 1.5
+      ) {
+        if (reg.id === 'h2o') {
           this.addLog({ type: 'alert', key: 'alertWaterIntoConcAcid', vesselLabel: v.label });
           dilutionHeatJ += Math.min(8500, amt * 360);
+        } else if (
+          reg.id === 'etoh' ||
+          reg.id === 'c2h5oh' ||
+          reg.id === 'ch3oh' ||
+          reg.id === 'ch3cooh' ||
+          (reg.perMl?.C2H5OH_l || 0) * amt >= 0.01 ||
+          (reg.perMl?.CH3OH_l || 0) * amt >= 0.01 ||
+          (reg.perMl?.CH3COOH_l || 0) * amt >= 0.01 ||
+          (reg.perMl?.H2O_l || 0) * amt >= 1.5
+        ) {
+          this.addLog({ type: 'alert', key: 'alertEsterConcAcidPour', vesselLabel: v.label });
+          dilutionHeatJ += Math.min(6200, amt * 240);
         }
       } else if (reg.id === 'h2o' && (v.moles.H_aq || 0) > 0.05) {
         const liqL = computeLiquidVolumeL(v.moles, v.tempK);
@@ -3054,10 +3079,17 @@ export class LabSimulation {
     if (
       dst.kind === 'vessel' &&
       (dst.moles.H2SO4_l || 0) >= 0.05 &&
-      actualMl >= 3.0 &&
-      (src.moles.H2O_l || 0) * frac > (src.moles.H2SO4_l || 0) * frac * 4.0 + 0.1
+      (dst.moles.H2O_l || 0) < (dst.moles.H2SO4_l || 0) * 2.5 &&
+      actualMl >= 3.0
     ) {
-      this.addLog({ type: 'alert', key: 'alertWaterIntoConcAcid', vesselLabel: dst.label });
+      if ((src.moles.H2O_l || 0) * frac > (src.moles.H2SO4_l || 0) * frac * 4.0 + 0.1) {
+        this.addLog({ type: 'alert', key: 'alertWaterIntoConcAcid', vesselLabel: dst.label });
+      } else if (
+        ((src.moles.C2H5OH_l || 0) + (src.moles.CH3OH_l || 0) + (src.moles.CH3COOH_l || 0)) * frac >
+        (src.moles.H2SO4_l || 0) * frac * 2.0 + 0.03
+      ) {
+        this.addLog({ type: 'alert', key: 'alertEsterConcAcidPour', vesselLabel: dst.label });
+      }
     }
     if (cDstBefore + cMoved > 0) {
       const nextT = (cDstBefore * dstTempBefore + cMoved * src.tempK + mixHeatJ) / (cDstBefore + cMoved);
@@ -5863,6 +5895,21 @@ export class LabSimulation {
             }
           }
         }
+        for (const [pendingProp, seenKey, logType, logKey, cooldown] of [
+          ['_soapConcAlkaliAlertPending', 'soap_conc_alkali', 'alert', 'alertSoapConcAlkaliPassivate', 6.0],
+          ['_soapEarlyBrineAlertPending', 'soap_early_brine', 'alert', 'alertSoapEarlyBrine', 6.0],
+          ['_soapScorchAlertPending', 'soap_scorch', 'alert', 'alertSoapScorch', 6.0],
+          ['_esterOverheatAlertPending', 'ester_overheat', 'alert', 'alertEsterOverheat', 6.0],
+          ['_soapCompleteAlertPending', 'soap_complete', 'info', 'alertSoapComplete', 12.0],
+        ]) {
+          if (v[pendingProp]) {
+            v[pendingProp] = false;
+            if ((this.timeSec - (v.seenReactions[seenKey] ?? -99)) > cooldown) {
+              v.seenReactions[seenKey] = this.timeSec;
+              this.addLog({ type: logType, key: logKey, vesselLabel: v.label });
+            }
+          }
+        }
 
         for (const ev of gasEvents) {
           if (ev.type === 'stopper_pop') {
@@ -5966,6 +6013,9 @@ export class LabSimulation {
         ? Math.max(0.02, Math.min(35.0, v.internalPressureBar))
         : this.environment.pressureBar;
       v.pickeringFoamMl = Number.isFinite(v.pickeringFoamMl || 0) ? Math.max(0, v.pickeringFoamMl || 0) : 0;
+      v.soapFoamMl = Number.isFinite(v.soapFoamMl || 0) ? Math.max(0, Math.min(200, v.soapFoamMl || 0)) : 0;
+      v.soapScorchFrac = Number.isFinite(v.soapScorchFrac || 0) ? Math.max(0, Math.min(1, v.soapScorchFrac || 0)) : 0;
+      v.esterOverheatFrac = Number.isFinite(v.esterOverheatFrac || 0) ? Math.max(0, Math.min(1, v.esterOverheatFrac || 0)) : 0;
       for (const [spId, val] of Object.entries(v.moles)) {
         if (!Number.isFinite(val) || val < 0) delete v.moles[spId];
       }

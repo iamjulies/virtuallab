@@ -1,6 +1,8 @@
 /**
  * Physical & chemical constants (SI / IUPAC standard units).
  */
+export const APP_VERSION_TAG = 'virlab_beta_v5+build.10';
+
 export const CONSTANTS = {
   // Ideal gas constant
   R_J_MOL_K: 8.314462618,

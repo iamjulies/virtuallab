@@ -98,6 +98,40 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     const massG = n * sp.molarMass;
     const settle = vessel.precipitateSettle?.[spId] ?? 0.35;
 
+    // Salted-out soap curds (RCOONa, density ~0.92-0.94 < water/brine) float as an upper white cake!
+    const isFloatingSoap =
+      (spId === 'C17H33COONa_s' || spId === 'C17H35COONa_s' || spId === 'C15H31COONa_s') &&
+      hasWater &&
+      surfaceY < bottom - 8;
+    if (isFloatingSoap) {
+      ctx.save();
+      const cakeH = Math.min(18, 4.2 + Math.sqrt(massG) * 3.8);
+      const cakeTop = Math.max((bounds.top ?? surfaceY - 12), surfaceY - cakeH * 0.35);
+      const cakeBot = Math.min(bottom - 2, cakeTop + cakeH);
+      const grad = ctx.createLinearGradient(0, cakeTop, 0, cakeBot);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.55, sp.color || '#fef9c3');
+      grad.addColorStop(1, '#e2e8f0');
+      ctx.globalAlpha = 0.94;
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(left + 1, cakeBot);
+      ctx.lineTo(left + 1, cakeTop + 1.5);
+      for (let s = 1; s <= 9; s++) {
+        const sx = left + (width * s) / 9;
+        const bump = (seeded(s, spId.charCodeAt(2) + 7) - 0.5) * 2.4;
+        ctx.lineTo(sx, cakeTop + bump);
+      }
+      ctx.lineTo(right - 1, cakeBot);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(203, 213, 225, 0.75)';
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      ctx.restore();
+      continue;
+    }
+
     // Layer thickness scales naturally with precipitate mass
     const maxLayerH = Math.min(28, 3.5 + Math.sqrt(massG) * 6.5);
     const settledH = hasWater ? maxLayerH * (0.25 + 0.75 * settle) : maxLayerH;

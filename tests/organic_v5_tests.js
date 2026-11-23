@@ -1,16 +1,19 @@
 /**
  * Modular Verification Suite for Organic Solver v5 Architecture & Beyond (Prompt 66+).
  */
-import { CONSTANTS } from '../src/data/constants.js';
+import { APP_VERSION_TAG, CONSTANTS } from '../src/data/constants.js';
 import { APPARATUS } from '../src/data/apparatus.js';
 import { SPECIES } from '../src/data/species.js';
 import { LabSimulation } from '../src/engine/simulation.js';
+import { stepVesselChemistry } from '../src/engine/chemistry.js';
+import { computePhaseStratification, computeSolutionVisuals, computeLiquidVolumeL, computePH } from '../src/engine/equilibrium.js';
 import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
 import { computeBeerLambertReading } from '../src/engine/analyticalTools.js';
 import { renderColorimeter, renderPhConductometer, renderTlcPlate } from '../src/canvas/toolRenderer.js';
 import { PRESET_MENU_ITEMS } from '../src/data/presets.js';
 import { I18N } from '../src/data/i18n.js';
 import { InspectorPanel } from '../src/ui/inspectorPanel.js';
+import { EnvironmentBar } from '../src/ui/environmentBar.js';
 import { renderRetortClampJaw } from '../src/canvas/vesselRenderer.js';
 
 export function runOrganicV5Tests(assert) {
@@ -477,6 +480,179 @@ export function runOrganicV5Tests(assert) {
       'Prompt 69 invariants: Colorimeter wavelength UI/Canvas sync & instant recalc, probe supportsClamp + wide reach + sleek jaws, clamped starch_colorimetry & titration_probe presets',
       clampedColOk && syncOk && clampedPhOk && jawRenderOk,
       `colClamp=${clampedColOk}(A=${(col.measuredAbsorbance||0).toFixed(2)},cl=${col.clampedToId}), sync=${syncOk}(wl=${wlLabelAfter},hi=${btn420Highlighted},btn=${hasClampBtn}), phClamp=${clampedPhOk}(pH=${phProbe?.measuredPH?.toFixed(2)}), jaw=${jawRenderOk}`
+    );
+  }
+
+  // TEST 188: Prompt 70 — Header Version Badge Dynamic Sync, Saponification Realism & Hazards,
+  // and Fischer Esterification Catalysis, Overheating & Purification Cascade
+  {
+    // 1) Header version badge sync (never hardcoded stale v4+build.24)
+    const sim70 = new LabSimulation();
+    const envHost = document.createElement('div');
+    document.body.appendChild(envHost);
+    const appState = { lang: 'vi', theme: 'dark', deviceMode: 'desktop', audioEnabled: false };
+    const bar70 = new EnvironmentBar(envHost, sim70, appState, {});
+    bar70.render((k) => I18N.vi[k] || k);
+    const badgeText = envHost.querySelector('#app-version-badge')?.textContent?.trim();
+    const headerSyncOk =
+      badgeText === APP_VERSION_TAG &&
+      !badgeText.includes('v4+build.24') &&
+      I18N.vi.appSubtitle.includes(APP_VERSION_TAG) &&
+      I18N.en.appSubtitle.includes(APP_VERSION_TAG);
+    document.body.removeChild(envHost);
+
+    // 2a) Saponification: Too-conc alkali (>45 wt% NaOH) causes early salting-out crust passivation; diluting resumes conversion
+    const vConcBase = sim70.createApparatus('beaker_250', 100, 300);
+    vConcBase.stirTimer = 8;
+    // 55 wt% NaOH (~0.40 mol NaOH = 16g + ~0.72 mol H2O = 13g) + 0.02 mol Triolein
+    vConcBase.moles = { C57H104O6_l: 0.02, Na_aq: 0.40, OH_aq: 0.40, H2O_l: 0.72 };
+    const vNormBase = sim70.createApparatus('beaker_250', 220, 300);
+    vNormBase.stirTimer = 8;
+    // 25 wt% NaOH (0.12 mol NaOH = 4.8g + 0.80 mol H2O = 14.4g) + 0.02 mol Triolein
+    vNormBase.moles = { C57H104O6_l: 0.02, Na_aq: 0.12, OH_aq: 0.12, H2O_l: 0.80 };
+    for (let i = 0; i < 6; i++) {
+      vConcBase.tempK = 358.15;
+      vNormBase.tempK = 358.15;
+      vConcBase.stirTimer = 5;
+      vNormBase.stirTimer = 5;
+      sim70.step(0.5);
+    }
+    const concAlertOk =
+      vConcBase.soapConcPassivated === true &&
+      (vNormBase.moles.C17H33COO_aq || 0) > (vConcBase.moles.C17H33COO_aq || 0) * 1.8 &&
+      sim70.logs.some((l) => l.key === 'alertSoapConcAlkaliPassivate');
+    // Dilute conc batch with hot water -> passivation clears and saponification resumes!
+    vConcBase.moles.H2O_l += 1.6;
+    const soapBeforeDil = vConcBase.moles.C17H33COO_aq || 0;
+    for (let i = 0; i < 8; i++) {
+      vConcBase.tempK = 358.15;
+      vConcBase.stirTimer = 5;
+      sim70.step(0.5);
+    }
+    const dilResumeOk = !vConcBase.soapConcPassivated && (vConcBase.moles.C17H33COO_aq || 0) > soapBeforeDil + 0.005;
+
+    // 2b) Premature brine traps lipid vs post-reaction brine yields floating soap cake + foam + glycerol Cu(OH)2 check
+    const vEarlySalt = sim70.createApparatus('beaker_250', 340, 300);
+    vEarlySalt.moles = { C57H104O6_l: 0.02, Na_aq: 0.35, OH_aq: 0.12, Cl_aq: 0.23, H2O_l: 2.2, C17H33COO_aq: 0.004 };
+    const vDoneSalt = sim70.createApparatus('beaker_250', 460, 300);
+    vDoneSalt.moles = { C57H104O6_l: 0.01, Na_aq: 0.16, OH_aq: 0.16, H2O_l: 1.5, C2H5OH_l: 0.08 };
+    for (let i = 0; i < 6; i++) {
+      vEarlySalt.tempK = 358.15;
+      sim70.step(0.4);
+    }
+    const earlyBrineOk = vEarlySalt.soapEarlySalted === true && sim70.logs.some((l) => l.key === 'alertSoapEarlyBrine');
+    for (let i = 0; i < 24; i++) {
+      vDoneSalt.tempK = 358.15;
+      vDoneSalt.stirTimer = 4;
+      sim70.step(0.5);
+    }
+    const foamDoneOk =
+      (vDoneSalt.soapFoamMl || 0) > 1.0 &&
+      vDoneSalt.saponificationComplete === true &&
+      (vDoneSalt.moles.C57H104O6_l || 0) <= 1e-4 &&
+      sim70.logs.some((l) => l.key === 'alertSoapComplete');
+    // Now add saturated NaCl post-completion -> clean floating cake + Cu(OH)2 glycerol check + renderCanvas ok
+    vDoneSalt.moles.Na_aq = (vDoneSalt.moles.Na_aq || 0) + 0.55;
+    vDoneSalt.moles.Cl_aq = (vDoneSalt.moles.Cl_aq || 0) + 0.55;
+    for (let i = 0; i < 6; i++) {
+      vDoneSalt.tempK = 328.15;
+      sim70.step(0.4);
+    }
+    vDoneSalt.moles.CuOH2_s = 0.008;
+    sim70.step(0.5);
+    const postBrineCakeOk =
+      vDoneSalt.soapSaltedOutCake === true &&
+      (vDoneSalt.moles.C17H33COONa_s || 0) > 0.015 &&
+      (vDoneSalt.moles.CuC2H4O2_aq || 0) > 0.001;
+    const fCanvas = document.createElement('canvas');
+    fCanvas.width = 180;
+    fCanvas.height = 240;
+    let soapRenderOk = true;
+    try {
+      renderVesselSolids(fCanvas.getContext('2d'), vDoneSalt, { left: 20, right: 160, top: 20, bottom: 220, width: 140 }, true, 85);
+    } catch {
+      soapRenderOk = false;
+    }
+
+    // 2c) Water-depletion scorching at >= 100 C when water drops very low
+    const vScorch = sim70.createApparatus('beaker_250', 560, 300);
+    vScorch.moles = { C17H33COO_aq: 0.04, Na_aq: 0.06, OH_aq: 0.02, C3H5OH_3_l: 0.013, H2O_l: 0.03 };
+    for (let i = 0; i < 6; i++) {
+      vScorch.tempK = 378.15;
+      sim70.step(0.4);
+    }
+    const visScorch = computeSolutionVisuals(
+      vScorch.moles,
+      computeLiquidVolumeL(vScorch.moles, vScorch.tempK),
+      computePH(vScorch.moles, 0.02, vScorch.tempK),
+      4,
+      0,
+      0,
+      { phaseFilter: 'aq', soapScorchFrac: vScorch.soapScorchFrac || 0 }
+    );
+    const scorchOk =
+      vScorch.soapScorched === true &&
+      (vScorch.soapScorchFrac || 0) > 0.16 &&
+      visScorch.r > visScorch.b + 10 &&
+      sim70.logs.some((l) => l.key === 'alertSoapScorch');
+
+    // 3) Fischer Esterification: Conc acid hazard pour + Conc H2SO4 dehydrating excess >66.7% + overheating amber + NaCl/Na2CO3/CaCl2 purification
+    const vAcidBad = sim70.createApparatus('round_flask_250', 120, 460);
+    vAcidBad.moles = { H2SO4_l: 0.18 };
+    sim70.addReagentToVessel(vAcidBad.id, 'etoh', 10);
+    const pourHazardOk = sim70.logs.some((l) => l.key === 'alertEsterConcAcidPour');
+
+    const vOverheat = sim70.createApparatus('round_flask_250', 240, 460);
+    vOverheat.moles = { CH3COOH_l: 0.08, C2H5OH_l: 0.04, H2SO4_l: 0.18 };
+    for (let i = 0; i < 6; i++) {
+      vOverheat.tempK = 416.15; // 143 C sustained overheat with conc. H2SO4!
+      stepVesselChemistry(vOverheat, 0.4, { environment: sim70.environment });
+    }
+    sim70.step(0.05); // Flush _esterOverheatAlertPending to sim70.logs
+    const visOverheat = computeSolutionVisuals(
+      vOverheat.moles,
+      computeLiquidVolumeL(vOverheat.moles, vOverheat.tempK),
+      1,
+      4,
+      0,
+      0,
+      { phaseFilter: 'all', esterOverheatFrac: vOverheat.esterOverheatFrac || 0 }
+    );
+    const overheatOk =
+      (vOverheat.esterOverheatFrac || 0) > 0.25 &&
+      visOverheat.r > visOverheat.b + 15 &&
+      sim70.logs.some((l) => l.key === 'alertEsterOverheat');
+
+    // Purification cascade: EtOAc + EtOH + H2O -> brine salting-out -> Na2CO3 neutralization -> CaCl2 drying
+    const vPure = sim70.createApparatus('beaker_250', 380, 460);
+    vPure.moles = { CH3COOC2H5_l: 0.10, CH3COOH_l: 0.015, C2H5OH_l: 0.05, H2O_l: 1.5 };
+    const stratPreSalt = computePhaseStratification(vPure.moles, 298.15, APPARATUS.beaker_250, 0);
+    // Wash 1: CO3^2- neutralizes residual Acetic acid evolving CO2_g
+    vPure.moles.Na_aq = 0.28;
+    vPure.moles.CO3_2_aq = 0.02;
+    vPure.moles.Cl_aq = 0.24; // NaCl + Na2CO3 wash
+    const co2BeforeWash = vPure.escapedGasMoles?.CO2_g || vPure.headspaceGasMoles?.CO2_g || 0;
+    for (let i = 0; i < 6; i++) {
+      vPure.tempK = 298.15;
+      sim70.step(0.5);
+    }
+    const co2TotalWash = (vPure.escapedGasMoles?.CO2_g || 0) + (vPure.headspaceGasMoles?.CO2_g || 0);
+    const stratPostSalt = computePhaseStratification(vPure.moles, 298.15, APPARATUS.beaker_250, 0);
+    // Decant water/EtOH and dry with anhydrous CaCl2_s
+    vPure.moles = { CH3COOC2H5_l: 0.095, CaCl2_s: 0.02, H2O_l: 0.015, C2H5OH_l: 0.01 };
+    for (let i = 0; i < 4; i++) {
+      vPure.tempK = 298.15;
+      sim70.step(0.4);
+    }
+    const purifyOk =
+      stratPostSalt.lightOrganicMl > stratPreSalt.lightOrganicMl + 0.5 &&
+      co2TotalWash > co2BeforeWash + 0.005 &&
+      vPure.esterPurified === true;
+
+    assert(
+      'Prompt 70 invariants: Dynamic header build badge, conc alkali passivation + early/post brine floating soap cake + scorch + glycerol Cu(OH)2, conc H2SO4 hazard/overheat amber & NaCl/Na2CO3/CaCl2 ester purification',
+      headerSyncOk && concAlertOk && dilResumeOk && earlyBrineOk && foamDoneOk && postBrineCakeOk && soapRenderOk && scorchOk && pourHazardOk && overheatOk && purifyOk,
+      `hdr=${headerSyncOk}(${badgeText}), conc=${concAlertOk}, dil=${dilResumeOk}, early=${earlyBrineOk}, foam=${foamDoneOk}, cake=${postBrineCakeOk}, ren=${soapRenderOk}, scorch=${scorchOk}, pour=${pourHazardOk}, ovh=${overheatOk}(f=${(vOverheat.esterOverheatFrac||0).toFixed(2)}), pur=${purifyOk}(light:${stratPreSalt.lightOrganicMl.toFixed(1)}->${stratPostSalt.lightOrganicMl.toFixed(1)},CO2=${co2TotalWash.toFixed(3)})`
     );
   }
 }
