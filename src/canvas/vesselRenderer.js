@@ -1821,6 +1821,383 @@ function renderShatteredWreckage(ctx, vessel, spec, pal, isSelected) {
   ctx.restore();
 }
 
+const VESSEL_SHELL_CACHE = new Map();
+const VESSEL_SHELL_PAD = 24;
+
+export function getVesselGlassShellCacheSize() {
+  return VESSEL_SHELL_CACHE.size;
+}
+
+function getCachedVesselGlassShell(spec, pal, isDark, isSelected, isDropTarget, softenGlowFrac = 0, sagFrac = 0) {
+  if (typeof document === 'undefined') return null;
+  const cacheDpr = typeof window !== 'undefined' ? Math.min(2, Math.max(1, window.devicePixelRatio || 1)) : 1;
+  const glowQ = softenGlowFrac > 0.08 ? Math.round(softenGlowFrac * 8) : 0;
+  const sagQ = sagFrac > 0.005 ? Math.round(sagFrac * 20) : 0;
+  const key = `${spec.id}|${isDark ? 1 : 0}|${isSelected ? 1 : 0}|${isDropTarget ? 1 : 0}|${glowQ}|${sagQ}|${cacheDpr}`;
+
+  const hit = VESSEL_SHELL_CACHE.get(key);
+  if (hit) return hit;
+
+  const pad = VESSEL_SHELL_PAD;
+  const w = spec.width;
+  const h = spec.height;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round((w + pad * 2) * cacheDpr);
+  canvas.height = Math.round((h + pad * 2) * cacheDpr);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(cacheDpr, cacheDpr);
+
+  const x = pad + w / 2;
+  const y = pad + h / 2;
+  const top = y - h / 2;
+  const bottom = y + h / 2;
+  const geom = computeVesselFluidGeometry(spec, y, 0);
+  const { interiorBottom, scaleY, neckHalf, volumeMlToY, volumeMlToState } = geom;
+
+  // Draw glass outer silhouette + ISO reinforced wall + red-orange thermal softening sag
+  traceVesselPath(ctx, spec, x, y, sagFrac);
+  const vesselGlowColor = isDropTarget
+    ? '#10b981'
+    : softenGlowFrac > 0.08
+    ? `rgba(249, 115, 22, ${Math.min(0.95, 0.35 + softenGlowFrac * 0.6).toFixed(2)})`
+    : isSelected
+    ? '#3b82f6'
+    : null;
+  if (vesselGlowColor) strokeHaloGlow(ctx, vesselGlowColor, isSelected || isDropTarget ? 2.5 : 2.0);
+  ctx.strokeStyle =
+    softenGlowFrac > 0.25
+      ? `rgb(249, ${Math.max(60, Math.round(160 - softenGlowFrac * 100))}, 22)`
+      : isDropTarget
+      ? '#10b981'
+      : isSelected
+      ? '#3b82f6'
+      : pal.glassStroke;
+  ctx.lineWidth = isSelected || isDropTarget ? 2.5 : spec.wallThicknessMm >= 1.1 || spec.shape === 'dish' || spec.shape === 'mortar' || spec.shape === 'crucible' ? 2.3 : 1.75;
+  ctx.stroke();
+
+  if (spec.hasTwoEnds) {
+    if (spec.isHorizontalTube) {
+      ctx.strokeStyle = pal.glassHighlight;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x - w * 0.44, y - h * 0.34);
+      ctx.lineTo(x + w * 0.44, y - h * 0.34);
+      ctx.stroke();
+    } else if (spec.isUTube) {
+      const dxU = spec.limbSpacingX || 28;
+      const rOut = spec.tubeOuterR || 13;
+      const topY = y - h / 2 + 2;
+      const bendCy = y + h / 2 - 2 - (dxU + rOut);
+      ctx.strokeStyle = pal.glassStroke;
+      ctx.lineWidth = 2.0;
+      for (const armSign of [-1, 1]) {
+        const cxArm = x + armSign * dxU;
+        ctx.beginPath();
+        ctx.ellipse(cxArm, topY, rOut + 1.5, 2.2, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = pal.glassHighlight;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x - dxU - rOut + 3.2, topY + 6);
+      ctx.lineTo(x - dxU - rOut + 3.2, bendCy);
+      ctx.arc(x, bendCy, dxU + rOut - 3.2, Math.PI, Math.PI * 0.56, true);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x + dxU + rOut - 3.2, topY + 6);
+      ctx.lineTo(x + dxU + rOut - 3.2, bendCy);
+      ctx.stroke();
+    }
+  }
+
+  // Glass vertical specular highlight
+  if (!spec.isUTube && !spec.isHorizontalTube && spec.shape !== 'dish' && spec.shape !== 'mortar' && spec.shape !== 'crucible') {
+    ctx.strokeStyle = pal.glassHighlight;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (spec.shape === 'erlenmeyer') {
+      const shoulderY = interiorBottom - spec.geometry.profilePoints[3][0] * scaleY;
+      ctx.moveTo(x - neckHalf + 4, shoulderY + 2);
+      ctx.lineTo(x - w * 0.36, bottom - 15);
+    } else if (spec.shape === 'round_flask') {
+      const { pts } = mapProfileToCanvas(spec, x, y, sagFrac);
+      const minBulbRx = Math.max(neckHalf + 5, w * 0.25);
+      const bulbPts = pts.filter((p) => p.rx >= minBulbRx);
+      if (bulbPts.length >= 3) {
+        const iStart = Math.max(0, Math.floor(bulbPts.length * 0.14));
+        const iEnd = Math.min(bulbPts.length - 1, Math.floor(bulbPts.length * 0.86));
+        ctx.moveTo(x - bulbPts[iStart].rx * 0.80, bulbPts[iStart].cy);
+        for (let i = iStart + 1; i <= iEnd; i++) {
+          ctx.lineTo(x - bulbPts[i].rx * 0.80, bulbPts[i].cy);
+        }
+      }
+    } else if (spec.shape === 'trough') {
+      ctx.moveTo(x - w * 0.38, top + 12);
+      ctx.lineTo(x - w * 0.35, bottom - 12);
+    } else {
+      ctx.moveTo(x - w * 0.33, top + 12);
+      ctx.lineTo(x - w * 0.33, bottom - 14);
+    }
+    ctx.stroke();
+  }
+
+  // White ceramic enamel ISO graduations + frosted write-on patch
+  // Record text labels relative to center (x, y) so main ctx renders crisp text & satisfies ctx.fillText tests
+  const textDraws = [];
+  ctx.fillText = (text, tx, ty) => {
+    textDraws.push({
+      text: String(text),
+      dx: tx - x,
+      dy: ty - y,
+      font: ctx.font,
+      fillStyle: ctx.fillStyle,
+      textAlign: ctx.textAlign,
+      textBaseline: ctx.textBaseline,
+    });
+  };
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 8px system-ui, sans-serif';
+  if (spec.shape === 'beaker') {
+    const isLargeBeaker = (spec.maxVolumeMl || 250) >= 900;
+    const marks = isLargeBeaker
+      ? [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+      : [25, 50, 75, 100, 125, 150, 175, 200, 225, 250];
+    for (const ml of marks) {
+      const ty = volumeMlToY(ml);
+      const isMajor = isLargeBeaker ? ml % 200 === 0 : ml % 50 === 0;
+      const tickX = x - w * 0.32;
+      const tickLen = isMajor ? 9 : 5;
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.1 : 0.8;
+      ctx.beginPath();
+      ctx.moveTo(tickX, ty);
+      ctx.lineTo(tickX + tickLen, ty);
+      ctx.stroke();
+      if (isMajor) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'left';
+        ctx.fillText(String(ml), tickX + 11, ty + 0.5);
+      }
+    }
+    const patchW = (spec.maxVolumeMl || 250) >= 900 ? 27 : spec.formVariant === 'tall' ? 17 : 19;
+    const patchH = spec.formVariant === 'tall' ? 23 : 20;
+    const patchX = x + w * 0.17;
+    const patchY = top + h * 0.28;
+    ctx.fillStyle = pal.writePatchBg;
+    ctx.strokeStyle = pal.writePatchBorder;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.roundRect(patchX, patchY, patchW, patchH, 2.5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = pal.enamelText;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 7.5px system-ui, sans-serif';
+    ctx.fillText(String(spec.maxVolumeMl || 250), patchX + patchW / 2, patchY + 7);
+    ctx.font = '600 6.5px system-ui, sans-serif';
+    ctx.fillText(formatCanvasText('mL'), patchX + patchW / 2, patchY + 15);
+  } else if (spec.shape === 'erlenmeyer') {
+    const isLargeFlask = (spec.maxVolumeMl || 250) >= 900;
+    const marks = isLargeFlask ? [200, 400, 600, 800, 1000] : [50, 100, 150, 200, 250];
+    for (const ml of marks) {
+      const st = volumeMlToState(ml);
+      const ty = st.cy;
+      const tickX = x - st.halfWPx * 0.72;
+      const isTopMark = ml === (isLargeFlask ? 1000 : 250);
+      const isMajor = isLargeFlask ? ml % 400 === 0 || ml === 200 || ml === 1000 : ml === 100 || ml === 200 || ml === 250;
+      const tickLen = isTopMark ? 6 : isMajor ? 9 : 5.5;
+      ctx.strokeStyle = pal.tickStroke;
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(tickX, ty);
+      ctx.lineTo(tickX + tickLen, ty);
+      ctx.stroke();
+      if (isMajor) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'left';
+        ctx.fillText(String(ml), tickX + tickLen + 2, ty + 0.5);
+      }
+    }
+    const patchW = (spec.maxVolumeMl || 250) >= 900 ? 27 : 20;
+    const patchH = 22;
+    const patchX = x + 9;
+    const patchY = bottom - 46;
+    ctx.fillStyle = pal.writePatchBg;
+    ctx.strokeStyle = pal.writePatchBorder;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.roundRect(patchX, patchY, patchW, patchH, 2.5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = pal.enamelText;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 7.5px system-ui, sans-serif';
+    ctx.fillText(String(spec.maxVolumeMl || 250), patchX + patchW / 2, patchY + 7.5);
+    ctx.font = '600 6.5px system-ui, sans-serif';
+    ctx.fillText(formatCanvasText('ISO'), patchX + patchW / 2, patchY + 15.5);
+  } else if (spec.shape === 'round_flask') {
+    const isLargeRound = (spec.maxVolumeMl || 250) >= 900;
+    const neckHalfPx = spec.neckRadius || 17;
+    ctx.fillStyle = isDark ? 'rgba(226, 232, 240, 0.22)' : 'rgba(148, 163, 184, 0.25)';
+    ctx.fillRect(x - neckHalfPx + 1.5, top + 2, (neckHalfPx - 1.5) * 2, 16);
+    ctx.strokeStyle = pal.tickMinor;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x - neckHalfPx + 1.5, top + 18);
+    ctx.lineTo(x + neckHalfPx - 1.5, top + 18);
+    ctx.stroke();
+    const marks = isLargeRound ? [200, 400, 600, 800, 1000] : [50, 100, 150, 200, 250];
+    for (const ml of marks) {
+      const st = volumeMlToState(ml);
+      const ty = st.cy;
+      const halfR = st.halfWPx || st.rx || w * 0.36;
+      const tickX = x - Math.max(10, halfR * 0.72);
+      const isMajor = isLargeRound ? ml % 400 === 0 || ml === 200 || ml === 1000 : ml % 100 === 0 || ml === 50 || ml === 250;
+      const tickLen = isMajor ? (isLargeRound ? 8.5 : 6.5) : 4.5;
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.05 : 0.85;
+      ctx.beginPath();
+      ctx.moveTo(tickX, ty);
+      ctx.lineTo(tickX + tickLen, ty);
+      ctx.stroke();
+      ctx.fillStyle = pal.enamelText;
+      ctx.textAlign = 'left';
+      ctx.font = isLargeRound ? '600 7.5px system-ui, sans-serif' : '600 6.5px system-ui, sans-serif';
+      ctx.fillText(String(ml), tickX + tickLen + 2, ty + 0.5);
+    }
+    const eqSt = volumeMlToState((spec.maxVolumeMl || 250) * 0.45);
+    const patchW = isLargeRound ? 28 : 21;
+    const patchH = 21;
+    const patchX = x + (isLargeRound ? 14 : 7);
+    const patchY = Math.round(eqSt.cy - patchH / 2);
+    ctx.fillStyle = pal.writePatchBg;
+    ctx.strokeStyle = pal.writePatchBorder;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.roundRect(patchX, patchY, patchW, patchH, 2.5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = pal.enamelText;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 7.5px system-ui, sans-serif';
+    ctx.fillText(String(spec.maxVolumeMl || 250), patchX + patchW / 2, patchY + 7.5);
+    ctx.font = '600 6.5px system-ui, sans-serif';
+    ctx.fillText('mL', patchX + patchW / 2, patchY + 15.5);
+  } else if (spec.shape === 'cylinder') {
+    for (let ml = 10; ml <= 100; ml += 10) {
+      const ty = volumeMlToY(ml);
+      const isMajor = ml % 20 === 0;
+      const tickX = x - w * 0.34;
+      const tickLen = isMajor ? 10 : 5;
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.1 : 0.8;
+      ctx.beginPath();
+      ctx.moveTo(tickX, ty);
+      ctx.lineTo(tickX + tickLen, ty);
+      ctx.stroke();
+      if (isMajor) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'left';
+        ctx.font = '600 7.5px system-ui, sans-serif';
+        ctx.fillText(String(ml), tickX + 11.5, ty + 0.5);
+      }
+    }
+  } else if (spec.isUTube) {
+    const dxU = spec.limbSpacingX || 28;
+    const rOut = spec.tubeOuterR || 13;
+    const armTickX = x - dxU - rOut + 2.5;
+    for (let ml = 20; ml <= 80; ml += 10) {
+      const frac = ml / Math.max(1, spec.maxVolumeMl || 100);
+      const ty = interiorBottom - frac * Math.max(12, interiorBottom - top - 10);
+      const isMajor = ml === 40 || ml === 80;
+      const tickLen = isMajor ? 5.5 : 3.2;
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.0 : 0.75;
+      ctx.beginPath();
+      ctx.moveTo(armTickX, ty);
+      ctx.lineTo(armTickX + tickLen, ty);
+      ctx.stroke();
+      if (isMajor) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'right';
+        ctx.font = '600 6.8px system-ui, sans-serif';
+        ctx.fillText(String(ml), armTickX - 3.5, ty + 0.5);
+      }
+    }
+  } else if (spec.isHorizontalTube) {
+    const marks = [
+      { fracX: -0.28, label: '20' },
+      { fracX: -0.14, label: null },
+      { fracX: 0.0, label: '60' },
+      { fracX: 0.14, label: null },
+      { fracX: 0.28, label: '100' },
+    ];
+    for (const mk of marks) {
+      const tx = x + w * mk.fracX;
+      const isMajor = Boolean(mk.label);
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.0 : 0.75;
+      ctx.beginPath();
+      ctx.moveTo(tx, top + 3);
+      ctx.lineTo(tx, top + (isMajor ? 8 : 5.5));
+      ctx.stroke();
+      if (mk.label) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'center';
+        ctx.font = '600 6.8px system-ui, sans-serif';
+        ctx.fillText(mk.label, tx, top + 14.5);
+      }
+    }
+  } else if (spec.shape === 'trough') {
+    for (let ml = 250; ml <= 1250; ml += 250) {
+      const ty = volumeMlToY(ml);
+      if (ty < top + 6 || ty > bottom - 7) continue;
+      const isMajor = ml % 500 === 0;
+      const tickX = x - w * 0.36;
+      const tickLen = isMajor ? 9.5 : 5.5;
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.05 : 0.75;
+      ctx.beginPath();
+      ctx.moveTo(tickX, ty);
+      ctx.lineTo(tickX + tickLen, ty);
+      ctx.stroke();
+      if (isMajor) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'left';
+        ctx.font = '600 7.2px system-ui, sans-serif';
+        ctx.fillText(String(ml), tickX + tickLen + 2.5, ty + 0.5);
+      }
+    }
+  } else if (spec.shape === 'test_tube') {
+    for (let ml = 10; ml <= 50; ml += 5) {
+      const ty = volumeMlToY(ml);
+      const isMajor = ml % 10 === 0;
+      const tickX = x - w * 0.30;
+      const tickLen = isMajor ? 7.5 : 4;
+      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
+      ctx.lineWidth = isMajor ? 1.0 : 0.75;
+      ctx.beginPath();
+      ctx.moveTo(tickX, ty);
+      ctx.lineTo(tickX + tickLen, ty);
+      ctx.stroke();
+      if (ml === 10 || ml === 30 || ml === 50) {
+        ctx.fillStyle = pal.enamelText;
+        ctx.textAlign = 'left';
+        ctx.font = '600 6.8px system-ui, sans-serif';
+        ctx.fillText(String(ml), tickX + 8.5, ty + 0.5);
+      }
+    }
+  }
+
+  if (VESSEL_SHELL_CACHE.size >= 96) {
+    const oldestKey = VESSEL_SHELL_CACHE.keys().next().value;
+    if (oldestKey !== undefined) VESSEL_SHELL_CACHE.delete(oldestKey);
+  }
+  const entry = { canvas, pad, textDraws };
+  VESSEL_SHELL_CACHE.set(key, entry);
+  return entry;
+}
+
 export function renderVessel(ctx, vessel, opts) {
   const { isSelected, isDropTarget, isDark, timeNow, langCode = 'vi', themeName = isDark ? 'dark' : 'light' } = opts;
   const spec = APPARATUS[vessel.typeId];
@@ -2712,65 +3089,26 @@ export function renderVessel(ctx, vessel, opts) {
 
   ctx.restore(); // Remove clip
 
-  // Draw glass outer silhouette + ISO reinforced wall + red-orange thermal softening sag
-  traceVesselPath(ctx, spec, x, y, sagFrac);
-  const softenG = vessel.softenGlowFrac || 0;
-  const vesselGlowColor = isDropTarget
-    ? '#10b981'
-    : softenG > 0.08
-    ? `rgba(249, 115, 22, ${Math.min(0.95, 0.35 + softenG * 0.6).toFixed(2)})`
-    : isSelected
-    ? '#3b82f6'
-    : null;
-  if (vesselGlowColor) strokeHaloGlow(ctx, vesselGlowColor, isSelected || isDropTarget ? 2.5 : 2.0);
-  ctx.strokeStyle = vessel.isShattered
-    ? '#ef4444'
-    : softenG > 0.25
-    ? `rgb(249, ${Math.max(60, Math.round(160 - softenG * 100))}, 22)`
-    : isDropTarget
-    ? '#10b981'
-    : isSelected
-    ? '#3b82f6'
-    : pal.glassStroke;
-  ctx.lineWidth = isSelected || isDropTarget ? 2.5 : spec.wallThicknessMm >= 1.1 || spec.shape === 'dish' || spec.shape === 'mortar' || spec.shape === 'crucible' ? 2.3 : 1.75;
-  ctx.stroke();
+  // Blit offscreen-cached static glass silhouette, selection/thermal halo, specular highlight, and ISO graduations
+  const shellEntry = getCachedVesselGlassShell(spec, pal, isDark, isSelected, isDropTarget, vessel.softenGlowFrac || 0, sagFrac);
+  if (shellEntry) {
+    const { canvas: sCvs, pad, textDraws } = shellEntry;
+    ctx.drawImage(sCvs, x - w / 2 - pad, y - h / 2 - pad, w + pad * 2, h + pad * 2);
+    if (textDraws?.length) {
+      ctx.save();
+      for (const td of textDraws) {
+        ctx.font = td.font;
+        ctx.fillStyle = td.fillStyle;
+        ctx.textAlign = td.textAlign;
+        ctx.textBaseline = td.textBaseline;
+        ctx.fillText(td.text, x + td.dx, y + td.dy);
+      }
+      ctx.restore();
+    }
+  }
 
   // Horizontal Fused Quartz Tube & U-Shaped Quartz Tube double-ended stoppers, phen cotton plugs & tubing ports
   if (spec.hasTwoEnds && !vessel.isShattered) {
-    if (spec.isHorizontalTube) {
-      ctx.strokeStyle = pal.glassHighlight;
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.moveTo(x - w * 0.44, y - h * 0.34);
-      ctx.lineTo(x + w * 0.44, y - h * 0.34);
-      ctx.stroke();
-    } else if (spec.isUTube) {
-      const dxU = spec.limbSpacingX || 28;
-      const rOut = spec.tubeOuterR || 13;
-      const topY = y - h / 2 + 2;
-      const bendCy = y + h / 2 - 2 - (dxU + rOut);
-      // Rolled glass lip caps at both open U-tube limbs
-      ctx.strokeStyle = pal.glassStroke;
-      ctx.lineWidth = 2.0;
-      for (const armSign of [-1, 1]) {
-        const cxArm = x + armSign * dxU;
-        ctx.beginPath();
-        ctx.ellipse(cxArm, topY, rOut + 1.5, 2.2, 0, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      // Curved outer specular highlights following U-arms smoothly into the lower bend (never cutting straight across bottom!)
-      ctx.strokeStyle = pal.glassHighlight;
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.moveTo(x - dxU - rOut + 3.2, topY + 6);
-      ctx.lineTo(x - dxU - rOut + 3.2, bendCy);
-      ctx.arc(x, bendCy, dxU + rOut - 3.2, Math.PI, Math.PI * 0.56, true);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(x + dxU + rOut - 3.2, topY + 6);
-      ctx.lineTo(x + dxU + rOut - 3.2, bendCy);
-      ctx.stroke();
-    }
 
     const ends = getVesselEndPorts(vessel);
     const connSide = vessel.connectedPortSide || (vessel.flippedX ? 'left' : 'right');
@@ -2868,282 +3206,6 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.lineWidth = 4.5;
     ctx.stroke();
     ctx.restore();
-  }
-
-  // Glass vertical specular highlight & bottom heavy-base tint (skip dual/horizontal tubes & opaque porcelain)
-  if (!spec.isUTube && !spec.isHorizontalTube && spec.shape !== 'dish' && spec.shape !== 'mortar' && spec.shape !== 'crucible') {
-    ctx.strokeStyle = pal.glassHighlight;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    if (spec.shape === 'erlenmeyer') {
-      const shoulderY = interiorBottom - spec.geometry.profilePoints[3][0] * scaleY;
-      ctx.moveTo(x - neckHalf + 4, shoulderY + 2);
-      ctx.lineTo(x - w * 0.36, bottom - 15);
-    } else if (spec.shape === 'round_flask') {
-      const { pts } = mapProfileToCanvas(spec, x, y, sagFrac);
-      const minBulbRx = Math.max(neckHalf + 5, w * 0.25);
-      const bulbPts = pts.filter((p) => p.rx >= minBulbRx);
-      if (bulbPts.length >= 3) {
-        const iStart = Math.max(0, Math.floor(bulbPts.length * 0.14));
-        const iEnd = Math.min(bulbPts.length - 1, Math.floor(bulbPts.length * 0.86));
-        ctx.moveTo(x - bulbPts[iStart].rx * 0.80, bulbPts[iStart].cy);
-        for (let i = iStart + 1; i <= iEnd; i++) {
-          ctx.lineTo(x - bulbPts[i].rx * 0.80, bulbPts[i].cy);
-        }
-      }
-    } else if (spec.shape === 'trough') {
-      ctx.moveTo(x - w * 0.38, top + 12);
-      ctx.lineTo(x - w * 0.35, bottom - 12);
-    } else {
-      ctx.moveTo(x - w * 0.33, top + 12);
-      ctx.lineTo(x - w * 0.33, bottom - 14);
-    }
-    ctx.stroke();
-  }
-
-  // White ceramic enamel ISO graduations + frosted write-on patch
-  ctx.textBaseline = 'middle';
-  ctx.font = '600 8px system-ui, sans-serif';
-  if (spec.shape === 'beaker') {
-    const isLargeBeaker = (spec.maxVolumeMl || 250) >= 900;
-    const marks = isLargeBeaker
-      ? [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
-      : [25, 50, 75, 100, 125, 150, 175, 200, 225, 250];
-    for (const ml of marks) {
-      const ty = volumeMlToY(ml);
-      const isMajor = isLargeBeaker ? ml % 200 === 0 : ml % 50 === 0;
-      const tickX = x - w * 0.32;
-      const tickLen = isMajor ? 9 : 5;
-      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
-      ctx.lineWidth = isMajor ? 1.1 : 0.8;
-      ctx.beginPath();
-      ctx.moveTo(tickX, ty);
-      ctx.lineTo(tickX + tickLen, ty);
-      ctx.stroke();
-      if (isMajor) {
-        ctx.fillStyle = pal.enamelText;
-        ctx.textAlign = 'left';
-        ctx.fillText(String(ml), tickX + 11, ty + 0.5);
-      }
-    }
-    // Frosted write-on enamel label patch
-    const patchW = (spec.maxVolumeMl || 250) >= 900 ? 27 : spec.formVariant === 'tall' ? 17 : 19;
-    const patchH = spec.formVariant === 'tall' ? 23 : 20;
-    const patchX = x + w * 0.17;
-    const patchY = top + h * 0.28;
-    ctx.fillStyle = pal.writePatchBg;
-    ctx.strokeStyle = pal.writePatchBorder;
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.roundRect(patchX, patchY, patchW, patchH, 2.5);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = pal.enamelText;
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 7.5px system-ui, sans-serif';
-    ctx.fillText(String(spec.maxVolumeMl || 250), patchX + patchW / 2, patchY + 7);
-    ctx.font = '600 6.5px system-ui, sans-serif';
-    ctx.fillText(formatCanvasText('mL'), patchX + patchW / 2, patchY + 15);
-  } else if (spec.shape === 'erlenmeyer') {
-    // Non-linear conical graduations directly from VesselGeometry radial-volume slices
-    const isLargeFlask = (spec.maxVolumeMl || 250) >= 900;
-    const marks = isLargeFlask ? [200, 400, 600, 800, 1000] : [50, 100, 150, 200, 250];
-    for (const ml of marks) {
-      const st = volumeMlToState(ml);
-      const ty = st.cy;
-      const tickX = x - st.halfWPx * 0.72;
-      const isTopMark = ml === (isLargeFlask ? 1000 : 250);
-      const isMajor = isLargeFlask ? ml % 400 === 0 || ml === 200 || ml === 1000 : ml === 100 || ml === 200 || ml === 250;
-      const tickLen = isTopMark ? 6 : isMajor ? 9 : 5.5;
-      ctx.strokeStyle = pal.tickStroke;
-      ctx.lineWidth = 1.1;
-      ctx.beginPath();
-      ctx.moveTo(tickX, ty);
-      ctx.lineTo(tickX + tickLen, ty);
-      ctx.stroke();
-      if (isMajor) {
-        ctx.fillStyle = pal.enamelText;
-        ctx.textAlign = 'left';
-        ctx.fillText(String(ml), tickX + tickLen + 2, ty + 0.5);
-      }
-    }
-    // Frosted write-on enamel patch on slanted conical shoulder
-    const patchW = (spec.maxVolumeMl || 250) >= 900 ? 27 : 20;
-    const patchH = 22;
-    const patchX = x + 9;
-    const patchY = bottom - 46;
-    ctx.fillStyle = pal.writePatchBg;
-    ctx.strokeStyle = pal.writePatchBorder;
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.roundRect(patchX, patchY, patchW, patchH, 2.5);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = pal.enamelText;
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 7.5px system-ui, sans-serif';
-    ctx.fillText(String(spec.maxVolumeMl || 250), patchX + patchW / 2, patchY + 7.5);
-    ctx.font = '600 6.5px system-ui, sans-serif';
-    ctx.fillText(formatCanvasText('ISO'), patchX + patchW / 2, patchY + 15.5);
-  } else if (spec.shape === 'round_flask') {
-    // NS 29/32 ground-glass joint neck band + ISO bulb graduations + non-overlapping capacity badge
-    const isLargeRound = (spec.maxVolumeMl || 250) >= 900;
-    const neckHalfPx = spec.neckRadius || 17;
-    ctx.fillStyle = isDark ? 'rgba(226, 232, 240, 0.22)' : 'rgba(148, 163, 184, 0.25)';
-    ctx.fillRect(x - neckHalfPx + 1.5, top + 2, (neckHalfPx - 1.5) * 2, 16);
-    ctx.strokeStyle = pal.tickMinor;
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(x - neckHalfPx + 1.5, top + 18);
-    ctx.lineTo(x + neckHalfPx - 1.5, top + 18);
-    ctx.stroke();
-
-    const marks = isLargeRound ? [200, 400, 600, 800, 1000] : [50, 100, 150, 200, 250];
-    for (const ml of marks) {
-      const st = volumeMlToState(ml);
-      const ty = st.cy;
-      const halfR = st.halfWPx || st.rx || w * 0.36;
-      const tickX = x - Math.max(10, halfR * 0.72);
-      const isMajor = isLargeRound ? ml % 400 === 0 || ml === 200 || ml === 1000 : ml % 100 === 0 || ml === 50 || ml === 250;
-      const tickLen = isMajor ? (isLargeRound ? 8.5 : 6.5) : 4.5;
-      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
-      ctx.lineWidth = isMajor ? 1.05 : 0.85;
-      ctx.beginPath();
-      ctx.moveTo(tickX, ty);
-      ctx.lineTo(tickX + tickLen, ty);
-      ctx.stroke();
-      ctx.fillStyle = pal.enamelText;
-      ctx.textAlign = 'left';
-      ctx.font = isLargeRound ? '600 7.5px system-ui, sans-serif' : '600 6.5px system-ui, sans-serif';
-      ctx.fillText(String(ml), tickX + tickLen + 2, ty + 0.5);
-    }
-
-    const eqSt = volumeMlToState((spec.maxVolumeMl || 250) * 0.45);
-    const patchW = isLargeRound ? 28 : 21;
-    const patchH = 21;
-    const patchX = x + (isLargeRound ? 14 : 7);
-    const patchY = Math.round(eqSt.cy - patchH / 2);
-    ctx.fillStyle = pal.writePatchBg;
-    ctx.strokeStyle = pal.writePatchBorder;
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.roundRect(patchX, patchY, patchW, patchH, 2.5);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = pal.enamelText;
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 7.5px system-ui, sans-serif';
-    ctx.fillText(String(spec.maxVolumeMl || 250), patchX + patchW / 2, patchY + 7.5);
-    ctx.font = '600 6.5px system-ui, sans-serif';
-    ctx.fillText('mL', patchX + patchW / 2, patchY + 15.5);
-  } else if (spec.shape === 'cylinder') {
-    for (let ml = 10; ml <= 100; ml += 10) {
-      const ty = volumeMlToY(ml);
-      const isMajor = ml % 20 === 0;
-      const tickX = x - w * 0.34;
-      const tickLen = isMajor ? 10 : 5;
-      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
-      ctx.lineWidth = isMajor ? 1.1 : 0.8;
-      ctx.beginPath();
-      ctx.moveTo(tickX, ty);
-      ctx.lineTo(tickX + tickLen, ty);
-      ctx.stroke();
-      if (isMajor) {
-        ctx.fillStyle = pal.enamelText;
-        ctx.textAlign = 'left';
-        ctx.font = '600 7.5px system-ui, sans-serif';
-        ctx.fillText(String(ml), tickX + 11.5, ty + 0.5);
-      }
-    }
-  } else if (spec.isUTube) {
-    // U-Tube arm ceramic enamel graduations along outside of LEFT limb (never in center gap or colliding with docked electrode)
-    const dxU = spec.limbSpacingX || 28;
-    const rOut = spec.tubeOuterR || 13;
-    const armTickX = x - dxU - rOut + 2.5;
-    for (let ml = 20; ml <= 80; ml += 10) {
-      const frac = ml / Math.max(1, spec.maxVolumeMl || 100);
-      const ty = interiorBottom - frac * Math.max(12, interiorBottom - top - 10);
-      const isMajor = ml === 40 || ml === 80;
-      const tickLen = isMajor ? 5.5 : 3.2;
-      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
-      ctx.lineWidth = isMajor ? 1.0 : 0.75;
-      ctx.beginPath();
-      ctx.moveTo(armTickX, ty);
-      ctx.lineTo(armTickX + tickLen, ty);
-      ctx.stroke();
-      if (isMajor) {
-        ctx.fillStyle = pal.enamelText;
-        ctx.textAlign = 'right';
-        ctx.font = '600 6.8px system-ui, sans-serif';
-        ctx.fillText(String(ml), armTickX - 3.5, ty + 0.5);
-      }
-    }
-  } else if (spec.isHorizontalTube) {
-    // Sparse horizontal graduation marks along quartz combustion barrel (omit cramped 40 label)
-    const marks = [
-      { fracX: -0.28, label: '20' },
-      { fracX: -0.14, label: null },
-      { fracX: 0.0, label: '60' },
-      { fracX: 0.14, label: null },
-      { fracX: 0.28, label: '100' },
-    ];
-    for (const mk of marks) {
-      const tx = x + w * mk.fracX;
-      const isMajor = Boolean(mk.label);
-      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
-      ctx.lineWidth = isMajor ? 1.0 : 0.75;
-      ctx.beginPath();
-      ctx.moveTo(tx, top + 3);
-      ctx.lineTo(tx, top + (isMajor ? 8 : 5.5));
-      ctx.stroke();
-      if (mk.label) {
-        ctx.fillStyle = pal.enamelText;
-        ctx.textAlign = 'center';
-        ctx.font = '600 6.8px system-ui, sans-serif';
-        ctx.fillText(mk.label, tx, top + 14.5);
-      }
-    }
-  } else if (spec.shape === 'trough') {
-    // Calibrated 1500 mL Glass Bath graduations every 250 mL (major ticks at 500 & 1000 mL)
-    for (let ml = 250; ml <= 1250; ml += 250) {
-      const ty = volumeMlToY(ml);
-      if (ty < top + 6 || ty > bottom - 7) continue;
-      const isMajor = ml % 500 === 0;
-      const tickX = x - w * 0.36;
-      const tickLen = isMajor ? 9.5 : 5.5;
-      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
-      ctx.lineWidth = isMajor ? 1.05 : 0.75;
-      ctx.beginPath();
-      ctx.moveTo(tickX, ty);
-      ctx.lineTo(tickX + tickLen, ty);
-      ctx.stroke();
-      if (isMajor) {
-        ctx.fillStyle = pal.enamelText;
-        ctx.textAlign = 'left';
-        ctx.font = '600 7.2px system-ui, sans-serif';
-        ctx.fillText(String(ml), tickX + tickLen + 2.5, ty + 0.5);
-      }
-    }
-  } else if (spec.shape === 'test_tube') {
-    // ISO 4142 Test Tube ceramic enamel white graduations every 5 mL (10, 30, 50 mL labels for clean spacing)
-    for (let ml = 10; ml <= 50; ml += 5) {
-      const ty = volumeMlToY(ml);
-      const isMajor = ml % 10 === 0;
-      const tickX = x - w * 0.30;
-      const tickLen = isMajor ? 7.5 : 4;
-      ctx.strokeStyle = isMajor ? pal.tickStroke : pal.tickMinor;
-      ctx.lineWidth = isMajor ? 1.0 : 0.75;
-      ctx.beginPath();
-      ctx.moveTo(tickX, ty);
-      ctx.lineTo(tickX + tickLen, ty);
-      ctx.stroke();
-      if (ml === 10 || ml === 30 || ml === 50) {
-        ctx.fillStyle = pal.enamelText;
-        ctx.textAlign = 'left';
-        ctx.font = '600 6.8px system-ui, sans-serif';
-        ctx.fillText(String(ml), tickX + 8.5, ty + 0.5);
-      }
-    }
   }
 
   // Comparison mode selection tag pill (⚖️ A / B / C)

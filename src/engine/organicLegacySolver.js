@@ -2260,21 +2260,36 @@ export function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, ga
         }
       }
 
-      // Property-Driven Soap Salting-Out: scans sp.isSoapIon + sp.saltOutNaId cleanly
-      if (cClSalt >= 1.5 && (moles.H2O_l || 0) > 1e-4 && (moles.Na_aq || 0) > 1e-9) {
+      // Property-Driven Soap Salting-Out via Ksp(T): scans sp.isSoapIon + sp.saltOutNaId cleanly
+      // Checks ion product Q = [Na+][RCOO-] > Ksp(T) & solves exact equilibrium precipitation (no cClSalt >= 1.5 gate)
+      if ((moles.H2O_l || 0) > 1e-4 && (moles.Na_aq || 0) > 1e-9) {
+        let nNaAvail = moles.Na_aq || 0;
+        const invV = 1 / Math.max(1e-5, totVolL);
+        const vSq = totVolL * totVolL;
         for (const [ionId, nSoapI] of Object.entries(moles)) {
-          if (nSoapI <= 1e-9) continue;
+          if (nSoapI <= 1e-9 || nNaAvail <= 1e-9) continue;
           const spSoap = SPECIES[ionId];
           if (!spSoap?.isSoapIon || !spSoap.saltOutNaId || !SPECIES[spSoap.saltOutNaId]) continue;
-          const minNaM = spSoap.saltOutMinNaM ?? 1.8;
-          if (cNaSalt < minNaM) continue;
-          const solidId = spSoap.saltOutNaId;
-          const dSaltOut = Math.min(nSoapI, moles.Na_aq) * (1 - Math.exp(-2.2 * dt));
+          const ksp298 = spSoap.soapKsp298 ?? Math.max(0.012, 0.05 * Math.pow(0.76, (spSoap.soapChainLength || 18) - 18));
+          const krafftBoost = T > 338.15 ? Math.exp(0.32 * Math.min(25, T - 338.15)) : 1;
+          const kspT = ksp298 * Math.exp(0.022 * (T - 298.15)) * krafftBoost;
+          const qIon = (nNaAvail * invV) * (nSoapI * invV);
+          if (qIon <= kspT) continue;
+
+          // Solve (nNa - x)(nRCOO - x) = Ksp(T) * V^2 => x^2 - (nNa + nRCOO)x + (nNa*nRCOO - Ksp*V^2) = 0
+          const bSum = nNaAvail + nSoapI;
+          const cTerm = nNaAvail * nSoapI - kspT * vSq;
+          const disc = Math.max(0, bSum * bSum - 4 * cTerm);
+          const xEq = Math.min(nNaAvail, nSoapI, Math.max(0, 0.5 * (bSum - Math.sqrt(disc))));
+          const dSaltOut = Math.min(nSoapI, nNaAvail, xEq * (1 - Math.exp(-3.2 * dt)));
           if (dSaltOut > 1e-11) {
-            consumeSpecies(ionId, dSaltOut); consumeSpecies('Na_aq', dSaltOut);
+            const solidId = spSoap.saltOutNaId;
+            consumeSpecies(ionId, dSaltOut);
+            consumeSpecies('Na_aq', dSaltOut);
+            nNaAvail = Math.max(0, nNaAvail - dSaltOut);
             moles[solidId] = (moles[solidId] || 0) + dSaltOut;
             const label = SPECIES[solidId]?.formula?.replace(/↓$/, '') || solidId;
-            pushRxn(`saltout_${solidId}`, `${spSoap.formula || ionId} + Na⁺ —(NaCl bão hòa)→ ${label}↓`, `Kết tinh tách xà phòng ${label}↓ nổi lên trên khi thêm NaCl bão hòa`, `Salting-out soap: ${label}↓ floats above brine`, 'Dung dịch NaCl bão hòa làm giảm độ tan của muối Sodium carboxylate khiến xà phòng kết tinh tách lớp nổi lên trên dung dịch Glycerol + muối.', 'Saturated NaCl brine salts out buoyant white soap cake floating cleanly above the aqueous glycerol brine.', dSaltOut);
+            pushRxn(`saltout_${solidId}`, `${spSoap.formula || ionId} + Na⁺ —(Salting-out Ksp)→ ${label}↓`, `Kết tinh tách xà phòng ${label}↓ nổi lên trên khi [Na⁺][RCOO⁻] > Ksp`, `Salting-out soap: ${label}↓ floats above brine`, 'Hiệu ứng ion chung (thêm NaCl hoặc Na⁺ dư) đẩy [Na⁺][RCOO⁻] vượt Ksp(T) khiến xà phòng kết tinh tách lớp nổi lên trên dung dịch Glycerol + kiềm/muối.', 'Common-ion salting-out drives [Na⁺][RCOO⁻] > Ksp(T), precipitating buoyant solid soap cake cleanly above the glycerol brine.', dSaltOut);
           }
         }
       }
@@ -2282,11 +2297,11 @@ export function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, ga
       const nLipidAfter = afterStats.nLongLipid;
       const nSoapAqAfter = afterStats.nSoapAq;
       const nSoapSolidAfter = afterStats.nSoapSolid;
-      vessel.soapSaltedOutCake = nLipidAfter <= 1e-4 && nSoapSolidAfter >= 1e-4 && hasSatBrine;
+      vessel.soapSaltedOutCake = nLipidAfter <= 1e-4 && nSoapSolidAfter >= 1e-4;
       vessel.soapSoftPotassiumGel = (moles.K_aq || 0) >= 0.03 && (moles.Na_aq || 0) < 0.02 && nSoapAqAfter >= 0.005 && !vessel.soapSaltedOutCake;
 
-      // Durable white soap foam column (weighted by sp.foamStrength; minimal for short-chain carboxylates)
-      if (afterStats.nSoapFoamWeighted > 5e-5 && (moles.H2O_l || 0) > 1e-4 && !hasSatBrine) {
+      // Durable white soap foam column (collapses once salted-out solid soap cake separates or under saturated brine)
+      if (afterStats.nSoapFoamWeighted > 5e-5 && (moles.H2O_l || 0) > 1e-4 && !hasSatBrine && !vessel.soapSaltedOutCake) {
         const isWarmAgitated = isStirred || (T >= 348.15 && (vessel.wasBoiling || nLipidAfter > 1e-5 || (vessel.tempK || 298) >= 353.15));
         const targetSoapFoam = Math.min(48, 3.0 + afterStats.nSoapFoamWeighted * 220);
         if (isWarmAgitated) {

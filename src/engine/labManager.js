@@ -19,6 +19,7 @@ export class LabManager {
     this.tabClipboard = null;
     this.storageCabinet = []; // Infinite-capacity frozen storage locker ({ id, storedAt, apparatusId, speciesIds, hasChemicals, stickyLabel, snapshot })
     this.pasteSequence = 0;
+    this._bgCursor = 0;
     this.addLab('starter', { silent: true });
   }
 
@@ -75,7 +76,7 @@ export class LabManager {
       sim,
       particles: new ParticleSystem(),
       unreadAlerts: 0,
-      bgAccum: 0,
+      bgAccum: -(this.labs.length * (0.066 / 9)),
     };
     this._wireLabHooks(lab);
     sim.setupPreset(presetName);
@@ -568,7 +569,8 @@ export class LabManager {
   }
 
   /**
-   * Step active lab at frame rate and background labs in ~15 Hz batches for zero lag across up to 10 active labs.
+   * Step active lab at frame rate and distribute background labs across frames via Round-Robin
+   * (max 2 background labs or ~4 ms/frame time budget) with staggered phase accumulation.
    */
   stepAllLabs(dt, onBgAlertChange = null) {
     const active = this.labs[this.activeIndex];
@@ -577,20 +579,44 @@ export class LabManager {
       active.particles.update(dt * (active.sim.environment.paused ? 0 : active.sim.environment.speed));
     }
 
-    let bgNotified = false;
-    for (let i = 0; i < this.labs.length; i++) {
+    const nLabs = this.labs.length;
+    if (nLabs <= 1) return;
+
+    for (let i = 0; i < nLabs; i++) {
       if (i === this.activeIndex) continue;
       const lab = this.labs[i];
-      if (lab.sim.environment.paused) continue;
-      const prevAlert = lab.unreadAlerts || 0;
-      lab.bgAccum += dt;
-      if (lab.bgAccum >= 0.066) {
-        const batchDt = Math.min(0.25, lab.bgAccum);
-        lab.bgAccum = 0;
-        lab.sim.step(batchDt);
-        if ((lab.unreadAlerts || 0) !== prevAlert) bgNotified = true;
+      if (!lab.sim.environment.paused) {
+        lab.bgAccum += dt;
       }
     }
+
+    const nowFn = typeof performance !== 'undefined' ? () => performance.now() : () => Date.now();
+    const tStart = nowFn();
+    let bgNotified = false;
+    let steppedCount = 0;
+    let checked = 0;
+
+    while (checked < nLabs) {
+      const idx = this._bgCursor % nLabs;
+      this._bgCursor = (idx + 1) % nLabs;
+      checked++;
+      if (idx === this.activeIndex) continue;
+
+      const lab = this.labs[idx];
+      if (lab.sim.environment.paused || lab.bgAccum < 0.033) continue;
+
+      const prevAlert = lab.unreadAlerts || 0;
+      const batchDt = Math.min(0.25, lab.bgAccum);
+      lab.bgAccum = 0;
+      lab.sim.step(batchDt, { isBackground: true, maxSubsteps: 2 });
+      if ((lab.unreadAlerts || 0) !== prevAlert) bgNotified = true;
+      steppedCount++;
+
+      if (steppedCount >= 2 || (steppedCount >= 1 && nowFn() - tStart >= 4.0)) {
+        break;
+      }
+    }
+
     if (bgNotified) onBgAlertChange?.();
   }
 }

@@ -133,6 +133,8 @@ export const REACTIONS = [
     products: { Na_aq: 1, Cl_aq: 1 },
     solidId: 'NaCl_s',
     ionCheckId: 'Na_aq',
+    anionCheckId: 'Cl_aq',
+    useKsp: true,
     solubilityMolPerKg298: 6.15,
     solubilityTempCoeff: 0.0014,
     etohRelSolubility: 0.01,

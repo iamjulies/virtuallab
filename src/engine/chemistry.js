@@ -250,25 +250,23 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
       Math.exp(solCoeff * (T - CONSTANTS.T_STD_K));
     const maxSoluble = sTemp * effectiveSolventKg;
     const currentIon = moles[rxn.ionCheckId] || 0;
-    if (rxn.solidId === 'NaHCO3_s') {
-      const mNa = (moles.Na_aq || 0) / Math.max(1e-8, effectiveSolventKg);
-      const mHco3 = (moles.HCO3_aq || 0) / Math.max(1e-8, effectiveSolventKg);
-      const kspNaHCO3 = sTemp * sTemp;
-      if (mNa * mHco3 >= kspNaHCO3 * 0.998 || currentIon >= maxSoluble * 0.999) return 0;
+    let undersaturation = Math.max(0, 1 - currentIon / Math.max(1e-12, maxSoluble));
+    if (rxn.useKsp || rxn.solidId === 'NaHCO3_s') {
+      const catId = rxn.cationCheckId || rxn.ionCheckId || 'Na_aq';
+      const anId = rxn.anionCheckId || (rxn.solidId === 'NaHCO3_s' ? 'HCO3_aq' : null);
+      if (anId) {
+        const invKg = 1 / Math.max(1e-8, effectiveSolventKg);
+        const mCat = (moles[catId] || 0) * invKg;
+        const mAn = (moles[anId] || 0) * invKg;
+        const ksp = sTemp * sTemp;
+        if (mCat * mAn >= ksp * 0.998) return 0;
+        undersaturation = Math.max(0, 1 - (mCat * mAn) / Math.max(1e-12, ksp));
+      } else if (currentIon >= maxSoluble * 0.999) {
+        return 0;
+      }
     } else if (currentIon >= maxSoluble * 0.999) {
       return 0;
     }
-
-    const undersaturation =
-      rxn.solidId === 'NaHCO3_s'
-        ? Math.max(
-            0,
-            Math.min(
-              1 - currentIon / Math.max(1e-12, maxSoluble),
-              1 - ((moles.Na_aq || 0) * (moles.HCO3_aq || 0)) / Math.max(1e-12, Math.pow(Math.max(1e-8, effectiveSolventKg) * sTemp, 2))
-            )
-          )
-        : Math.max(0, 1 - currentIon / Math.max(1e-12, maxSoluble));
     const pCount = vessel.particleCounts?.[rxn.solidId] ?? 12;
     const area = computeSolidSurfaceAreaM2(rxn.solidId, nSolid, pCount);
     const k = rxn.k298 * arrheniusFactor(rxn.eaJ, T);
@@ -1430,7 +1428,7 @@ function applySupersaturationCrystallization(vessel, dt, activeReactions = null)
     { cat: 'Cu2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'CuCl2_s', formula: 'CuCl₂', sol298: 5.6, coeff: 0.010, etohRel: 0.35, crystHeatJ: 8000 },
     { cat: 'NH4_aq', cCat: 1, an: 'HSO4_aq', cAn: 1, solid: 'NH4HSO4_s', formula: 'NH₄HSO₄', sol298: 5.2, coeff: 0.018, etohRel: 0.02, crystHeatJ: 1800 },
     { cat: 'NH4_aq', cCat: 2, an: 'SO4_2_aq', cAn: 1, solid: 'NH4_2_SO4_s', formula: '(NH₄)₂SO₄', sol298: 5.7, coeff: 0.008, etohRel: 0.01, crystHeatJ: 6600 },
-    { cat: 'Na_aq', cCat: 1, an: 'Cl_aq', cAn: 1, solid: 'NaCl_s', formula: 'NaCl', sol298: 6.15, coeff: 0.0014, etohRel: 0.01, crystHeatJ: 3900 },
+    { cat: 'Na_aq', cCat: 1, an: 'Cl_aq', cAn: 1, solid: 'NaCl_s', formula: 'NaCl', sol298: 6.15, coeff: 0.0014, etohRel: 0.01, crystHeatJ: 3900, useKsp: true },
     { cat: 'Ca2_aq', cCat: 1, an: 'Cl_aq', cAn: 2, solid: 'CaCl2_s', formula: 'CaCl₂', sol298: 7.3, coeff: 0.014, etohRel: 0.18, crystHeatJ: -81300 },
     { cat: 'NH4_aq', cCat: 1, an: 'Cl_aq', cAn: 1, solid: 'NH4Cl_s', formula: 'NH₄Cl', sol298: 7.4, coeff: 0.018, etohRel: 0.02, crystHeatJ: 14800 },
     { cat: 'Ca2_aq', cCat: 1, an: 'NO3_aq', cAn: 2, solid: 'CaNO3_2_s', formula: 'Ca(NO₃)₂', sol298: 8.6, coeff: 0.016, etohRel: 0.05, crystHeatJ: 19200 },

@@ -183,6 +183,7 @@ export class LabSimulation {
     this.undoStack = [];
     this.maxUndo = 10;
     this._suppressUndo = 0;
+    this._dirtySeq = 1;
   }
 
   withUndoSuppressed(fn) {
@@ -404,7 +405,53 @@ export class LabSimulation {
   }
 
   emitChange() {
+    this._dirtySeq = (this._dirtySeq || 0) + 1;
     for (const fn of this.listeners) fn(this);
+  }
+
+  wakeVessel(v) {
+    if (!v) return;
+    v._quiescent = false;
+    v._quietTicks = 0;
+  }
+
+  _computeVesselMoleSig(v) {
+    if (!v) return '';
+    let mCnt = 0;
+    let mSum = 0;
+    for (const k in v.moles) {
+      const val = v.moles[k];
+      if (val > 0) {
+        mCnt++;
+        mSum += val;
+      }
+    }
+    let gCnt = 0;
+    let gSum = 0;
+    if (v.headspaceGasMoles) {
+      for (const k in v.headspaceGasMoles) {
+        const val = v.headspaceGasMoles[k];
+        if (val > 0) {
+          gCnt++;
+          gSum += val;
+        }
+      }
+    }
+    return `${mCnt}:${mSum.toFixed(7)}|${gCnt}:${gSum.toFixed(7)}|${v.isStoppered ? 1 : 0}|${v.lidState || ''}|${v.hasStirBar ? 1 : 0}:${v.magStirRpm || 0}`;
+  }
+
+  _computeChemActivitySig(v) {
+    if (!v) return '';
+    let w = 0;
+    for (const k in v.moles) {
+      if (k === 'H2O_l') continue;
+      const val = v.moles[k];
+      if (val > 0) {
+        const len = k.length;
+        w += val * (len * 13 + k.charCodeAt(0) + k.charCodeAt(len - 1) * 7);
+      }
+    }
+    return `${w.toFixed(6)}|${(v.naTarnishFrac || 0).toFixed(4)}|${(v.kTarnishFrac || 0).toFixed(4)}|${(v.naohDeliquesceFrac || 0).toFixed(4)}`;
   }
 
   addLog(entry) {
@@ -2503,6 +2550,7 @@ export class LabSimulation {
     for (const key of Object.keys(v.precipitateSettle)) {
       v.precipitateSettle[key] = 0.0;
     }
+    this.wakeVessel(v);
     this.emitChange();
   }
 
@@ -5654,7 +5702,7 @@ export class LabSimulation {
   /**
    * Main simulation tick called by animation loop (realDeltaSec).
    */
-  step(realDeltaSec) {
+  step(realDeltaSec, options = {}) {
     // Always animate visual pipette suction & dispense timers smoothly even while paused
     for (const item of this.items) {
       if (item.kind !== 'pipette') continue;
@@ -5694,7 +5742,10 @@ export class LabSimulation {
     this.stepTimedTransfers();
 
     // Sub-step for numerical accuracy & smooth fast ionic kinetics
-    const numSteps = Math.max(1, Math.ceil(scaledDt / CONSTANTS.SUBSTEP_MAX_DT));
+    let numSteps = Math.max(1, Math.ceil(scaledDt / CONSTANTS.SUBSTEP_MAX_DT));
+    if (options?.isBackground && options?.maxSubsteps > 0) {
+      numSteps = Math.min(numSteps, options.maxSubsteps);
+    }
     const dt = scaledDt / numSteps;
 
     // Advance rigid-body workbench gravity & landing impact physics, keeping mouth stoppers/cotton synced to wobble
@@ -5702,6 +5753,34 @@ export class LabSimulation {
     this.syncAttachedMouthTools();
 
     const getApp = (id) => this.getItem(id);
+    const curEnvSig = `${(this.environment.tempK || CONSTANTS.T_STD_K).toFixed(2)}|${(this.environment.pressureBar || 1).toFixed(3)}|${this.environment.uvLight ? 1 : 0}|${this.environment.atmosphereMode || 'air'}`;
+
+    // Identify vessels with active transfers, funnels, burettes, circuits, or powered electrodes to prevent false sleep
+    const activeWakeIds = new Set();
+    for (const job of this.timedTransfers || []) {
+      if (job.sourceId) activeWakeIds.add(job.sourceId);
+      if (job.targetId) activeWakeIds.add(job.targetId);
+    }
+    for (const it of this.items) {
+      if (it.kind === 'filter_funnel' || it.kind === 'separatory_funnel' || it.kind === 'burette') {
+        if (it.filtrateTargetId) activeWakeIds.add(it.filtrateTargetId);
+        if (it.mountedOnVesselId) activeWakeIds.add(it.mountedOnVesselId);
+        if (it.targetVesselId) activeWakeIds.add(it.targetVesselId);
+      } else if (it.kind === 'power_supply' && it.powerOn && (it.voltage || 0) > 0) {
+        for (const elId of [it.posElectrodeId, it.negElectrodeId]) {
+          const el = elId ? getApp(elId) : null;
+          if (el?.dockedVesselId) activeWakeIds.add(el.dockedVesselId);
+        }
+      } else if (it.kind === 'electrode' && it.dockedVesselId) {
+        activeWakeIds.add(it.dockedVesselId);
+      } else if (it.kind === 'salt_bridge' && !it.isBroken) {
+        if (it.vesselAId) activeWakeIds.add(it.vesselAId);
+        if (it.vesselBId) activeWakeIds.add(it.vesselBId);
+      } else if (it.kind === 'wash_bottle' && it.isSpraying) {
+        if (it.squirtTargetId) activeWakeIds.add(it.squirtTargetId);
+      }
+    }
+    let anyVesselActiveStep = false;
 
     for (const v of this.items) {
       if (v.kind !== 'vessel') continue;
@@ -5766,6 +5845,60 @@ export class LabSimulation {
       const burnerPowerW = heatSrc?.powerW || 0;
       const burnerFlameLevel = heatSrc?.flameLevel || 0;
       const burnerFlameTempK = heatSrc?.flameTempK || null;
+
+      // Smart Quiescent Sleep: skip chemistry/thermo work on idle ambient vessels while auto-waking on any trigger/input
+      const curMoleSig = this._computeVesselMoleSig(v);
+      const hasAmbientGap = Math.abs((v.tempK || CONSTANTS.T_STD_K) - this.environment.tempK) > 0.15;
+      const hasUnsettledPrecip = v.precipitateSettle && Object.keys(v.precipitateSettle).some((sk) => (v.moles[sk] || 0) > 0 && (v.precipitateSettle[sk] ?? 1) < 0.995);
+      const hasAirExposedReactive =
+        !v.isStoppered &&
+        (this.environment.atmosphereMode || 'air') === 'air' &&
+        (((v.moles.Na_s || 0) > 0 && (v.naTarnishFrac || 0) < 0.99) ||
+          ((v.moles.K_s || 0) > 0 && (v.kTarnishFrac || 0) < 0.99) ||
+          ((v.moles.NaOH_s || 0) > 0 && (v.naohDeliquesceFrac || 0) < 0.99));
+      const hasVolatileEquilib =
+        ((v.moles.I2_s || 0) > 0 && (!v.isStoppered || (v.headspaceGasMoles?.I2_g || 0) < 5e-5)) ||
+        ((v.moles.Br2_l || 0) > 0 && (!v.isStoppered || (v.headspaceGasMoles?.Br2_g || 0) < 2e-3));
+      const mustWakeContinuously =
+        burnerPowerW > 0 ||
+        Boolean(bathSrc) ||
+        hasAmbientGap ||
+        hasUnsettledPrecip ||
+        hasAirExposedReactive ||
+        hasVolatileEquilib ||
+        Boolean(v.isSupersaturated && v.crystallizeTriggered) ||
+        Boolean(v.connectedTargetId || v.connectedFromId || v.connectedSyringeId || v.isInverted) ||
+        Math.abs(v.tiltDeg || 0) > 0.5 ||
+        Math.abs(v.tiltAngle || 0) > 0.01 ||
+        (v.stirTimer || 0) > 0.005 ||
+        (v.stirAgitation || 0) > 0.005 ||
+        (v.stirIntensity || 0) > 0.005 ||
+        (v.suspensionLevel || 0) > 0.005 ||
+        Boolean(v.hasStirBar && (v.magStirRpm || 0) > 0) ||
+        (v.soapFoamMl || 0) > 0.05 ||
+        (v.pickeringFoamMl || 0) > 0.05 ||
+        Boolean(v.wasBoiling) ||
+        (v.wallCondenseLevel || 0) > 0.01 ||
+        (v.frostOpacity || 0) > 0.01 ||
+        (v.bumpingSurgeFrac || 0) > 0.01 ||
+        (v.gasOutBannerTimer || 0) > 0.01 ||
+        (v.tubeLiquidFlowTimer || 0) > 0.01 ||
+        (v.escapedFrostH2OMol || 0) > 0 ||
+        (v.overflowRateMlS || 0) > 0.05 ||
+        activeWakeIds.has(v.id);
+      const wokeByDiff = v._qEnvSig !== curEnvSig || v._qMoleSig !== curMoleSig;
+      const mustStayAwake = mustWakeContinuously || wokeByDiff;
+
+      if (v._quiescent && !mustStayAwake) {
+        v.activeReactions = [];
+        continue;
+      }
+      if (v._quiescent) {
+        v._quiescent = false;
+        v._quietTicks = 0;
+      }
+      const preChemActivitySig = this._computeChemActivitySig(v);
+      anyVesselActiveStep = true;
       v._bunsenHeated = Boolean(heatSrc?.burner?.typeId === 'bunsen_burner' && burnerPowerW > 0);
       if (v._bunsenHeated && heatSrc.burner.airHoleOpen === false) {
         v.sootLevel = Math.min(1.0, (v.sootLevel || 0) + 0.095 * scaledDt);
@@ -6737,6 +6870,35 @@ export class LabSimulation {
       }
 
       this.recordHistorySnapshot(v, false);
+
+      const postMoleSig = this._computeVesselMoleSig(v);
+      const postChemActivitySig = this._computeChemActivitySig(v);
+      v._qMoleSig = postMoleSig;
+      v._qEnvSig = curEnvSig;
+
+      const isEmptyVessel = Object.keys(v.moles).length === 0 && Object.keys(v.headspaceGasMoles || {}).length === 0;
+      const isCalmState =
+        !mustWakeContinuously &&
+        preChemActivitySig === postChemActivitySig &&
+        frameActiveMap.size === 0 &&
+        (v.lastTotalRateMolS || 0) < 1e-11 &&
+        Math.abs(v._lastStepDeltaTK || 0) < 0.02 &&
+        Math.abs((v.waveAmp || 0)) < 0.02 &&
+        Math.abs((v.waveVel || 0)) < 0.02 &&
+        Object.keys(v._rxnHoldMap || {}).length === 0;
+      if (isCalmState || isEmptyVessel) {
+        if (isCalmState) {
+          v._quietTicks = (v._quietTicks || 0) + 1;
+          if (v._quietTicks >= (isEmptyVessel ? 2 : 3)) {
+            v._quiescent = true;
+          }
+        }
+      } else {
+        v._quietTicks = 0;
+      }
+    }
+    if (anyVesselActiveStep) {
+      this._dirtySeq = (this._dirtySeq || 0) + 1;
     }
 
     // Step wheel-tilt pouring & falling spills for filter funnels & spoons, plus expire electrode tube telemetry

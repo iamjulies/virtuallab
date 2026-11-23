@@ -390,6 +390,23 @@ export function deserializeBench(sim, benchData) {
   return true;
 }
 
+function getLabSerializeKey(lab) {
+  const sim = lab?.sim;
+  return `${sim?._dirtySeq || 0}|${sim?.items?.length || 0}|${sim?.selectedId || ''}|${lab?.id || ''}|${lab?.number || 0}|${lab?.customName || ''}`;
+}
+
+function getCachedBenchEntry(lab) {
+  if (!lab?.sim) return null;
+  const key = getLabSerializeKey(lab);
+  if (lab._benchSerCache && lab._benchSerCache.key === key) {
+    return lab._benchSerCache;
+  }
+  const bench = serializeBench(lab.sim, { id: lab.id, number: lab.number, customName: lab.customName || '' });
+  const benchJson = JSON.stringify(bench);
+  lab._benchSerCache = { key, bench, benchJson };
+  return lab._benchSerCache;
+}
+
 /**
  * Serialize either a full LabManager (all benches) or a single LabSimulation.
  */
@@ -398,9 +415,7 @@ export function serializeWorkspace(target) {
 
   // Support passing either LabManager or a single LabSimulation directly
   if (Array.isArray(target.labs)) {
-    const benches = target.labs.map((lab) =>
-      serializeBench(lab.sim, { id: lab.id, number: lab.number, customName: lab.customName || '' })
-    );
+    const benches = target.labs.map((lab) => getCachedBenchEntry(lab).bench);
     const activeBench = benches[target.activeIndex] || benches[0] || { vessels: [], connections: [], items: [] };
     const storageCabinet = Array.isArray(target.storageCabinet)
       ? stripUndefinedDeep(target.storageCabinet)
@@ -432,6 +447,23 @@ export function serializeWorkspace(target) {
     benches: [singleBench],
     storageCabinet: [],
   };
+}
+
+export function serializeWorkspaceJson(target) {
+  if (!target) return null;
+  if (!Array.isArray(target.labs)) {
+    const obj = serializeWorkspace(target);
+    return obj ? JSON.stringify(obj) : null;
+  }
+  const entries = target.labs.map((lab) => getCachedBenchEntry(lab));
+  const activeBench = entries[target.activeIndex]?.bench || entries[0]?.bench || { vessels: [], connections: [], items: [] };
+  const storageCabinet = Array.isArray(target.storageCabinet)
+    ? stripUndefinedDeep(target.storageCabinet)
+    : [];
+  const savedAt = Date.now();
+  const activeBenchIndex = target.activeIndex || 0;
+  const nextLabNumber = target.nextLabNumber || entries.length + 1;
+  return `{"schemaVersion":${JSON.stringify(WORKSPACE_SCHEMA_VERSION)},"scope":${JSON.stringify(VLAB_SCOPES.FULL_LAB)},"savedAt":${savedAt},"activeBenchIndex":${activeBenchIndex},"nextLabNumber":${nextLabNumber},"vessels":${JSON.stringify(activeBench.vessels)},"connections":${JSON.stringify(activeBench.connections)},"benches":[${entries.map((e) => e.benchJson).join(',')}],"storageCabinet":${JSON.stringify(storageCabinet)}}`;
 }
 
 /**
@@ -498,9 +530,9 @@ export function deserializeWorkspace(target, rawData) {
 export function saveToLocalStorage(labManager) {
   try {
     if (typeof localStorage === 'undefined') return false;
-    const payload = serializeWorkspace(labManager);
-    if (!payload) return false;
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(payload));
+    const json = serializeWorkspaceJson(labManager);
+    if (!json) return false;
+    localStorage.setItem(LOCAL_STORAGE_KEY, json);
     return true;
   } catch (err) {
     console.warn('[WorkspaceStorage] LocalStorage save failed:', err);
@@ -1127,8 +1159,19 @@ export function initWorkspacePersistence(labManager, options = {}) {
       )
     );
     if (hasActiveProcess) {
-      saveToLocalStorage(labManager);
-      options.onAutoSaved?.(Date.now());
+      if (typeof requestIdleCallback === 'function') {
+        if (idleHandle && typeof cancelIdleCallback === 'function') cancelIdleCallback(idleHandle);
+        idleHandle = requestIdleCallback(() => {
+          idleHandle = 0;
+          if (!options.shouldDefer?.()) {
+            saveToLocalStorage(labManager);
+            options.onAutoSaved?.(Date.now());
+          }
+        }, { timeout: 1500 });
+      } else {
+        saveToLocalStorage(labManager);
+        options.onAutoSaved?.(Date.now());
+      }
     }
   }, 5000);
 

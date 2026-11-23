@@ -18,9 +18,9 @@ import { LabWorkbenchCanvas } from '../src/canvas/workbench.js';
 import { ParticleSystem } from '../src/canvas/particles.js';
 import { FluidGasOverlay } from '../src/canvas/fluidGasOverlay.js';
 import { ShelfPanel } from '../src/ui/shelfPanel.js';
-import { initWorkspacePersistence } from '../src/storage/workspaceStorage.js';
+import { serializeWorkspace, serializeWorkspaceJson, initWorkspacePersistence } from '../src/storage/workspaceStorage.js';
 import { LabManager } from '../src/engine/labManager.js';
-import { renderRetortClampJaw, renderVessel } from '../src/canvas/vesselRenderer.js';
+import { renderRetortClampJaw, renderVessel, getVesselGlassShellCacheSize } from '../src/canvas/vesselRenderer.js';
 
 export function runOrganicV5Tests(assert) {
   // TEST 184: Prompt 66 — Modular Organic Architecture, Reversible Zero-Reactant/Anhydrous Solver,
@@ -1190,6 +1190,145 @@ export function runOrganicV5Tests(assert) {
       'Prompt 74 invariants: Zero-cost clicks (no exportSnapshot/emitChange), lightweight position undo vs full chemical undo, outside-only tab hover, shelf hover lock, chart placeholder skip & 30Hz FluidGas throttle',
       selectionZeroCostOk && zeroFullSnapOnMove && posUndoRestoredOk && outsideHoverFilterOk && pouredSalt && chemUndoRestoredOk && hasDragClass && removedDragClass && chartPlaceholderOk && fgoThrottleOk,
       `sel=${selectionZeroCostOk}, posUndo=${zeroFullSnapOnMove && posUndoRestoredOk}(type=${topUndoType},movedX=${movedX.toFixed(0)}), outHover=${outsideHoverFilterOk}(in=${extHoverCallsInside},out=${movedOutsideCalls}), chemUndo=${pouredSalt && chemUndoRestoredOk}, shelfCls=${hasDragClass && removedDragClass}, chart=${chartPlaceholderOk}, fgo30=${fgoThrottleOk}`
+    );
+  }
+
+  // TEST 193: Prompt 75 — Property-Driven Ksp(T) Soap Salting-Out + Quadratic Equilibrium, NaCl [Na+][Cl-] Dissolution,
+  // Inspector phenFlags, Filter Funnel Soap Separation, Round-Robin 9 Background Labs, Smart Quiescent Sleep & Auto-Wake,
+  // Per-Lab Dirty Cache & Offscreen Vessel Glass Shell Cache
+  {
+    const sim75 = new LabSimulation();
+
+    // 1) Screenshot 001520 exact scenario: [Na+]=4.29M (NaOH+NaCl), [Cl-]=1.09M (<1.5M!), [Oleate]=0.88M -> MUST salt out!
+    const vSalt = sim75.createApparatus('beaker_250', 220, 434);
+    vSalt.tempK = 298.15;
+    vSalt.soapFoamMl = 18;
+    vSalt.moles = {
+      H2O_l: 13.0,
+      Na_aq: 1.5098,
+      OH_aq: 0.8151,
+      Cl_aq: 0.3847,
+      C17H33COO_aq: 0.3100,
+      C3H5OH_3_l: 0.1033,
+    };
+    const host75 = document.createElement('div');
+    document.body.appendChild(host75);
+    const insp75 = new InspectorPanel(host75, sim75, () => (k) => I18N.vi[k] || k, { getLabsMeta: () => null });
+    sim75.selectedId = vSalt.id;
+    const sigBeforeCake = insp75.getStructureSignature((k) => I18N.vi[k] || k, 'vi');
+    for (let i = 0; i < 6; i++) {
+      vSalt.tempK = 298.15;
+      stepVesselChemistry(vSalt, 0.5, { environment: sim75.environment });
+    }
+    const sigAfterCake = insp75.getStructureSignature((k) => I18N.vi[k] || k, 'vi');
+    host75.remove();
+    const cakeRatio = (vSalt.moles.C17H33COONa_s || 0) / 0.3100;
+    const saltingOutKspOk =
+      cakeRatio > 0.90 &&
+      vSalt.soapSaltedOutCake === true &&
+      vSalt.soapFoamMl < 5 &&
+      sigBeforeCake !== sigAfterCake;
+
+    // 1b) Ksp(T) temperature scaling & chain-specific soapKsp298 (Stearate 0.028 < Oleate 0.050 < Linoleate 0.072)
+    const vColdSte = sim75.createApparatus('beaker_250', 360, 434);
+    const vHotLin = sim75.createApparatus('beaker_250', 500, 434);
+    vColdSte.moles = { H2O_l: 15.0, Na_aq: 0.25, C17H35COO_aq: 0.25 };
+    vHotLin.moles = { H2O_l: 15.0, Na_aq: 0.25, C17H31COO_aq: 0.25 };
+    vColdSte.tempK = 298.15;
+    vHotLin.tempK = 353.15;
+    stepVesselChemistry(vColdSte, 1.0, { environment: sim75.environment });
+    stepVesselChemistry(vHotLin, 1.0, { environment: sim75.environment });
+    const kspChainTempOk = (vColdSte.moles.C17H35COONa_s || 0) > (vHotLin.moles.C17H31COONa_s || 0) + 0.04;
+
+    // 1c) dissolve_nacl checks [Na+][Cl-] instead of blocking purely on excess NaOH's Na_aq
+    const vNaCl = sim75.createApparatus('beaker_250', 620, 434);
+    vNaCl.moles = { H2O_l: 20.0, Na_aq: 2.3, OH_aq: 2.3, NaCl_s: 0.4 };
+    vNaCl.tempK = 298.15;
+    stepVesselChemistry(vNaCl, 0.5, { environment: sim75.environment });
+    const naclProductDissolveOk = (vNaCl.moles.Cl_aq || 0) > 0.05;
+
+    // 1d) earlyBrineBlocked preserved when raw lipid still present & saturated NaCl poured early
+    const vEarly = sim75.createApparatus('beaker_250', 740, 434);
+    vEarly.moles = { H2O_l: 12.0, C57H104O6_l: 0.05, Na_aq: 0.8, OH_aq: 0.8, Cl_aq: 0.7 };
+    vEarly.tempK = 353.15;
+    stepVesselChemistry(vEarly, 0.2, { environment: sim75.environment });
+    const earlyWarnOk = vEarly.soapEarlySalted === true;
+
+    // 1e) Filter funnel retains 100% solid RCOONa soap cake while draining aqueous brine below
+    const simFilt = new LabSimulation();
+    const vRecvF = simFilt.createApparatus('beaker_250', 300, 434);
+    const fSoap = simFilt.createApparatus('filter_funnel', 300, vRecvF.y - 60);
+    fSoap.mountedOnVesselId = vRecvF.id;
+    fSoap.moles = { H2O_l: 2.0, Cl_aq: 0.2, OH_aq: 0.2, C3H5OH_3_l: 0.05, C17H33COONa_s: 0.12 };
+    for (let i = 0; i < 40; i++) simFilt.step(0.15);
+    const funnelSepOk =
+      (fSoap.moles.C17H33COONa_s || 0) > 0.119 &&
+      (fSoap.moles.H2O_l || 0) < 0.05 &&
+      (vRecvF.moles.Cl_aq || 0) > 0.18 &&
+      (vRecvF.moles.C17H33COONa_s || 0) < 1e-6;
+
+    // 2) Round-Robin 9 background labs + Smart Quiescent Sleep & Auto Wake-Up + Per-Lab Dirty Cache
+    const mgr75 = new LabManager();
+    for (let k = 0; k < 9; k++) mgr75.addLab('clean');
+    const bgStepCounts = new Array(10).fill(0);
+    for (let idx = 1; idx < mgr75.labs.length; idx++) {
+      const origStep = mgr75.labs[idx].sim.step.bind(mgr75.labs[idx].sim);
+      mgr75.labs[idx].sim.step = (...args) => {
+        bgStepCounts[idx]++;
+        return origStep(...args);
+      };
+    }
+    mgr75.stepAllLabs(0.05);
+    const frame1RanBg = bgStepCounts.slice(1).reduce((a, b) => a + b, 0);
+    for (let f = 0; f < 10; f++) mgr75.stepAllLabs(0.05);
+    const allAdvancedBg = bgStepCounts.slice(1).every((c) => c >= 1);
+    const roundRobinOk = frame1RanBg <= 2 && allAdvancedBg;
+
+    // Quiescent Sleep & Auto Wake-Up
+    const simQ = new LabSimulation();
+    const vQuiet = simQ.createApparatus('beaker_250', 240, 434);
+    vQuiet.moles = { H2O_l: 5.0, Na_aq: 0.2, Cl_aq: 0.2 };
+    for (let i = 0; i < 8; i++) simQ.step(0.05);
+    const enteredQuiet = vQuiet._quiescent === true;
+    // Trigger wakeup via adding reagent / modifying moles + stepping
+    vQuiet.moles.HCl_aq = 0.2;
+    simQ.step(0.05);
+    const wokeOnReagent = vQuiet._quiescent === false;
+    // Return to sleep then wake via ambient temp shift
+    delete vQuiet.moles.HCl_aq;
+    for (let i = 0; i < 8; i++) simQ.step(0.05);
+    const reQuieted = vQuiet._quiescent === true;
+    simQ.environment.tempK = 335.15;
+    simQ.step(0.05);
+    const wokeOnEnvTemp = vQuiet._quiescent === false;
+    const quiescentOk = enteredQuiet && wokeOnReagent && reQuieted && wokeOnEnvTemp;
+
+    // Per-Lab dirty JSON cache
+    serializeWorkspace(mgr75);
+    const cachedRefBefore = mgr75.labs[9]._benchSerCache;
+    mgr75.labs[0].sim.createApparatus('beaker_250', 400, 434);
+    const json75 = serializeWorkspaceJson(mgr75);
+    const cachedRefAfter = mgr75.labs[9]._benchSerCache;
+    const parsedOk = Boolean(json75 && JSON.parse(json75).benches?.length === 10);
+    const cacheReuseOk = Boolean(cachedRefBefore && cachedRefBefore === cachedRefAfter && parsedOk);
+
+    // 3) Offscreen Vessel Glass Shell Cache reuse
+    const c75 = document.createElement('canvas');
+    c75.width = 400;
+    c75.height = 400;
+    const ctx75 = c75.getContext('2d');
+    const bShell1 = sim75.createApparatus('beaker_250', 120, 200);
+    const bShell2 = sim75.createApparatus('beaker_250', 260, 200);
+    renderVessel(ctx75, bShell1, { isSelected: false, isDropTarget: false, isDark: true, timeNow: 1.0 });
+    const sizeAfter1 = getVesselGlassShellCacheSize();
+    renderVessel(ctx75, bShell2, { isSelected: false, isDropTarget: false, isDark: true, timeNow: 1.1 });
+    const sizeAfter2 = getVesselGlassShellCacheSize();
+    const glassShellCacheOk = sizeAfter1 >= 1 && sizeAfter2 === sizeAfter1;
+
+    assert(
+      'Prompt 75 invariants: Ksp(T) soap salting-out (NaOH+low Cl), NaCl [Na+][Cl-] dissolution, funnel cake separation, round-robin 9 bg labs, smart quiescent sleep/wake, per-lab JSON cache & offscreen glass shell cache',
+      saltingOutKspOk && kspChainTempOk && naclProductDissolveOk && earlyWarnOk && funnelSepOk && roundRobinOk && quiescentOk && cacheReuseOk && glassShellCacheOk,
+      `kspOut=${saltingOutKspOk}(ratio=${cakeRatio.toFixed(3)},sigDiff=${sigBeforeCake!==sigAfterCake}), chainT=${kspChainTempOk}, nacl=${naclProductDissolveOk}(Cl=${(vNaCl.moles.Cl_aq||0).toFixed(3)}), early=${earlyWarnOk}, funnel=${funnelSepOk}, rr=${roundRobinOk}(f1=${frame1RanBg}), quiet=${quiescentOk}, jsonCache=${cacheReuseOk}, glassCache=${glassShellCacheOk}(${sizeAfter1}->${sizeAfter2})`
     );
   }
 }
