@@ -2430,6 +2430,40 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.restore();
   }
 
+  // Draw porous SiC / ceramic boiling chips resting on vessel floor (anti-bumping nucleation sites)
+  if (vessel.hasBoilingChips) {
+    const chipY = vessel.isInverted ? top + 3.5 : interiorBottom - 4.5;
+    ctx.save();
+    const chipOffsets = [
+      [-8, 0, 2.8, '#475569'],
+      [-2, -1.2, 3.1, '#64748b'],
+      [4, 0.4, 2.6, '#52525b'],
+      [9, -0.8, 2.5, '#71717a'],
+    ];
+    for (const [dx, dy, r, col] of chipOffsets) {
+      ctx.fillStyle = col;
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 0.7;
+      ctx.beginPath();
+      ctx.arc(x + dx, chipY + dy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    if ((vessel.wasBoiling || (vessel.tempK || 298) >= 340) && !vessel.isFrozenSolid) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.68)';
+      for (let b = 0; b < 6; b++) {
+        const bx = x - 7 + b * 2.8 + Math.sin(timeNow * 7 + b) * 1.1;
+        const by = chipY - 3 - ((timeNow * 24 + b * 11) % 22);
+        if (by > surfaceY + 2) {
+          ctx.beginPath();
+          ctx.arc(bx, by, 1.1, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
+  }
+
   // Draw floating slush or solid frozen H2O(s) ice matrix with trapped solute tint & crystalline facets
   if (hasIce) {
     const iceFlippedByGravity = !hasWater && (vessel.isInverted || Math.cos(effTilt) < -0.08);

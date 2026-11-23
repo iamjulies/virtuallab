@@ -902,6 +902,19 @@ export const APPARATUS = {
     height: 16,
     fragilityDropPx: Infinity,
   },
+  boiling_chips: {
+    id: 'boiling_chips',
+    kind: 'boiling_chips',
+    category: 'thermal',
+    breakable: false,
+    i18nKey: 'eq_boiling_chips',
+    isoStandard: 'Porous SiC / Porcelain Anti-Bumping Boiling Chips (2–4 mm)',
+    materialSpec: 'Porous Silicon Carbide / Unglazed Porcelain',
+    tareMassG: 1.5,
+    width: 28,
+    height: 18,
+    fragilityDropPx: Infinity,
+  },
 
   // --- Group 5: Electrochemistry ---
   dc_power: {
@@ -1223,6 +1236,7 @@ export const APPARATUS_ORDER = [
   'tlc_plate',
   'phen_cotton',
   'stir_bar',
+  'boiling_chips',
   'dc_power',
   'volt_ammeter',
   'electrode_rod',

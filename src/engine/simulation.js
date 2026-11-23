@@ -513,6 +513,8 @@ export class LabSimulation {
         hasStirBar: false,
         magStirRpm: 0,
         stirBarPhase: 0,
+        hasBoilingChips: false,
+        bumpingSurgeFrac: 0,
         grindAnimTimer: 0,
         gasDisplacedRate: 0,
         silverMirrorFrac: 0,
@@ -648,7 +650,7 @@ export class LabSimulation {
         isBleached: false,
         sampledFrom: '',
       });
-    } else if (spec.kind === 'stir_bar') {
+    } else if (spec.kind === 'stir_bar' || spec.kind === 'boiling_chips') {
       Object.assign(base, {
         inVesselId: null,
       });
@@ -853,6 +855,13 @@ export class LabSimulation {
       }
       item.inVesselId = null;
     }
+    if (item.kind === 'boiling_chips' && item.inVesselId) {
+      const host = this.getItem(item.inVesselId);
+      if (host) {
+        host.hasBoilingChips = this.items.some((i) => i.kind === 'boiling_chips' && i.id !== item.id && i.inVesselId === host.id);
+      }
+      item.inVesselId = null;
+    }
     if (item.kind === 'electrode') {
       item.dockedVesselId = null;
       item.renderHeight = null;
@@ -922,6 +931,8 @@ export class LabSimulation {
     if (item.kind === 'vessel') {
       item.hasStirBar = false;
       item.magStirRpm = 0;
+      item.hasBoilingChips = false;
+      item.bumpingSurgeFrac = 0;
       item.mountedOverElectrodeId = null;
       item.submergedInTroughId = null;
     }
@@ -2485,6 +2496,8 @@ export class LabSimulation {
     v.crystallizeTriggered = false;
     v.pickeringFoamMl = 0;
     v.pickeringOverflowActive = false;
+    v.hasBoilingChips = false;
+    v.bumpingSurgeFrac = 0;
     v.soapFoamMl = 0;
     v.soapScorchFrac = 0;
     v.soapScorched = false;
@@ -2640,6 +2653,8 @@ export class LabSimulation {
         if (reg.id === 'h2o') {
           this.addLog({ type: 'alert', key: 'alertWaterIntoConcAcid', vesselLabel: v.label });
           dilutionHeatJ += Math.min(8500, amt * 360);
+          v.stirTimer = Math.max(v.stirTimer || 0, 1.4);
+          applySurfaceImpulse(v, 0.9, 0.35);
         } else if (
           reg.id === 'etoh' ||
           reg.id === 'c2h5oh' ||
@@ -2652,6 +2667,8 @@ export class LabSimulation {
         ) {
           this.addLog({ type: 'alert', key: 'alertEsterConcAcidPour', vesselLabel: v.label });
           dilutionHeatJ += Math.min(6200, amt * 240);
+          v.stirTimer = Math.max(v.stirTimer || 0, 1.4);
+          applySurfaceImpulse(v, 0.8, 0.3);
         }
       } else if (reg.id === 'h2o' && (v.moles.H_aq || 0) > 0.05) {
         const liqL = computeLiquidVolumeL(v.moles, v.tempK);
@@ -3393,6 +3410,40 @@ export class LabSimulation {
       bar.inVesselId = null;
       bar.y = Math.min(SIM_BENCH_FLOOR_Y - 8, bar.y);
       bar.x = Math.min(920, bar.x + 56);
+    }
+    this.recomputeScaleReadings();
+    this.emitChange();
+    return true;
+  }
+
+  insertBoilingChipsIntoVessel(chipId, vesselId) {
+    const chips = this.getItem(chipId);
+    const v = this.getItem(vesselId);
+    if (!chips || chips.kind !== 'boiling_chips' || !v || v.kind !== 'vessel' || v.isShattered || v.isStoppered) return false;
+    if (chips.inVesselId && chips.inVesselId !== v.id) {
+      this.removeBoilingChipsFromVessel(chips.id);
+    }
+    chips.inVesselId = v.id;
+    v.hasBoilingChips = true;
+    v.bumpingSurgeFrac = 0;
+    syncDockedToolPositions(this);
+    this.recomputeScaleReadings();
+    this.emitChange();
+    return true;
+  }
+
+  removeBoilingChipsFromVessel(chipId) {
+    const chips = this.getItem(chipId);
+    if (!chips || chips.kind !== 'boiling_chips') return false;
+    if (chips.inVesselId) {
+      const v = this.getItem(chips.inVesselId);
+      if (v) {
+        const stillHas = this.items.some((i) => i.kind === 'boiling_chips' && i.id !== chips.id && i.inVesselId === v.id);
+        v.hasBoilingChips = stillHas;
+      }
+      chips.inVesselId = null;
+      chips.y = Math.min(SIM_BENCH_FLOOR_Y - 8, chips.y);
+      chips.x = Math.min(920, chips.x + 56);
     }
     this.recomputeScaleReadings();
     this.emitChange();
@@ -6338,6 +6389,28 @@ export class LabSimulation {
       }
 
       v.wasBoiling = frameBoiling;
+
+      // Prompt 71: Boiling bumping suppression via porous Boiling Chips (đá bọt) or active magnetic stirring
+      const hasAntiBump = Boolean(v.hasBoilingChips) || (Boolean(v.hasStirBar) && (v.magStirRpm || 0) > 0);
+      const isOrganicOrTestTube =
+        v.typeId === 'test_tube_50' ||
+        (v.moles.H2SO4_l || 0) > 1e-4 ||
+        (v.moles.C2H5OH_l || 0) > 1e-3 ||
+        (v.moles.CH3COOH_l || 0) > 1e-3 ||
+        (v.moles.CH3COOC2H5_l || 0) > 1e-3 ||
+        (v.moles.C5H11OH_l || 0) > 1e-3;
+      if (!v.isFrozenSolid && !v.isShattered && frameBoiling && burnerPowerW > 0 && !hasAntiBump && (isOrganicOrTestTube || (v.stirTimer || 0) > 0.25)) {
+        v.bumpingSurgeFrac = Math.min(1, (v.bumpingSurgeFrac || 0) + 0.35 * realDeltaSec);
+        if (Math.random() < Math.min(0.45, 0.25 * realDeltaSec * 5) || v.bumpingSurgeFrac > 0.35) {
+          applySurfaceImpulse(v, 0.72, (Math.random() - 0.5) * 0.28);
+          if ((this.timeSec - (v.seenReactions.boiling_bumping ?? -99)) > 8.0) {
+            v.seenReactions.boiling_bumping = this.timeSec;
+            this.addLog({ type: 'alert', key: 'alertBoilingBumping', vesselLabel: v.label });
+          }
+        }
+      } else {
+        v.bumpingSurgeFrac = Math.max(0, (v.bumpingSurgeFrac || 0) - 1.5 * realDeltaSec);
+      }
 
       // Update precipitate settling (~12-15s undisturbed rest) & suspension decay (locked in frozen matrix)
       const vigAgitation = !v.isFrozenSolid && (v.stirTimer > 0 || frameGas.H2_g > 1e-5 || frameBoiling);

@@ -81,6 +81,23 @@ export function computeGeneralReactionRate(rxn, vessel, strat, liquidVolL, getMo
     }
   }
 
+  let dehydrateWaterAct = 1.0;
+  if (rxn.dehydrateByH2SO4) {
+    const nSulfC = getMolFn('H2SO4_l') || 0;
+    const mSulfG = nSulfC * 98.079;
+    const mWaterG = (getMolFn('H2O_l') || 0) * 18.01528;
+    const wSulf = mSulfG + mWaterG > 1e-6 ? mSulfG / (mSulfG + mWaterG) : 0;
+    if (nSulfC > 1e-5 && wSulf >= 0.25) {
+      catFactor = Math.min(28.0, Math.max(catFactor, (nSulfC * 1.6) / effVolL) * 1.45);
+      if (wSulf >= 0.38) {
+        dehydrateWaterAct = Math.max(0.32, 1.0 - 0.62 * Math.min(1, wSulf / 0.72));
+      }
+    } else if (rxn.id === 'isoamyl_acetate_reversible') {
+      // Isoamyl acetate requires conc. H2SO4 for brisk esterification; dilute aqueous acid reacts very slowly
+      catFactor *= 0.08;
+    }
+  }
+
   // Interfacial phase-contact acceleration when stirred or emulsified by shaking
   let phaseBoost = 1.0;
   if (cond.phaseContact) {
@@ -132,7 +149,8 @@ export function computeGeneralReactionRate(rxn, vessel, strat, liquidVolL, getMo
         break;
       }
       const revOrder = kin.reverseOrders?.[spId] ?? stoich;
-      termR *= Math.pow(nAvail / effVolL, revOrder);
+      const spConcEff = (nAvail / effVolL) * (spId === 'H2O_l' ? dehydrateWaterAct : 1.0);
+      termR *= Math.pow(spConcEff, revOrder);
     }
     const vR = hasAllProducts ? kR * effVolL * termR * catFactor * phaseBoost : 0;
     return vF - vR;

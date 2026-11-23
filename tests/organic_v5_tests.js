@@ -2,14 +2,14 @@
  * Modular Verification Suite for Organic Solver v5 Architecture & Beyond (Prompt 66+).
  */
 import { APP_VERSION_TAG, CONSTANTS } from '../src/data/constants.js';
-import { APPARATUS } from '../src/data/apparatus.js';
+import { APPARATUS, APPARATUS_ORDER } from '../src/data/apparatus.js';
 import { SPECIES } from '../src/data/species.js';
 import { LabSimulation } from '../src/engine/simulation.js';
 import { stepVesselChemistry } from '../src/engine/chemistry.js';
-import { computePhaseStratification, computeSolutionVisuals, computeLiquidVolumeL, computePH } from '../src/engine/equilibrium.js';
+import { computePhaseStratification, computeSolutionVisuals, computeLiquidVolumeL, computePH, computeVesselAroma } from '../src/engine/equilibrium.js';
 import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
 import { computeBeerLambertReading } from '../src/engine/analyticalTools.js';
-import { renderColorimeter, renderPhConductometer, renderTlcPlate } from '../src/canvas/toolRenderer.js';
+import { renderBoilingChips, renderColorimeter, renderPhConductometer, renderTlcPlate } from '../src/canvas/toolRenderer.js';
 import { PRESET_MENU_ITEMS } from '../src/data/presets.js';
 import { I18N } from '../src/data/i18n.js';
 import { InspectorPanel } from '../src/ui/inspectorPanel.js';
@@ -653,6 +653,132 @@ export function runOrganicV5Tests(assert) {
       'Prompt 70 invariants: Dynamic header build badge, conc alkali passivation + early/post brine floating soap cake + scorch + glycerol Cu(OH)2, conc H2SO4 hazard/overheat amber & NaCl/Na2CO3/CaCl2 ester purification',
       headerSyncOk && concAlertOk && dilResumeOk && earlyBrineOk && foamDoneOk && postBrineCakeOk && soapRenderOk && scorchOk && pourHazardOk && overheatOk && purifyOk,
       `hdr=${headerSyncOk}(${badgeText}), conc=${concAlertOk}, dil=${dilResumeOk}, early=${earlyBrineOk}, foam=${foamDoneOk}, cake=${postBrineCakeOk}, ren=${soapRenderOk}, scorch=${scorchOk}, pour=${pourHazardOk}, ovh=${overheatOk}(f=${(vOverheat.esterOverheatFrac||0).toFixed(2)}), pur=${purifyOk}(light:${stratPreSalt.lightOrganicMl.toFixed(1)}->${stratPostSalt.lightOrganicMl.toFixed(1)},CO2=${co2TotalWash.toFixed(3)})`
+    );
+  }
+
+  // TEST 189: Prompt 71 — Tripalmitin ESTER_KINETICS, KOH vs NaOH Soft Gel, Vapor Aroma Telemetry,
+  // Strict Conc vs Dilute H2SO4 Esterification (Ethanol + Isoamyl) & Boiling Chips ('boiling_chips') Anti-Bumping Tool
+  {
+    const sim71 = new LabSimulation();
+
+    // 1) boiling_chips equipment registry + placement + anti-bumping boiling physics + render test
+    const hasChipsSpec = Boolean(APPARATUS.boiling_chips) && APPARATUS_ORDER.includes('boiling_chips');
+    const stand1 = sim71.createApparatus('retort_stand', 140, 310);
+    const tubeNoChips = sim71.createApparatus('test_tube_50', 140, 290);
+    tubeNoChips.clampedToId = stand1.id;
+    tubeNoChips.moles = { C2H5OH_l: 0.25 };
+    const burner1 = sim71.createApparatus('bunsen_burner', 140, 418);
+    sim71.setBurnerFlame(burner1.id, 2);
+    burner1.airHoleOpen = true;
+
+    const stand2 = sim71.createApparatus('retort_stand', 260, 310);
+    const tubeWithChips = sim71.createApparatus('test_tube_50', 260, 290);
+    tubeWithChips.clampedToId = stand2.id;
+    tubeWithChips.moles = { C2H5OH_l: 0.25 };
+    const burner2 = sim71.createApparatus('bunsen_burner', 260, 418);
+    sim71.setBurnerFlame(burner2.id, 2);
+    burner2.airHoleOpen = true;
+    const chips = sim71.createApparatus('boiling_chips', 260, 290);
+    sim71.insertBoilingChipsIntoVessel(chips.id, tubeWithChips.id);
+
+    for (let i = 0; i < 18; i++) {
+      tubeNoChips.tempK = 358.15;
+      tubeWithChips.tempK = 358.15;
+      sim71.step(0.25);
+    }
+    const bumpingOk =
+      hasChipsSpec &&
+      tubeWithChips.hasBoilingChips === true &&
+      (tubeWithChips.bumpingSurgeFrac || 0) === 0 &&
+      (tubeNoChips.bumpingSurgeFrac || 0) > 0.2 &&
+      sim71.logs.some((l) => l.key === 'alertBoilingBumping');
+    const cChip = document.createElement('canvas');
+    cChip.width = 160;
+    cChip.height = 160;
+    let chipRenderOk = true;
+    try {
+      const chipsBench = sim71.createApparatus('boiling_chips', 80, 80);
+      renderBoilingChips(cChip.getContext('2d'), chipsBench, false, true);
+    } catch {
+      chipRenderOk = false;
+    }
+
+    // 2) Tripalmitin (C51H98O6_s) autocatalytic saponification + conc alkali passivation + KOH vs NaOH distinction
+    const vPalm = sim71.createApparatus('beaker_250', 400, 300);
+    vPalm.moles = { C51H98O6_s: 0.01, Na_aq: 0.16, OH_aq: 0.16, H2O_l: 1.5, C2H5OH_l: 0.08 };
+    const vKoh = sim71.createApparatus('beaker_250', 520, 300);
+    vKoh.moles = { C57H104O6_l: 0.01, K_aq: 0.25, OH_aq: 0.25, H2O_l: 1.8, C2H5OH_l: 0.08 };
+    for (let i = 0; i < 20; i++) {
+      vPalm.tempK = 358.15;
+      vPalm.stirTimer = 4;
+      vKoh.tempK = 358.15;
+      vKoh.stirTimer = 4;
+      sim71.step(0.5);
+    }
+    vPalm.moles.Na_aq = (vPalm.moles.Na_aq || 0) + 0.55;
+    vPalm.moles.Cl_aq = 0.55;
+    for (let i = 0; i < 6; i++) {
+      vPalm.tempK = 328.15;
+      sim71.step(0.4);
+    }
+    const tripalmOk =
+      (vPalm.moles.C15H31COONa_s || 0) > 0.015 &&
+      (vPalm.moles.C3H5OH_3_l || 0) > 0.008 &&
+      vPalm.soapSaltedOutCake === true;
+    const kohGelOk =
+      (vKoh.moles.C17H33COO_aq || 0) > 0.015 &&
+      (vKoh.moles.C17H33COONa_s || 0) === 0 &&
+      vKoh.soapSaltedOutCake === false &&
+      vKoh.soapSoftPotassiumGel === true;
+
+    // 3) Strict conc vs dilute H2SO4 for both CH3COOH + C2H5OH and CH3COOH + Isoamyl alcohol (C5H11OH_l)
+    const vConcEt = sim71.createApparatus('round_flask_250', 640, 300);
+    vConcEt.isStoppered = true;
+    vConcEt.moles = { CH3COOH_l: 0.15, C2H5OH_l: 0.15, H2SO4_l: 0.08 };
+    const vDilEt = sim71.createApparatus('round_flask_250', 740, 300);
+    vDilEt.isStoppered = true;
+    vDilEt.moles = { CH3COOH_l: 0.15, C2H5OH_l: 0.15, H2SO4_l: 0.015, H2O_l: 2.0 };
+    const vIsoConc = sim71.createApparatus('round_flask_250', 840, 300);
+    vIsoConc.isStoppered = true;
+    vIsoConc.moles = { CH3COOH_l: 0.10, C5H11OH_l: 0.10, H2SO4_l: 0.05 };
+    const vIsoDil = sim71.createApparatus('round_flask_250', 920, 300);
+    vIsoDil.isStoppered = true;
+    vIsoDil.moles = { CH3COOH_l: 0.10, C5H11OH_l: 0.10, H_aq: 0.05, H2O_l: 1.5 };
+    for (let i = 0; i < 16; i++) {
+      for (const vv of [vConcEt, vDilEt, vIsoConc, vIsoDil]) {
+        vv.tempK = 351.15;
+        stepVesselChemistry(vv, 0.4, { environment: sim71.environment });
+      }
+    }
+    const esterConcOk =
+      (vConcEt.moles.CH3COOC2H5_l || 0) > (vDilEt.moles.CH3COOC2H5_l || 0) * 5 &&
+      (vConcEt.moles.CH3COOC2H5_l || 0) > 0.08 &&
+      (vIsoConc.moles.CH3COOC5H11_l || 0) > (vIsoDil.moles.CH3COOC5H11_l || 0) * 3;
+
+    // 4) Vapor Aroma telemetry across reaction stages + InspectorPanel HTML rendering
+    const aromaVinegar = computeVesselAroma({ moles: { CH3COOH_l: 0.05 } });
+    const aromaFruity = computeVesselAroma(vConcEt);
+    const aromaCleared = computeVesselAroma({ _hadVolatileEsterForAroma: true, moles: { CH3COO_aq: 0.05, OH_aq: 0.02 } });
+    const aromaOverheat = computeVesselAroma({ esterOverheatFrac: 0.5, moles: { H2SO4_l: 0.1 } });
+    const insHost = document.createElement('div');
+    document.body.appendChild(insHost);
+    const tVi71 = (k) => I18N.vi[k] || k;
+    const ins71 = new InspectorPanel(insHost, sim71, () => tVi71, { getLabsMeta: () => null });
+    sim71.selectedId = vConcEt.id;
+    ins71.update('vi', true);
+    const insHasAroma = insHost.textContent.includes(I18N.vi.aromaEsterFruity);
+    document.body.removeChild(insHost);
+    const aromaOk =
+      aromaVinegar?.kind === 'vinegar' &&
+      aromaFruity?.kind === 'ester_fruity' &&
+      aromaCleared?.kind === 'ester_cleared' &&
+      aromaOverheat?.kind === 'burnt_so2' &&
+      insHasAroma;
+
+    assert(
+      'Prompt 71 invariants: Boiling Chips (boiling_chips) anti-bumping & render, Tripalmitin ESTER_KINETICS, KOH soft gel vs NaOH cake, conc vs dilute H2SO4 esterification (EtOH + Isoamyl) & Aroma telemetry',
+      bumpingOk && chipRenderOk && tripalmOk && kohGelOk && esterConcOk && aromaOk,
+      `bump=${bumpingOk}(no:${(tubeNoChips.bumpingSurgeFrac||0).toFixed(2)},with:${(tubeWithChips.bumpingSurgeFrac||0).toFixed(2)}), ren=${chipRenderOk}, palm=${tripalmOk}(salt=${(vPalm.moles.C15H31COONa_s||0).toFixed(3)}), koh=${kohGelOk}, estConc=${esterConcOk}(et:${(vConcEt.moles.CH3COOC2H5_l||0).toFixed(3)}/${(vDilEt.moles.CH3COOC2H5_l||0).toFixed(3)},iso:${(vIsoConc.moles.CH3COOC5H11_l||0).toFixed(3)}/${(vIsoDil.moles.CH3COOC5H11_l||0).toFixed(3)}), aroma=${aromaOk}`
     );
   }
 }

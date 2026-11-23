@@ -1182,3 +1182,53 @@ export function estimateVesselEsterificationMetrics(vessel, liqL = 0) {
   const k1Phys = calcEsterificationRateConstantK1({ tempK: T, cHPlus });
   return { Kc, yieldEqPct, yieldActualPct, k1Phys, minABMol: minAB * liqL };
 }
+
+/**
+ * Qualitative vapor/solution aroma telemetry (Prompt 71) for the Inspector panel.
+ */
+export function computeVesselAroma(vessel) {
+  if (!vessel || vessel.isShattered) return null;
+  const m = vessel.moles || {};
+  const h = vessel.headspaceGasMoles || {};
+  const nSO2 = (h.SO2_g || 0) + (vessel.escapedGasMoles?.SO2_g || 0);
+  if ((vessel.esterOverheatFrac || 0) > 0.25 || nSO2 > 2e-4) {
+    return { kind: 'burnt_so2', key: 'aromaBurntSO2', tone: 'text-red-400 border-red-500/40 bg-red-500/10' };
+  }
+  if (vessel.soapScorched || (vessel.soapScorchFrac || 0) > 0.2) {
+    return { kind: 'scorched', key: 'aromaScorched', tone: 'text-amber-400 border-amber-500/40 bg-amber-500/10' };
+  }
+  const nFruityEster =
+    (m.CH3COOC2H5_l || 0) +
+    (m.CH3COOC5H11_l || 0) +
+    (m.CH3COOC3H7_l || 0) +
+    (m.CH3COOCH3_l || 0) +
+    (m.HCOOC2H5_l || 0) +
+    (m.HCOOCH3_l || 0);
+  const nPungentAcid = (m.CH3COOH_l || 0) + (m.HCOOH_l || 0);
+  if (nFruityEster >= 0.003 && (nFruityEster >= nPungentAcid * 0.12 || (m.H2SO4_l || 0) > 1e-4)) {
+    return { kind: 'ester_fruity', key: 'aromaEsterFruity', tone: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' };
+  }
+  if (vessel._hadVolatileEsterForAroma && nFruityEster < 0.001 && (m.OH_aq || 0) + (m.CH3COO_aq || 0) + (m.HCOO_aq || 0) > 0.005) {
+    return { kind: 'ester_cleared', key: 'aromaEsterCleared', tone: 'text-sky-400 border-sky-500/40 bg-sky-500/10' };
+  }
+  if ((m.C2H5OC2H5_l || 0) >= 0.003) {
+    return { kind: 'ether', key: 'aromaEther', tone: 'text-purple-300 border-purple-500/40 bg-purple-500/10' };
+  }
+  if (nPungentAcid >= 0.005) {
+    return { kind: 'vinegar', key: 'aromaVinegar', tone: 'text-amber-300 border-amber-500/40 bg-amber-500/10' };
+  }
+  const nSoapTot =
+    (m.C17H33COO_aq || 0) +
+    (m.C17H35COO_aq || 0) +
+    (m.C15H31COO_aq || 0) +
+    (m.C17H33COONa_s || 0) +
+    (m.C17H35COONa_s || 0) +
+    (m.C15H31COONa_s || 0);
+  if (vessel.saponificationComplete || nSoapTot >= 0.005) {
+    return { kind: 'soapy_clean', key: 'aromaSoapyClean', tone: 'text-sky-300 border-sky-400/40 bg-sky-400/10' };
+  }
+  if ((m.C2H5OH_l || 0) + (m.CH3OH_l || 0) + (m.C5H11OH_l || 0) + (m.C3H7OH_l || 0) >= 0.01) {
+    return { kind: 'alcohol', key: 'aromaAlcohol', tone: 'text-main border-theme bg-surface-alt' };
+  }
+  return null;
+}

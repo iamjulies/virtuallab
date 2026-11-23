@@ -498,25 +498,30 @@ export function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, ga
     // Conc. H2SO4 provides strong H+ catalysis AND dehydrating equilibrium push when used in dehydrating excess; dilute acid reacts markedly slower!
     const effVolEst = Math.max(1e-4, liquidVolL || 0.02);
     const nConcSulfEst = moles.H2SO4_l || 0;
+    const nSulfIonEst = (moles.HSO4_aq || 0) + (moles.SO4_2_aq || 0);
+    const nSulfTotEst = nConcSulfEst + nSulfIonEst;
     const cAcidCat = (nConcSulfEst * 1.6 + (moles.H_aq || 0)) / effVolEst;
     const hasConcH2SO4 = nConcSulfEst > 1e-5;
+    const hasSulfSource = nSulfTotEst > 1e-5;
     const hasAcidCat = hasConcH2SO4 || (cAcidCat >= 0.35 && ((moles.SO4_2_aq || 0) + (moles.HSO4_aq || 0) + (moles.Cl_aq || 0)) > 1e-5);
     const nAcTotEst = (moles.CH3COOH_l || 0) + (moles.CH3COOC2H5_l || 0);
     const sulfAcRatio = nAcTotEst > 1e-6 ? nConcSulfEst / nAcTotEst : 0;
-    const sulfMassEst = nConcSulfEst * 98.079;
+    const sulfMassEst = nSulfTotEst * 98.079;
     const waterMassEst = (moles.H2O_l || 0) * 18.01528;
     const sulfConcFrac = sulfMassEst + waterMassEst > 1e-6 ? sulfMassEst / (sulfMassEst + waterMassEst) : 0;
-    // Catalytic conc. H2SO4 (~5-12 mol%) keeps exact Kc=4 equilibrium; heavy dehydrating excess (>22 mol%, >40 wt%) ties up H2O to push yield past 66.7%!
+    // Strict conc vs dilute H2SO4 gating (tracks total sulfate so partial H2SO4->H++HSO4- ionization as H2O forms never stalls reflux):
+    const isConcSulfEst = hasSulfSource && sulfConcFrac >= 0.25;
+    // Catalytic conc. H2SO4 (~5-12 mol%) keeps exact Kc=4 equilibrium; heavy dehydrating excess (>22 mol%, >38 wt%) ties up H2O to push yield past 66.7%!
     const dehydrateTieUp =
-      hasConcH2SO4 && sulfAcRatio >= 0.22 && sulfConcFrac >= 0.38
+      hasConcH2SO4 && isConcSulfEst && sulfAcRatio >= 0.22 && sulfConcFrac >= 0.38
         ? Math.min(0.62, ((sulfAcRatio - 0.18) / 0.65) * 0.62 * Math.min(1, sulfConcFrac / 0.65))
         : 0;
     if (((moles.CH3COOH_l || 0) > 1e-8 && (moles.C2H5OH_l || 0) > 1e-8) || ((moles.CH3COOC2H5_l || 0) > 1e-8 && (moles.H2O_l || 0) > 1e-8 && hasAcidCat)) {
       const KcEst = Math.max(3.5, Math.min(4.4, 4.0 * Math.exp((-3800 / CONSTANTS.R_J_MOL_K) * (1 / Math.max(250, T) - 1 / 348.15))));
       const eaEstJ = 50000;
       const arrhRatio = Math.exp((-eaEstJ / CONSTANTS.R_J_MOL_K) * (1 / Math.max(250, T) - 1 / 353.15));
-      // Conc. H2SO4 runs briskly; dilute aqueous mineral acid (~H_aq only) catalyzes ~3.5x slower; uncatalyzed ~1000x slower!
-      const dilPenalty = hasConcH2SO4 ? 1.0 : 0.28;
+      // Conc. H2SO4 runs briskly; dilute aqueous mineral acid (<25 wt% H2SO4 or H_aq only) catalyzes markedly slower; uncatalyzed ~1000x slower!
+      const dilPenalty = isConcSulfEst ? 1.0 : hasSulfSource ? 0.055 : 0.04;
       const catFactor = (hasAcidCat ? (0.001 + 1.0 * Math.max(0.25, Math.min(3.5, cAcidCat))) * dilPenalty : 0.0008);
       const k1Sim = 0.055 * catFactor * arrhRatio;
       const kRevSim = k1Sim / KcEst;
@@ -550,8 +555,15 @@ export function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, ga
           pushRxn('fischer_hydrolysis', 'CH₃COOC₂H₅ + H₂O ⇌(H⁺; t°) CH₃COOH + C₂H₅OH', 'Thủy phân thuận nghịch Ethyl acetate tiến về trạng thái cân bằng Kc ≈ 4', 'Acid-catalyzed reverse ester hydrolysis approaching Kc ≈ 4', 'Khi dư nước hoặc sản phẩm vượt quá cân bằng Kc ≈ 4, ester bị thủy phân ngược lại một phần.', 'Excess water partially hydrolyzes Ethyl acetate back toward Kc ≈ 4 equilibrium.', dHyd);
         }
       }
-      // Overheating (>130–140 C) with conc. H2SO4: yellows/darkens mixture & triggers side charring + SO2
-      if (T >= 403.15 && nConcSulfEst >= 0.005 && ((moles.C2H5OH_l || 0) > 1e-4 || (moles.CH3COOC2H5_l || 0) > 1e-4)) {
+      // Overheating (>130–140 C) with conc. H2SO4 across any esterification alcohols/esters: yellows/darkens mixture & triggers side charring + SO2
+      const hasOverheatOrg =
+        (moles.C2H5OH_l || 0) > 1e-4 ||
+        (moles.C5H11OH_l || 0) > 1e-4 ||
+        (moles.C3H7OH_l || 0) > 1e-4 ||
+        (moles.CH3OH_l || 0) > 1e-4 ||
+        (moles.CH3COOC2H5_l || 0) > 1e-4 ||
+        (moles.CH3COOC5H11_l || 0) > 1e-4;
+      if (T >= 403.15 && nConcSulfEst >= 0.005 && hasOverheatOrg) {
         vessel.esterOverheatFrac = Math.min(1, (vessel.esterOverheatFrac || 0) + (T >= 413.15 ? 0.28 : 0.14) * dt);
         vessel._esterOverheatAlertPending = true;
       }
@@ -2019,7 +2031,12 @@ export function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, ga
         { id: 'C6H5COOC2H5_l', acidId: 'C6H5COOH_s', saltId: 'C6H5COO_aq', alcId: 'C2H5OH_l', stoich: 1, aAlk: 4.10e7, eaAlk: 58200, aAcid: 1.20e8, eaAcid: 72000, kc: 0.24, isFat: false, dHAlkJ: 45000, dHAcidJ: 3500, rxnIdAlk: 'sap_C6H5COOC2H5_l', eqAlk: 'C₆H₅COOC₂H₅ + OH⁻ → C₆H₅COO⁻ + C₂H₅OH', nameViAlk: 'Xà phòng hóa Ethyl benzoate', nameEnAlk: 'Alkaline hydrolysis of Ethyl benzoate' },
         { id: 'C57H104O6_l', acidId: 'C17H33COOH_l', saltId: 'C17H33COO_aq', alcId: 'C3H5OH_3_l', stoich: 3, aAlk: 3.20e7, eaAlk: 54000, aAcid: 1.80e8, eaAcid: 74500, kc: 0.22, isFat: true, dHAlkJ: 135000, dHAcidJ: 11000, rxnIdAlk: 'triolein_saponification', eqAlk: '(C₁₇H₃₃COO)₃C₃H₅ + 3OH⁻ ⇌(Nhũ tương hóa) C₃H₅(OH)₃ + 3C₁₇H₃₃COO⁻', nameViAlk: 'Xà phòng hóa Triolein (tự xúc tác nhũ tương hóa) → Glycerol + Oleate', nameEnAlk: 'Autocatalytic Triolein saponification → Glycerol + 3 Oleate soap' },
         { id: 'C57H110O6_s', acidId: 'C17H35COOH_s', saltId: 'C17H35COO_aq', alcId: 'C3H5OH_3_l', stoich: 3, aAlk: 3.20e7, eaAlk: 54000, aAcid: 1.80e8, eaAcid: 74500, kc: 0.22, isFat: true, meltTempK: 345.15, dHAlkJ: 140000, dHAcidJ: 12000, rxnIdAlk: 'tristearin_saponification', eqAlk: '(C₁₇H₃₅COO)₃C₃H₅ + 3OH⁻ ⇌(Nhũ tương hóa) C₃H₅(OH)₃ + 3C₁₇H₃₅COO⁻', nameViAlk: 'Xà phòng hóa Tristearin → Glycerol + Stearate', nameEnAlk: 'Autocatalytic Tristearin saponification → Glycerol + 3 Stearate soap' },
+        { id: 'C51H98O6_s', acidId: 'C15H31COOH_s', saltId: 'C15H31COO_aq', alcId: 'C3H5OH_3_l', stoich: 3, aAlk: 3.40e7, eaAlk: 53500, aAcid: 1.85e8, eaAcid: 74000, kc: 0.22, isFat: true, meltTempK: 338.15, dHAlkJ: 138000, dHAcidJ: 11500, rxnIdAlk: 'tripalmitin_saponification', eqAlk: '(C₁₅H₃₁COO)₃C₃H₅ + 3OH⁻ ⇌(Nhũ tương hóa) C₃H₅(OH)₃ + 3C₁₅H₃₁COO⁻', nameViAlk: 'Xà phòng hóa Tripalmitin (tự xúc tác nhũ tương hóa) → Glycerol + Palmitate', nameEnAlk: 'Autocatalytic Tripalmitin saponification → Glycerol + 3 Palmitate soap' },
       ];
+
+      if ((moles.CH3COOC2H5_l || 0) > 0.003 || (moles.HCOOC2H5_l || 0) > 0.003 || (moles.HCOOCH3_l || 0) > 0.003) {
+        vessel._hadVolatileEsterForAroma = true;
+      }
 
       // Saponification kinetic & safety regime diagnostics (Prompt 70):
       const nLipidLeft = (moles.C57H104O6_l || 0) + (moles.C57H110O6_s || 0) + (moles.C51H98O6_s || 0);
@@ -2182,6 +2199,7 @@ export function stepOrganicChemistry(vessel, liquidVolL, dt, activeReactions, ga
       const nSoapAqAfter = (moles.C17H33COO_aq || 0) + (moles.C17H35COO_aq || 0) + (moles.C15H31COO_aq || 0);
       const nSoapSolidAfter = (moles.C17H33COONa_s || 0) + (moles.C17H35COONa_s || 0) + (moles.C15H31COONa_s || 0);
       vessel.soapSaltedOutCake = nLipidAfter <= 1e-4 && nSoapSolidAfter >= 1e-4 && hasSatBrine;
+      vessel.soapSoftPotassiumGel = (moles.K_aq || 0) >= 0.03 && (moles.Na_aq || 0) < 0.02 && nSoapAqAfter >= 0.005 && !vessel.soapSaltedOutCake;
 
       // Durable white soap foam column during boiling/stirred soap aqueous solution
       if (nSoapAqAfter > 5e-5 && (moles.H2O_l || 0) > 1e-4 && !hasSatBrine) {

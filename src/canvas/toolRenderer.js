@@ -949,6 +949,37 @@ export function renderStirBar(ctx, item, isSelected, isDark) {
   ctx.restore();
 }
 
+export function renderBoilingChips(ctx, item, isSelected, isDark) {
+  if (item.inVesselId) return; // Rendered directly at the bottom inside host vessel
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  ctx.save();
+  drawSelectionGlow(ctx, isSelected, false);
+  const grains = [
+    [-7, 2, 4.2, '#64748b'],
+    [0, -1, 4.8, '#475569'],
+    [7, 2, 3.9, '#94a3b8'],
+    [-3, 3.5, 3.3, '#52525b'],
+    [4, -2.5, 3.5, '#71717a'],
+  ];
+  for (const [dx, dy, r, col] of grains) {
+    ctx.fillStyle = col;
+    ctx.strokeStyle = isSelected ? '#3b82f6' : '#334155';
+    ctx.lineWidth = isSelected ? 1.6 : 1.0;
+    ctx.beginPath();
+    ctx.moveTo(x + dx - r, y + dy);
+    ctx.lineTo(x + dx - r * 0.4, y + dy - r * 0.9);
+    ctx.lineTo(x + dx + r * 0.85, y + dy - r * 0.5);
+    ctx.lineTo(x + dx + r, y + dy + r * 0.6);
+    ctx.lineTo(x + dx - r * 0.2, y + dy + r * 0.85);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  drawLabelPill(ctx, x, y - 16, `${item.label} · SiC Chips`, { pal, font: '600 10px system-ui, sans-serif', height: 16 });
+  ctx.restore();
+}
+
 export function renderSaltBridge(ctx, item, items = [], isSelected = false, isDark = true, timeNow = 0, langCode = 'vi') {
   const pal = getThemePalette(isDark);
   const spec = APPARATUS.salt_bridge;

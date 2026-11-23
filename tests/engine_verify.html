@@ -2479,7 +2479,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.10';
+      const expectedBuild = 'virlab_beta_v5+build.11';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2548,6 +2548,9 @@
         Boolean(I18N.vi.badgeSoapSaltedCake && I18N.en.badgeSoapSaltedCake) &&
         Boolean(I18N.vi.badgeEsterOverheated && I18N.en.badgeEsterOverheated) &&
         Boolean(I18N.vi.badgeEsterPurified && I18N.en.badgeEsterPurified) &&
+        Boolean(I18N.vi.eq_boiling_chips && I18N.en.eq_boiling_chips) &&
+        Boolean(I18N.vi.alertBoilingBumping && I18N.en.alertBoilingBumping) &&
+        Boolean(I18N.vi.aromaEsterFruity && I18N.en.aromaEsterFruity) &&
         Boolean(I18N.vi.regCatOrganic && I18N.en.regCatOrganic) &&
         Boolean(I18N.vi.reg_benzene && I18N.en.reg_benzene) &&
         Boolean(I18N.vi.reg_methanol && I18N.en.reg_methanol) &&
@@ -2559,7 +2562,7 @@
         Boolean(I18N.vi.eq_tlc_plate && I18N.en.eq_tlc_plate);
       assert(
         'Build virlab_beta_v5+build.7 parity: All 43 apparatus & 34 starter reagents translated in VI/EN, Analytical Trio + Organic Ecosystem parity enforced',
-        APPARATUS_ORDER.length === 43 &&
+        APPARATUS_ORDER.length === 44 &&
           STARTER_REAGENTS.length === 34 &&
           !APPARATUS.clay_triangle &&
           !APPARATUS.crucible_tongs &&

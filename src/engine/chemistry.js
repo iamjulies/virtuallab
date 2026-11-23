@@ -2999,20 +2999,41 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   for (const rxn of REACTIONS) {
     if (rxn.kinetics?.type === 'instant') continue;
     const rate = computeReactionRate(rxn, vessel, liquidVolL, chemOpts);
+    const isRevCap = rxn.type === 'reversible' || rxn.kinetics?.type === 'reversible';
     if (rate > 1e-13) {
+      let rawDxi = rate * dt;
+      if (isRevCap) {
+        let minAvail = Infinity;
+        for (const [spId, st] of Object.entries(rxn.reactants)) {
+          minAvail = Math.min(minAvail, getReactantAvailableMol(vessel, spId, env) / Math.max(1e-12, st));
+        }
+        const softCap = 0.42 * minAvail;
+        if (softCap > 1e-13 && rawDxi > softCap * 0.25) {
+          rawDxi = softCap * (1 - Math.exp(-rawDxi / softCap));
+        }
+      }
       rawExtents.push({
         rxn,
         rate,
-        rawDxi: rate * dt,
+        rawDxi,
         isReverse: false,
         consumedMap: rxn.reactants,
         producedMap: rxn.products,
       });
-    } else if (rate < -1e-13 && (rxn.type === 'reversible' || rxn.kinetics?.type === 'reversible')) {
+    } else if (rate < -1e-13 && isRevCap) {
+      let rawDxi = (-rate) * dt;
+      let minAvailR = Infinity;
+      for (const [spId, st] of Object.entries(rxn.products)) {
+        minAvailR = Math.min(minAvailR, getReactantAvailableMol(vessel, spId, env) / Math.max(1e-12, st));
+      }
+      const softCapR = 0.42 * minAvailR;
+      if (softCapR > 1e-13 && rawDxi > softCapR * 0.25) {
+        rawDxi = softCapR * (1 - Math.exp(-rawDxi / softCapR));
+      }
       rawExtents.push({
         rxn,
         rate: -rate,
-        rawDxi: (-rate) * dt,
+        rawDxi,
         isReverse: true,
         consumedMap: rxn.products,
         producedMap: rxn.reactants,

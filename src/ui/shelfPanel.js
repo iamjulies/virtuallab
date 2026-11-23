@@ -57,6 +57,8 @@ function apparatusSvg(typeId) {
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 17c0 7 4.5 11 11 11s11-4 11-11H7z"/><path d="M19 18l7-10" stroke-width="3" stroke-linecap="round"/></svg>`;
     case 'stir_bar':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="14" width="20" height="8" rx="4" fill="currentColor" opacity="0.25"/><path d="M13 11c3-2 7-2 10 0M13 25c3 2 7 2 10 0" opacity="0.6"/></svg>`;
+    case 'boiling_chips':
+      return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="8,24 12,17 18,19 16,26" fill="currentColor" opacity="0.45"/><polygon points="17,22 21,15 27,18 25,25" fill="currentColor" opacity="0.3"/><polygon points="12,15 16,10 21,12 18,17" fill="currentColor" opacity="0.55"/><circle cx="15" cy="7" r="1.1" fill="#38bdf8" stroke="none"/><circle cx="21" cy="8.5" r="1.1" fill="#38bdf8" stroke="none"/></svg>`;
     case 'dc_power':
       return `<svg viewBox="0 0 36 36" class="w-7 h-7 pointer-events-none" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="9" width="24" height="18" rx="3"/><rect x="10" y="13" width="16" height="6" rx="1" fill="#059669" opacity="0.55"/><circle cx="12" cy="23" r="1.8" fill="#ef4444" stroke="none"/><circle cx="24" cy="23" r="1.8" fill="currentColor" stroke="none"/></svg>`;
     case 'volt_ammeter':

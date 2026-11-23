@@ -11,6 +11,7 @@ import {
   computePH,
   computePhaseStratification,
   computeSolidVolumeMl,
+  computeVesselAroma,
   computeVesselElectrochemicalMetrics,
   estimateVesselEsterificationMetrics,
 } from '../engine/equilibrium.js';
@@ -393,7 +394,9 @@ export class InspectorPanel {
         ? ((item.airO2PurgeFrac ?? 1) <= 0.14 ? 'P' : 'U')
         : 'N';
       const airFlags = `${(item.naTarnishFrac || 0) > 0.25 ? 1 : 0}${(item.kTarnishFrac || 0) > 0.25 ? 1 : 0}${(item.naohDeliquesceFrac || 0) > 0.15 ? 1 : 0}${(item.caCo3FilmFrac || 0) > 0.25 ? 1 : 0}${item.fePassivated ? 1 : 0}${item.alPassivated ? 1 : 0}${item.caso4Passivated ? 1 : 0}${(item.znCombustionTimer || 0) > 0.05 ? 1 : 0}${(item.mgCombustionTimer || 0) > 0.05 ? 1 : 0}${(item.alCombustionTimer || 0) > 0.05 ? 1 : 0}${purgedFlag}`;
-      const phenFlags = `${item.isSupersaturated ? 1 : 0}${(item.znPassivationFrac || 0) > 0.35 ? 1 : 0}${(item.pickeringFoamMl || 0) > 0.5 ? 1 : 0}${(item.langmuirCoverage || 0) > 0.55 ? 1 : 0}`;
+      const aromaInfo = computeVesselAroma(item);
+      const aromaKey = aromaInfo ? aromaInfo.kind : 'none';
+      const phenFlags = `${item.isSupersaturated ? 1 : 0}${(item.znPassivationFrac || 0) > 0.35 ? 1 : 0}${(item.pickeringFoamMl || 0) > 0.5 ? 1 : 0}${(item.langmuirCoverage || 0) > 0.55 ? 1 : 0}${(item.soapFoamMl || 0) > 0.5 ? 1 : 0}${item.hasBoilingChips ? 1 : 0}${item.soapSoftPotassiumGel ? 1 : 0}${aromaKey}`;
       const cmpFlag = Array.isArray(this.sim.compareVesselIds) && this.sim.compareVesselIds.includes(item.id) ? 1 : 0;
       const softenFlag = (item.softenGlowFrac || 0) > 0.1 || (item.softenSagFrac || 0) > 0.05 ? 1 : 0;
       const sootFlag = (item.sootLevel || 0) > 0.05 ? 1 : 0;
@@ -489,6 +492,10 @@ export class InspectorPanel {
       const host = item.inVesselId ? this.sim.getItem(item.inVesselId) : null;
       const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered).length;
       return `sb_bar|${item.id}|${item.inVesselId || ''}|${host?.magStirRpm || 0}|${vCnt}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'boiling_chips') {
+      const vCnt = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered).length;
+      return `bchip|${item.id}|${item.inVesselId || ''}|${vCnt}|${langCode}|${logLen}`;
     }
     if (item.kind === 'salt_bridge') {
       return `sbr|${item.id}|${item.isBroken ? 1 : 0}|${item.vesselAId || ''}|${item.vesselBId || ''}|${langCode}|${logLen}`;
@@ -1603,6 +1610,40 @@ export class InspectorPanel {
           }
         </div>
       `;
+    } else if (item.kind === 'boiling_chips') {
+      const spc = APPARATUS.boiling_chips;
+      const hostV = item.inVesselId ? this.sim.getItem(item.inVesselId) : null;
+      const openVessels = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered);
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">🪨 ${t(spc.i18nKey)} ${item.label}</div>
+              <div class="text-[11px] text-muted">${spc.isoStandard}</div>
+            </div>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          ${
+            hostV
+              ? `<div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-2 text-xs">
+                  <div class="flex justify-between">
+                    <span class="text-muted">${t('targetVessel')}</span>
+                    <strong class="font-mono">${t(APPARATUS[hostV.typeId].i18nKey)} ${hostV.label}</strong>
+                  </div>
+                  <div class="text-[11px] text-emerald-400">${t('badgeBoilingChips')}</div>
+                  <button type="button" id="ins-bc-remove" class="py-1.5 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent">${t('boilingChipsRemove')}</button>
+                </div>`
+              : `<div class="flex flex-col gap-2 text-xs">
+                  <p class="text-muted leading-snug">${t('boilingChipsHint')}</p>
+                  ${
+                    openVessels.length > 0
+                      ? `<button type="button" id="ins-bc-pick-insert" class="w-full py-1.5 px-2.5 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">${t('boilingChipsInsert')} · ${t('btnPickOnBench')}</button>`
+                      : ''
+                  }
+                </div>`
+          }
+        </div>
+      `;
     } else if (item.kind === 'salt_bridge') {
       const spc = APPARATUS.salt_bridge;
       const vA = item.vesselAId ? this.sim.getItem(item.vesselAId) : null;
@@ -1872,6 +1913,12 @@ export class InspectorPanel {
           ${item.saponificationComplete && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-emerald-500/50 bg-emerald-500/15 text-emerald-400 text-xs font-semibold">${t('badgeSoapDone')}</div>` : ''}
           ${(item.esterOverheatFrac || 0) > 0.12 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-amber-500/50 bg-amber-500/15 text-amber-400 text-xs font-medium">${t('badgeEsterOverheated')}</div>` : ''}
           ${item.esterPurified && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-emerald-500/50 bg-emerald-500/15 text-emerald-400 text-xs font-medium">${t('badgeEsterPurified')}</div>` : ''}
+          ${item.hasBoilingChips && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-slate-400/50 bg-slate-500/10 text-main text-xs font-medium">${t('badgeBoilingChips')}</div>` : ''}
+          ${item.soapSoftPotassiumGel && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-sky-400/50 bg-sky-400/10 text-sky-300 text-xs font-medium">${t('badgeSoapSoftKoh')}</div>` : ''}
+          ${(() => {
+            const aroma = !item.isShattered ? computeVesselAroma(item) : null;
+            return aroma ? `<div class="p-1.5 px-2.5 rounded-lg border ${aroma.tone} text-xs font-medium"><span class="opacity-80">${t('aromaTitle')}:</span> ${t(aroma.key)}</div>` : '';
+          })()}
           ${(item.langmuirCoverage || 0) > 0.55 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs font-medium">${t('badgeLangmuirSat')} (θ=${Math.round((item.langmuirCoverage || 0) * 100)}%, n≈${(item.langmuirOrder ?? 0).toFixed(2)})</div>` : ''}
           ${(item.naTarnishFrac || 0) > 0.25 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-slate-500/40 bg-slate-500/10 text-muted text-xs font-medium">${t('badgeAirTarnished')}</div>` : ''}
           ${(item.kTarnishFrac || 0) > 0.25 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-purple-500/40 bg-purple-500/10 text-purple-300 text-xs font-medium">${t('badgeAirTarnishedK')}</div>` : ''}
@@ -2957,6 +3004,19 @@ export class InspectorPanel {
       });
       this.container.querySelector('#ins-sb-remove')?.addEventListener('click', () => {
         this.sim.removeStirBarFromVessel(item.id);
+      });
+    } else if (item.kind === 'boiling_chips') {
+      this.container.querySelector('#ins-bc-pick-insert')?.addEventListener('click', () => {
+        const vs = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isStoppered);
+        if (vs.length === 0) return;
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: vs.map((v) => v.id),
+          promptText: `${t('boilingChipsInsert')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.insertBoilingChipsIntoVessel(item.id, picked.id),
+        });
+      });
+      this.container.querySelector('#ins-bc-remove')?.addEventListener('click', () => {
+        this.sim.removeBoilingChipsFromVessel(item.id);
       });
     } else if (item.kind === 'spoon') {
       this.container.querySelector('#ins-spoon-scoop')?.addEventListener('click', () => {

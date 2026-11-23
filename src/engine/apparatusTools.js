@@ -1256,7 +1256,7 @@ export function syncDockedToolPositions(sim) {
       it.vy = 0;
       it.fallStartY = null;
       it.submergedInTroughId = parentV.id;
-    } else if (it.kind === 'stir_bar' && it.inVesselId) {
+    } else if ((it.kind === 'stir_bar' || it.kind === 'boiling_chips') && it.inVesselId) {
       const v = sim.getItem(it.inVesselId);
       if (!v || v.isShattered) {
         it.inVesselId = null;

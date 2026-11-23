@@ -67,6 +67,7 @@ import {
   renderSeparatoryFunnel,
   renderSplint,
   renderStirBar,
+  renderBoilingChips,
   renderThermometer,
   renderVoltAmmeterAndWires,
   renderWashBottle,
@@ -380,6 +381,7 @@ export class LabWorkbenchCanvas {
       it.kind === 'filter_funnel' ||
       it.kind === 'separatory_funnel' ||
       it.kind === 'stir_bar' ||
+      it.kind === 'boiling_chips' ||
       it.kind === 'salt_bridge' ||
       it.kind === 'pipette' ||
       it.kind === 'splint' ||
@@ -907,7 +909,7 @@ export class LabWorkbenchCanvas {
     if (payloadType === 'reagent') {
       const tgt = this.findVesselAt(pt.x, pt.y, null, true);
       this.dropTargetVesselId = tgt ? tgt.id : null;
-    } else if (payloadId === 'pipette_10' || payloadId === 'stir_bar' || payloadId === 'electrode_rod' || payloadId === 'filter_funnel' || payloadId === 'separatory_funnel') {
+    } else if (payloadId === 'pipette_10' || payloadId === 'stir_bar' || payloadId === 'boiling_chips' || payloadId === 'electrode_rod' || payloadId === 'filter_funnel' || payloadId === 'separatory_funnel') {
       const tgt = this.findVesselAt(pt.x, pt.y, null, false);
       const tSpec = tgt ? APPARATUS[tgt.typeId] : null;
       const valid = tgt && (payloadId !== 'electrode_rod' || !tSpec?.isHorizontalTube);
@@ -958,6 +960,8 @@ export class LabWorkbenchCanvas {
           }
         } else if (created.kind === 'stir_bar' && hoverVessel && !hoverVessel.isStoppered) {
           this.sim.insertStirBarIntoVessel(created.id, hoverVessel.id, 800);
+        } else if (created.kind === 'boiling_chips' && hoverVessel && !hoverVessel.isStoppered) {
+          this.sim.insertBoilingChipsIntoVessel(created.id, hoverVessel.id);
         } else if (created.kind === 'electrode' && hoverVessel) {
           const hvSpec = APPARATUS[hoverVessel.typeId];
           const side = clampedX >= hoverVessel.x ? 'right' : 'left';
@@ -1497,14 +1501,18 @@ export class LabWorkbenchCanvas {
 
       // Once user actually drags a docked stir bar (>6 px), undock it cleanly so simple clicks still inspect without ejecting!
       if (
-        item.kind === 'stir_bar' &&
+        (item.kind === 'stir_bar' || item.kind === 'boiling_chips') &&
         item.inVesselId &&
         Math.hypot(pt.x - this.dragState.offsetX - this.dragState.startX, pt.y - this.dragState.offsetY - this.dragState.startY) > 6
       ) {
         const prevV = this.sim.getItem(item.inVesselId);
         if (prevV) {
-          prevV.hasStirBar = false;
-          prevV.magStirRpm = 0;
+          if (item.kind === 'stir_bar') {
+            prevV.hasStirBar = false;
+            prevV.magStirRpm = 0;
+          } else {
+            prevV.hasBoilingChips = this.sim.items.some((i) => i.kind === 'boiling_chips' && i.id !== item.id && i.inVesselId === prevV.id);
+          }
         }
         item.inVesselId = null;
       }
@@ -1632,7 +1640,7 @@ export class LabWorkbenchCanvas {
       } else if (item.kind === 'wash_bottle') {
         const arc = computeWashBottleStreamArc(item, this.sim.items, BENCH_FLOOR_Y, CONSTANTS.GRAVITY_PX_S2 || 1800);
         this.dropTargetVesselId = arc.hitTarget ? arc.hitTarget.id : null;
-      } else if (item.kind === 'stir_bar' || item.kind === 'electrode' || item.kind === 'filter_funnel') {
+      } else if (item.kind === 'stir_bar' || item.kind === 'boiling_chips' || item.kind === 'electrode' || item.kind === 'filter_funnel') {
         const tgt = this.findVesselAt(item.x, item.y + 18, item.id, false);
         this.dropTargetVesselId = tgt && !tgt.isStoppered ? tgt.id : null;
       } else if (item.kind === 'separatory_funnel') {
@@ -1867,6 +1875,11 @@ export class LabWorkbenchCanvas {
             const tgt = this.findVesselAt(item.x, item.y + 10, null, false);
             if (tgt && !tgt.isStoppered) {
               this.sim.insertStirBarIntoVessel(item.id, tgt.id, 800);
+            }
+          } else if (item.kind === 'boiling_chips') {
+            const tgt = this.findVesselAt(item.x, item.y + 10, null, false);
+            if (tgt && !tgt.isStoppered) {
+              this.sim.insertBoilingChipsIntoVessel(item.id, tgt.id);
             }
           } else if (item.kind === 'electrode') {
             const tgt = this.findVesselAt(item.x, item.y + 10, null, false);
@@ -2445,7 +2458,7 @@ export class LabWorkbenchCanvas {
       ...this.sim.items.filter((i) => i.kind === 'gas_syringe' || i.kind === 'condenser' || i.kind === 'burette'),
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
       ...this.sim.items.filter((i) => i.kind === 'rubber_stopper' || i.kind === 'phen_cotton'),
-      ...this.sim.items.filter((i) => i.kind === 'filter_funnel' || i.kind === 'separatory_funnel' || i.kind === 'electrode' || i.kind === 'salt_bridge' || i.kind === 'stir_bar'),
+      ...this.sim.items.filter((i) => i.kind === 'filter_funnel' || i.kind === 'separatory_funnel' || i.kind === 'electrode' || i.kind === 'salt_bridge' || i.kind === 'stir_bar' || i.kind === 'boiling_chips'),
       ...this.sim.items.filter((i) => i.kind === 'pipette' || i.kind === 'wash_bottle' || i.kind === 'splint' || i.kind === 'flame_loop' || i.kind === 'indicator_strip' || i.kind === 'spoon' || i.kind === 'thermometer' || i.kind === 'ph_conductometer' || i.kind === 'colorimeter' || i.kind === 'tlc_plate'),
     ];
 
@@ -2504,6 +2517,8 @@ export class LabWorkbenchCanvas {
         renderIronSpoon(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'stir_bar') {
         renderStirBar(ctx, item, isSelected, this.isDark);
+      } else if (item.kind === 'boiling_chips') {
+        renderBoilingChips(ctx, item, isSelected, this.isDark);
       } else if (item.kind === 'electrode') {
         renderElectrodeRod(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'salt_bridge') {
