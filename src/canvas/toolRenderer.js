@@ -1929,8 +1929,22 @@ export function renderColorimeter(ctx, item, isSelected, isDark) {
   const topY = y - h / 2 + 4;
   const bodyH = 48;
   const tipBot = y + h / 2 - 6;
+  const mode = item.spectroMode || 'uvvis_kinetics';
   const wl = item.wavelengthNm || 525;
-  const ledCol = wl <= 440 ? '#818cf8' : wl <= 490 ? '#38bdf8' : wl <= 550 ? '#22c55e' : wl <= 605 ? '#f59e0b' : '#ef4444';
+  const ledCol =
+    mode === 'ir_spectrum'
+      ? '#f97316'
+      : mode === 'uvvis_spectrum'
+      ? '#38bdf8'
+      : wl <= 440
+      ? '#818cf8'
+      : wl <= 490
+      ? '#38bdf8'
+      : wl <= 550
+      ? '#22c55e'
+      : wl <= 605
+      ? '#f59e0b'
+      : '#ef4444';
 
   ctx.save();
 
@@ -1954,10 +1968,17 @@ export function renderColorimeter(ctx, item, isSelected, isDark) {
   ctx.fillStyle = ledCol;
   ctx.font = '700 8.5px ui-monospace, monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(`λ=${wl}nm`, x, topY + 17);
+  const topLine = mode === 'ir_spectrum' ? 'FT-IR' : mode === 'uvvis_spectrum' ? 'UV-Vis' : `λ=${wl}nm`;
+  const botLine =
+    mode === 'ir_spectrum'
+      ? '4000→400'
+      : mode === 'uvvis_spectrum'
+      ? `${item.measuredLambdaMax || 525}nm`
+      : `A=${aVal.toFixed(2)}`;
+  ctx.fillText(topLine, x, topY + 17);
   ctx.fillStyle = '#f8fafc';
-  ctx.font = '700 10px ui-monospace, monospace';
-  ctx.fillText(`A=${aVal.toFixed(2)}`, x, topY + 32);
+  ctx.font = mode === 'ir_spectrum' ? '700 8px ui-monospace, monospace' : '700 10px ui-monospace, monospace';
+  ctx.fillText(botLine, x, topY + 32);
 
   // Fiber-optic dip probe & cuvette slot
   ctx.fillStyle = '#334155';
@@ -1976,7 +1997,13 @@ export function renderColorimeter(ctx, item, isSelected, isDark) {
   ctx.fillRect(x - 5, tipBot - 8, 10, 3);
   ctx.globalAlpha = 1;
 
-  drawLabelPill(ctx, x, topY - 10, `${item.label} · A=${aVal.toFixed(2)}`, {
+  const pillTag =
+    mode === 'ir_spectrum'
+      ? `${item.label} · FT-IR`
+      : mode === 'uvvis_spectrum'
+      ? `${item.label} · UV-Vis`
+      : `${item.label} · A=${aVal.toFixed(2)}`;
+  drawLabelPill(ctx, x, topY - 10, pillTag, {
     pal,
     borderColor: isSelected ? '#3b82f6' : ledCol,
     font: '700 9.5px ui-monospace, monospace',

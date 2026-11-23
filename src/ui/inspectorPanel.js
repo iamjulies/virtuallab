@@ -24,7 +24,12 @@ import {
   computeTubingGeometry,
 } from '../engine/gasNetwork.js';
 import { computeWashBottleStreamArc } from '../engine/apparatusTools.js';
-import { COLORIMETER_WAVELENGTHS, stepAnalyticalInstruments } from '../engine/analyticalTools.js';
+import {
+  COLORIMETER_WAVELENGTHS,
+  computeIrSpectrum,
+  computeUvVisSpectrum,
+  stepAnalyticalInstruments,
+} from '../engine/analyticalTools.js';
 import { computeCaOOptimizationScore } from '../engine/chemistry.js';
 import { soundEngine } from '../audio/soundEngine.js';
 import { downloadCompositionXlsx } from '../storage/xlsxExport.js';
@@ -510,7 +515,7 @@ export class InspectorPanel {
       return `bath|${item.id}|${item.isBroken ? 1 : 0}|${item.bathMode || 'ice'}|${langCode}|${logLen}`;
     }
     if (item.kind === 'colorimeter') {
-      return `col|${item.id}|${item.wavelengthNm || 525}|${item.clampedToId || ''}|${standCount}|${langCode}|${logLen}`;
+      return `col|${item.id}|${item.spectroMode || 'uvvis_kinetics'}|${item.irSubtractWater !== false ? 1 : 0}|${item.wavelengthNm || 525}|${item.contactVesselId || ''}|${item.clampedToId || ''}|${standCount}|${langCode}|${logLen}`;
     }
     if (item.kind === 'ph_conductometer') {
       return `phc|${item.id}|${item.clampedToId || ''}|${standCount}|${langCode}|${logLen}`;
@@ -1329,19 +1334,31 @@ export class InspectorPanel {
         </div>
       `;
     } else if (item.kind === 'colorimeter') {
+      const mode = item.spectroMode || 'uvvis_kinetics';
       const wl = item.wavelengthNm || 525;
       const aVal = item.measuredAbsorbance ?? 0;
       const tVal = item.measuredTransmittance ?? 100;
+      const irSub = item.irSubtractWater !== false;
+      const contactV = item.contactVesselId ? this.sim.getItem(item.contactVesselId) : null;
+      const uvSpec = mode === 'uvvis_spectrum' ? computeUvVisSpectrum(contactV) : null;
+      const irSpec = mode === 'ir_spectrum' ? computeIrSpectrum(contactV, { subtractWater: irSub }) : null;
       const stands = this.sim.items.filter((i) => i.kind === 'stand');
-      topSection = `
-        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
-          <div class="flex items-center justify-between gap-2">
-            <div>
-              <div class="text-sm font-bold">${t('eq_colorimeter')} ${item.label}</div>
-              <div class="text-[11px] text-muted">${APPARATUS.colorimeter.isoStandard}</div>
-            </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
-          </div>
+      const readoutHtml =
+        mode === 'uvvis_spectrum'
+          ? `
+          <div class="grid grid-cols-2 gap-2 p-2.5 rounded-lg border border-theme bg-slate-950 font-mono text-center">
+            <div><div class="text-[10px] text-slate-400">λ<sub>max</sub> (UV–Vis)</div><div class="text-lg font-bold text-sky-400" id="live-col-lmax">${uvSpec && uvSpec.maxA > 0.01 ? `${uvSpec.lambdaMaxNm} nm` : '—'}</div></div>
+            <div><div class="text-[10px] text-slate-400">A<sub>max</sub></div><div class="text-lg font-bold text-amber-400" id="live-col-amax">${uvSpec ? uvSpec.maxA.toFixed(3) : '0.000'}</div></div>
+          </div>`
+          : mode === 'ir_spectrum'
+          ? `
+          <div class="flex items-center justify-between gap-2 p-2 rounded-lg border border-theme bg-surface text-xs">
+            <span class="font-mono text-[11px] text-muted">4000 → 400 cm⁻¹ (%T)</span>
+            <button type="button" id="ins-col-ir-sub" class="px-2 py-1 rounded border text-[11px] font-medium ${
+              irSub ? 'border-emerald-500 bg-emerald-500/15 text-emerald-400 font-semibold' : 'border-theme bg-surface text-muted'
+            }">${t('specIrSubtractH2O')}</button>
+          </div>`
+          : `
           <div class="grid grid-cols-2 gap-2 p-2.5 rounded-lg border border-theme bg-slate-950 font-mono text-center">
             <div><div class="text-[10px] text-slate-400">Absorbance (A)</div><div class="text-lg font-bold text-amber-400" id="live-col-abs">${aVal.toFixed(3)}</div></div>
             <div><div class="text-[10px] text-slate-400">Transmittance</div><div class="text-sm font-bold text-emerald-400 mt-1" id="live-col-trans">${tVal.toFixed(1)}% T</div></div>
@@ -1352,13 +1369,58 @@ export class InspectorPanel {
                 wl === w ? 'border-sky-500 bg-sky-500/20 text-sky-400 font-bold' : 'border-theme bg-surface text-muted'
               }" data-wl="${w}">${w}</button>`
             ).join('')}
-          </div>
-          <div class="p-2 rounded-lg border border-theme bg-surface">
-            <div class="text-[11px] text-muted mb-1 flex justify-between">
-              <span>${langCode === 'en' ? 'Beer–Lambert Kinetics A(t)' : 'Động học quang A(t)'}</span>
-              <span class="font-mono" id="live-col-wl">${wl} nm</span>
+          </div>`;
+
+      const chartH = mode === 'uvvis_kinetics' ? 112 : 168;
+      const chartTitle =
+        mode === 'ir_spectrum'
+          ? 'ATR FT-IR (4000 → 400 cm⁻¹)'
+          : mode === 'uvvis_spectrum'
+          ? 'UV–Vis Scan (220–750 nm)'
+          : langCode === 'en'
+          ? 'Beer–Lambert Kinetics A(t)'
+          : 'Động học quang A(t)';
+      const chartRight = mode === 'ir_spectrum' ? (contactV ? contactV.label || 'Sample' : '—') : mode === 'uvvis_spectrum' ? 'A(λ)' : `${wl} nm`;
+
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2.5">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t('eq_colorimeter')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${APPARATUS.colorimeter.isoStandard}</div>
             </div>
-            <canvas id="analytical-chart" width="270" height="104" class="w-full h-24 rounded border border-theme/50"></canvas>
+            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+          </div>
+          <div class="grid grid-cols-3 gap-1 p-1 rounded-lg border border-theme bg-surface text-[11px]">
+            ${[
+              ['uvvis_kinetics', t('specModeKinetics')],
+              ['uvvis_spectrum', t('specModeUvVis')],
+              ['ir_spectrum', t('specModeIr')],
+            ]
+              .map(
+                ([mId, mLabel]) => `<button type="button" class="col-mode-btn py-1 px-1.5 rounded font-medium transition-colors ${
+                  mode === mId
+                    ? mId === 'ir_spectrum'
+                      ? 'bg-orange-500/20 text-orange-400 border border-orange-500/50 font-bold'
+                      : 'bg-sky-500/20 text-sky-400 border border-sky-500/50 font-bold'
+                    : 'text-muted hover:text-main'
+                }" data-spec-mode="${mId}">${mLabel}</button>`
+              )
+              .join('')}
+          </div>
+          ${readoutHtml}
+          <div class="p-2 rounded-lg border border-theme bg-surface flex flex-col gap-1.5">
+            <div class="text-[11px] text-muted flex justify-between items-center gap-1">
+              <span>${chartTitle}</span>
+              <span class="font-mono text-[10px]" id="live-col-wl">${chartRight}</span>
+            </div>
+            <canvas id="analytical-chart" width="290" height="${chartH}" class="w-full rounded border border-theme/50 cursor-crosshair" style="height:${chartH}px"></canvas>
+            ${
+              mode !== 'uvvis_kinetics'
+                ? `<div class="text-[10px] font-mono text-muted min-h-[16px] truncate" id="live-col-hover">${contactV ? t('specHoverHint') : t('specNoVessel')}</div>
+                   <div class="flex flex-wrap gap-1 text-[10px]" id="live-col-peaks"></div>`
+                : ''
+            }
           </div>
           <div class="flex flex-wrap gap-1.5">
             ${
@@ -1368,7 +1430,11 @@ export class InspectorPanel {
                   )}</button>`
                 : ''
             }
-            <button type="button" id="ins-col-reset" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetCurve')}</button>
+            ${
+              mode === 'uvvis_kinetics'
+                ? `<button type="button" id="ins-col-reset" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetCurve')}</button>`
+                : ''
+            }
           </div>
         </div>
       `;
@@ -2896,7 +2962,20 @@ export class InspectorPanel {
           this.sim.emitChange();
         });
       } else if (item.kind === 'colorimeter') {
+        this._spectroHoverFrac = null;
         this.drawAnalyticalChart(item);
+        this.container.querySelectorAll('.col-mode-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            item.spectroMode = btn.dataset.specMode || 'uvvis_kinetics';
+            this._spectroHoverFrac = null;
+            stepAnalyticalInstruments(this.sim, item, 0.05);
+            this.sim.emitChange();
+          });
+        });
+        this.container.querySelector('#ins-col-ir-sub')?.addEventListener('click', () => {
+          item.irSubtractWater = !(item.irSubtractWater !== false);
+          this.sim.emitChange();
+        });
         this.container.querySelectorAll('.col-wl-btn').forEach((btn) => {
           btn.addEventListener('click', () => {
             item.wavelengthNm = Number(btn.dataset.wl) || 525;
@@ -2909,6 +2988,22 @@ export class InspectorPanel {
           item.history = [];
           this.sim.emitChange();
         });
+        const specCanvas = this.container.querySelector('#analytical-chart');
+        if (specCanvas) {
+          const onHoverMove = (ev) => {
+            const rect = specCanvas.getBoundingClientRect();
+            if (!rect.width) return;
+            const frac = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+            this._spectroHoverFrac = frac;
+            this.drawAnalyticalChart(item);
+          };
+          specCanvas.addEventListener('pointermove', onHoverMove);
+          specCanvas.addEventListener('mousemove', onHoverMove);
+          specCanvas.addEventListener('mouseleave', () => {
+            this._spectroHoverFrac = null;
+            this.drawAnalyticalChart(item);
+          });
+        }
       } else if (item.kind === 'tlc_plate') {
         this.container.querySelector('#ins-tlc-reset')?.addEventListener('click', () => {
           item.solventFront = 0;
@@ -3341,12 +3436,22 @@ export class InspectorPanel {
     }
 
     if (item.kind === 'colorimeter') {
-      const aEl = this.container.querySelector('#live-col-abs');
-      const tEl = this.container.querySelector('#live-col-trans');
-      const wlEl = this.container.querySelector('#live-col-wl');
-      if (aEl) aEl.textContent = (item.measuredAbsorbance ?? 0).toFixed(3);
-      if (tEl) tEl.textContent = `${(item.measuredTransmittance ?? 100).toFixed(1)}% T`;
-      if (wlEl) wlEl.textContent = `${item.wavelengthNm || 525} nm`;
+      const mode = item.spectroMode || 'uvvis_kinetics';
+      if (mode === 'uvvis_kinetics') {
+        const aEl = this.container.querySelector('#live-col-abs');
+        const tEl = this.container.querySelector('#live-col-trans');
+        const wlEl = this.container.querySelector('#live-col-wl');
+        if (aEl) aEl.textContent = (item.measuredAbsorbance ?? 0).toFixed(3);
+        if (tEl) tEl.textContent = `${(item.measuredTransmittance ?? 100).toFixed(1)}% T`;
+        if (wlEl) wlEl.textContent = `${item.wavelengthNm || 525} nm`;
+      } else if (mode === 'uvvis_spectrum') {
+        const contactV = item.contactVesselId ? this.sim.getItem(item.contactVesselId) : null;
+        const uvSpec = computeUvVisSpectrum(contactV);
+        const lEl = this.container.querySelector('#live-col-lmax');
+        const aEl = this.container.querySelector('#live-col-amax');
+        if (lEl) lEl.textContent = uvSpec.maxA > 0.01 ? `${uvSpec.lambdaMaxNm} nm` : '—';
+        if (aEl) aEl.textContent = uvSpec.maxA.toFixed(3);
+      }
       this.drawAnalyticalChart(item);
       return;
     }
@@ -3557,6 +3662,11 @@ export class InspectorPanel {
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
 
+    if (item.kind === 'colorimeter' && (item.spectroMode === 'uvvis_spectrum' || item.spectroMode === 'ir_spectrum')) {
+      this._drawSpectroscopyScanChart(canvas, ctx, item);
+      return;
+    }
+
     const hist = item.history || [];
     if (hist.length < 2) {
       ctx.fillStyle = this.isDark ? '#64748b' : '#94a3b8';
@@ -3623,6 +3733,256 @@ export class InspectorPanel {
         else ctx.lineTo(px, py);
       });
       ctx.stroke();
+    }
+  }
+
+  _drawSpectroscopyScanChart(canvas, ctx, item) {
+    const w = canvas.width;
+    const h = canvas.height;
+    const isDark = this.isDark;
+    const mode = item.spectroMode || 'uvvis_spectrum';
+    const isIr = mode === 'ir_spectrum';
+    const t = this.getLang();
+    const lang = this.sim?.environment?.lang || document?.documentElement?.lang || 'vi';
+    const isEn = lang === 'en' || t('specModeIr') === 'FT-IR Scan';
+    const contactV = item.contactVesselId ? this.sim.getItem(item.contactVesselId) : null;
+
+    const padL = 24;
+    const padR = 8;
+    const padT = 12;
+    const padB = 22;
+    const plotW = Math.max(20, w - padL - padR);
+    const plotH = Math.max(20, h - padT - padB);
+
+    // Chart background
+    ctx.fillStyle = isDark ? '#090f1d' : '#f8fafc';
+    ctx.fillRect(0, 0, w, h);
+
+    // Horizontal grid lines
+    ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.14)' : 'rgba(15,23,42,0.10)';
+    ctx.lineWidth = 1;
+    for (let g = 0; g <= 4; g++) {
+      const gy = padT + (plotH * g) / 4;
+      ctx.beginPath();
+      ctx.moveTo(padL, gy);
+      ctx.lineTo(padL + plotW, gy);
+      ctx.stroke();
+    }
+
+    const hoverEl = this.container.querySelector('#live-col-hover');
+    const peaksEl = this.container.querySelector('#live-col-peaks');
+
+    if (isIr) {
+      // FT-IR 4000 -> 400 cm^-1 (reversed X-axis) vs %T (0..100%)
+      const ir = computeIrSpectrum(contactV, { subtractWater: item.irSubtractWater !== false, stepCm: 15 });
+      const xToPx = (wn) => padL + ((4000 - wn) / 3600) * plotW;
+      const yToPx = (T) => padT + ((100 - Math.max(0, Math.min(100, T))) / 100) * plotH;
+
+      // Wavenumber vertical grid & axis labels
+      ctx.fillStyle = isDark ? '#94a3b8' : '#475569';
+      ctx.font = '9px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      for (const tick of [4000, 3500, 3000, 2500, 2000, 1750, 1500, 1000, 500]) {
+        const tx = xToPx(tick);
+        ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.10)' : 'rgba(15,23,42,0.08)';
+        ctx.beginPath();
+        ctx.moveTo(tx, padT);
+        ctx.lineTo(tx, padT + plotH);
+        ctx.stroke();
+        if (tick === 4000 || tick === 3000 || tick === 2000 || tick === 1500 || tick === 1000 || tick === 500) {
+          ctx.fillText(String(tick), tx, h - 6);
+        }
+      }
+      ctx.textAlign = 'right';
+      ctx.fillText('100', padL - 3, padT + 4);
+      ctx.fillText('50', padL - 3, padT + plotH / 2 + 3);
+      ctx.fillText('0%', padL - 3, padT + plotH + 2);
+
+      // %T curve
+      if (ir.points.length > 1) {
+        ctx.strokeStyle = ir.hasAnalyte ? (isDark ? '#fb923c' : '#ea580c') : isDark ? '#475569' : '#94a3b8';
+        ctx.lineWidth = 1.75;
+        ctx.beginPath();
+        ir.points.forEach((pt, idx) => {
+          const px = xToPx(pt.wn);
+          const py = yToPx(pt.T);
+          if (idx === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+      }
+
+      // Auto peak trough annotations directly on peaks (collision-avoidance)
+      const placedBoxes = [];
+      ctx.font = '600 8.5px system-ui, sans-serif';
+      for (const pk of ir.peaks.slice(0, 4)) {
+        const px = xToPx(pk.wn);
+        const py = yToPx(pk.T);
+        ctx.fillStyle = isDark ? '#38bdf8' : '#0284c7';
+        ctx.beginPath();
+        ctx.arc(px, py, 2.3, 0, Math.PI * 2);
+        ctx.fill();
+
+        const shortTag = String(isEn ? pk.labelEn : pk.labelVi).split('(')[0].trim();
+        const label = `${shortTag} ${pk.wn}`;
+        const labelX = Math.max(padL + 26, Math.min(w - 28, px));
+        let labelY = Math.min(padT + plotH - 5, py + 11);
+        for (const bx of placedBoxes) {
+          if (Math.abs(labelX - bx.x) < 54 && Math.abs(labelY - bx.y) < 10) {
+            labelY = Math.max(padT + 9, py - 8);
+          }
+        }
+        placedBoxes.push({ x: labelX, y: labelY });
+        ctx.fillStyle = isDark ? '#e2e8f0' : '#0f172a';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, labelX, labelY);
+      }
+
+      // Hover crosshair + exact readout
+      if (this._spectroHoverFrac != null && ir.points.length > 0) {
+        const targetWn = 4000 - this._spectroHoverFrac * 3600;
+        let nearest = ir.points[0];
+        for (const pt of ir.points) {
+          if (Math.abs(pt.wn - targetWn) < Math.abs(nearest.wn - targetWn)) nearest = pt;
+        }
+        const hx = xToPx(nearest.wn);
+        const hy = yToPx(nearest.T);
+        ctx.strokeStyle = isDark ? 'rgba(56,189,248,0.65)' : 'rgba(2,132,199,0.65)';
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(hx, padT);
+        ctx.lineTo(hx, padT + plotH);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(hx, hy, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        const nearPeak = ir.peaks.find((pk) => Math.abs(pk.wn - nearest.wn) <= 85);
+        const pkTxt = nearPeak ? ` · ${isEn ? nearPeak.labelEn : nearPeak.labelVi}` : '';
+        if (hoverEl) hoverEl.textContent = `${nearest.wn} cm⁻¹ · ${nearest.T.toFixed(1)}% T${pkTxt}`;
+      } else if (hoverEl) {
+        hoverEl.textContent = contactV ? t('specHoverHint') : t('specNoVessel');
+      }
+
+      if (peaksEl) {
+        peaksEl.innerHTML =
+          ir.peaks.length > 0
+            ? ir.peaks
+                .map(
+                  (pk) =>
+                    `<span class="px-1.5 py-0.5 rounded bg-orange-500/15 border border-orange-500/30 text-orange-400 font-mono">${pk.wn} cm⁻¹: ${isEn ? pk.labelEn : pk.labelVi}</span>`
+                )
+                .join('')
+            : `<span class="text-muted">${contactV ? (isEn ? 'No strong IR organic bands' : 'Chưa thấy dải IR hữu cơ rõ') : ''}</span>`;
+      }
+      return;
+    }
+
+    // UV–Vis Full Spectrum (220 -> 750 nm) vs Absorbance A
+    const uv = computeUvVisSpectrum(contactV, 5);
+    const maxScaleA = Math.max(0.5, Math.min(3.5, Math.ceil((uv.maxA || 0.4) * 4) / 4));
+    const xToPx = (nm) => padL + ((nm - 220) / 530) * plotW;
+    const yToPx = (A) => padT + plotH - (Math.min(maxScaleA, Math.max(0, A)) / maxScaleA) * plotH;
+
+    // UV region highlight (220-380 nm) + Visible rainbow bar along bottom axis (380-750 nm)
+    const x380 = xToPx(380);
+    ctx.fillStyle = isDark ? 'rgba(139, 92, 246, 0.08)' : 'rgba(139, 92, 246, 0.07)';
+    ctx.fillRect(padL, padT, Math.max(0, x380 - padL), plotH);
+    const visGrad = ctx.createLinearGradient(x380, 0, padL + plotW, 0);
+    visGrad.addColorStop(0.0, '#7c3aed');
+    visGrad.addColorStop(0.18, '#2563eb');
+    visGrad.addColorStop(0.38, '#10b981');
+    visGrad.addColorStop(0.58, '#eab308');
+    visGrad.addColorStop(0.78, '#f97316');
+    visGrad.addColorStop(1.0, '#ef4444');
+    ctx.fillStyle = visGrad;
+    ctx.fillRect(x380, padT + plotH + 1, padL + plotW - x380, 3);
+
+    // Axis ticks
+    ctx.fillStyle = isDark ? '#94a3b8' : '#475569';
+    ctx.font = '9px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    for (const tick of [220, 300, 400, 500, 600, 700]) {
+      const tx = xToPx(tick);
+      ctx.fillText(String(tick), tx, h - 6);
+    }
+    ctx.textAlign = 'right';
+    ctx.fillText(maxScaleA.toFixed(1), padL - 3, padT + 5);
+    ctx.fillText('0', padL - 3, padT + plotH + 2);
+
+    // Spectrum fill + stroke
+    if (uv.points.length > 1) {
+      ctx.beginPath();
+      uv.points.forEach((pt, idx) => {
+        const px = xToPx(pt.nm);
+        const py = yToPx(pt.A);
+        if (idx === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.strokeStyle = isDark ? '#38bdf8' : '#0284c7';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+
+      ctx.lineTo(padL + plotW, padT + plotH);
+      ctx.lineTo(padL, padT + plotH);
+      ctx.closePath();
+      ctx.fillStyle = isDark ? 'rgba(56,189,248,0.16)' : 'rgba(2,132,199,0.14)';
+      ctx.fill();
+    }
+
+    // Annotate λmax / UV–Vis peaks
+    ctx.font = '600 8.5px system-ui, sans-serif';
+    for (const pk of uv.peaks.slice(0, 3)) {
+      const px = xToPx(pk.nm);
+      const py = yToPx(pk.A);
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = isDark ? '#f8fafc' : '#0f172a';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${pk.nm}nm`, Math.max(padL + 18, Math.min(w - 22, px)), Math.max(padT + 9, py - 5));
+    }
+
+    if (this._spectroHoverFrac != null && uv.points.length > 0) {
+      const targetNm = 220 + this._spectroHoverFrac * 530;
+      let nearest = uv.points[0];
+      for (const pt of uv.points) {
+        if (Math.abs(pt.nm - targetNm) < Math.abs(nearest.nm - targetNm)) nearest = pt;
+      }
+      const hx = xToPx(nearest.nm);
+      const hy = yToPx(nearest.A);
+      ctx.strokeStyle = isDark ? 'rgba(251,191,36,0.7)' : 'rgba(217,119,6,0.7)';
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(hx, padT);
+      ctx.lineTo(hx, padT + plotH);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#fbbf24';
+      ctx.beginPath();
+      ctx.arc(hx, hy, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      const nearPeak = uv.peaks.find((pk) => Math.abs(pk.nm - nearest.nm) <= 22);
+      const pkTxt = nearPeak ? ` · ${isEn ? nearPeak.labelEn : nearPeak.labelVi}` : '';
+      if (hoverEl) hoverEl.textContent = `${nearest.nm} nm (${nearest.nm < 380 ? 'UV' : 'Vis'}) · A=${nearest.A.toFixed(3)} · ${nearest.T.toFixed(1)}% T${pkTxt}`;
+    } else if (hoverEl) {
+      hoverEl.textContent = contactV ? t('specHoverHint') : t('specNoVessel');
+    }
+
+    if (peaksEl) {
+      peaksEl.innerHTML =
+        uv.peaks.length > 0
+          ? uv.peaks
+              .map(
+                (pk) =>
+                  `<span class="px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-400 font-mono">${pk.nm} nm: ${isEn ? pk.labelEn : pk.labelVi}</span>`
+              )
+              .join('')
+          : `<span class="text-muted">${contactV ? (isEn ? 'Transparent in 220–750 nm' : 'Không hấp thụ vùng 220–750 nm') : ''}</span>`;
     }
   }
 

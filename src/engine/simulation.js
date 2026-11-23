@@ -904,9 +904,13 @@ export class LabSimulation {
       Object.assign(base, {
         contactVesselId: null,
         contactLabel: '',
+        spectroMode: 'uvvis_kinetics',
+        irSubtractWater: true,
         wavelengthNm: 525,
         measuredAbsorbance: 0,
         measuredTransmittance: 100,
+        measuredLambdaMax: 525,
+        measuredSpectrumMaxA: 0,
         history: [],
         tiltAngle: 0,
       });

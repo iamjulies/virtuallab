@@ -8,7 +8,7 @@ import { LabSimulation } from '../src/engine/simulation.js';
 import { stepVesselChemistry } from '../src/engine/chemistry.js';
 import { computePhaseStratification, computeSolutionVisuals, computeLiquidVolumeL, computePH, computeVesselAroma } from '../src/engine/equilibrium.js';
 import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
-import { computeBeerLambertReading } from '../src/engine/analyticalTools.js';
+import { computeBeerLambertReading, computeIrSpectrum, computeUvVisSpectrum, stepAnalyticalInstruments } from '../src/engine/analyticalTools.js';
 import { renderBoilingChips, renderColorimeter, renderPhConductometer, renderTlcPlate } from '../src/canvas/toolRenderer.js';
 import { PRESET_MENU_ITEMS } from '../src/data/presets.js';
 import { I18N } from '../src/data/i18n.js';
@@ -1329,6 +1329,132 @@ export function runOrganicV5Tests(assert) {
       'Prompt 75 invariants: Ksp(T) soap salting-out (NaOH+low Cl), NaCl [Na+][Cl-] dissolution, funnel cake separation, round-robin 9 bg labs, smart quiescent sleep/wake, per-lab JSON cache & offscreen glass shell cache',
       saltingOutKspOk && kspChainTempOk && naclProductDissolveOk && earlyWarnOk && funnelSepOk && roundRobinOk && quiescentOk && cacheReuseOk && glassShellCacheOk,
       `kspOut=${saltingOutKspOk}(ratio=${cakeRatio.toFixed(3)},sigDiff=${sigBeforeCake!==sigAfterCake}), chainT=${kspChainTempOk}, nacl=${naclProductDissolveOk}(Cl=${(vNaCl.moles.Cl_aq||0).toFixed(3)}), early=${earlyWarnOk}, funnel=${funnelSepOk}, rr=${roundRobinOk}(f1=${frame1RanBg}), quiet=${quiescentOk}, jsonCache=${cacheReuseOk}, glassCache=${glassShellCacheOk}(${sizeAfter1}->${sizeAfter2})`
+    );
+  }
+
+  // TEST 194: Prompt 76 — phenFlags Sync for soapSaltedOutCake & UV–Vis (220–750 nm) + FT-IR (4000 → 400 cm^-1) Spectrometer System
+  {
+    const sim76 = new LabSimulation();
+
+    // 1) phenFlags sync when soapSaltedOutCake toggles WITHOUT changing vessel.moles keys
+    const vFlag = sim76.createApparatus('beaker_250', 180, 434);
+    vFlag.moles = { H2O_l: 5.0, C17H33COONa_s: 0.05 };
+    vFlag.soapSaltedOutCake = false;
+    const host76 = document.createElement('div');
+    document.body.appendChild(host76);
+    const insp76 = new InspectorPanel(host76, sim76, () => (k) => I18N.vi[k] || k, { getLabsMeta: () => null });
+    sim76.selectedId = vFlag.id;
+    const sigCakeOff = insp76.getStructureSignature((k) => I18N.vi[k] || k, 'vi');
+    vFlag.soapSaltedOutCake = true;
+    const sigCakeOn = insp76.getStructureSignature((k) => I18N.vi[k] || k, 'vi');
+    insp76.update('vi', true);
+    const badgeVisibleVi = host76.innerHTML.includes(I18N.vi.badgeSoapSaltedCake);
+    const phenFlagSyncOk = sigCakeOff !== sigCakeOn && badgeVisibleVi;
+
+    // 2) Full-range UV–Vis Scan (220–750 nm): chromophore λmax + UV aromatic peak (220–320 nm)
+    const vMnO4 = sim76.createApparatus('beaker_250', 300, 434);
+    vMnO4.moles = { H2O_l: 5.5, MnO4_aq: 0.00004, K_aq: 0.00004 };
+    const uvMnO4 = computeUvVisSpectrum(vMnO4);
+    const vCuAmm = sim76.createApparatus('beaker_250', 420, 434);
+    vCuAmm.moles = { H2O_l: 5.5, CuNH3_4_2_aq: 0.002 };
+    const uvCuAmm = computeUvVisSpectrum(vCuAmm);
+    const vPhenol = sim76.createApparatus('beaker_250', 540, 434);
+    vPhenol.moles = { H2O_l: 5.5, C6H5OH_s: 0.02 };
+    const uvPhenol = computeUvVisSpectrum(vPhenol);
+    const uvScanOk =
+      uvMnO4.points[0].nm === 220 &&
+      uvMnO4.points[uvMnO4.points.length - 1].nm === 750 &&
+      Math.abs(uvMnO4.lambdaMaxNm - 525) <= 15 &&
+      uvMnO4.maxA > 0.4 &&
+      uvCuAmm.peaks.some((p) => p.nm >= 590 && p.nm <= 620) &&
+      uvPhenol.lambdaMaxNm >= 220 &&
+      uvPhenol.lambdaMaxNm <= 310 &&
+      uvPhenol.maxA > 0.25;
+
+    // 3) FT-IR (4000 -> 400 cm^-1 reversed axis, %T):
+    // 3a) Triglyceride saponification -> ~1744 cm^-1 ester C=O disappears, ~1576 cm^-1 (-COO-) + broad O-H (~3355) appear
+    const getIrTAt = (ir, targetWn) =>
+      ir.points.reduce((best, p) => (Math.abs(p.wn - targetWn) < Math.abs(best.wn - targetWn) ? p : best), ir.points[0]).T;
+
+    const vLipidIR = sim76.createApparatus('beaker_250', 220, 434);
+    vLipidIR.moles = { C57H104O6_l: 0.02 };
+    const irLipid = computeIrSpectrum(vLipidIR, { subtractWater: true });
+    const axisDescOk =
+      irLipid.points[0].wn === 4000 &&
+      irLipid.points[irLipid.points.length - 1].wn === 400 &&
+      irLipid.points.every((p, idx) => idx === 0 || p.wn < irLipid.points[idx - 1].wn);
+    const esterTBefore = getIrTAt(irLipid, 1744);
+    const cooTBefore = getIrTAt(irLipid, 1576);
+
+    vLipidIR.moles = { H2O_l: 5.0, C17H33COO_aq: 0.06, C3H5OH_3_l: 0.02, Na_aq: 0.12, Cl_aq: 0.06 };
+    const irSoap = computeIrSpectrum(vLipidIR, { subtractWater: true });
+    const esterTAfter = getIrTAt(irSoap, 1744);
+    const cooTAfter = getIrTAt(irSoap, 1576);
+    const glyOhTAfter = getIrTAt(irSoap, 3355);
+    const irSaponificationOk =
+      axisDescOk &&
+      esterTBefore < 35 &&
+      esterTAfter > 85 &&
+      cooTAfter < 40 &&
+      cooTBefore > 80 &&
+      glyOhTAfter < 65;
+
+    // 3b) Fischer Esterification -> broad O-H decreases cleanly while Ester ~1744 grows
+    const vEstIR = sim76.createApparatus('beaker_250', 340, 434);
+    vEstIR.moles = { CH3COOH_l: 0.05, C2H5OH_l: 0.05 };
+    const irEstBefore = computeIrSpectrum(vEstIR, { subtractWater: true });
+    const ohInitT = getIrTAt(irEstBefore, 3355);
+    vEstIR.moles = { CH3COOH_l: 0.015, C2H5OH_l: 0.015, CH3COOC2H5_l: 0.035, H2O_l: 0.035 };
+    const irEstAfter = computeIrSpectrum(vEstIR, { subtractWater: true });
+    const ohFinalT = getIrTAt(irEstAfter, 3355);
+    const estPeakFinalT = getIrTAt(irEstAfter, 1744);
+    const irEsterificationOk = ohInitT < 40 && ohFinalT > ohInitT + 15 && estPeakFinalT < 40;
+
+    // 3c) H2O solvent subtraction toggle + Primary amine doublet + UI/Canvas rendering in Light & Dark
+    const vWaterOnly = sim76.createApparatus('beaker_250', 460, 434);
+    vWaterOnly.moles = { H2O_l: 5.0 };
+    const irWaterSub = computeIrSpectrum(vWaterOnly, { subtractWater: true });
+    const irWaterRaw = computeIrSpectrum(vWaterOnly, { subtractWater: false });
+    const waterToggleOk = getIrTAt(irWaterSub, 3390) > 95 && getIrTAt(irWaterRaw, 3390) < 35;
+
+    const vAmine = sim76.createApparatus('beaker_250', 580, 434);
+    vAmine.moles = { C6H5NH2_l: 0.04 };
+    const irAmine = computeIrSpectrum(vAmine, { subtractWater: true });
+    const amineDoubletOk = getIrTAt(irAmine, 3420) < 60 && getIrTAt(irAmine, 3340) < 65;
+
+    // Inspector UI + Canvas instrument render in uvvis_spectrum & ir_spectrum modes across Dark/Light themes
+    const col76 = sim76.createApparatus('colorimeter', vMnO4.x, vMnO4.y - 35);
+    let uiRenderOk = true;
+    try {
+      const cvs76 = document.createElement('canvas');
+      cvs76.width = 240;
+      cvs76.height = 240;
+      const ctx76 = cvs76.getContext('2d');
+      sim76.selectedId = col76.id;
+
+      col76.spectroMode = 'uvvis_spectrum';
+      stepAnalyticalInstruments(sim76, col76, 0.05);
+      insp76.setTheme(true);
+      insp76.update('vi', true);
+      renderColorimeter(ctx76, col76, true, true);
+
+      col76.x = vEstIR.x;
+      col76.y = vEstIR.y - 35;
+      col76.spectroMode = 'ir_spectrum';
+      stepAnalyticalInstruments(sim76, col76, 0.05);
+      insp76.setTheme(false);
+      insp76.update('en', true);
+      renderColorimeter(ctx76, col76, false, false);
+    } catch {
+      uiRenderOk = false;
+    } finally {
+      host76.remove();
+    }
+
+    assert(
+      'Prompt 76 invariants: phenFlags soapSaltedOutCake sync, full UV–Vis (220–750 nm) + UV arene scan, FT-IR (4000->400 cm^-1 %T) saponification/esterification/H2O-subtract/amine doublet & Light/Dark UI render',
+      phenFlagSyncOk && uvScanOk && irSaponificationOk && irEsterificationOk && waterToggleOk && amineDoubletOk && uiRenderOk,
+      `phenSync=${phenFlagSyncOk}, uvScan=${uvScanOk}(MnLmax=${uvMnO4.lambdaMaxNm},PhMax=${uvPhenol.lambdaMaxNm}), irSap=${irSaponificationOk}(est:${esterTBefore.toFixed(1)}->${esterTAfter.toFixed(1)},coo:${cooTAfter.toFixed(1)}), irEst=${irEsterificationOk}(oh:${ohInitT.toFixed(1)}->${ohFinalT.toFixed(1)},est:${estPeakFinalT.toFixed(1)}), h2oSub=${waterToggleOk}, amine=${amineDoubletOk}, ui=${uiRenderOk}`
     );
   }
 }
