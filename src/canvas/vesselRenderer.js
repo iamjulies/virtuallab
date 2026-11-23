@@ -31,6 +31,37 @@ import {
   getSyringeNozzlePos,
   samplePolylineAt,
 } from '../engine/gasNetwork.js';
+
+/**
+ * Lightweight vector halo glow replacing expensive Canvas2D software ctx.shadowBlur.
+ * Strokes the active path in 3 widening translucent outer passes without clearing it.
+ */
+export function strokeHaloGlow(ctx, glowColor, baseWidth = 2.0, alphaScale = 1.0) {
+  if (!glowColor) return;
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = glowColor;
+  const layers = [
+    [baseWidth + 10, 0.13],
+    [baseWidth + 5.5, 0.23],
+    [baseWidth + 2.4, 0.42],
+  ];
+  for (const [lw, a] of layers) {
+    ctx.lineWidth = lw;
+    ctx.globalAlpha = a * alphaScale;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+export function strokeSelectionGlow(ctx, isSelected, isDropTarget, baseWidth = 2.0) {
+  if (isDropTarget) {
+    strokeHaloGlow(ctx, '#10b981', baseWidth);
+  } else if (isSelected) {
+    strokeHaloGlow(ctx, '#3b82f6', baseWidth);
+  }
+}
 import { renderVesselSolids } from './chemicalVisuals.js';
 
 function cylinderFillHeightFraction(areaFrac) {
@@ -376,10 +407,6 @@ export function renderScale(ctx, item, isSelected, isDark, timeNow) {
   const top = y - h / 2;
 
   ctx.save();
-  if (isSelected) {
-    ctx.shadowColor = '#3b82f6';
-    ctx.shadowBlur = 12;
-  }
 
   // Weighing pan
   ctx.fillStyle = pal.scalePan;
@@ -392,10 +419,9 @@ export function renderScale(ctx, item, isSelected, isDark, timeNow) {
   ctx.lineWidth = isSelected ? 2.2 : 1.4;
   ctx.beginPath();
   ctx.roundRect(x - w / 2, top + 12, w, h - 12, 8);
+  if (isSelected) strokeHaloGlow(ctx, '#3b82f6', 2.2);
   ctx.fill();
   ctx.stroke();
-
-  ctx.shadowBlur = 0;
 
   // LCD screen
   const lcdW = w - 26;
@@ -815,17 +841,13 @@ export function renderRetortStand(ctx, stand, isSelected, isDark) {
     ctx.rotate(stand.landingTilt * 0.4);
     ctx.translate(-x, -bottom);
   }
-  if (isSelected) {
-    ctx.shadowColor = '#3b82f6';
-    ctx.shadowBlur = 10;
-  }
-
   // Heavy cast-iron base plate resting on bench
   ctx.fillStyle = isDark ? '#334155' : '#475569';
   ctx.strokeStyle = isSelected ? '#3b82f6' : isDark ? '#64748b' : '#1e293b';
   ctx.lineWidth = isSelected ? 2 : 1.4;
   ctx.beginPath();
   ctx.roundRect(x - w / 2, bottom - 12, w, 12, 3);
+  if (isSelected) strokeHaloGlow(ctx, '#3b82f6', 2.0);
   ctx.fill();
   ctx.stroke();
 
@@ -992,10 +1014,6 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
     ctx.rotate(item.landingTilt * 0.45);
     ctx.translate(-x, -y);
   }
-  if (isSelected) {
-    ctx.shadowColor = '#3b82f6';
-    ctx.shadowBlur = 11;
-  }
 
   // Ground puddle beneath if dropped and spilled liquid
   if (item.spilledPuddleColor && !item.clampedToId) {
@@ -1045,6 +1063,7 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   ctx.lineWidth = isSelected || overP >= 0.35 ? 2.2 : 1.7;
   ctx.beginPath();
   ctx.roundRect(barrelLeft, barrelTop, barrelW, barrelH, 5);
+  if (isSelected) strokeHaloGlow(ctx, '#3b82f6', 2.2);
   ctx.fill();
   ctx.stroke();
 
@@ -1053,7 +1072,6 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   ctx.roundRect(rearX - (barrelDir > 0 ? 4 : 3), y - collarH / 2, 7, collarH, 3);
   ctx.fill();
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   // Inner chamber strictly clipped to [frontInnerX .. plungerFaceX]
   if (chamberW > 0.5) {
@@ -1420,10 +1438,6 @@ export function renderPipette(ctx, item, isSelected, isDark, langCode = 'vi', ti
     : 0;
 
   ctx.save();
-  if (isSelected) {
-    ctx.shadowColor = '#3b82f6';
-    ctx.shadowBlur = 11;
-  }
 
   // Tilted slight ergonomic angle while dragged or wobbling from impact
   const totTilt = (item.tiltAngle || 0) + (item.landingTilt || 0);
@@ -1501,8 +1515,8 @@ export function renderPipette(ctx, item, isSelected, isDark, langCode = 'vi', ti
   ctx.closePath();
   ctx.strokeStyle = isSelected ? '#3b82f6' : pal.glassStroke;
   ctx.lineWidth = isSelected ? 2 : 1.5;
+  if (isSelected) strokeHaloGlow(ctx, '#3b82f6', 2.0);
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   ctx.strokeStyle = pal.tickStroke;
   ctx.lineWidth = 0.9;
@@ -1863,18 +1877,6 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.translate(-x, -y);
   }
 
-  // Drop target glow ring or Borosilicate high-T softening crimson thermal glow
-  if (isDropTarget) {
-    ctx.shadowColor = '#10b981';
-    ctx.shadowBlur = 18;
-  } else if ((vessel.softenGlowFrac || 0) > 0.08) {
-    ctx.shadowColor = `rgba(249, 115, 22, ${Math.min(0.95, 0.35 + vessel.softenGlowFrac * 0.6).toFixed(2)})`;
-    ctx.shadowBlur = 14 + vessel.softenGlowFrac * 12;
-  } else if (isSelected) {
-    ctx.shadowColor = '#3b82f6';
-    ctx.shadowBlur = 12;
-  }
-
   // Cork support ring nested underneath Round-Bottom Flasks when sitting upright on bench or scale
   if (
     spec.isRoundBottom &&
@@ -1887,7 +1889,6 @@ export function renderVessel(ctx, vessel, opts) {
     const ringY = y + h / 2 - 2;
     const rx = Math.max(18, w * 0.27);
     ctx.save();
-    ctx.shadowBlur = 0;
     ctx.fillStyle = isDark ? '#78350f' : '#92400e';
     ctx.beginPath();
     ctx.ellipse(x, ringY - 2, rx, 6.2, 0, 0, Math.PI * 2);
@@ -2712,9 +2713,16 @@ export function renderVessel(ctx, vessel, opts) {
   ctx.restore(); // Remove clip
 
   // Draw glass outer silhouette + ISO reinforced wall + red-orange thermal softening sag
-  ctx.shadowBlur = 0;
   traceVesselPath(ctx, spec, x, y, sagFrac);
   const softenG = vessel.softenGlowFrac || 0;
+  const vesselGlowColor = isDropTarget
+    ? '#10b981'
+    : softenG > 0.08
+    ? `rgba(249, 115, 22, ${Math.min(0.95, 0.35 + softenG * 0.6).toFixed(2)})`
+    : isSelected
+    ? '#3b82f6'
+    : null;
+  if (vesselGlowColor) strokeHaloGlow(ctx, vesselGlowColor, isSelected || isDropTarget ? 2.5 : 2.0);
   ctx.strokeStyle = vessel.isShattered
     ? '#ef4444'
     : softenG > 0.25
@@ -3304,16 +3312,16 @@ export function renderVessel(ctx, vessel, opts) {
       const nx = x - noteW / 2;
       const ny = y - noteH / 2 + (spec.shape === 'erlenmeyer' || spec.shape === 'round_flask' ? h * 0.14 : 0);
 
-      ctx.shadowColor = 'rgba(15, 23, 42, 0.22)';
-      ctx.shadowBlur = 4;
-      ctx.shadowOffsetY = 1.5;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.16)';
+      ctx.beginPath();
+      ctx.roundRect(nx + 0.8, ny + 1.8, noteW, noteH, 3);
+      ctx.fill();
       ctx.fillStyle = noteBg;
       ctx.strokeStyle = 'rgba(15, 23, 42, 0.25)';
       ctx.lineWidth = 0.8;
       ctx.beginPath();
       ctx.roundRect(nx, ny, noteW, noteH, 3);
       ctx.fill();
-      ctx.shadowColor = 'transparent';
       ctx.stroke();
 
       // Subtle folded bottom-right paper corner

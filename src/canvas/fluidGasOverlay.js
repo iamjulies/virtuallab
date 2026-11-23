@@ -297,6 +297,9 @@ export class FluidGasOverlay {
     this.obsCtx = null;
     this.obsTex = null;
     this._obsSig = '';
+    this.isSleeping = false;
+    this._idleSec = 0;
+    this._hasPlumeEnergy = false;
     this.init();
   }
 
@@ -451,26 +454,46 @@ export class FluidGasOverlay {
     targetDFBO.swap();
   }
 
-  stepAndRender(sim, dtRaw, isDark) {
-    if (!this.enabled || !sim) return;
+  _clearAllTargets() {
     const gl = this.gl;
-    const dt = Math.max(0.008, Math.min(0.035, dtRaw || 0.016));
-    const items = sim.items || [];
-    const envT = sim.environment?.tempK || CONSTANTS.T_STD_K;
-    const opticsMode = sim.environment?.opticsMode || 'normal';
+    if (!gl || !this.canvas) return;
+    const clearFbo = (fbo, w, h) => {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, w, h);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    };
+    if (this.vel) {
+      clearFbo(this.vel.read.fbo, SIM_W, SIM_H);
+      clearFbo(this.vel.write.fbo, SIM_W, SIM_H);
+    }
+    if (this.dye) {
+      clearFbo(this.dye.read.fbo, SIM_W, SIM_H);
+      clearFbo(this.dye.write.fbo, SIM_W, SIM_H);
+    }
+    if (this.tempBuoy) {
+      clearFbo(this.tempBuoy.read.fbo, SIM_W, SIM_H);
+      clearFbo(this.tempBuoy.write.fbo, SIM_W, SIM_H);
+    }
+    clearFbo(null, this.canvas.width, this.canvas.height);
+  }
 
-    this._updateObstacles(items);
+  reset() {
+    this._idleSec = 0;
+    this._hasPlumeEnergy = false;
+    if (this.enabled) {
+      this._clearAllTargets();
+      this.isSleeping = true;
+    }
+  }
 
-    // 1. Splat emitters from open/inverted/sealed vessels and burners
+  _collectEmitters(items, envT, opticsMode) {
+    const burners = [];
+    const heatVessels = [];
+    const plumeVessels = [];
     for (const it of items) {
       if (it.kind === 'burner' && (it.powerW || 0) > 0) {
-        const bSpec = APPARATUS[it.typeId] || APPARATUS.burner;
-        const uvX = it.x / BENCH_LOGICAL_W;
-        const nozzleY = it.typeId === 'bunsen_burner' ? it.y + bSpec.height / 2 - 68 : it.y + bSpec.height / 2 - 48;
-        const uvY = 1.0 - nozzleY / BENCH_LOGICAL_H;
-        const normT = Math.min(1.0, (it.powerW / 1400) * 0.85);
-        this._splat(this.tempBuoy, uvX, uvY, 0.0012, [normT * dt * 6.0, 0, 0, 0], 1);
-        this._splat(this.vel, uvX, uvY, 0.0012, [0, 0.25 * dt * 6.0, 0, 0], 1);
+        burners.push(it);
         continue;
       }
       if (it.kind !== 'vessel' || it.isShattered) continue;
@@ -510,9 +533,7 @@ export class FluidGasOverlay {
       const dTK = Math.max(0, (it.tempK || envT) - envT);
       const dTNorm = dTK > 3 ? Math.min(1.0, Math.pow(dTK / 145, 0.72)) : 0;
       if (dTNorm > 0.04) {
-        const cx = it.x / BENCH_LOGICAL_W;
-        const cy = 1.0 - it.y / BENCH_LOGICAL_H;
-        this._splat(this.tempBuoy, cx, cy, 0.0020, [Math.min(0.85, dTNorm) * dt * 4.2, 0, 0, 0], 1);
+        heatVessels.push({ it, dTNorm });
       }
 
       // Sealed stoppered vessels NEVER release an external gas plume through the cork
@@ -520,8 +541,59 @@ export class FluidGasOverlay {
 
       // In Thermal FLIR mode, even colorless escaping hot gases (e.g. 51°C HCl(g) or H2O(g)) create a hot plume
       const hasThermalGasOut = opticsMode === 'thermal' && dTNorm > 0.05 && totalVisMol > 0.002;
-      if (totalVisMol <= 0.015 && !hasThermalGasOut) continue;
+      if (totalVisMol > 0.015 || hasThermalGasOut) {
+        plumeVessels.push({ it, spec, sumColor, totalVisMol, weightedRelD, dTNorm, isOneHoleVent, hasThermalGasOut });
+      }
+    }
+    return { burners, heatVessels, plumeVessels };
+  }
 
+  stepAndRender(sim, dtRaw, isDark) {
+    if (!this.enabled || !sim) return;
+    const gl = this.gl;
+    const dt = Math.max(0.008, Math.min(0.035, dtRaw || 0.016));
+    const items = sim.items || [];
+    const envT = sim.environment?.tempK || CONSTANTS.T_STD_K;
+    const opticsMode = sim.environment?.opticsMode || 'normal';
+
+    const { burners, heatVessels, plumeVessels } = this._collectEmitters(items, envT, opticsMode);
+    const hasActiveEmitter = burners.length > 0 || heatVessels.length > 0 || plumeVessels.length > 0;
+
+    if (!hasActiveEmitter) {
+      if (this.isSleeping) return;
+      if (!this._hasPlumeEnergy || this._idleSec >= 2.6) {
+        this._clearAllTargets();
+        this._hasPlumeEnergy = false;
+        this.isSleeping = true;
+        return;
+      }
+      this._idleSec += dt;
+    } else {
+      this.isSleeping = false;
+      this._idleSec = 0;
+      this._hasPlumeEnergy = true;
+    }
+
+    this._updateObstacles(items);
+
+    // 1. Splat emitters from open/inverted/sealed vessels and burners
+    for (const it of burners) {
+      const bSpec = APPARATUS[it.typeId] || APPARATUS.burner;
+      const uvX = it.x / BENCH_LOGICAL_W;
+      const nozzleY = it.typeId === 'bunsen_burner' ? it.y + bSpec.height / 2 - 68 : it.y + bSpec.height / 2 - 48;
+      const uvY = 1.0 - nozzleY / BENCH_LOGICAL_H;
+      const normT = Math.min(1.0, (it.powerW / 1400) * 0.85);
+      this._splat(this.tempBuoy, uvX, uvY, 0.0012, [normT * dt * 6.0, 0, 0, 0], 1);
+      this._splat(this.vel, uvX, uvY, 0.0012, [0, 0.25 * dt * 6.0, 0, 0], 1);
+    }
+
+    for (const { it, dTNorm } of heatVessels) {
+      const cx = it.x / BENCH_LOGICAL_W;
+      const cy = 1.0 - it.y / BENCH_LOGICAL_H;
+      this._splat(this.tempBuoy, cx, cy, 0.0020, [Math.min(0.85, dTNorm) * dt * 4.2, 0, 0, 0], 1);
+    }
+
+    for (const { it, spec, sumColor, totalVisMol, weightedRelD, dTNorm, isOneHoleVent, hasThermalGasOut } of plumeVessels) {
       const avgRelD = totalVisMol > 1e-5 ? weightedRelD / totalVisMol : 1.0;
       const mouthOffY = it.isInverted ? spec.height * 0.44 : -spec.height * 0.36;
       const tilt = ((it.tiltDir < 0 ? -1 : 1) * (it.tiltDeg || 0) * Math.PI) / 180;

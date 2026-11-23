@@ -14,7 +14,11 @@ import { PRESET_MENU_ITEMS } from '../src/data/presets.js';
 import { I18N } from '../src/data/i18n.js';
 import { InspectorPanel } from '../src/ui/inspectorPanel.js';
 import { EnvironmentBar } from '../src/ui/environmentBar.js';
-import { renderRetortClampJaw } from '../src/canvas/vesselRenderer.js';
+import { LabWorkbenchCanvas } from '../src/canvas/workbench.js';
+import { ParticleSystem } from '../src/canvas/particles.js';
+import { FluidGasOverlay } from '../src/canvas/fluidGasOverlay.js';
+import { ShelfPanel } from '../src/ui/shelfPanel.js';
+import { renderRetortClampJaw, renderVessel } from '../src/canvas/vesselRenderer.js';
 
 export function runOrganicV5Tests(assert) {
   // TEST 184: Prompt 66 — Modular Organic Architecture, Reversible Zero-Reactant/Anhydrous Solver,
@@ -900,6 +904,148 @@ export function runOrganicV5Tests(assert) {
       'Prompt 72 invariants: Zero-hardcode SPECIES-driven lipid/soap engine (Trilinolein db=6 + Br2/H2 + floating linoleate cake, short-chain Tributyrin no cake/low foam, runtime acylChains 2:1 mixed lipid)',
       trilinOk && unsat6Ok && tributOk && mixedOk,
       `trilin=${trilinOk}(cake=${(vTrilin.moles.C17H31COONa_s||0).toFixed(3)},foam=${(vTrilin.soapFoamMl||0).toFixed(1)}), unsat6=${unsat6Ok}(brRem=${(vBrLin.moles.Br2_l||0).toFixed(3)},ste=${(vHydLin.moles.C57H110O6_s||0).toFixed(3)},h2=${(vHydLin.headspaceGasMoles.H2_g||0).toFixed(3)}), tribut=${tributOk}(but=${(vTrib.moles.C3H7COO_aq||0).toFixed(3)},foam=${(vTrib.soapFoamMl||0).toFixed(1)}), mixed=${mixedOk}(${ole.toFixed(4)}/${ste.toFixed(4)})`
+    );
+  }
+
+  // TEST 191: Prompt 73 — Drag & Canvas Performance Optimization Invariants
+  // (GPU translate3d ghost drag, rAF-coalesced pointermove + cached canvasRect, FluidGasOverlay auto-idle sleep/wake,
+  // zero per-frame shadowBlur on render paths, offscreen static backdrop/bench cache)
+  {
+    const sim73 = new LabSimulation();
+    const wrap73 = document.createElement('div');
+    wrap73.style.cssText = 'position:fixed;left:0;top:0;width:1000px;height:560px;pointer-events:none;opacity:0.01;';
+    const cvs73 = document.createElement('canvas');
+    cvs73.width = 1000;
+    cvs73.height = 560;
+    cvs73.style.cssText = 'width:1000px;height:560px;display:block;';
+    wrap73.appendChild(cvs73);
+    const shelfHost73 = document.createElement('div');
+    document.body.appendChild(wrap73);
+    document.body.appendChild(shelfHost73);
+
+    const wb73 = new LabWorkbenchCanvas(cvs73, sim73, new ParticleSystem());
+    wb73.resize();
+    const shelf73 = new ShelfPanel(shelfHost73, sim73, () => (k) => I18N.vi[k] || k, {
+      onExternalDragMove: (cx, cy, kind, id) => wb73.setExternalDropPreview(cx, cy, kind, id),
+      onExternalDrop: (cx, cy, kind, id) => wb73.dropFromShelf(cx, cy, kind, id),
+    });
+    shelf73.render((k) => I18N.vi[k] || k);
+
+    // 1) Shelf reagent drag uses GPU translate3d without layout style.left/top & caches canvasRect cleanly
+    let rectCalls = 0;
+    const origGetRect = cvs73.getBoundingClientRect.bind(cvs73);
+    cvs73.getBoundingClientRect = () => {
+      rectCalls++;
+      return origGetRect();
+    };
+    const regCard = shelfHost73.querySelector('.reagent-card[data-reagent-id="cuso4_5h2o"]');
+    regCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 120, button: 0, pointerType: 'mouse' }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 220, clientY: 200, pointerType: 'mouse' }));
+    const ghostTransform = shelf73._dragSession?.ghostEl?.style?.transform || '';
+    const ghostNoLeftTop = !shelf73._dragSession?.ghostEl?.style?.left && !shelf73._dragSession?.ghostEl?.style?.top;
+    const rectCallsDuringExternal = rectCalls;
+    for (let k = 0; k < 6; k++) {
+      window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 230 + k * 10, clientY: 200 + k * 5, pointerType: 'mouse' }));
+    }
+    const extCoalescedOk = rectCalls === rectCallsDuringExternal; // Cached rect & rAF coalescing prevent repeated layout queries!
+    window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true }));
+    const ghostOk = ghostTransform.includes('translate3d(') && ghostNoLeftTop && extCoalescedOk && !wb73._canvasRect;
+
+    // 2) Canvas item drag caches rect + coalesces burst pointermove + releases cleanly on endDrag
+    const beaker73 = sim73.createApparatus('beaker_250', 400, 420);
+    beaker73.moles = { H2O_l: 5.0 };
+    beaker73.tempK = 420;
+    beaker73.softenGlowFrac = 0.5;
+    rectCalls = 0;
+    cvs73.dispatchEvent(new PointerEvent('pointerdown', { clientX: 400, clientY: 420, pointerId: 1 }));
+    for (let k = 1; k <= 8; k++) {
+      cvs73.dispatchEvent(new PointerEvent('pointermove', { clientX: 400 + k * 12, clientY: 420 - k * 10, pointerId: 1 }));
+    }
+    const movedPos = beaker73.x;
+    const canvasRectCachedOk = rectCalls <= 1 && Boolean(wb73._canvasRect);
+    cvs73.dispatchEvent(new PointerEvent('pointerup', { clientX: 496, clientY: 340, pointerId: 1 }));
+    const finalBeakerX = beaker73.x; // Trailing queued move flushed before endDrag!
+    const dragCoalesceOk = canvasRectCachedOk && movedPos >= 400 && finalBeakerX > 480 && !wb73._canvasRect;
+
+    // 3) Zero per-frame ctx.shadowBlur usage on live canvas scene & renderers
+    const testCvs = document.createElement('canvas');
+    testCvs.width = 1000;
+    testCvs.height = 560;
+    const rawCtx = testCvs.getContext('2d');
+    let shadowBlurWrites = 0;
+    const trackedCtx = new Proxy(rawCtx, {
+      set(target, prop, value) {
+        if (prop === 'shadowBlur' && Number(value) > 0) shadowBlurWrites++;
+        target[prop] = value;
+        return true;
+      },
+      get(target, prop) {
+        const val = target[prop];
+        return typeof val === 'function' ? val.bind(target) : val;
+      },
+    });
+    wb73.setSelection([beaker73.id], beaker73.id);
+    wb73.dropTargetVesselId = beaker73.id;
+    wb73.zoomMode = true;
+    wb73.zoomScale = 2.0;
+    wb73.pointerLogical = { x: 450, y: 340 };
+    wb73.renderWorldScene(trackedCtx, 1.5);
+    wb73.renderLoupeLens(trackedCtx, 1.5, 450, 340);
+    wb73.toggleZoomMode(false);
+    renderVessel(trackedCtx, beaker73, true, true, true, 1.0, 'vi');
+    renderBoilingChips(trackedCtx, sim73.createApparatus('boiling_chips', 200, 460), true, true);
+    renderColorimeter(trackedCtx, sim73.createApparatus('colorimeter', 260, 420), true, true);
+    renderPhConductometer(trackedCtx, sim73.createApparatus('ph_conductometer', 320, 420), true, true, 'vi');
+    renderTlcPlate(trackedCtx, sim73.createApparatus('tlc_plate', 360, 420), true, true, true);
+    const zeroShadowBlurOk = shadowBlurWrites === 0;
+
+    // 4) Offscreen background cache builds & invalidates cleanly on theme/resize
+    const darkBg = wb73._ensureBgCache();
+    const darkKey = wb73._bgCacheKey;
+    wb73.setTheme(false, 'ctrl');
+    const ctrlInvalidated = wb73._bgCacheKey === '';
+    wb73.renderWorldScene(rawCtx, 2.0);
+    const ctrlKey = wb73._bgCacheKey;
+    wb73.setTheme(true, 'sos');
+    wb73.renderWorldScene(rawCtx, 2.5);
+    const sosKey = wb73._bgCacheKey;
+    wb73.resize();
+    const resizeInvalidated = wb73._bgCacheKey === '';
+    const bgCacheOk =
+      Boolean(darkBg) &&
+      darkBg.width >= 1000 &&
+      ctrlInvalidated &&
+      darkKey !== ctrlKey &&
+      ctrlKey !== sosKey &&
+      resizeInvalidated;
+
+    // 5) FluidGasOverlay auto-idle sleep & wake
+    const fgo = new FluidGasOverlay();
+    const emptyEmit = fgo._collectEmitters([], CONSTANTS.T_STD_K, 'normal');
+    const burnerItem = { kind: 'burner', typeId: 'bunsen_burner', x: 300, y: 440, powerW: 900 };
+    const burnerEmit = fgo._collectEmitters([burnerItem], CONSTANTS.T_STD_K, 'normal');
+    let fgoSleepCycleOk = emptyEmit.burners.length === 0 && burnerEmit.burners.length === 1;
+    if (fgo.enabled) {
+      const simF = new LabSimulation();
+      fgo.stepAndRender(simF, 0.016, true);
+      const sleptEmpty = fgo.isSleeping === true;
+      const bn = simF.createApparatus('bunsen_burner', 300, 440);
+      bn.powerW = 900;
+      fgo.stepAndRender(simF, 0.016, true);
+      const wokeOnBurner = fgo.isSleeping === false && fgo._hasPlumeEnergy === true;
+      bn.powerW = 0;
+      for (let t = 0; t < 180; t++) fgo.stepAndRender(simF, 0.02, true);
+      const sleptAfterCool = fgo.isSleeping === true;
+      fgoSleepCycleOk = fgoSleepCycleOk && sleptEmpty && wokeOnBurner && sleptAfterCool;
+    }
+
+    wrap73.remove();
+    shelfHost73.remove();
+
+    assert(
+      'Prompt 73 invariants: GPU translate3d shelf ghost, rAF-coalesced pointermove + cached canvasRect, zero per-frame shadowBlur, offscreen bg/bench cache & FluidGasOverlay auto-idle sleep',
+      ghostOk && dragCoalesceOk && zeroShadowBlurOk && bgCacheOk && fgoSleepCycleOk,
+      `ghost=${ghostOk}(t=${ghostTransform}), drag=${dragCoalesceOk}(rectCalls=${rectCalls},finalX=${finalBeakerX.toFixed(1)}), noBlur=${zeroShadowBlurOk}(writes=${shadowBlurWrites}), bgCache=${bgCacheOk}, fluidSleep=${fgoSleepCycleOk}`
     );
   }
 }

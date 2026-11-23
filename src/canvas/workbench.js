@@ -108,6 +108,13 @@ export class LabWorkbenchCanvas {
     this.shakeMagnitude = 0;
     this.lastRenderMs = performance.now();
     this.fluidGasOverlay = new FluidGasOverlay();
+    this._canvasRect = null;
+    this._externalDragActive = false;
+    this._moveRafId = 0;
+    this._pendingPointerMove = null;
+    this._bgCacheCanvas = null;
+    this._bgCacheCtx = null;
+    this._bgCacheKey = '';
 
     // Magnifier / Camera Zoom & Loupe state
     this.zoomMode = false;
@@ -130,6 +137,7 @@ export class LabWorkbenchCanvas {
   setTheme(isDark, themeName = isDark ? 'dark' : 'light') {
     this.isDark = isDark;
     this.themeName = themeName || (isDark ? 'dark' : 'light');
+    this._bgCacheKey = '';
   }
 
   setLang(langCode) {
@@ -144,6 +152,7 @@ export class LabWorkbenchCanvas {
     this.pickState = null;
     this.hoverItemId = null;
     this.dropTargetVesselId = null;
+    this.fluidGasOverlay?.reset?.();
     this.callbacks.onPickStateChange?.(null);
   }
 
@@ -188,6 +197,8 @@ export class LabWorkbenchCanvas {
     this.viewOffsetX = (w - BENCH_LOGICAL_W * scale) / 2;
     this.viewOffsetY = (h - BENCH_LOGICAL_H * scale) / 2;
     this.dpr = dpr;
+    this._canvasRect = null;
+    this._bgCacheKey = '';
   }
 
   getZoomState() {
@@ -235,8 +246,25 @@ export class LabWorkbenchCanvas {
     this.setZoomView(1.0, BENCH_LOGICAL_W * 0.5, BENCH_LOGICAL_H * 0.5);
   }
 
-  clientToLogical(clientX, clientY) {
+  _getCanvasRect() {
+    if (this._canvasRect) return this._canvasRect;
     const rect = this.canvas.getBoundingClientRect();
+    if (
+      this.dragState ||
+      this.marqueeState ||
+      this.panDragState ||
+      this.portDragState ||
+      this.standResizeState ||
+      this.tubeTipDragState ||
+      this._externalDragActive
+    ) {
+      this._canvasRect = rect;
+    }
+    return rect;
+  }
+
+  clientToLogical(clientX, clientY) {
+    const rect = this._getCanvasRect();
     const cx = clientX - rect.left;
     const cy = clientY - rect.top;
     const baseX = (cx - this.viewOffsetX) / this.viewScale;
@@ -897,10 +925,13 @@ export class LabWorkbenchCanvas {
    */
   setExternalDropPreview(clientX, clientY, payloadType, payloadId) {
     if (!payloadType) {
+      this._externalDragActive = false;
+      this._canvasRect = null;
       this.dropTargetVesselId = null;
       return;
     }
-    const rect = this.canvas.getBoundingClientRect();
+    this._externalDragActive = true;
+    const rect = this._getCanvasRect();
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
       this.dropTargetVesselId = null;
       return;
@@ -930,6 +961,8 @@ export class LabWorkbenchCanvas {
    */
   dropFromShelf(clientX, clientY, payloadType, payloadId) {
     const pt = this.clientToLogical(clientX, clientY);
+    this._externalDragActive = false;
+    this._canvasRect = null;
     if (payloadType === 'apparatus' && payloadId) {
       const spec = APPARATUS[payloadId];
       if (!spec) {
@@ -1102,9 +1135,13 @@ export class LabWorkbenchCanvas {
   bindEvents() {
     this.ro = new ResizeObserver(() => this.resize());
     if (this.canvas.parentElement) this.ro.observe(this.canvas.parentElement);
+    window.addEventListener('scroll', () => {
+      this._canvasRect = null;
+    }, { passive: true, capture: true });
 
     // Unified pointer events for Mouse + Touch + Pen
     this.canvas.addEventListener('pointerdown', (e) => {
+      this._canvasRect = this.canvas.getBoundingClientRect();
       const pt = this.clientToLogical(e.clientX, e.clientY);
 
       if (this.pickState) {
@@ -1348,6 +1385,7 @@ export class LabWorkbenchCanvas {
       this.resetWheelTiltedVessel(null);
       if (!this.dragState && !this.portDragState && !this.panDragState) {
         this.hoverItemId = null;
+        this._canvasRect = null;
       }
     });
 
@@ -1363,12 +1401,12 @@ export class LabWorkbenchCanvas {
       this.callbacks.onContextMenu?.(e.clientX, e.clientY, pt, hitItem);
     });
 
-    this.canvas.addEventListener('pointermove', (e) => {
-      const pt = this.clientToLogical(e.clientX, e.clientY);
+    const runPointerMove = (clientX, clientY) => {
+      const pt = this.clientToLogical(clientX, clientY);
       this.pointerLogical = { x: pt.x, y: pt.y };
       if (this.panDragState) {
-        const dxPx = e.clientX - this.panDragState.startClientX;
-        const dyPx = e.clientY - this.panDragState.startClientY;
+        const dxPx = clientX - this.panDragState.startClientX;
+        const dyPx = clientY - this.panDragState.startClientY;
         const dxWorld = dxPx / (this.viewScale * this.zoomScale);
         const dyWorld = dyPx / (this.viewScale * this.zoomScale);
         this.setZoomView(
@@ -1727,11 +1765,40 @@ export class LabWorkbenchCanvas {
       const dragItemsList = this.dragState?.groupMembers?.length > 1
         ? this.dragState.groupMembers.map((m) => m.item).filter(Boolean)
         : [item];
-      this.callbacks.onExternalTabDragHover?.(e.clientX, e.clientY, item, dragItemsList);
+      this.callbacks.onExternalTabDragHover?.(clientX, clientY, item, dragItemsList);
       this.sim.recomputeScaleReadings();
+    };
+
+    this.canvas.addEventListener('pointermove', (e) => {
+      this._pendingPointerMove = { clientX: e.clientX, clientY: e.clientY };
+      if (!this._moveRafId) {
+        // Leading-edge execution once per frame, coalescing extra high-Hz moves to the next rAF
+        const pm = this._pendingPointerMove;
+        this._pendingPointerMove = null;
+        runPointerMove(pm.clientX, pm.clientY);
+        this._moveRafId = requestAnimationFrame(() => {
+          this._moveRafId = 0;
+          const queued = this._pendingPointerMove;
+          this._pendingPointerMove = null;
+          if (queued) runPointerMove(queued.clientX, queued.clientY);
+        });
+      }
     });
 
     const endDrag = (e) => {
+      if (this._moveRafId) {
+        cancelAnimationFrame(this._moveRafId);
+        this._moveRafId = 0;
+      }
+      const queuedMove = this._pendingPointerMove;
+      this._pendingPointerMove = null;
+      if (
+        queuedMove &&
+        (this.dragState || this.marqueeState || this.panDragState || this.portDragState || this.standResizeState || this.tubeTipDragState)
+      ) {
+        runPointerMove(queuedMove.clientX, queuedMove.clientY);
+      }
+      this._canvasRect = null;
       this.callbacks.onExternalTabDragHover?.(0, 0, null, null);
       if (this.standResizeState) {
         this.standResizeState = null;
@@ -2215,9 +2282,12 @@ export class LabWorkbenchCanvas {
     const clampY = Math.max(r + 12, Math.min(BENCH_LOGICAL_H - r - 12, ly));
 
     ctx.save();
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.42)';
-    ctx.shadowBlur = 18;
-    ctx.shadowOffsetY = 5;
+    for (let s = 3; s >= 1; s--) {
+      ctx.fillStyle = `rgba(0, 0, 0, ${(0.055 * (4 - s)).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(clampX, clampY + 4 + s * 1.2, r + s * 4.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.beginPath();
     ctx.arc(clampX, clampY, r, 0, Math.PI * 2);
     ctx.fillStyle = this.isDark ? '#0f172a' : '#f8fafc';
@@ -2277,95 +2347,108 @@ export class LabWorkbenchCanvas {
     ctx.restore();
   }
 
-  renderWorldScene(ctx, timeNow, { includeLabels = true } = {}) {
-    // 1. Background sky/noir theme backdrop, subtle dot grid & lab bench surface (plus optional UV Lamp spotlight)
+  _ensureBgCache() {
+    const uvOn = Boolean(this.sim?.environment?.uvLight);
+    const cacheScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    const key = `${this.themeName}|${this.isDark ? 1 : 0}|${uvOn ? 1 : 0}|${cacheScale}`;
+    if (this._bgCacheCanvas && this._bgCacheKey === key) {
+      return this._bgCacheCanvas;
+    }
+
+    if (!this._bgCacheCanvas) {
+      this._bgCacheCanvas = document.createElement('canvas');
+      this._bgCacheCtx = this._bgCacheCanvas.getContext('2d');
+    }
+    const targetW = Math.round(BENCH_LOGICAL_W * cacheScale);
+    const targetH = Math.round(BENCH_LOGICAL_H * cacheScale);
+    if (this._bgCacheCanvas.width !== targetW || this._bgCacheCanvas.height !== targetH) {
+      this._bgCacheCanvas.width = targetW;
+      this._bgCacheCanvas.height = targetH;
+    }
+
+    const bCtx = this._bgCacheCtx;
+    bCtx.save();
+    bCtx.setTransform(1, 0, 0, 1, 0, 0);
+    bCtx.clearRect(0, 0, targetW, targetH);
+    bCtx.scale(cacheScale, cacheScale);
+
+    // Theme sky/noir backdrop
     if (this.themeName === 'olivia') {
-      const skyGrad = ctx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
+      const skyGrad = bCtx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
       skyGrad.addColorStop(0, '#72AEE0');
       skyGrad.addColorStop(1, '#CBE5FA');
-      ctx.fillStyle = skyGrad;
-      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      bCtx.fillStyle = skyGrad;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
     } else if (this.themeName === 'ctrl') {
-      // SZA Ctrl (2017): pale atmospheric sky-blue + delicate hand-drawn notebook grid + red sketchbook margin + corner CRT vignetting
-      const ctrlGrad = ctx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
+      const ctrlGrad = bCtx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
       ctrlGrad.addColorStop(0, '#B9DEF2');
       ctrlGrad.addColorStop(0.55, '#DCEEFB');
       ctrlGrad.addColorStop(1, '#EAF5FC');
-      ctx.fillStyle = ctrlGrad;
-      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
-      ctx.strokeStyle = 'rgba(79, 99, 88, 0.12)';
-      ctx.lineWidth = 1;
+      bCtx.fillStyle = ctrlGrad;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      bCtx.strokeStyle = 'rgba(79, 99, 88, 0.12)';
+      bCtx.lineWidth = 1;
       for (let gx = 40; gx < BENCH_LOGICAL_W; gx += 40) {
-        ctx.beginPath();
-        ctx.moveTo(gx, 0);
-        ctx.lineTo(gx, BENCH_FLOOR_Y);
-        ctx.stroke();
+        bCtx.beginPath();
+        bCtx.moveTo(gx, 0);
+        bCtx.lineTo(gx, BENCH_FLOOR_Y);
+        bCtx.stroke();
       }
       for (let gy = 40; gy < BENCH_FLOOR_Y; gy += 40) {
-        ctx.beginPath();
-        ctx.moveTo(0, gy);
-        ctx.lineTo(BENCH_LOGICAL_W, gy);
-        ctx.stroke();
+        bCtx.beginPath();
+        bCtx.moveTo(0, gy);
+        bCtx.lineTo(BENCH_LOGICAL_W, gy);
+        bCtx.stroke();
       }
-      ctx.strokeStyle = 'rgba(180, 83, 9, 0.24)';
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      ctx.moveTo(52, 0);
-      ctx.lineTo(52, BENCH_FLOOR_Y);
-      ctx.stroke();
+      bCtx.strokeStyle = 'rgba(180, 83, 9, 0.24)';
+      bCtx.lineWidth = 1.4;
+      bCtx.beginPath();
+      bCtx.moveTo(52, 0);
+      bCtx.lineTo(52, BENCH_FLOOR_Y);
+      bCtx.stroke();
     } else if (this.themeName === 'sos') {
-      // SZA SOS (2022): deep abyssal ocean backdrop with calm horizon luminescence + sonar rings
-      const sosGrad = ctx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
+      const sosGrad = bCtx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
       sosGrad.addColorStop(0, '#071728');
       sosGrad.addColorStop(0.55, '#0A2540');
       sosGrad.addColorStop(1, '#103554');
-      ctx.fillStyle = sosGrad;
-      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
-      const mistG = ctx.createRadialGradient(BENCH_LOGICAL_W * 0.5, BENCH_FLOOR_Y - 10, 30, BENCH_LOGICAL_W * 0.5, BENCH_FLOOR_Y - 40, 460);
+      bCtx.fillStyle = sosGrad;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      const mistG = bCtx.createRadialGradient(BENCH_LOGICAL_W * 0.5, BENCH_FLOOR_Y - 10, 30, BENCH_LOGICAL_W * 0.5, BENCH_FLOOR_Y - 40, 460);
       mistG.addColorStop(0, 'rgba(91, 181, 201, 0.18)');
       mistG.addColorStop(1, 'rgba(91, 181, 201, 0)');
-      ctx.fillStyle = mistG;
-      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
-      const sonarPulse = 0.72 + Math.sin(performance.now() * 0.0016) * 0.28;
-      ctx.strokeStyle = `rgba(91, 181, 201, ${(0.095 * sonarPulse).toFixed(3)})`;
-      ctx.lineWidth = 1.25;
-      for (const rad of [140, 260, 380]) {
-        ctx.beginPath();
-        ctx.arc(BENCH_LOGICAL_W * 0.5, BENCH_FLOOR_Y + 38, rad, Math.PI, 0);
-        ctx.stroke();
-      }
-      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      bCtx.fillStyle = mistG;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
     } else if (this.themeName === 'petal') {
-      ctx.fillStyle = '#111113';
-      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
-      // Diagonal sunlit shaft cutting across film-noir shadows
-      const beamGrad = ctx.createLinearGradient(120, 0, 740, BENCH_FLOOR_Y);
+      bCtx.fillStyle = '#111113';
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      const beamGrad = bCtx.createLinearGradient(120, 0, 740, BENCH_FLOOR_Y);
       beamGrad.addColorStop(0, 'rgba(242, 242, 245, 0.08)');
       beamGrad.addColorStop(0.55, 'rgba(242, 242, 245, 0.035)');
       beamGrad.addColorStop(1, 'rgba(242, 242, 245, 0)');
-      ctx.fillStyle = beamGrad;
-      ctx.beginPath();
-      ctx.moveTo(90, 0);
-      ctx.lineTo(390, 0);
-      ctx.lineTo(820, BENCH_FLOOR_Y);
-      ctx.lineTo(520, BENCH_FLOOR_Y);
-      ctx.closePath();
-      ctx.fill();
-      // Subtle 3% monochrome film-grain texture
-      ctx.fillStyle = 'rgba(242, 242, 245, 0.03)';
+      bCtx.fillStyle = beamGrad;
+      bCtx.beginPath();
+      bCtx.moveTo(90, 0);
+      bCtx.lineTo(390, 0);
+      bCtx.lineTo(820, BENCH_FLOOR_Y);
+      bCtx.lineTo(520, BENCH_FLOOR_Y);
+      bCtx.closePath();
+      bCtx.fill();
+      bCtx.fillStyle = 'rgba(242, 242, 245, 0.03)';
       for (let gi = 0; gi < 64; gi++) {
         const gx = ((gi * 173 + 29) % 980) + 10;
         const gy = ((gi * 97 + 41) % (BENCH_FLOOR_Y - 20)) + 10;
-        ctx.fillRect(gx, gy, 2, 2);
+        bCtx.fillRect(gx, gy, 2, 2);
       }
     }
-    if (this.sim.environment.uvLight) {
-      const uvGrad = ctx.createRadialGradient(BENCH_LOGICAL_W * 0.5, 10, 20, BENCH_LOGICAL_W * 0.5, 250, 520);
+
+    if (uvOn) {
+      const uvGrad = bCtx.createRadialGradient(BENCH_LOGICAL_W * 0.5, 10, 20, BENCH_LOGICAL_W * 0.5, 250, 520);
       uvGrad.addColorStop(0, this.isDark ? 'rgba(139, 92, 246, 0.24)' : 'rgba(139, 92, 246, 0.14)');
       uvGrad.addColorStop(1, 'rgba(139, 92, 246, 0)');
-      ctx.fillStyle = uvGrad;
-      ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      bCtx.fillStyle = uvGrad;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
     }
+
     const bgGrid =
       this.themeName === 'olivia'
         ? 'rgba(250, 243, 227, 0.72)'
@@ -2378,15 +2461,15 @@ export class LabWorkbenchCanvas {
         : this.isDark
         ? 'rgba(148, 163, 184, 0.08)'
         : 'rgba(15, 23, 42, 0.06)';
-    ctx.fillStyle = bgGrid;
+    bCtx.fillStyle = bgGrid;
     for (let gx = 40; gx < BENCH_LOGICAL_W; gx += 40) {
       for (let gy = 40; gy < BENCH_FLOOR_Y; gy += 40) {
-        ctx.fillRect(gx - 1, gy - 1, 2, 2);
+        bCtx.fillRect(gx - 1, gy - 1, 2, 2);
       }
     }
 
     // Lab Bench Table Edge
-    const benchGrad = ctx.createLinearGradient(0, BENCH_FLOOR_Y, 0, BENCH_LOGICAL_H);
+    const benchGrad = bCtx.createLinearGradient(0, BENCH_FLOOR_Y, 0, BENCH_LOGICAL_H);
     if (this.themeName === 'olivia') {
       benchGrad.addColorStop(0, '#F8F0DF');
       benchGrad.addColorStop(1, '#F4A5B8');
@@ -2406,10 +2489,10 @@ export class LabWorkbenchCanvas {
       benchGrad.addColorStop(0, '#cbd5e1');
       benchGrad.addColorStop(1, '#94a3b8');
     }
-    ctx.fillStyle = benchGrad;
-    ctx.fillRect(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, BENCH_LOGICAL_H - BENCH_FLOOR_Y);
+    bCtx.fillStyle = benchGrad;
+    bCtx.fillRect(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, BENCH_LOGICAL_H - BENCH_FLOOR_Y);
 
-    ctx.strokeStyle =
+    bCtx.strokeStyle =
       this.themeName === 'olivia'
         ? '#221F20'
         : this.themeName === 'ctrl'
@@ -2421,11 +2504,33 @@ export class LabWorkbenchCanvas {
         : this.isDark
         ? '#334155'
         : '#64748b';
-    ctx.lineWidth = this.themeName === 'olivia' || this.themeName === 'ctrl' ? 1.6 : 2;
-    ctx.beginPath();
-    ctx.moveTo(0, BENCH_FLOOR_Y);
-    ctx.lineTo(BENCH_LOGICAL_W, BENCH_FLOOR_Y);
-    ctx.stroke();
+    bCtx.lineWidth = this.themeName === 'olivia' || this.themeName === 'ctrl' ? 1.6 : 2;
+    bCtx.beginPath();
+    bCtx.moveTo(0, BENCH_FLOOR_Y);
+    bCtx.lineTo(BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+    bCtx.stroke();
+    bCtx.restore();
+
+    this._bgCacheKey = key;
+    return this._bgCacheCanvas;
+  }
+
+  renderWorldScene(ctx, timeNow, { includeLabels = true } = {}) {
+    // 1. Blit pre-rendered static theme backdrop, dot grid, UV tint, and lab bench surface
+    const bgCanvas = this._ensureBgCache();
+    ctx.drawImage(bgCanvas, 0, 0, BENCH_LOGICAL_W, BENCH_LOGICAL_H);
+    if (this.themeName === 'sos') {
+      const sonarPulse = 0.72 + Math.sin(performance.now() * 0.0016) * 0.28;
+      ctx.save();
+      ctx.strokeStyle = `rgba(91, 181, 201, ${(0.095 * sonarPulse).toFixed(3)})`;
+      ctx.lineWidth = 1.25;
+      for (const rad of [140, 260, 380]) {
+        ctx.beginPath();
+        ctx.arc(BENCH_LOGICAL_W * 0.5, BENCH_FLOOR_Y + 38, rad, Math.PI, 0);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
 
     // 2. Render supports & stands behind, clamp jaws, then Syringes, Vessels, and Pipettes on top.
     // Floating Canvas label pills auto-hide by default: show only hovered/dragged apparatus, drawn on the top layer.
@@ -2706,7 +2811,7 @@ export class LabWorkbenchCanvas {
         this._prevFluidTime = timeNow;
         this.fluidGasOverlay.stepAndRender(this.sim, fluidDt, this.isDark);
       }
-      if ((this.sim.environment?.opticsMode || 'normal') !== 'thermal') {
+      if (!this.fluidGasOverlay.isSleeping && (this.sim.environment?.opticsMode || 'normal') !== 'thermal') {
         ctx.save();
         ctx.drawImage(this.fluidGasOverlay.canvas, 0, 0, BENCH_LOGICAL_W, BENCH_LOGICAL_H);
         ctx.restore();
@@ -3284,7 +3389,7 @@ export class LabWorkbenchCanvas {
       ctx.drawImage(this._thermalCanvas, 0, 0, BENCH_LOGICAL_W, BENCH_LOGICAL_H);
 
       // Composite WebGL2 buoyant thermal gas plumes directly OVER the background FLIR map
-      if (this.fluidGasOverlay?.enabled && this.fluidGasOverlay?.canvas) {
+      if (this.fluidGasOverlay?.enabled && !this.fluidGasOverlay.isSleeping && this.fluidGasOverlay?.canvas) {
         ctx.save();
         ctx.globalCompositeOperation = 'screen';
         ctx.globalAlpha = 0.94;

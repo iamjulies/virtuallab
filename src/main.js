@@ -327,7 +327,6 @@ workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
   onSelect: () => {
     shortcutTarget = 'canvas';
     contextUI.closeMenu();
-    refreshChrome();
   },
   onContextMenu: (clientX, clientY, logicalPt, hitItem) => {
     shortcutTarget = 'canvas';
@@ -649,9 +648,9 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
     ) {
       const clampedX = Math.max(rect.left + 2, Math.min(rect.right - 2, clientX));
       const clampedY = Math.max(rect.top + 2, Math.min(rect.bottom - 2, clientY));
-      workbench.dropFromShelf(clampedX, clampedY, kind, id);
+      const dropped = workbench.dropFromShelf(clampedX, clampedY, kind, id);
       if (isMobileViewActive()) setMobileTab('bench');
-      refreshChrome();
+      if (dropped && kind !== 'apparatus') refreshChrome();
     } else {
       workbench.setExternalDropPreview(0, 0, null, null);
     }

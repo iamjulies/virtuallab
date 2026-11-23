@@ -441,10 +441,11 @@ header button.bg-amber-500 {
 .touch-none { touch-action: none; }
 .drag-ghost-card {
   position: fixed;
+  left: 0;
+  top: 0;
   z-index: 9999;
   pointer-events: none;
-  transform: translate(-50%, -62%);
-  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.35));
+  will-change: transform;
 }
 .cursor-grab { cursor: grab; }
 .cursor-pointer { cursor: pointer; }

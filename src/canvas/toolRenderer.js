@@ -3,17 +3,7 @@ import { buildRigidTubePoints, samplePolylineAt } from '../engine/gasNetwork.js'
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computePhaseStratification, computeSolidVolumeMl, computeSolutionVisuals, computePH } from '../engine/equilibrium.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
-import { drawLabelPill, formatCanvasText, getCurrentCanvasTheme, getThemePalette, setCurrentLabelItemId } from './vesselRenderer.js';
-
-function drawSelectionGlow(ctx, isSelected, isDropTarget) {
-  if (isDropTarget) {
-    ctx.shadowColor = '#10b981';
-    ctx.shadowBlur = 16;
-  } else if (isSelected) {
-    ctx.shadowColor = '#3b82f6';
-    ctx.shadowBlur = 11;
-  }
-}
+import { drawLabelPill, formatCanvasText, getCurrentCanvasTheme, getThemePalette, setCurrentLabelItemId, strokeSelectionGlow } from './vesselRenderer.js';
 
 function renderBrokenToolShards(ctx, item, pal, isSelected, spanW = 48, height = 60) {
   const { x, y } = item;
@@ -69,7 +59,6 @@ export function renderFilterFunnel(ctx, item, isSelected, isDropTarget, isDark, 
     ctx.rotate(item.tiltAngle || 0);
     ctx.translate(-x, -y);
   }
-  drawSelectionGlow(ctx, isSelected, isDropTarget);
 
   // Outer Borosilicate 60-deg cone + stem
   ctx.beginPath();
@@ -80,12 +69,12 @@ export function renderFilterFunnel(ctx, item, isSelected, isDropTarget, isDark, 
   ctx.lineTo(x - 4.5, stemBotY - 5);
   ctx.lineTo(x - 4.5, coneBotY);
   ctx.closePath();
+  strokeSelectionGlow(ctx, isSelected, isDropTarget, 2.2);
   ctx.fillStyle = pal.glassFill;
   ctx.fill();
   ctx.strokeStyle = isDropTarget ? '#10b981' : isSelected ? '#3b82f6' : pal.glassStroke;
   ctx.lineWidth = isSelected || isDropTarget ? 2.2 : 1.7;
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   // Folded cellulose filter paper inside cone
   ctx.beginPath();
@@ -226,7 +215,6 @@ export function renderSeparatoryFunnel(ctx, item, isSelected, isDropTarget, isDa
     ctx.rotate(effTilt);
     ctx.translate(-x, -y);
   }
-  drawSelectionGlow(ctx, isSelected, isDropTarget);
 
   const tracePearBody = () => {
     ctx.beginPath();
@@ -245,12 +233,12 @@ export function renderSeparatoryFunnel(ctx, item, isSelected, isDropTarget, isDa
 
   // Outer Borosilicate 3.3 pear-shaped body
   tracePearBody();
+  strokeSelectionGlow(ctx, isSelected, isDropTarget, 2.2);
   ctx.fillStyle = pal.glassFill;
   ctx.fill();
   ctx.strokeStyle = isDropTarget ? '#10b981' : isSelected ? '#3b82f6' : pal.glassStroke;
   ctx.lineWidth = isSelected || isDropTarget ? 2.2 : 1.65;
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   // Stratified liquid layers or emulsion inside pear bulb
   const solMl = computeSolidVolumeMl(item.moles);
@@ -423,7 +411,6 @@ export function renderWashBottle(ctx, item, isSelected, isDark, langCode = 'vi',
   const dir = item.flippedX ? 1 : -1; // -1: spout top-left (default), +1: flipped top-right
 
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   // Curved PTFE squeeze spout extending left or right
   ctx.strokeStyle = isDark ? '#e2e8f0' : '#475569';
@@ -446,9 +433,9 @@ export function renderWashBottle(ctx, item, isSelected, isDark, langCode = 'vi',
   ctx.lineWidth = isSelected ? 2.2 : 1.6;
   ctx.beginPath();
   ctx.roundRect(x - w / 2, topY + 36, w, botY - topY - 36, 7);
+  strokeSelectionGlow(ctx, isSelected, false, 2.2);
   ctx.fill();
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   // Distilled water level inside wash bottle
   const fillFrac = Math.max(0, Math.min(1, (item.waterMl || 0) / 250));
@@ -526,7 +513,6 @@ export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0
   const ports = getCondenserPorts(item);
 
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   // Outer tilted glass water jacket (direction matches ports.tiltAngle: +0.14 or -0.14 when flipped)
   ctx.translate(x, y);
@@ -549,9 +535,9 @@ export function renderLiebigCondenser(ctx, item, isSelected, isDark, timeNow = 0
     : pal.glassFill;
   ctx.beginPath();
   ctx.roundRect(-halfW + 24, -16, spec.width - 48, 32, 5);
+  strokeSelectionGlow(ctx, isSelected, false, 1.8);
   ctx.fill();
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   // Water hose barbs mirrored around center when flipped
   ctx.fillStyle = '#0ea5e9';
@@ -657,7 +643,6 @@ export function renderBurette(ctx, item, isSelected, isDropTarget, isDark, timeN
     ctx.rotate(item.tiltAngle || 0);
     ctx.translate(-x, -y);
   }
-  drawSelectionGlow(ctx, isSelected, isDropTarget);
 
   // Top flared funnel neck & graduated glass barrel + tapered stopcock tip
   ctx.fillStyle = pal.glassFill;
@@ -673,9 +658,9 @@ export function renderBurette(ctx, item, isSelected, isDropTarget, isDark, timeN
   ctx.lineTo(x - halfW, colBotY);
   ctx.lineTo(x - halfW, colTopY);
   ctx.closePath();
+  strokeSelectionGlow(ctx, isSelected, isDropTarget, 2.1);
   ctx.fill();
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   // Liquid column inside burette
   const liqL = computeLiquidVolumeL(item.moles, item.tempK);
@@ -739,7 +724,6 @@ export function renderSplint(ctx, item, isSelected, isDark, timeNow = 0) {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   // Wooden birch body
   const tip = getProbeTipPos(item);
@@ -749,9 +733,9 @@ export function renderSplint(ctx, item, isSelected, isDark, timeNow = 0) {
   ctx.lineWidth = isSelected ? 2 : 1;
   ctx.beginPath();
   ctx.roundRect(dir < 0 ? x - 46 : x - 50, y - 3, 96, 6, 2);
+  strokeSelectionGlow(ctx, isSelected, false, 2.0);
   ctx.fill();
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   const tipX = tip.visualTipX;
   const isO2Flare = item.mode === 'burning' && (item.o2FlareTimer || 0) > 0;
@@ -841,7 +825,6 @@ export function renderFlameLoop(ctx, item, isSelected, isDark, timeNow = 0) {
   const tip = getProbeTipPos(item);
   const dir = tip.dir;
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   // Borosilicate handle
   ctx.fillStyle = isDark ? 'rgba(186, 230, 253, 0.35)' : 'rgba(148, 163, 184, 0.45)';
@@ -849,6 +832,7 @@ export function renderFlameLoop(ctx, item, isSelected, isDark, timeNow = 0) {
   ctx.lineWidth = 1.4;
   ctx.beginPath();
   ctx.roundRect(dir < 0 ? x - 6 : x - 52, y - 3.5, 58, 7, 3.5);
+  strokeSelectionGlow(ctx, isSelected, false, 1.6);
   ctx.fill();
   ctx.stroke();
 
@@ -894,7 +878,6 @@ export function renderIndicatorStrip(ctx, item, isSelected, isDark, langCode = '
   const wetColor = item.tipColor || dryBase;
 
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   // Dry handle half
   ctx.fillStyle = dryBase;
@@ -902,13 +885,13 @@ export function renderIndicatorStrip(ctx, item, isSelected, isDark, langCode = '
   ctx.lineWidth = isSelected ? 2 : 1.1;
   ctx.beginPath();
   ctx.roundRect(x - 28, y - 6, 56, 12, 2);
+  strokeSelectionGlow(ctx, isSelected, false, 2.0);
   ctx.fill();
   ctx.stroke();
 
   // Immersed / sampled tip half (left by default, right if flipped)
   ctx.fillStyle = wetColor;
   ctx.fillRect(dir < 0 ? x - 27.5 : x + 2.5, y - 5.5, 25, 11);
-  ctx.shadowBlur = 0;
 
   let txt;
   if (item.isBleached) {
@@ -937,12 +920,12 @@ export function renderStirBar(ctx, item, isSelected, isDark) {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
   ctx.fillStyle = '#f8fafc';
   ctx.strokeStyle = isSelected ? '#3b82f6' : '#64748b';
   ctx.lineWidth = isSelected ? 2 : 1.2;
   ctx.beginPath();
   ctx.roundRect(x - 13, y - 4.5, 26, 9, 4.5);
+  strokeSelectionGlow(ctx, isSelected, false, 2.0);
   ctx.fill();
   ctx.stroke();
   drawLabelPill(ctx, x, y - 16, `${item.label} · PTFE Magnet`, { pal, font: '600 10px system-ui, sans-serif', height: 16 });
@@ -954,7 +937,6 @@ export function renderBoilingChips(ctx, item, isSelected, isDark) {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
   const grains = [
     [-7, 2, 4.2, '#64748b'],
     [0, -1, 4.8, '#475569'],
@@ -973,6 +955,7 @@ export function renderBoilingChips(ctx, item, isSelected, isDark) {
     ctx.lineTo(x + dx + r, y + dy + r * 0.6);
     ctx.lineTo(x + dx - r * 0.2, y + dy + r * 0.85);
     ctx.closePath();
+    strokeSelectionGlow(ctx, isSelected, false, 1.6);
     ctx.fill();
     ctx.stroke();
   }
@@ -1024,7 +1007,6 @@ export function renderSaltBridge(ctx, item, items = [], isSelected = false, isDa
   }
 
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   const r = Math.max(18, (rx - lx) * 0.5);
   const midX = 0.5 * (lx + rx);
@@ -1044,6 +1026,7 @@ export function renderSaltBridge(ctx, item, items = [], isSelected = false, isDa
   ctx.lineWidth = 10.5;
   ctx.lineCap = 'round';
   traceU();
+  strokeSelectionGlow(ctx, isSelected, false, 10.5);
   ctx.stroke();
 
   // Saturated agar Na2SO4 / KNO3 gel core
@@ -1051,7 +1034,6 @@ export function renderSaltBridge(ctx, item, items = [], isSelected = false, isDa
   ctx.lineWidth = 6.8;
   traceU();
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   // Porous cotton/agar end plugs clearly visible inside the solutions
   ctx.fillStyle = isDark ? '#f8fafc' : '#e2e8f0';
@@ -1122,7 +1104,6 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
   const maxCoatH = Math.max(12, Math.min(rodH - 22, item.immersedHeightPx ?? (rodH - 20) * 0.56));
 
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   // Metal/graphite plate dipped vertically
   ctx.fillStyle = mat.color;
@@ -1130,6 +1111,7 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
   ctx.lineWidth = isSelected || item.cathodicProtectedActive ? 2.1 : 1.4;
   ctx.beginPath();
   ctx.roundRect(x - 4.5, topY + 12, 9, rodH - 16, 2);
+  strokeSelectionGlow(ctx, isSelected, false, 2.1);
   ctx.fill();
   ctx.stroke();
 
@@ -1218,7 +1200,6 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
   ctx.beginPath();
   ctx.roundRect(x - 6, topY + 2, 12, 11, 2);
   ctx.fill();
-  ctx.shadowBlur = 0;
 
   // Gas micro-bubbles restricted to the submerged liquid zone during electrolysis
   if (item.gasBubbleType && (item.gasBubbleRate || 0) > 1e-7 && (!item.dockedVesselId || (item.immersedFrac ?? 1) > 0.01)) {
@@ -1355,15 +1336,14 @@ export function renderDcPowerAndWires(ctx, items, selectedId, isDark) {
 
     // 2. Render DC Supply Chassis & Dual LCD Readout
     ctx.save();
-    drawSelectionGlow(ctx, isSelected, false);
     ctx.fillStyle = pal.scaleBody;
     ctx.strokeStyle = isSelected ? '#3b82f6' : pal.scaleBorder;
     ctx.lineWidth = isSelected ? 2.2 : 1.7;
     ctx.beginPath();
     ctx.roundRect(leftX, topY, spec.width, spec.height, 8);
+    strokeSelectionGlow(ctx, isSelected, false, 2.2);
     ctx.fill();
     ctx.stroke();
-    ctx.shadowBlur = 0;
 
     // Digital LCD screen
     ctx.fillStyle = pal.lcdBg;
@@ -1453,16 +1433,15 @@ export function renderVoltAmmeterAndWires(ctx, items, selectedId, isDark) {
     drawLead(postNeg, negEl, isDark ? '#94a3b8' : '#1e293b');
 
     ctx.save();
-    drawSelectionGlow(ctx, isSelected, false);
     // Iconic bench Multimeter Amber/Slate holster
     ctx.fillStyle = isDark ? '#b45309' : '#f59e0b';
     ctx.strokeStyle = isSelected ? '#3b82f6' : isDark ? '#f59e0b' : '#b45309';
     ctx.lineWidth = isSelected ? 2.2 : 1.7;
     ctx.beginPath();
     ctx.roundRect(leftX, topY, spec.width, spec.height, 9);
+    strokeSelectionGlow(ctx, isSelected, false, 2.2);
     ctx.fill();
     ctx.stroke();
-    ctx.shadowBlur = 0;
 
     // Inner dark bezel & LCD readout
     ctx.fillStyle = '#0f172a';
@@ -1546,7 +1525,6 @@ export function renderDiffusionTube(ctx, item, isSelected, isDropTarget, isDark,
     ctx.rotate(item.tiltAngle || 0);
     ctx.translate(-x, -y);
   }
-  drawSelectionGlow(ctx, isSelected, isDropTarget);
 
   // Bench rubber cradle stands supporting horizontal tube
   ctx.fillStyle = isDark ? '#334155' : '#475569';
@@ -1562,9 +1540,9 @@ export function renderDiffusionTube(ctx, item, isSelected, isDropTarget, isDark,
   ctx.lineWidth = isSelected || isDropTarget ? 2.2 : 1.7;
   ctx.beginPath();
   ctx.roundRect(leftX, y - tubeHalfH, spec.width, tubeHalfH * 2, 6);
+  strokeSelectionGlow(ctx, isSelected, isDropTarget, 2.2);
   ctx.fill();
   ctx.stroke();
-  ctx.shadowBlur = 0;
 
   // Advancing subtle vapor plumes inside bore before meeting
   ctx.save();
@@ -1674,13 +1652,13 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
     ctx.rotate(tilt);
     ctx.translate(-x, -y);
   }
-  drawSelectionGlow(ctx, isSelected, false);
 
   // Top hanging ring & vertical steel rod down to cup neck
   ctx.strokeStyle = isSelected ? '#3b82f6' : isDark ? '#cbd5e1' : '#334155';
   ctx.lineWidth = 2.4;
   ctx.beginPath();
   ctx.arc(stemX, topRingY, 5.5, 0, Math.PI * 2);
+  strokeSelectionGlow(ctx, isSelected, false, 2.4);
   ctx.stroke();
 
   ctx.lineWidth = 3.0;
@@ -1689,6 +1667,7 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
   ctx.moveTo(stemX, topRingY + 5.5);
   ctx.lineTo(stemX, bowlY - 3);
   ctx.quadraticCurveTo(stemX, bowlY + 1, bowlX - dir * 8.5, bowlY + 1);
+  strokeSelectionGlow(ctx, isSelected, false, 2.4);
   ctx.stroke();
 
   // Deep deflagrating spoon cup bowl (glows cherry-orange when heated > 720 K)
@@ -1705,6 +1684,7 @@ export function renderIronSpoon(ctx, item, isSelected, isDark, timeNow = 0) {
   ctx.beginPath();
   ctx.arc(bowlX, bowlY, 10.5, 0, Math.PI, false);
   ctx.closePath();
+  strokeSelectionGlow(ctx, isSelected, false, 1.8);
   ctx.fill();
   ctx.stroke();
 
@@ -1817,7 +1797,6 @@ export function renderThermometer(ctx, item, isSelected, isDark, langCode = 'vi'
     ctx.rotate(tilt);
     ctx.translate(-x, -y);
   }
-  drawSelectionGlow(ctx, isSelected, false);
 
   const topY = y - h / 2 + 8;
   const botY = y + h / 2 - 12;
@@ -1830,6 +1809,7 @@ export function renderThermometer(ctx, item, isSelected, isDark, langCode = 'vi'
   ctx.lineWidth = 1.6;
   ctx.beginPath();
   ctx.roundRect(x - 5.5, stemTop, 11, stemBot - stemTop + 6, 5.5);
+  strokeSelectionGlow(ctx, isSelected, false, 1.8);
   ctx.fill();
   ctx.stroke();
 
@@ -1889,7 +1869,6 @@ export function renderPhConductometer(ctx, item, isSelected, isDark, langCode = 
   const stemBot = y + h / 2 - 6;
 
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   // Digital handheld LCD head
   ctx.fillStyle = isDark ? '#1e293b' : '#f1f5f9';
@@ -1897,6 +1876,7 @@ export function renderPhConductometer(ctx, item, isSelected, isDark, langCode = 
   ctx.lineWidth = 1.6;
   ctx.beginPath();
   ctx.roundRect(x - 25, topY, 50, headH, 7);
+  strokeSelectionGlow(ctx, isSelected, false, 1.8);
   ctx.fill();
   ctx.stroke();
 
@@ -1953,7 +1933,6 @@ export function renderColorimeter(ctx, item, isSelected, isDark) {
   const ledCol = wl <= 440 ? '#818cf8' : wl <= 490 ? '#38bdf8' : wl <= 550 ? '#22c55e' : wl <= 605 ? '#f59e0b' : '#ef4444';
 
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   // Compact Beer-Lambert instrument body
   ctx.fillStyle = isDark ? '#1e293b' : '#e2e8f0';
@@ -1961,6 +1940,7 @@ export function renderColorimeter(ctx, item, isSelected, isDark) {
   ctx.lineWidth = 1.6;
   ctx.beginPath();
   ctx.roundRect(x - 29, topY, 58, bodyH, 8);
+  strokeSelectionGlow(ctx, isSelected, false, 1.8);
   ctx.fill();
   ctx.stroke();
 
@@ -2021,7 +2001,6 @@ export function renderTlcPlate(ctx, item, isSelected, isDark, uvLight = false) {
   const sfY = originY - sfFrac * maxRun;
 
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   // Silica gel F254 plate background (fluoresces green under UV-254 light)
   ctx.fillStyle = uvLight ? '#16a34a' : '#f8fafc';
@@ -2029,6 +2008,7 @@ export function renderTlcPlate(ctx, item, isSelected, isDark, uvLight = false) {
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.roundRect(left, topY, pw, ph, 2);
+  strokeSelectionGlow(ctx, isSelected, false, 1.8);
   ctx.fill();
   ctx.stroke();
 
@@ -2110,7 +2090,6 @@ export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFrom
   const topHalf = botHalf + 3.8;
 
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   ctx.save();
   ctx.translate(x, y);
@@ -2129,6 +2108,7 @@ export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFrom
   ctx.lineTo(botHalf, 9);
   ctx.lineTo(-botHalf, 9);
   ctx.closePath();
+  strokeSelectionGlow(ctx, isSelected, false, 2.0);
   ctx.fill();
   ctx.stroke();
 
@@ -2198,7 +2178,6 @@ export function renderPhenCotton(ctx, item, isSelected, isDark) {
     ctx.rotate(item._tiltRad);
     ctx.translate(-x, -y);
   }
-  drawSelectionGlow(ctx, isSelected, false);
   ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
   ctx.strokeStyle = isSelected ? '#3b82f6' : lvl > 0.25 ? '#ec4899' : '#94a3b8';
   ctx.lineWidth = isSelected ? 2 : 1.15;
@@ -2209,6 +2188,7 @@ export function renderPhenCotton(ctx, item, isSelected, isDark) {
   ctx.arc(x, y - 3, 7.2, Math.PI * 1.0, Math.PI * 2.0);
   ctx.arc(x + 6, y + 1, 6.5, Math.PI * 1.4, Math.PI * 0.5);
   ctx.closePath();
+  strokeSelectionGlow(ctx, isSelected, false, 2.0);
   ctx.fill();
   ctx.stroke();
 
@@ -2317,7 +2297,6 @@ export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCo
   }
 
   ctx.save();
-  drawSelectionGlow(ctx, isSelected, false);
 
   // Outer insulated stainless / borosilicate tub
   const tubGrad = ctx.createLinearGradient(left, top, left + w, top);
@@ -2336,6 +2315,7 @@ export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCo
   ctx.lineWidth = isSelected ? 2.4 : 1.75;
   ctx.beginPath();
   ctx.roundRect(left, top + 6, w, h - 6, [6, 6, 12, 12]);
+  strokeSelectionGlow(ctx, isSelected, false, 2.4);
   ctx.fill();
   ctx.stroke();
 

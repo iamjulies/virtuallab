@@ -194,9 +194,20 @@ export class ShelfPanel {
       canvas.width = 160;
       canvas.height = 240;
       canvas.style.cssText = 'width:80px;height:120px;display:block;';
+      // Pre-bake soft drop-shadow once at drag start (avoids expensive per-frame CSS filter: drop-shadow)
+      const tmp = document.createElement('canvas');
+      tmp.width = 160;
+      tmp.height = 240;
+      const tCtx = tmp.getContext('2d');
+      tCtx.scale(2, 2);
+      drawReagentBottle(tCtx, reg, 40, 62, 0.82, { tiltRad: -0.18, uncapped: true, isDark: true });
       const ctx = canvas.getContext('2d');
-      ctx.scale(2, 2);
-      drawReagentBottle(ctx, reg, 40, 62, 0.82, { tiltRad: -0.18, uncapped: true, isDark: true });
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.36)';
+      ctx.shadowBlur = 14;
+      ctx.shadowOffsetY = 7;
+      ctx.drawImage(tmp, 0, 0);
+      ctx.restore();
       ghost.appendChild(canvas);
     } else {
       const spec = APPARATUS[id];
@@ -206,6 +217,14 @@ export class ShelfPanel {
     return ghost;
   }
 
+  _applyDragPosition(ds, clientX, clientY) {
+    if (!ds) return;
+    if (ds.ghostEl) {
+      ds.ghostEl.style.transform = `translate3d(${clientX}px, ${clientY}px, 0) translate(-50%, -62%)`;
+    }
+    this.callbacks.onExternalDragMove?.(clientX, clientY, ds.kind, ds.id);
+  }
+
   _bindGlobalPointerHandlers() {
     if (this._boundPointer || typeof window === 'undefined') return;
     this._boundPointer = true;
@@ -213,6 +232,11 @@ export class ShelfPanel {
     const cleanup = () => {
       const ds = this._dragSession;
       if (!ds) return;
+      if (ds._moveRafId) {
+        cancelAnimationFrame(ds._moveRafId);
+        ds._moveRafId = 0;
+      }
+      ds._pendingMove = null;
       if (ds.ghostEl) ds.ghostEl.remove();
       this._dragSession = null;
       this.callbacks.onExternalDragMove?.(0, 0, null, null);
@@ -234,11 +258,19 @@ export class ShelfPanel {
         ds.moved = true;
         ds.ghostEl = this._buildFloatingGhost(ds.kind, ds.id, this.getLang());
       }
-      if (ds.ghostEl) {
-        ds.ghostEl.style.left = `${e.clientX}px`;
-        ds.ghostEl.style.top = `${e.clientY}px`;
+      if (!ds._moveRafId) {
+        this._applyDragPosition(ds, e.clientX, e.clientY);
+        ds._moveRafId = requestAnimationFrame(() => {
+          ds._moveRafId = 0;
+          const pending = ds._pendingMove;
+          ds._pendingMove = null;
+          if (pending && this._dragSession === ds) {
+            this._applyDragPosition(ds, pending.x, pending.y);
+          }
+        });
+      } else {
+        ds._pendingMove = { x: e.clientX, y: e.clientY };
       }
-      this.callbacks.onExternalDragMove?.(e.clientX, e.clientY, ds.kind, ds.id);
     });
 
     window.addEventListener('pointerup', (e) => {
