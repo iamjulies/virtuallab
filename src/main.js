@@ -268,24 +268,68 @@ const dosingModal = new DosingModal(
   }
 );
 
+let dropZoneRectCache = null;
+
+function clearDropZoneRectCache() {
+  dropZoneRectCache = null;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', clearDropZoneRectCache, { passive: true });
+  window.addEventListener('scroll', clearDropZoneRectCache, { passive: true, capture: true });
+}
+
+function getDropZoneRects() {
+  if (dropZoneRectCache) return dropZoneRectCache;
+  const tabZones = [];
+  if (labTabsEl) {
+    const storBtn = labTabsEl.querySelector('[data-storage-tab]');
+    if (storBtn) {
+      const r = storBtn.getBoundingClientRect();
+      if (r.width > 4 && r.height > 4) {
+        tabZones.push({ btn: storBtn, idx: -1, storageTab: true, left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+      }
+    }
+    labTabsEl.querySelectorAll('.lab-tab-btn').forEach((btn) => {
+      if (btn.dataset.labIndex === undefined) return;
+      const idx = Number(btn.dataset.labIndex);
+      if (idx === labManager.activeIndex || idx < 0 || idx >= labManager.labs.length) return;
+      const r = btn.getBoundingClientRect();
+      if (r.width > 4 && r.height > 4) {
+        tabZones.push({ btn, idx, storageTab: false, left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+      }
+    });
+  }
+
+  const discardZones = [];
+  const pushDiscard = (el, padLeft = 0, padRight = 0, padTop = 0, padBottom = 0, edgeMode = 'box') => {
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 10 || r.height <= 10) return;
+    discardZones.push({ el, left: r.left - padLeft, right: r.right + padRight, top: r.top - padTop, bottom: r.bottom + padBottom, edgeMode });
+  };
+  pushDiscard(document.getElementById('panel-shelf'), 0, 12, 12, 12, 'left');
+  pushDiscard(document.getElementById('panel-inspector'), 12, 0, 12, 12, 'right');
+  pushDiscard(document.querySelector('.mobile-tab-btn[data-tab="shelf"]'));
+  pushDiscard(document.querySelector('.mobile-tab-btn[data-tab="inspector"]'));
+
+  dropZoneRectCache = { tabZones, discardZones };
+  return dropZoneRectCache;
+}
+
 function findDropLabTab(clientX, clientY) {
   if (!labTabsEl || (!clientX && !clientY)) return null;
-  const els = document.elementsFromPoint(clientX, clientY);
-  for (const el of els) {
-    const storBtn = el.closest?.('[data-storage-tab]');
-    if (storBtn) return { btn: storBtn, idx: -1, storageTab: true };
-    const btn = el.closest?.('.lab-tab-btn');
-    if (btn && btn.dataset.labIndex !== undefined) {
-      const idx = Number(btn.dataset.labIndex);
-      if (idx !== labManager.activeIndex && idx >= 0 && idx < labManager.labs.length) {
-        return { btn, idx };
-      }
+  const { tabZones } = getDropZoneRects();
+  for (const tz of tabZones) {
+    if (clientX >= tz.left && clientX <= tz.right && clientY >= tz.top && clientY <= tz.bottom) {
+      return tz.storageTab ? { btn: tz.btn, idx: -1, storageTab: true } : { btn: tz.btn, idx: tz.idx };
     }
   }
   return null;
 }
 
-function clearLabDropHighlights() {
+function clearLabDropHighlights(invalidateCache = false) {
+  if (invalidateCache) dropZoneRectCache = null;
   labTabsEl?.querySelectorAll('.lab-tab-drop-target').forEach((el) => {
     el.classList.remove('lab-tab-drop-target');
   });
@@ -297,36 +341,30 @@ function clearLabDropHighlights() {
 
 function isOverShelfDiscardZone(clientX, clientY) {
   if (!clientX && !clientY) return null;
-  const shelfElPanel = document.getElementById('panel-shelf');
-  if (shelfElPanel) {
-    const r = shelfElPanel.getBoundingClientRect();
-    if (r.width > 10 && r.height > 10 && clientX <= r.right + 12 && clientY >= r.top - 12 && clientY <= r.bottom + 12) {
-      return shelfElPanel;
-    }
-  }
-  const inspPanel = document.getElementById('panel-inspector');
-  if (inspPanel) {
-    const r = inspPanel.getBoundingClientRect();
-    if (r.width > 10 && r.height > 10 && clientX >= r.left - 12 && clientY >= r.top - 12 && clientY <= r.bottom + 12) {
-      return inspPanel;
-    }
-  }
-  for (const tabSel of ['.mobile-tab-btn[data-tab="shelf"]', '.mobile-tab-btn[data-tab="inspector"]']) {
-    const mobBtn = document.querySelector(tabSel);
-    if (mobBtn) {
-      const r = mobBtn.getBoundingClientRect();
-      if (r.width > 10 && r.height > 10 && clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-        return mobBtn;
-      }
+  const { discardZones } = getDropZoneRects();
+  for (const dz of discardZones) {
+    if (dz.edgeMode === 'left') {
+      if (clientX <= dz.right && clientY >= dz.top && clientY <= dz.bottom) return dz.el;
+    } else if (dz.edgeMode === 'right') {
+      if (clientX >= dz.left && clientY >= dz.top && clientY <= dz.bottom) return dz.el;
+    } else if (clientX >= dz.left && clientX <= dz.right && clientY >= dz.top && clientY <= dz.bottom) {
+      return dz.el;
     }
   }
   return null;
 }
 
+let lastSelectedKind = null;
 workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
-  onSelect: () => {
+  onSelect: (selectedItem) => {
     shortcutTarget = 'canvas';
     contextUI.closeMenu();
+    const prevKind = lastSelectedKind;
+    lastSelectedKind = selectedItem?.kind || null;
+    inspectorPanel.update(appState.lang);
+    if (selectedItem?.kind === 'pipette' || prevKind === 'pipette') {
+      shelfPanel.render(getTranslator());
+    }
   },
   onContextMenu: (clientX, clientY, logicalPt, hitItem) => {
     shortcutTarget = 'canvas';
@@ -336,7 +374,7 @@ workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
     dosingModal.openReagent(reagentId, vesselId);
   },
   onExternalTabDragHover: (clientX, clientY, item) => {
-    clearLabDropHighlights();
+    clearLabDropHighlights(!item);
     if (!item) return;
     const shelfHit = isOverShelfDiscardZone(clientX, clientY);
     if (shelfHit) {
@@ -347,7 +385,7 @@ workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
     if (hit) hit.btn.classList.add('lab-tab-drop-target');
   },
   onDropToLabTab: (clientX, clientY, item, dragItems = null) => {
-    clearLabDropHighlights();
+    clearLabDropHighlights(true);
     const shelfHit = item ? isOverShelfDiscardZone(clientX, clientY) : null;
     if (shelfHit) {
       const toRemove = Array.isArray(dragItems) && dragItems.length > 0 ? dragItems : [item];
@@ -1925,6 +1963,7 @@ const storageModal = new WorkspaceStorageModal(labManager, getTranslator, {
 
 const workspacePersistence = initWorkspacePersistence(labManager, {
   onAutoSaved: (ts) => storageModal.setLastAutoSaveTime(ts),
+  shouldDefer: () => Boolean(workbench?.dragState || shelfPanel?._dragSession?.moved),
 });
 
 // Restore auto-saved workspace from Browser LocalStorage if present

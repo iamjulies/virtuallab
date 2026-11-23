@@ -194,6 +194,29 @@ export class LabSimulation {
     }
   }
 
+  exportPositionSnapshot() {
+    return {
+      type: 'positions',
+      items: this.items.map((it) => ({
+        id: it.id,
+        x: it.x,
+        y: it.y,
+        restingOnId: it.restingOnId ?? null,
+        clampedToId: it.clampedToId ?? null,
+        dockedVesselId: it.dockedVesselId ?? null,
+        dockSide: it.dockSide ?? null,
+        mountedOnVesselId: it.mountedOnVesselId ?? null,
+        inVesselId: it.inVesselId ?? null,
+        attachedToId: it.attachedToId ?? null,
+        attachedSide: it.attachedSide ?? null,
+        fallStartY: it.fallStartY ?? null,
+        tiltAngle: it.tiltAngle ?? 0,
+        tiltDeg: it.tiltDeg ?? 0,
+        tiltDir: it.tiltDir ?? 1,
+      })),
+    };
+  }
+
   exportSnapshot() {
     const cleanItems = this.items.map((it) => {
       const copy = JSON.parse(JSON.stringify(it));
@@ -217,6 +240,33 @@ export class LabSimulation {
 
   restoreSnapshot(snap) {
     if (!snap) return false;
+    if (snap.type === 'positions') {
+      for (const saved of snap.items || []) {
+        const it = this.getItem(saved.id);
+        if (!it) continue;
+        it.x = saved.x;
+        it.y = saved.y;
+        it.vy = 0;
+        it.isDragging = false;
+        it.restingOnId = saved.restingOnId;
+        it.clampedToId = saved.clampedToId;
+        it.dockedVesselId = saved.dockedVesselId;
+        if (saved.dockSide !== undefined) it.dockSide = saved.dockSide;
+        it.mountedOnVesselId = saved.mountedOnVesselId;
+        it.inVesselId = saved.inVesselId;
+        it.attachedToId = saved.attachedToId;
+        if (saved.attachedSide !== undefined) it.attachedSide = saved.attachedSide;
+        it.fallStartY = saved.fallStartY;
+        it.tiltAngle = saved.tiltAngle;
+        it.tiltDeg = saved.tiltDeg;
+        it.tiltDir = saved.tiltDir;
+      }
+      this.activePourStream = null;
+      this.updateSupportAttachments();
+      this.recomputeScaleReadings();
+      this.emitChange();
+      return true;
+    }
     this.timeSec = snap.timeSec ?? 0;
     this.nextId = snap.nextId ?? 1;
     if (snap.environment) {
@@ -1207,6 +1257,7 @@ export class LabSimulation {
   }
 
   recomputeScaleReadings() {
+    if (!this.items.some((it) => it.kind === 'scale')) return;
     for (const sc of this.items) {
       if (sc.kind !== 'scale') continue;
       let loadG = 0;

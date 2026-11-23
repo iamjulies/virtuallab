@@ -110,6 +110,7 @@ export class LabWorkbenchCanvas {
     this.fluidGasOverlay = new FluidGasOverlay();
     this._canvasRect = null;
     this._externalDragActive = false;
+    this._extHoverWasOutside = false;
     this._moveRafId = 0;
     this._pendingPointerMove = null;
     this._bgCacheCanvas = null;
@@ -244,6 +245,48 @@ export class LabWorkbenchCanvas {
 
   resetZoom() {
     this.setZoomView(1.0, BENCH_LOGICAL_W * 0.5, BENCH_LOGICAL_H * 0.5);
+  }
+
+  _upgradeDragToFullUndo() {
+    if (!this.dragState || this.dragState.fullUndoRecorded || !this.sim.exportSnapshot) return;
+    const fullSnap = this.sim.exportSnapshot();
+    const posSnap = this.dragState.preDragSnap;
+    if (posSnap?.type === 'positions' && Array.isArray(posSnap.items)) {
+      const posById = new Map(posSnap.items.map((p) => [p.id, p]));
+      for (const sIt of fullSnap.items || []) {
+        const prev = posById.get(sIt.id);
+        if (!prev) continue;
+        sIt.x = prev.x;
+        sIt.y = prev.y;
+        sIt.restingOnId = prev.restingOnId;
+        sIt.clampedToId = prev.clampedToId;
+        sIt.dockedVesselId = prev.dockedVesselId;
+        if (prev.dockSide !== undefined) sIt.dockSide = prev.dockSide;
+        sIt.mountedOnVesselId = prev.mountedOnVesselId;
+        sIt.inVesselId = prev.inVesselId;
+        sIt.attachedToId = prev.attachedToId;
+        if (prev.attachedSide !== undefined) sIt.attachedSide = prev.attachedSide;
+        sIt.fallStartY = prev.fallStartY;
+        sIt.tiltAngle = prev.tiltAngle;
+        sIt.tiltDeg = prev.tiltDeg;
+        sIt.tiltDir = prev.tiltDir;
+      }
+    }
+    const stack = this.sim.undoStack;
+    if (this.dragState.undoRecorded && Array.isArray(stack) && stack.length > 0 && stack[stack.length - 1] === posSnap) {
+      stack[stack.length - 1] = fullSnap;
+    } else {
+      this.sim.pushUndoSnapshot?.(fullSnap);
+    }
+    this.dragState.fullUndoRecorded = true;
+    this.dragState.undoRecorded = true;
+  }
+
+  _trySetPointerCapture(pointerId) {
+    if (pointerId == null || !this.canvas.setPointerCapture) return;
+    try {
+      this.canvas.setPointerCapture(pointerId);
+    } catch {}
   }
 
   _getCanvasRect() {
@@ -1168,10 +1211,9 @@ export class LabWorkbenchCanvas {
           startExtendPx: standTip.extendPx || 0,
         };
         this.canvas.style.cursor = 'ns-resize';
-        this.canvas.setPointerCapture(e.pointerId);
+        this._trySetPointerCapture(e.pointerId);
         soundEngine.playClampClick();
         if (this.callbacks.onSelect) this.callbacks.onSelect(standTip);
-        this.sim.emitChange();
         return;
       }
 
@@ -1184,9 +1226,8 @@ export class LabWorkbenchCanvas {
           dstVesselId: tubeTipHit.dstVessel.id,
         };
         this.canvas.style.cursor = 'ns-resize';
-        this.canvas.setPointerCapture(e.pointerId);
+        this._trySetPointerCapture(e.pointerId);
         if (this.callbacks.onSelect) this.callbacks.onSelect(tubeTipHit.srcVessel);
-        this.sim.emitChange();
         return;
       }
 
@@ -1204,9 +1245,8 @@ export class LabWorkbenchCanvas {
           y: pt.y,
           moved: false,
         };
-        this.canvas.setPointerCapture(e.pointerId);
+        this._trySetPointerCapture(e.pointerId);
         if (this.callbacks.onSelect) this.callbacks.onSelect(portHit.cond);
-        this.sim.emitChange();
         return;
       }
 
@@ -1219,7 +1259,6 @@ export class LabWorkbenchCanvas {
         if (hit) {
           this.setSelection([hit.id], hit.id);
           if (this.callbacks.onSelect) this.callbacks.onSelect(hit);
-          this.sim.emitChange();
         }
         this.setZoomView(2.8, pt.x, pt.y);
         return;
@@ -1234,8 +1273,7 @@ export class LabWorkbenchCanvas {
           y: pt.y,
           baseSet: new Set(this.getSelectedIdSet()),
         };
-        this.canvas.setPointerCapture(e.pointerId);
-        this.sim.emitChange();
+        this._trySetPointerCapture(e.pointerId);
         return;
       }
 
@@ -1247,7 +1285,6 @@ export class LabWorkbenchCanvas {
             const rem = Array.from(curSel);
             this.setSelection(rem, rem[rem.length - 1] || null);
             if (this.callbacks.onSelect) this.callbacks.onSelect(this.sim.getItem(this.sim.selectedId));
-            this.sim.emitChange();
             return;
           }
           curSel.add(hit.id);
@@ -1286,7 +1323,7 @@ export class LabWorkbenchCanvas {
         if (hit.kind === 'wash_bottle' && (hit.waterMl || 0) > 0.1) {
           hit.isSpraying = true;
         }
-        const preDragSnap = this.sim.exportSnapshot ? this.sim.exportSnapshot() : null;
+        const preDragSnap = this.sim.exportPositionSnapshot ? this.sim.exportPositionSnapshot() : null;
         // Bring dragged item to front visually unless it's a support base (scale/burner/stand)
         if (
           hit.kind === 'vessel' ||
@@ -1320,6 +1357,7 @@ export class LabWorkbenchCanvas {
           startY: hit.y,
           preDragSnap,
           undoRecorded: false,
+          fullUndoRecorded: false,
           unmountHoldoffId: wasMountedId,
           pourTargetId: null,
           pipetteTargetId: null,
@@ -1329,10 +1367,12 @@ export class LabWorkbenchCanvas {
           pouredMl: 0,
           groupMembers,
         };
-        this.canvas.setPointerCapture(e.pointerId);
+        if (hit.kind === 'wash_bottle' && hit.isSpraying) {
+          this._upgradeDragToFullUndo();
+        }
+        this._trySetPointerCapture(e.pointerId);
         soundEngine.playGlassClink(hit.typeId, 0.55);
         if (this.callbacks.onSelect) this.callbacks.onSelect(hit);
-        this.sim.emitChange();
       } else if (this.zoomScale > 1.02) {
         this.panDragState = {
           startClientX: e.clientX,
@@ -1341,11 +1381,10 @@ export class LabWorkbenchCanvas {
           startCenterY: this.zoomCenterY,
         };
         this.canvas.style.cursor = 'grabbing';
-        this.canvas.setPointerCapture(e.pointerId);
+        this._trySetPointerCapture(e.pointerId);
       } else {
         this.setSelection([], null);
         if (this.callbacks.onSelect) this.callbacks.onSelect(null);
-        this.sim.emitChange();
       }
     });
 
@@ -1762,10 +1801,19 @@ export class LabWorkbenchCanvas {
         }
       }
 
-      const dragItemsList = this.dragState?.groupMembers?.length > 1
-        ? this.dragState.groupMembers.map((m) => m.item).filter(Boolean)
-        : [item];
-      this.callbacks.onExternalTabDragHover?.(clientX, clientY, item, dragItemsList);
+      const rect = this._getCanvasRect();
+      const isOutsideCanvas =
+        clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom;
+      if (isOutsideCanvas) {
+        this._extHoverWasOutside = true;
+        const dragItemsList = this.dragState?.groupMembers?.length > 1
+          ? this.dragState.groupMembers.map((m) => m.item).filter(Boolean)
+          : [item];
+        this.callbacks.onExternalTabDragHover?.(clientX, clientY, item, dragItemsList);
+      } else if (this._extHoverWasOutside) {
+        this._extHoverWasOutside = false;
+        this.callbacks.onExternalTabDragHover?.(0, 0, null, null);
+      }
       this.sim.recomputeScaleReadings();
     };
 
@@ -1799,7 +1847,10 @@ export class LabWorkbenchCanvas {
         runPointerMove(queuedMove.clientX, queuedMove.clientY);
       }
       this._canvasRect = null;
-      this.callbacks.onExternalTabDragHover?.(0, 0, null, null);
+      if (this._extHoverWasOutside) {
+        this._extHoverWasOutside = false;
+        this.callbacks.onExternalTabDragHover?.(0, 0, null, null);
+      }
       if (this.standResizeState) {
         this.standResizeState = null;
         this.canvas.style.cursor = 'default';
@@ -1831,7 +1882,6 @@ export class LabWorkbenchCanvas {
           } catch {}
         }
         this.callbacks.onSelect?.(this.sim.getItem(this.sim.selectedId));
-        this.sim.emitChange();
         return;
       }
       if (this.panDragState) {
@@ -1902,13 +1952,22 @@ export class LabWorkbenchCanvas {
       }
 
       if (!this.dragState) return;
+      let didStateChange = false;
       try {
         const item = this.sim.getItem(this.dragState.itemId);
         const pipTargetId = this.dragState.pipetteTargetId;
+        const dragDist = item ? Math.hypot(item.x - this.dragState.startX, item.y - this.dragState.startY) : 0;
+        didStateChange = Boolean(
+          this.dragState.undoRecorded ||
+          this.dragState.fullUndoRecorded ||
+          (this.dragState.pouredMl || 0) > 0 ||
+          dragDist > 1
+        );
         const dropItemsList = this.dragState.groupMembers?.length > 1
           ? this.dragState.groupMembers.map((m) => m.item).filter(Boolean)
           : item ? [item] : [];
         if (item && this.callbacks.onDropToLabTab?.(e.clientX, e.clientY, item, dropItemsList)) {
+          didStateChange = true;
           for (const member of this.dragState.groupMembers || []) {
             if (member.item) member.item.isDragging = false;
           }
@@ -1931,22 +1990,30 @@ export class LabWorkbenchCanvas {
           if (item.kind === 'rubber_stopper' && !item.attachedToId) {
             const mTgt = this.findMouthTargetAt(item.x, item.y, 'stopper');
             if (mTgt) {
+              this._upgradeDragToFullUndo();
               this.sim.attachRubberStopper(item.id, mTgt.vessel.id, mTgt.side);
+              didStateChange = true;
             }
           } else if (item.kind === 'phen_cotton' && !item.attachedToId) {
             const mTgt = this.findMouthTargetAt(item.x, item.y, 'cotton');
             if (mTgt) {
+              this._upgradeDragToFullUndo();
               this.sim.attachPhenCotton(item.id, mTgt.vessel.id, mTgt.side);
+              didStateChange = true;
             }
           } else if (item.kind === 'stir_bar') {
             const tgt = this.findVesselAt(item.x, item.y + 10, null, false);
             if (tgt && !tgt.isStoppered) {
+              this._upgradeDragToFullUndo();
               this.sim.insertStirBarIntoVessel(item.id, tgt.id, 800);
+              didStateChange = true;
             }
           } else if (item.kind === 'boiling_chips') {
             const tgt = this.findVesselAt(item.x, item.y + 10, null, false);
             if (tgt && !tgt.isStoppered) {
+              this._upgradeDragToFullUndo();
               this.sim.insertBoilingChipsIntoVessel(item.id, tgt.id);
+              didStateChange = true;
             }
           } else if (item.kind === 'electrode') {
             const tgt = this.findVesselAt(item.x, item.y + 10, null, false);
@@ -1956,6 +2023,7 @@ export class LabWorkbenchCanvas {
               item.dockedVesselId = tgt.id;
               item.dockSide = side;
               syncDockedToolPositions(this.sim);
+              didStateChange = true;
             }
           } else if (item.kind === 'filter_funnel' && !this.dragState.pourTargetId) {
             const dragMoved = Math.hypot(item.x - this.dragState.startX, item.y - this.dragState.startY);
@@ -1965,6 +2033,7 @@ export class LabWorkbenchCanvas {
               if (dragMoved <= 6 || tgt.id !== this.dragState.unmountHoldoffId || Math.abs(item.y - (tgt.y - APPARATUS[tgt.typeId].height / 2)) <= 30) {
                 item.mountedOnVesselId = tgt.id;
                 syncDockedToolPositions(this.sim);
+                if (this.dragState.unmountHoldoffId !== tgt.id) didStateChange = true;
               }
             }
           } else if (item.kind === 'separatory_funnel' && !this.dragState.pourTargetId) {
@@ -1973,8 +2042,12 @@ export class LabWorkbenchCanvas {
             if (tgt && !tgt.isInverted && Math.abs(item.x - tgt.x) <= 30) {
               if (dragMoved <= 6 || tgt.id !== this.dragState.unmountHoldoffId || Math.abs(item.y - (tgt.y - APPARATUS[tgt.typeId].height / 2 - 42)) <= 42) {
                 this.sim.mountSeparatoryFunnel(item.id, tgt.id);
+                if (this.dragState.unmountHoldoffId !== tgt.id) didStateChange = true;
               }
             }
+          }
+          if (this.dragState.unmountHoldoffId && !item.mountedOnVesselId) {
+            didStateChange = true;
           }
           item.fallStartY =
             item.clampedToId || item.dockedVesselId || item.inVesselId || item.mountedOnVesselId || item.attachedToId
@@ -2005,9 +2078,13 @@ export class LabWorkbenchCanvas {
           const spAct = this.dragState.spoonAction;
           const spTgtId = this.dragState.spoonTargetId;
           if (spTgtId && spAct === 'pour') {
+            this._upgradeDragToFullUndo();
             this.sim.spoonPourIntoVessel(item.id, spTgtId);
+            didStateChange = true;
           } else if (spTgtId && spAct === 'scoop') {
+            this._upgradeDragToFullUndo();
             this.sim.spoonScoopFromVessel(item.id, spTgtId);
+            didStateChange = true;
           }
         }
         if (item && item.kind === 'pipette' && !item.isBroken) {
@@ -2015,12 +2092,14 @@ export class LabWorkbenchCanvas {
           if (pipTargetId) {
             const tgt = this.sim.getItem(pipTargetId);
             if (tgt && tgt.kind === 'vessel' && !tgt.isShattered && !tgt.isStoppered) {
+              this._upgradeDragToFullUndo();
               soundEngine.playDropPlink(0.95);
               if ((item.volumeMl || 0) <= 0.05) {
                 this.sim.pipetteDrawFromVessel(tgt.id, item.capacityMl || 10.0, item);
               } else {
                 this.sim.pipetteDispenseToVessel(tgt.id, item.dropDoseMl || 1.0, item);
               }
+              didStateChange = true;
               const tSpec = APPARATUS[tgt.typeId];
               const pSpec = APPARATUS[item.typeId];
               const parkRightX = tgt.x + tSpec.width / 2 + 26;
@@ -2029,7 +2108,9 @@ export class LabWorkbenchCanvas {
               item.y = BENCH_FLOOR_Y - pSpec.height / 2 + 2;
               item.fallStartY = null;
             } else if (tgt && tgt.kind === 'gas_syringe' && !tgt.isBroken && (item.volumeMl || 0) <= 0.05) {
+              this._upgradeDragToFullUndo();
               this.sim.pipetteDrawFromSyringe(tgt.id, item.capacityMl || 10.0, item);
+              didStateChange = true;
               const pSpec = APPARATUS[item.typeId];
               const syrG = getSyringeGeometry(tgt);
               item.x = Math.max(45, Math.min(BENCH_LOGICAL_W - 45, syrG.nozzleX - syrG.barrelDir * 24));
@@ -2047,8 +2128,10 @@ export class LabWorkbenchCanvas {
             this.canvas.releasePointerCapture(e.pointerId);
           } catch {}
         }
-        this.sim.updateSupportAttachments();
-        this.sim.emitChange();
+        if (didStateChange) {
+          this.sim.updateSupportAttachments();
+          this.sim.emitChange();
+        }
       }
     };
 
@@ -2179,6 +2262,7 @@ export class LabWorkbenchCanvas {
       Object.values(src.moles || {}).some((n) => n > 1e-8);
     if (srcLiqMl <= 0.02 && !hasDrySolids) return;
     if (hasDrySolids && dst.kind === 'vessel') {
+      this._upgradeDragToFullUndo();
       this.sim.transferSolidsToVessel(src.id, dst.id, 1.0);
       this.dragState.pourTargetId = null;
       return;
@@ -2194,7 +2278,8 @@ export class LabWorkbenchCanvas {
     const flowRateMlS = baseMaxRateMlS * tiltFrac * tailFactor * alignFactor;
 
     // Physical hand-tilted decanting: settled dense solids remain behind unless previously stirred
-    const poured = this.sim.pourBetweenVessels(src.id, dst.id, flowRateMlS * realDeltaSec, false);
+    this._upgradeDragToFullUndo();
+    const poured = this.sim.pourBetweenVessels(src.id, dst.id, flowRateMlS * realDeltaSec, false, { silentUndo: true });
     if (poured > 0) {
       this.dragState.pouredMl += poured;
       const srcLiqL = computeLiquidVolumeL(src.moles, src.tempK);

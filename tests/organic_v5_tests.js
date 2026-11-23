@@ -18,6 +18,8 @@ import { LabWorkbenchCanvas } from '../src/canvas/workbench.js';
 import { ParticleSystem } from '../src/canvas/particles.js';
 import { FluidGasOverlay } from '../src/canvas/fluidGasOverlay.js';
 import { ShelfPanel } from '../src/ui/shelfPanel.js';
+import { initWorkspacePersistence } from '../src/storage/workspaceStorage.js';
+import { LabManager } from '../src/engine/labManager.js';
 import { renderRetortClampJaw, renderVessel } from '../src/canvas/vesselRenderer.js';
 
 export function runOrganicV5Tests(assert) {
@@ -1046,6 +1048,148 @@ export function runOrganicV5Tests(assert) {
       'Prompt 73 invariants: GPU translate3d shelf ghost, rAF-coalesced pointermove + cached canvasRect, zero per-frame shadowBlur, offscreen bg/bench cache & FluidGasOverlay auto-idle sleep',
       ghostOk && dragCoalesceOk && zeroShadowBlurOk && bgCacheOk && fgoSleepCycleOk,
       `ghost=${ghostOk}(t=${ghostTransform}), drag=${dragCoalesceOk}(rectCalls=${rectCalls},finalX=${finalBeakerX.toFixed(1)}), noBlur=${zeroShadowBlurOk}(writes=${shadowBlurWrites}), bgCache=${bgCacheOk}, fluidSleep=${fgoSleepCycleOk}`
+    );
+  }
+
+  // TEST 192: Prompt 74 — Zero-Overhead Clicks/Drags (Outside-Only Tab Hover, Light Position Undo vs Chemical Full Undo,
+  // No Selection emitChange, Deferred Idle Save, FluidGasOverlay 30Hz/13Hz Throttle, Shelf Hover Deactivation & Chart Skip)
+  {
+    const sim74 = new LabSimulation();
+    const wrap74 = document.createElement('div');
+    wrap74.style.cssText = 'position:fixed;left:0;top:0;width:1000px;height:560px;pointer-events:none;opacity:0.01;';
+    const cvs74 = document.createElement('canvas');
+    cvs74.width = 1000;
+    cvs74.height = 560;
+    cvs74.style.cssText = 'width:1000px;height:560px;display:block;';
+    wrap74.appendChild(cvs74);
+    const shelfHost74 = document.createElement('div');
+    document.body.appendChild(wrap74);
+    document.body.appendChild(shelfHost74);
+
+    let extHoverCallsInside = 0;
+    let extHoverCallsOutside = 0;
+    let selectCbCount = 0;
+    let emitCount = 0;
+    sim74.subscribe(() => {
+      emitCount++;
+    });
+
+    const wb74 = new LabWorkbenchCanvas(cvs74, sim74, new ParticleSystem(), {
+      onSelect: () => { selectCbCount++; },
+      onExternalTabDragHover: (cx, cy, it) => {
+        if (it) extHoverCallsOutside++;
+      },
+    });
+    wb74.resize();
+
+    const b74 = sim74.createApparatus('beaker_250', 300, 420);
+    b74.moles = { H2O_l: 2.0 };
+    const spoon74 = sim74.createApparatus('iron_spoon', 500, 440);
+    spoon74.moles = { NaCl_s: 0.05 };
+
+    let exportSnapCalls = 0;
+    const origExportSnap = sim74.exportSnapshot.bind(sim74);
+    sim74.exportSnapshot = () => {
+      exportSnapCalls++;
+      return origExportSnap();
+    };
+
+    // 1) Pure selection click -> fires onSelect once, ZERO exportSnapshot(), ZERO emitChange()
+    emitCount = 0;
+    selectCbCount = 0;
+    cvs74.dispatchEvent(new PointerEvent('pointerdown', { clientX: 300, clientY: 420, pointerId: 2 }));
+    cvs74.dispatchEvent(new PointerEvent('pointerup', { clientX: 300, clientY: 420, pointerId: 2 }));
+    const selectionZeroCostOk = selectCbCount === 1 && exportSnapCalls === 0 && emitCount === 0;
+
+    // 2) Pure position move -> lightweight 'positions' undo (ZERO exportSnapshot!), restores X/Y cleanly; inside drag skips external hover
+    const origX = b74.x;
+    const origY = b74.y;
+    extHoverCallsOutside = 0;
+    cvs74.dispatchEvent(new PointerEvent('pointerdown', { clientX: b74.x, clientY: b74.y, pointerId: 3 }));
+    cvs74.dispatchEvent(new PointerEvent('pointermove', { clientX: 460, clientY: 380, pointerId: 3 }));
+    extHoverCallsInside = extHoverCallsOutside;
+    cvs74.dispatchEvent(new PointerEvent('pointerup', { clientX: 460, clientY: 380, pointerId: 3 }));
+    const movedX = b74.x;
+    const topUndoType = sim74.undoStack[sim74.undoStack.length - 1]?.type;
+    const zeroFullSnapOnMove = exportSnapCalls === 0 && topUndoType === 'positions';
+    sim74.undo();
+    const posUndoRestoredOk = Math.abs(b74.x - origX) < 0.5 && Math.abs(b74.y - origY) < 0.5;
+
+    // 2b) Drag outside canvas boundary invokes onExternalTabDragHover and resets cleanly on pointerup
+    // Advance flush frame between sequential synthetic drags by clearing rAF lock via pointerdown/move after reset
+    wb74._moveRafId = 0;
+    wb74._pendingPointerMove = null;
+    cvs74.dispatchEvent(new PointerEvent('pointerdown', { clientX: b74.x, clientY: b74.y, pointerId: 5 }));
+    cvs74.dispatchEvent(new PointerEvent('pointermove', { clientX: 1200, clientY: -20, pointerId: 5 }));
+    const movedOutsideCalls = extHoverCallsOutside;
+    cvs74.dispatchEvent(new PointerEvent('pointerup', { clientX: 300, clientY: 420, pointerId: 5 }));
+    sim74.undo();
+    const outsideHoverFilterOk = extHoverCallsInside === 0 && movedOutsideCalls >= 1 && wb74._extHoverWasOutside === false;
+
+    // 3) Chemical spoon pour drag -> upgrades to full undo right before drop, sim.undo() restores salt moles & spoon position
+    b74.x = 300;
+    b74.y = 434;
+    wb74._moveRafId = 0;
+    wb74._pendingPointerMove = null;
+    cvs74.dispatchEvent(new PointerEvent('pointerdown', { clientX: spoon74.x, clientY: spoon74.y, pointerId: 4 }));
+    cvs74.dispatchEvent(new PointerEvent('pointermove', { clientX: 300, clientY: 390, pointerId: 4 }));
+    cvs74.dispatchEvent(new PointerEvent('pointerup', { clientX: 300, clientY: 390, pointerId: 4 }));
+    const pouredSalt = (b74.moles.NaCl_s || 0) > 0.01 && exportSnapCalls >= 1;
+    sim74.undo();
+    const bAfterChemUndo = sim74.getItem(b74.id);
+    const spAfterChemUndo = sim74.getItem(spoon74.id);
+    const chemUndoRestoredOk = (bAfterChemUndo?.moles?.NaCl_s || 0) < 1e-6 && (spAfterChemUndo?.moles?.NaCl_s || 0) > 0.04;
+
+    // 4) ShelfPanel adds .shelf-dragging-active class during drag & removes on cleanup
+    const shelf74 = new ShelfPanel(shelfHost74, sim74, () => (k) => I18N.vi[k] || k, {
+      onExternalDragMove: (cx, cy, kind, id) => wb74.setExternalDropPreview(cx, cy, kind, id),
+    });
+    shelf74.render((k) => I18N.vi[k] || k);
+    const appCard74 = shelfHost74.querySelector('.apparatus-card[data-apparatus-id="beaker_250"]');
+    appCard74.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 15, clientY: 15, button: 0, pointerType: 'mouse' }));
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 80, clientY: 80, pointerType: 'mouse' }));
+    const hasDragClass = shelfHost74.classList.contains('shelf-dragging-active');
+    window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true }));
+    const removedDragClass = !shelfHost74.classList.contains('shelf-dragging-active');
+
+    // 5) InspectorPanel chart placeholder skips redundant clears when history < 2 & Scale skips when none
+    const inspHost74 = document.createElement('div');
+    document.body.appendChild(inspHost74);
+    const insp74 = new InspectorPanel(inspHost74, sim74, () => (k) => I18N.vi[k] || k, { getLabsMeta: () => null });
+    sim74.selectedId = b74.id;
+    insp74.update('vi', true);
+    const chartCvs = inspHost74.querySelector('#vessel-mole-chart');
+    const chartPlaceholderOk = Boolean(chartCvs?.dataset?.placeholderKey);
+    inspHost74.remove();
+
+    // 6) FluidGasOverlay 30Hz step & deferred persistence controller
+    const fgo74 = new FluidGasOverlay();
+    let fgoThrottleOk = true;
+    if (fgo74.enabled) {
+      const simFG = new LabSimulation();
+      const bnFG = simFG.createApparatus('bunsen_burner', 300, 440);
+      bnFG.powerW = 800;
+      fgo74.isSleeping = true;
+      fgo74.stepAndRender(simFG, 0.01, true); // Wakes & steps immediately
+      const wokeAccum = fgo74._stepAccumDt === 0;
+      fgo74.stepAndRender(simFG, 0.01, true); // < 1/30 -> skipped & accumulated
+      const skippedAccum = fgo74._stepAccumDt > 0 && fgo74._stepAccumDt < 0.033;
+      fgoThrottleOk = wokeAccum && skippedAccum;
+    }
+
+    let deferredDragFlag = true;
+    const mgr74 = new LabManager();
+    const wp74 = initWorkspacePersistence(mgr74, { shouldDefer: () => deferredDragFlag });
+    wp74.triggerDebouncedSave();
+    wp74.dispose();
+
+    wrap74.remove();
+    shelfHost74.remove();
+
+    assert(
+      'Prompt 74 invariants: Zero-cost clicks (no exportSnapshot/emitChange), lightweight position undo vs full chemical undo, outside-only tab hover, shelf hover lock, chart placeholder skip & 30Hz FluidGas throttle',
+      selectionZeroCostOk && zeroFullSnapOnMove && posUndoRestoredOk && outsideHoverFilterOk && pouredSalt && chemUndoRestoredOk && hasDragClass && removedDragClass && chartPlaceholderOk && fgoThrottleOk,
+      `sel=${selectionZeroCostOk}, posUndo=${zeroFullSnapOnMove && posUndoRestoredOk}(type=${topUndoType},movedX=${movedX.toFixed(0)}), outHover=${outsideHoverFilterOk}(in=${extHoverCallsInside},out=${movedOutsideCalls}), chemUndo=${pouredSalt && chemUndoRestoredOk}, shelfCls=${hasDragClass && removedDragClass}, chart=${chartPlaceholderOk}, fgo30=${fgoThrottleOk}`
     );
   }
 }

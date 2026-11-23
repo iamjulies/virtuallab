@@ -238,6 +238,7 @@ export class ShelfPanel {
       }
       ds._pendingMove = null;
       if (ds.ghostEl) ds.ghostEl.remove();
+      this.container?.classList.remove('shelf-dragging-active');
       this._dragSession = null;
       this.callbacks.onExternalDragMove?.(0, 0, null, null);
     };
@@ -256,6 +257,7 @@ export class ShelfPanel {
           return;
         }
         ds.moved = true;
+        this.container?.classList.add('shelf-dragging-active');
         ds.ghostEl = this._buildFloatingGhost(ds.kind, ds.id, this.getLang());
       }
       if (!ds._moveRafId) {

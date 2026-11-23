@@ -297,6 +297,8 @@ export class FluidGasOverlay {
     this.obsCtx = null;
     this.obsTex = null;
     this._obsSig = '';
+    this._lastObsMs = 0;
+    this._stepAccumDt = 0;
     this.isSleeping = false;
     this._idleSec = 0;
     this._hasPlumeEnergy = false;
@@ -392,7 +394,11 @@ export class FluidGasOverlay {
       }
     }
     if (sig === this._obsSig) return;
+    const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    // Throttle dynamic obstacle canvas rebuild & WebGL texture upload during dragging to ~13 Hz
+    if (this._obsSig && nowMs - this._lastObsMs < 75) return;
     this._obsSig = sig;
+    this._lastObsMs = nowMs;
 
     octx.clearRect(0, 0, SIM_W, SIM_H);
     octx.fillStyle = '#ff0000';
@@ -480,6 +486,9 @@ export class FluidGasOverlay {
 
   reset() {
     this._idleSec = 0;
+    this._stepAccumDt = 0;
+    this._obsSig = '';
+    this._lastObsMs = 0;
     this._hasPlumeEnergy = false;
     if (this.enabled) {
       this._clearAllTargets();
@@ -564,15 +573,23 @@ export class FluidGasOverlay {
       if (!this._hasPlumeEnergy || this._idleSec >= 2.6) {
         this._clearAllTargets();
         this._hasPlumeEnergy = false;
+        this._stepAccumDt = 0;
         this.isSleeping = true;
         return;
       }
       this._idleSec += dt;
     } else {
+      if (this.isSleeping) this._stepAccumDt = 1 / 30;
       this.isSleeping = false;
       this._idleSec = 0;
       this._hasPlumeEnergy = true;
     }
+
+    // Throttle WebGL2 FBO solver steps to ~30 Hz; on skipped frames keep last canvas frame intact (zero flicker)
+    this._stepAccumDt += dt;
+    if (this._stepAccumDt < 1 / 30) return;
+    const simDt = Math.min(0.05, this._stepAccumDt);
+    this._stepAccumDt = 0;
 
     this._updateObstacles(items);
 
@@ -583,14 +600,14 @@ export class FluidGasOverlay {
       const nozzleY = it.typeId === 'bunsen_burner' ? it.y + bSpec.height / 2 - 68 : it.y + bSpec.height / 2 - 48;
       const uvY = 1.0 - nozzleY / BENCH_LOGICAL_H;
       const normT = Math.min(1.0, (it.powerW / 1400) * 0.85);
-      this._splat(this.tempBuoy, uvX, uvY, 0.0012, [normT * dt * 6.0, 0, 0, 0], 1);
-      this._splat(this.vel, uvX, uvY, 0.0012, [0, 0.25 * dt * 6.0, 0, 0], 1);
+      this._splat(this.tempBuoy, uvX, uvY, 0.0012, [normT * simDt * 6.0, 0, 0, 0], 1);
+      this._splat(this.vel, uvX, uvY, 0.0012, [0, 0.25 * simDt * 6.0, 0, 0], 1);
     }
 
     for (const { it, dTNorm } of heatVessels) {
       const cx = it.x / BENCH_LOGICAL_W;
       const cy = 1.0 - it.y / BENCH_LOGICAL_H;
-      this._splat(this.tempBuoy, cx, cy, 0.0020, [Math.min(0.85, dTNorm) * dt * 4.2, 0, 0, 0], 1);
+      this._splat(this.tempBuoy, cx, cy, 0.0020, [Math.min(0.85, dTNorm) * simDt * 4.2, 0, 0, 0], 1);
     }
 
     for (const { it, spec, sumColor, totalVisMol, weightedRelD, dTNorm, isOneHoleVent, hasThermalGasOut } of plumeVessels) {
@@ -607,7 +624,7 @@ export class FluidGasOverlay {
       const cR = totalVisMol > 1e-5 ? sumColor[0] / totalVisMol : 0.92;
       const cG = totalVisMol > 1e-5 ? sumColor[1] / totalVisMol : 0.55;
       const cB = totalVisMol > 1e-5 ? sumColor[2] / totalVisMol : 0.25;
-      const strength = Math.min(0.36, effVis * dt * 2.5) * ventScale;
+      const strength = Math.min(0.36, effVis * simDt * 2.5) * ventScale;
       this._splat(this.dye, uvX, uvY, 0.0016, [cR * strength, cG * strength, cB * strength, strength], 1);
 
       // Buoyancy weight: heavy gas > 1 sinks (-Y), light or thermally hot gas rises (+Y)
@@ -618,7 +635,7 @@ export class FluidGasOverlay {
         uvX,
         uvY,
         hasThermalGasOut ? 0.0024 : 0.0017,
-        [thermalDrive * dt * 3.8 * ventScale, (buoyDrive - dTNorm * 0.9) * dt * 4.5 * ventScale, 0, 0],
+        [thermalDrive * simDt * 3.8 * ventScale, (buoyDrive - dTNorm * 0.9) * simDt * 4.5 * ventScale, 0, 0],
         1
       );
     }
@@ -636,7 +653,7 @@ export class FluidGasOverlay {
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, this.obsTex);
       gl.uniform1i(gl.getUniformLocation(p, 'uObs'), 2);
-      gl.uniform1f(gl.getUniformLocation(p, 'uDt'), dt);
+      gl.uniform1f(gl.getUniformLocation(p, 'uDt'), simDt);
       gl.uniform1f(gl.getUniformLocation(p, 'uCurlAmp'), 1.35);
       gl.uniform2f(gl.getUniformLocation(p, 'uTexel'), 1 / SIM_W, 1 / SIM_H);
       this._blit(this.vel.write.fbo, SIM_W, SIM_H);
@@ -704,7 +721,7 @@ export class FluidGasOverlay {
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, this.obsTex);
       gl.uniform1i(gl.getUniformLocation(p, 'uObs'), 2);
-      gl.uniform1f(gl.getUniformLocation(p, 'uDt'), dt);
+      gl.uniform1f(gl.getUniformLocation(p, 'uDt'), simDt);
       gl.uniform1f(gl.getUniformLocation(p, 'uDissipate'), diss);
       gl.uniform2f(gl.getUniformLocation(p, 'uTexel'), 1 / SIM_W, 1 / SIM_H);
       this._blit(dfbo.write.fbo, SIM_W, SIM_H);

@@ -1070,19 +1070,54 @@ export const cloudSync = new CloudSyncController();
  */
 export function initWorkspacePersistence(labManager, options = {}) {
   let debounceTimer = null;
+  let idleHandle = 0;
+
+  const cancelScheduled = () => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    if (idleHandle && typeof cancelIdleCallback === 'function') {
+      cancelIdleCallback(idleHandle);
+      idleHandle = 0;
+    }
+  };
+
+  const runSave = () => {
+    if (options.shouldDefer?.()) {
+      debounceTimer = setTimeout(scheduleIdleSave, 250);
+      return;
+    }
+    saveToLocalStorage(labManager);
+    options.onAutoSaved?.(Date.now());
+  };
+
+  const scheduleIdleSave = () => {
+    debounceTimer = null;
+    if (options.shouldDefer?.()) {
+      debounceTimer = setTimeout(scheduleIdleSave, 250);
+      return;
+    }
+    if (typeof requestIdleCallback === 'function') {
+      idleHandle = requestIdleCallback(() => {
+        idleHandle = 0;
+        runSave();
+      }, { timeout: 1200 });
+    } else {
+      runSave();
+    }
+  };
 
   const triggerDebouncedSave = () => {
     cloudSync.markDirty();
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      saveToLocalStorage(labManager);
-      options.onAutoSaved?.(Date.now());
-    }, 500);
+    cancelScheduled();
+    debounceTimer = setTimeout(scheduleIdleSave, 600);
   };
 
   // Periodic 5-second save when any burner, power supply, or reaction is actively running
   const periodicInterval = setInterval(() => {
     if (!labManager || !Array.isArray(labManager.labs)) return;
+    if (options.shouldDefer?.()) return;
     const hasActiveProcess = labManager.labs.some((lab) =>
       lab.sim.items.some(
         (it) =>
@@ -1100,7 +1135,7 @@ export function initWorkspacePersistence(labManager, options = {}) {
   return {
     triggerDebouncedSave,
     dispose() {
-      if (debounceTimer) clearTimeout(debounceTimer);
+      cancelScheduled();
       clearInterval(periodicInterval);
     },
   };

@@ -3632,13 +3632,15 @@ export class InspectorPanel {
     const item = this.sim.getItem(this.sim.selectedId);
     if (!canvas || !item || item.kind !== 'vessel') return;
 
-    const ctx = canvas.getContext('2d');
     const w = canvas.width;
     const h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
-
     const hist = item.history;
     if (!hist || hist.length < 2) {
+      const placeholderKey = `${w}x${h}|${this.isDark ? 1 : 0}`;
+      if (canvas.dataset.placeholderKey === placeholderKey) return;
+      canvas.dataset.placeholderKey = placeholderKey;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, w, h);
       ctx.fillStyle = this.isDark ? '#64748b' : '#94a3b8';
       ctx.font = '12px system-ui, sans-serif';
       ctx.textAlign = 'center';
@@ -3646,6 +3648,9 @@ export class InspectorPanel {
       if (legendEl) legendEl.innerHTML = '';
       return;
     }
+    delete canvas.dataset.placeholderKey;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
 
     // Pick top reactive / non-water species present in history
     const totals = {};
