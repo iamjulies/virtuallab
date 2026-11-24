@@ -324,8 +324,10 @@ function stepSeparatoryFunnel(sim, funnel, dt) {
     target = findOpenVesselBelowPoint(sim.items, funnel.x, tipY, 56, -8, 280);
   }
 
-  const flowFrac = Math.max(0.05, Math.min(1.0, funnel.valveFlowFrac ?? 0.35));
-  const rateMlS = flowFrac * 12.0; // 0.6 .. 12.0 mL/s controllable stopcock
+  const rawRate = Number.isFinite(funnel.valveRateMlS)
+    ? funnel.valveRateMlS
+    : (funnel.valveFlowFrac ?? 0.35) * 10.0;
+  const rateMlS = Math.max(0.05, Math.min(10.0, rawRate)); // 0.05 .. 10.00 mL/s controllable stopcock
   const isSettledMulti = strat.layers.length >= 2 && (funnel.emulsionTimer || 0) <= 0.2;
   const bottomLayer = isSettledMulti ? strat.layers[0] : null;
   const refVolMl = bottomLayer ? bottomLayer.volMl : totalLiqMl;

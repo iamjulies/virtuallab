@@ -120,6 +120,7 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 2, H: 5, N: 1, O: 2 },
     functionalGroups: { isAminoAcid: true },
     tlcPolarity: 0.88,
+    uvActive: false,
   },
   Glycine_aq: {
     id: 'Glycine_aq',
@@ -133,6 +134,7 @@ export const NITROGEN_BIO_SPECIES = {
     boundProtons: 1,
     functionalGroups: { isAminoAcid: true },
     tlcPolarity: 0.88,
+    uvActive: false,
   },
   Glycinium_aq: {
     id: 'Glycinium_aq',
@@ -167,6 +169,7 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 4, H: 8, N: 2, O: 3 },
     functionalGroups: { hasPeptideBond: true },
     tlcPolarity: 0.92,
+    uvActive: false,
   },
   Peptide_aq: {
     id: 'Peptide_aq',
@@ -178,6 +181,7 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 4, H: 8, N: 2, O: 3 },
     functionalGroups: { hasPeptideBond: true },
     tlcPolarity: 0.92,
+    uvActive: false,
   },
   CuPeptide_aq: {
     id: 'CuPeptide_aq',
@@ -209,6 +213,8 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 6, H: 12, O: 6 },
     functionalGroups: { hasVicinalDiol: true, hasAldehydeGroup: true },
     tlcPolarity: 0.90,
+    uvActive: false,
+    tlcColor: '#f59e0b',
   },
   Glucose_aq: {
     id: 'Glucose_aq',
@@ -220,6 +226,8 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 6, H: 12, O: 6 },
     functionalGroups: { hasVicinalDiol: true, hasAldehydeGroup: true },
     tlcPolarity: 0.90,
+    uvActive: false,
+    tlcColor: '#fbbf24',
   },
   Gluconate_aq: {
     id: 'Gluconate_aq',
@@ -257,6 +265,8 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 12, H: 22, O: 11 },
     functionalGroups: { hasVicinalDiol: true },
     tlcPolarity: 0.93,
+    uvActive: false,
+    tlcColor: '#ec4899',
   },
   Sucrose_aq: {
     id: 'Sucrose_aq',
@@ -268,6 +278,8 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 12, H: 22, O: 11 },
     functionalGroups: { hasVicinalDiol: true },
     tlcPolarity: 0.93,
+    uvActive: false,
+    tlcColor: '#f472b6',
   },
   CuSuc2_aq: {
     id: 'CuSuc2_aq',
@@ -284,6 +296,8 @@ export const NITROGEN_BIO_SPECIES = {
     formula: '(C₆H₁₀O₅)ₙ(s)',
     name: 'Starch',
     phase: 's',
+    isPolymer: true,
+    uvActive: false,
     molarMass: M_STARCH_UNIT,
     density: 1.50,
     cp: 205.0,
@@ -302,6 +316,8 @@ export const NITROGEN_BIO_SPECIES = {
     formula: 'Starch(aq)',
     name: 'Starch (aqueous dispersion)',
     phase: 'aq',
+    isPolymer: true,
+    uvActive: false,
     molarMass: M_STARCH_UNIT,
     color: '#f8fafc',
     functionalGroups: { isPolysaccharide: true },
@@ -336,6 +352,8 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 6, H: 12, O: 6 },
     functionalGroups: { hasVicinalDiol: true, isKetone: true },
     tlcPolarity: 0.84,
+    uvActive: false,
+    tlcColor: '#06b6d4',
   },
   Fructose_aq: {
     id: 'Fructose_aq',
@@ -347,6 +365,8 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 6, H: 12, O: 6 },
     functionalGroups: { hasVicinalDiol: true, isKetone: true, isReducingSugar: true, noBr2Oxidation: true },
     tlcPolarity: 0.84,
+    uvActive: false,
+    tlcColor: '#22d3ee',
   },
   CuFrc2_aq: {
     id: 'CuFrc2_aq',
@@ -376,6 +396,8 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 12, H: 22, O: 11 },
     functionalGroups: { hasVicinalDiol: true, hasAldehydeGroup: true },
     tlcPolarity: 0.89,
+    uvActive: false,
+    tlcColor: '#f97316',
   },
   Maltose_aq: {
     id: 'Maltose_aq',
@@ -387,6 +409,8 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 12, H: 22, O: 11 },
     functionalGroups: { hasVicinalDiol: true, hasAldehydeGroup: true, isReducingSugar: true },
     tlcPolarity: 0.89,
+    uvActive: false,
+    tlcColor: '#fb923c',
   },
   CuMalt2_aq: {
     id: 'CuMalt2_aq',
@@ -404,6 +428,7 @@ export const NITROGEN_BIO_SPECIES = {
     name: 'Cellulose (cotton fiber)',
     phase: 's',
     isPolymer: true,
+    uvActive: false,
     molarMass: M_STARCH_UNIT,
     density: 1.50,
     cp: 195.0,
@@ -477,6 +502,8 @@ export const NITROGEN_BIO_SPECIES = {
     renderOrder: 185,
     atoms: { C: 12, H: 10, N: 2, O: 1 },
     functionalGroups: { isArene: true, isPhenol: true },
+    uvActive: true,
+    tlcColor: '#ea580c',
   },
   Alanine_s: {
     id: 'Alanine_s',
@@ -496,6 +523,7 @@ export const NITROGEN_BIO_SPECIES = {
     atoms: { C: 3, H: 7, N: 1, O: 2 },
     functionalGroups: { isAminoAcid: true },
     tlcPolarity: 0.85,
+    uvActive: false,
   },
   Alanine_aq: {
     id: 'Alanine_aq',
@@ -509,6 +537,7 @@ export const NITROGEN_BIO_SPECIES = {
     boundProtons: 1,
     functionalGroups: { isAminoAcid: true },
     tlcPolarity: 0.85,
+    uvActive: false,
   },
   Alaninium_aq: {
     id: 'Alaninium_aq',
@@ -641,7 +670,9 @@ export const NITROGEN_BIO_SPECIES = {
     renderLayer: 'bottom',
     renderOrder: 184,
     atoms: { C: 4, H: 8, N: 2, O: 3 },
-    functionalGroups: { hasPeptideBond: true, isArene: true },
+    functionalGroups: { hasPeptideBond: true, isArene: true, isProtein: true },
+    uvActive: true,
+    tlcColor: '#d97706',
   },
   Albumin_aq: {
     id: 'Albumin_aq',
@@ -652,6 +683,8 @@ export const NITROGEN_BIO_SPECIES = {
     color: '#fef9c3',
     functionalGroups: { hasPeptideBond: true, isArene: true, isProtein: true },
     tlcPolarity: 0.94,
+    uvActive: true,
+    tlcColor: '#eab308',
   },
   AlbuminCoagulated_s: {
     id: 'AlbuminCoagulated_s',

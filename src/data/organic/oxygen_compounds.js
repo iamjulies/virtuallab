@@ -204,6 +204,7 @@ export const OXYGEN_SPECIES = {
     atoms: { C: 5, H: 8, O: 2 },
     functionalGroups: { isAlkene: true, isEster: true },
     tlcPolarity: 0.30,
+    uvActive: true,
   },
   C51H98O6_s: {
     id: 'C51H98O6_s',

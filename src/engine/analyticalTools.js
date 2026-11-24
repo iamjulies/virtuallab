@@ -669,6 +669,36 @@ const TLC_SPOT_COLORS = {
   C6H12_l: '#a78bfa',
 };
 
+const TLC_FALLBACK_PALETTE = [
+  '#f43f5e', '#f59e0b', '#8b5cf6', '#0ea5e9',
+  '#ec4899', '#14b8a6', '#f97316', '#6366f1',
+  '#84cc16', '#06b6d4', '#e11d48', '#d97706',
+  '#7c3aed', '#0284c7', '#c026d3', '#0d9488',
+];
+
+function resolveTlcSpotColor(spId, sp) {
+  if (sp?.tlcColor) return sp.tlcColor;
+  if (TLC_SPOT_COLORS[spId]) return TLC_SPOT_COLORS[spId];
+  let hash = 2166136261;
+  for (let i = 0; i < spId.length; i++) {
+    hash ^= spId.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return TLC_FALLBACK_PALETTE[(hash >>> 0) % TLC_FALLBACK_PALETTE.length];
+}
+
+export function resolveTlcUvActive(sp) {
+  if (!sp) return false;
+  if (typeof sp.uvActive === 'boolean') return sp.uvActive;
+  if (typeof sp.isUV === 'boolean') return sp.isUV;
+  const fg = sp.functionalGroups || {};
+  if (fg.isArene || fg.isPhenol || fg.isAromaticAmine) return true;
+  if (fg.isConjugatedDiene || fg.hasConjugatedPi || fg.hasAzoGroup || fg.hasNitroGroup) return true;
+  // Conjugated α,β-unsaturated carbonyls absorb UV-254, whereas isolated alkenes/aldehydes/sugars do not
+  if (fg.isAlkene && (fg.hasAldehydeGroup || fg.isKetone || fg.isCarboxylicAcid || fg.isEster)) return true;
+  return false;
+}
+
 function computeVesselEluentStrength(vessel) {
   let sumWeight = 0;
   let weightedElu = 0;
@@ -692,8 +722,15 @@ function captureTlcSpots(plate, vessel) {
     if (!Number.isFinite(nMol) || nMol <= 1e-5) continue;
     const sp = SPECIES[spId];
     if (!sp || (sp.phase !== 'l' && sp.phase !== 's' && sp.phase !== 'aq')) continue;
-    // Skip inorganic salts, pure water, and giant insoluble polymers
-    if (spId === 'H2O_l' || sp.isPolymer) continue;
+    const fg = sp.functionalGroups || {};
+    // Exclude pure water, macromolecules/polymers/polysaccharides/proteins, and insoluble coagulated precipitates
+    const isInsolubleMacromolecule =
+      sp.isPolymer ||
+      fg.isPolysaccharide ||
+      fg.isProtein ||
+      fg.isEnzyme ||
+      (sp.isPrecipitate && (fg.hasPeptideBond || sp.noMelt || sp.isSoapSolid));
+    if (spId === 'H2O_l' || isInsolubleMacromolecule) continue;
     const isOrganic =
       Boolean(sp.atoms?.C > 0 || sp.functionalGroups || sp.tlcPolarity != null || (sp.liquidGroup && sp.liquidGroup.includes('organic')));
     if (!isOrganic) continue;
@@ -708,8 +745,8 @@ function captureTlcSpots(plate, vessel) {
       formula: sp.formula || spId,
       name: sp.name || spId,
       rf,
-      color: TLC_SPOT_COLORS[spId] || (sp.functionalGroups?.isArene ? '#818cf8' : '#38bdf8'),
-      uvActive: Boolean(sp.functionalGroups?.isArene || sp.functionalGroups?.isAlkene || sp.functionalGroups?.hasAldehydeGroup || sp.atoms?.C >= 6),
+      color: resolveTlcSpotColor(spId, sp),
+      uvActive: resolveTlcUvActive(sp),
     });
   }
   plate.spots = Array.from(existingMap.values()).slice(0, 8);

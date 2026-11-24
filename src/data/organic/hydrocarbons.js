@@ -300,6 +300,7 @@ export const HYDROCARBON_SPECIES = {
     atoms: { C: 3, H: 3, N: 1 },
     functionalGroups: { isAlkene: true },
     tlcPolarity: 0.42,
+    uvActive: true,
   },
   PAN_s: {
     id: 'PAN_s',

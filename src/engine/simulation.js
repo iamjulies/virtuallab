@@ -673,6 +673,7 @@ export class LabSimulation {
         isStoppered: false,
         mountedOnVesselId: null,
         valveOpen: false,
+        valveRateMlS: 3.5,
         valveFlowFrac: 0.35,
         stopAtInterface: true,
         emulsionTimer: 0,
@@ -3319,7 +3320,7 @@ export class LabSimulation {
   setBuretteValveRate(buretteId, rateMlS) {
     const b = this.getItem(buretteId);
     if (!b || b.kind !== 'burette') return;
-    b.valveRateMlS = Math.max(0, Math.min(5.0, Number(rateMlS) || 0));
+    b.valveRateMlS = Math.max(0, Math.min(10.0, Number(rateMlS) || 0));
     this.emitChange();
   }
 
@@ -5318,7 +5319,19 @@ export class LabSimulation {
   setSeparatoryValveFlow(funnelId, flowFrac = 0.35) {
     const f = this.getItem(funnelId);
     if (!f || f.kind !== 'separatory_funnel' || f.isBroken) return false;
-    f.valveFlowFrac = Math.max(0.05, Math.min(1.0, Number(flowFrac) || 0.35));
+    const clampedFrac = Math.max(0.005, Math.min(1.0, Number(flowFrac) || 0.35));
+    f.valveFlowFrac = clampedFrac;
+    f.valveRateMlS = Math.max(0.05, Math.min(10.0, +(clampedFrac * 10.0).toFixed(2)));
+    this.emitChange();
+    return true;
+  }
+
+  setSeparatoryValveRateMlS(funnelId, rateMlS = 3.5) {
+    const f = this.getItem(funnelId);
+    if (!f || f.kind !== 'separatory_funnel' || f.isBroken) return false;
+    const clampedRate = Math.max(0.05, Math.min(10.0, Number(rateMlS) || 3.5));
+    f.valveRateMlS = +clampedRate.toFixed(2);
+    f.valveFlowFrac = +(clampedRate / 10.0).toFixed(4);
     this.emitChange();
     return true;
   }

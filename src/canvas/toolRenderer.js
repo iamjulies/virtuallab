@@ -378,8 +378,9 @@ export function renderSeparatoryFunnel(ctx, item, isSelected, isDropTarget, isDa
 
   // Active draining stream / drops from stem tip
   if (item.activeDrop) {
+    const rateFrac = Number.isFinite(item.valveRateMlS) ? item.valveRateMlS / 10.0 : (item.valveFlowFrac ?? 0.35);
     ctx.strokeStyle = item.drainColor || 'rgba(186, 230, 253, 0.88)';
-    ctx.lineWidth = Math.max(1.4, (item.valveFlowFrac ?? 0.35) * 3.2);
+    ctx.lineWidth = Math.max(1.4, Math.min(1.0, rateFrac) * 3.2);
     ctx.beginPath();
     ctx.moveTo(x, stemEndY);
     ctx.lineTo(x, stemEndY + 15 + ((timeNow * 28) % 9));
@@ -2115,12 +2116,14 @@ export function renderTlcPlate(ctx, item, isSelected, isDark, uvLight = false) {
   // Separated chromatographic analyte spots (y = originY - min(rf, sfFrac) * maxRun)
   const spots = item.spots || [];
   spots.forEach((sp, idx) => {
+    // Under 254 nm UV light, only UV-active (fluorescence-quenching) analytes are visible as dark spots
+    if (uvLight && !sp.uvActive) return;
     const laneCount = Math.min(3, Math.max(1, spots.length));
     const laneX = left + 8 + ((idx % laneCount) / Math.max(1, laneCount - 1)) * (pw - 16);
     const curRf = Math.min(sp.rf, sfFrac);
     const sy = originY - curRf * maxRun;
-    ctx.fillStyle = uvLight && sp.uvActive ? '#052e16' : sp.color || '#38bdf8';
-    ctx.globalAlpha = uvLight && sp.uvActive ? 0.88 : 0.78;
+    ctx.fillStyle = uvLight ? '#052e16' : sp.color || '#38bdf8';
+    ctx.globalAlpha = uvLight ? 0.88 : 0.82;
     ctx.beginPath();
     ctx.ellipse(spots.length === 1 ? x : laneX, sy, 3.6, 2.8, 0, 0, Math.PI * 2);
     ctx.fill();

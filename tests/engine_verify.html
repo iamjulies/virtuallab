@@ -55,7 +55,8 @@
     } from '../src/canvas/vesselRenderer.js';
     import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
     import { ParticleSystem } from '../src/canvas/particles.js';
-    import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod } from '../src/canvas/toolRenderer.js';
+    import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod, renderTlcPlate } from '../src/canvas/toolRenderer.js';
+    import { resolveTlcUvActive } from '../src/engine/analyticalTools.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
     import { DosingModal } from '../src/ui/dosingModal.js';
     import { ComparisonPanel } from '../src/ui/comparisonPanel.js';
@@ -2480,7 +2481,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.18';
+      const expectedBuild = 'virlab_beta_v5+build.19';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -10133,6 +10134,127 @@
         'Prompt 78 invariants: Tilt-pour liquid mixture -> sep funnel/burette, uncapped shake spill, pipette mixture draw/dispense, deep funnel mount, bio assets & tool usage guides',
         tiltPourSepOk && uncappedSpillOk && pipMixOk && burMixOk && deepMountOk && bioVisualsOk && guidesOk,
         `tiltSep=${tiltPourSepOk}(layers=${sepStrat.layers.length}), uncappedSpill=${uncappedSpillOk}(${beforeShakeWater.toFixed(2)}->${afterUncappedShake.toFixed(2)}->${afterStopperedShake.toFixed(2)}), pipMix=${pipMixOk}(drew=${drewMl.toFixed(2)}), burMix=${burMixOk}(disp=${dispMl.toFixed(2)},layers=${burStrat.layers.length}), mountDepth=${mountDepthPx.toFixed(1)}px(${deepMountOk}), bio=${bioVisualsOk}, guides=${guidesOk}`
+      );
+    }
+
+    // TEST: Prompt 79 — Property-driven TLC UV-254 & Polymer/Protein Exclusion, 0.05-step Tool Sliders, Split Inspector Metrics & ΔH_rxn Subscript + 3-Tier Typography
+    {
+      const sim79 = new LabSimulation();
+      // 1) TLC: carbohydrates (Glucose, Fructose, Sucrose, Maltose) are uvActive=false, distinct colors; polymers (Starch_s, Starch_aq, Cellulose_s) & coagulated proteins do NOT migrate; aromatics & explicit isUV/uvActive override work
+      const tlcBioV = sim79.createApparatus('beaker_250', 220, 380);
+      tlcBioV.moles = {
+        C2H5OH_l: 0.4,
+        CH3COOC2H5_l: 0.3,
+        Glucose_aq: 0.05,
+        Sucrose_aq: 0.05,
+        Starch_s: 0.05,
+        Starch_aq: 0.05,
+        Cellulose_s: 0.05,
+        AlbuminCoagulated_s: 0.05,
+        C6H5CHO_l: 0.05,
+      };
+      const tlc79 = sim79.createApparatus('tlc_plate', 220, 355);
+      for (let i = 0; i < 6; i++) sim79.step(0.5);
+      const glcSpot = tlc79.spots.find((s) => s.id === 'Glucose_aq');
+      const sucSpot = tlc79.spots.find((s) => s.id === 'Sucrose_aq');
+      const bzSpot = tlc79.spots.find((s) => s.id === 'C6H5CHO_l');
+      const noPolymerMigration =
+        !tlc79.spots.some((s) => ['Starch_s', 'Starch_aq', 'Cellulose_s', 'AlbuminCoagulated_s'].includes(s.id));
+      const uvFlagOk =
+        glcSpot && glcSpot.uvActive === false &&
+        sucSpot && sucSpot.uvActive === false &&
+        bzSpot && bzSpot.uvActive === true &&
+        glcSpot.color !== sucSpot.color &&
+        resolveTlcUvActive({ isUV: true, atoms: { C: 2 } }) === true &&
+        resolveTlcUvActive({ isUV: false, functionalGroups: { isArene: true } }) === false;
+
+      // Check UV-254 light canvas rendering skips non-UV colorless spots cleanly
+      const tlcCanvas = document.createElement('canvas');
+      tlcCanvas.width = 160;
+      tlcCanvas.height = 180;
+      const tlcCtx = tlcCanvas.getContext('2d');
+      let fillsNormal = 0;
+      let fillsUv = 0;
+      const origEllipse = tlcCtx.ellipse.bind(tlcCtx);
+      tlcCtx.ellipse = (...args) => {
+        fillsNormal += 1;
+        return origEllipse(...args);
+      };
+      renderTlcPlate(tlcCtx, tlc79, true, true, false);
+      const normalCount = fillsNormal;
+      tlcCtx.ellipse = (...args) => {
+        fillsUv += 1;
+        return origEllipse(...args);
+      };
+      renderTlcPlate(tlcCtx, tlc79, true, true, true);
+      const uvOnlyRendersActive = normalCount === tlc79.spots.length && fillsUv === tlc79.spots.filter((s) => s.uvActive).length;
+
+      // 2) Precision 0.05-step sliders & rate bounds (separatory_funnel 0.05..10.00 mL/s, pipette 0.05..10.00 mL, burette 0.05..10.00 mL/s)
+      const sep79 = sim79.createApparatus('separatory_funnel', 420, 320);
+      const pip79 = sim79.createApparatus('pipette_10', 520, 320);
+      const bur79 = sim79.createApparatus('burette_50', 620, 320);
+      sim79.setSeparatoryValveRateMlS(sep79.id, 8.75);
+      sim79.setPipetteDropDose(pip79.id, 3.65);
+      sim79.setBuretteValveRate(bur79.id, 9.5);
+      const ratesOk =
+        Math.abs((sep79.valveRateMlS || 0) - 8.75) < 1e-6 &&
+        Math.abs((pip79.dropDoseMl || 0) - 3.65) < 1e-6 &&
+        Math.abs((bur79.valveRateMlS || 0) - 9.5) < 1e-6;
+
+      // 3) Inspector split metric cards, real ΔH_rxn subscript, slider DOM + no-focus-loss live update
+      const host = document.createElement('div');
+      document.body.appendChild(host);
+      const ins = new InspectorPanel(host, sim79, () => (k) => I18N.vi[k] || k, {});
+      const v79 = sim79.createApparatus('beaker_250', 300, 400);
+      v79.moles = { H2O_l: 5.0, NaCl_aq: 0.2 };
+      v79.cumulativeReactionHeatJ = -4500;
+      sim79.selectedId = v79.id;
+      ins.update('vi');
+      const dhHtml = host.querySelector('#live-cum-dh')?.innerHTML || '';
+      const hasSplitCards =
+        Boolean(host.querySelector('#live-cum-heat')) &&
+        Boolean(host.querySelector('#live-cum-dh')) &&
+        dhHtml.includes('<sub>rxn</sub>') &&
+        Boolean(host.querySelector('#live-vol')) &&
+        Boolean(host.querySelector('#live-mix-density')) &&
+        Boolean(host.querySelector('#live-mass')) &&
+        Boolean(host.querySelector('#live-mass-gross')) &&
+        Boolean(host.querySelector('#live-press-local')) &&
+        Boolean(host.querySelector('#live-press-limit')) &&
+        Boolean(host.querySelector('#live-ph')) &&
+        Boolean(host.querySelector('#live-ionic-str')) &&
+        Boolean(host.querySelector('#live-cond-sigma')) &&
+        Boolean(host.querySelector('#live-rxn-rate')) &&
+        Boolean(host.querySelector('#live-conv-yield'));
+
+      sim79.selectedId = sep79.id;
+      ins.update('vi');
+      const sepSigBefore = ins.getStructureSignature((k) => I18N.vi[k] || k, 'vi');
+      sim79.setSeparatoryValveRateMlS(sep79.id, 2.55);
+      const sepSigAfter = ins.getStructureSignature((k) => I18N.vi[k] || k, 'vi');
+      const sepSliderOk =
+        Boolean(host.querySelector('#ins-sep-flow-slider[step="0.05"][max="10"]')) &&
+        host.querySelectorAll('.sep-rate-btn').length === 7 &&
+        sepSigBefore === sepSigAfter;
+
+      sim79.selectedId = pip79.id;
+      ins.update('vi');
+      const pipSliderOk =
+        Boolean(host.querySelector('#ins-pip-dose-slider[step="0.05"][max="10"]')) &&
+        host.querySelectorAll('.pip-dose-btn').length === 7 &&
+        (host.querySelector('#live-pip-dose')?.textContent || '').includes('mL');
+
+      sim79.selectedId = bur79.id;
+      ins.update('vi');
+      const burSliderOk =
+        Boolean(host.querySelector('#ins-bur-rate-slider[step="0.05"][max="10"]')) &&
+        host.querySelectorAll('.bur-rate-btn').length === 8;
+
+      host.remove();
+      assert(
+        'Prompt 79 invariants: TLC uvActive/polymer filtering & UV-254 culling, 0.05-step rate sliders, split Inspector cards & ΔH_rxn subscript',
+        noPolymerMigration && uvFlagOk && uvOnlyRendersActive && ratesOk && hasSplitCards && sepSliderOk && pipSliderOk && burSliderOk,
+        `noPoly=${noPolymerMigration}, uvFlag=${uvFlagOk}, uvRender=${uvOnlyRendersActive}(${normalCount}->${fillsUv}), rates=${ratesOk}, split=${hasSplitCards}, sepUI=${sepSliderOk}, pipUI=${pipSliderOk}, burUI=${burSliderOk}`
       );
     }
 
