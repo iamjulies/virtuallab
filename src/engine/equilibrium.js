@@ -961,7 +961,9 @@ export function computeVesselElectrochemicalMetrics(vessel, ph = null, liqL = nu
     if (spId === 'H_aq') cHRecorded = c;
     if (spId === 'OH_aq') cOHRecorded = c;
     sumCZ2 += c * z * z;
-    const lambda0 = MOLAR_IONIC_CONDUCTIVITY_MS_CM2_MMOL[spId] ?? z * 60;
+    const lambda0 = Number.isFinite(sp.molarConductivity)
+      ? sp.molarConductivity
+      : MOLAR_IONIC_CONDUCTIVITY_MS_CM2_MMOL[spId] ?? z * 60;
     sumLambdaC += lambda0 * c;
   }
 
@@ -1204,7 +1206,7 @@ export function estimateVesselEsterificationMetrics(vessel, liqL = 0) {
 }
 
 /**
- * Qualitative vapor/solution aroma telemetry (Prompt 71) for the Inspector panel.
+ * Qualitative vapor/solution aroma telemetry (Prompt 71 / Property-driven Prompt 80) for Inspector panel.
  */
 export function computeVesselAroma(vessel) {
   if (!vessel || vessel.isShattered) return null;
@@ -1217,36 +1219,57 @@ export function computeVesselAroma(vessel) {
   if (vessel.soapScorched || (vessel.soapScorchFrac || 0) > 0.2) {
     return { kind: 'scorched', key: 'aromaScorched', tone: 'text-amber-400 border-amber-500/40 bg-amber-500/10' };
   }
-  const nFruityEster =
-    (m.CH3COOC2H5_l || 0) +
-    (m.CH3COOC5H11_l || 0) +
-    (m.CH3COOC3H7_l || 0) +
-    (m.CH3COOCH3_l || 0) +
-    (m.HCOOC2H5_l || 0) +
-    (m.HCOOCH3_l || 0);
-  const nPungentAcid = (m.CH3COOH_l || 0) + (m.HCOOH_l || 0);
+
+  let nFruityEster = 0;
+  let nPungentAcid = 0;
+  let nAlcohol = 0;
+  let nSoapTot = 0;
+  let customAroma = null;
+
+  for (const [id, n] of Object.entries(m)) {
+    if (!Number.isFinite(n) || n <= 1e-10) continue;
+    const sp = SPECIES[id];
+    if (!sp) continue;
+    if (sp.isSoapIon || sp.isSoapSolid) nSoapTot += n;
+
+    const ap = sp.aromaProfile;
+    if (ap) {
+      if (ap.category === 'ester_fruity') nFruityEster += n;
+      else if (ap.category === 'vinegar') nPungentAcid += n;
+      else if (ap.category === 'alcohol') nAlcohol += n;
+      else if (n >= (ap.minMol ?? 0.003) && !customAroma) {
+        customAroma = {
+          kind: ap.category || ap.key,
+          key: ap.key,
+          tone: ap.tone || 'text-main border-theme bg-surface-alt',
+        };
+      }
+      continue;
+    }
+
+    // Legacy fallback categories for species without explicit aromaProfile
+    if (sp.functionalGroups?.isEster && !sp.isFat && !sp.isPolymer && (sp.atoms?.C || 10) <= 8) nFruityEster += n;
+    else if (sp.functionalGroups?.isCarboxylicAcid && (sp.atoms?.C || 10) <= 4) nPungentAcid += n;
+    else if (sp.functionalGroups?.isPrimaryAlcohol && (sp.atoms?.C || 10) <= 5) nAlcohol += n;
+  }
+
   if (nFruityEster >= 0.003 && (nFruityEster >= nPungentAcid * 0.12 || (m.H2SO4_l || 0) > 1e-4)) {
     return { kind: 'ester_fruity', key: 'aromaEsterFruity', tone: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' };
   }
   if (vessel._hadVolatileEsterForAroma && nFruityEster < 0.001 && (m.OH_aq || 0) + (m.CH3COO_aq || 0) + (m.HCOO_aq || 0) > 0.005) {
     return { kind: 'ester_cleared', key: 'aromaEsterCleared', tone: 'text-sky-400 border-sky-500/40 bg-sky-500/10' };
   }
+  if (customAroma) return customAroma;
   if ((m.C2H5OC2H5_l || 0) >= 0.003) {
     return { kind: 'ether', key: 'aromaEther', tone: 'text-purple-300 border-purple-500/40 bg-purple-500/10' };
   }
   if (nPungentAcid >= 0.005) {
     return { kind: 'vinegar', key: 'aromaVinegar', tone: 'text-amber-300 border-amber-500/40 bg-amber-500/10' };
   }
-  let nSoapTot = 0;
-  for (const [id, n] of Object.entries(m)) {
-    if (n > 1e-10 && (SPECIES[id]?.isSoapIon || SPECIES[id]?.isSoapSolid)) {
-      nSoapTot += n;
-    }
-  }
   if (vessel.saponificationComplete || nSoapTot >= 0.005) {
     return { kind: 'soapy_clean', key: 'aromaSoapyClean', tone: 'text-sky-300 border-sky-400/40 bg-sky-400/10' };
   }
-  if ((m.C2H5OH_l || 0) + (m.CH3OH_l || 0) + (m.C5H11OH_l || 0) + (m.C3H7OH_l || 0) >= 0.01) {
+  if (nAlcohol >= 0.01) {
     return { kind: 'alcohol', key: 'aromaAlcohol', tone: 'text-main border-theme bg-surface-alt' };
   }
   return null;

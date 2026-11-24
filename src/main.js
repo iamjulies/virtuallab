@@ -28,6 +28,7 @@ import {
 } from './storage/workspaceStorage.js';
 import { WorkspaceStorageModal } from './ui/workspaceStorageModal.js';
 import { StorageCabinetModal } from './ui/storageCabinetModal.js';
+import { exportWorkbenchSnapshotAsset, openPrintableLabReport } from './storage/reportExport.js';
 import {
   ShortcutsModal,
   loadCustomShortcuts,
@@ -70,6 +71,10 @@ const benchHintEl = document.getElementById('bench-hint-text');
 const compareBtnEl = document.getElementById('btn-compare-mode');
 const compareRootEl = document.getElementById('comparison-panel-root');
 const resetBtnEl = document.getElementById('btn-reset-bench');
+const snapBtnEl = document.getElementById('btn-bench-snapshot');
+const snapMenuEl = document.getElementById('bench-snapshot-menu');
+const printReportBtnEl = document.getElementById('btn-print-report');
+const printReportRootEl = document.getElementById('print-lab-report');
 const zoomLoupeBtnEl = document.getElementById('btn-zoom-loupe');
 const zoomControlsEl = document.getElementById('canvas-zoom-controls');
 const zoomOutBtnEl = document.getElementById('btn-zoom-out');
@@ -468,6 +473,10 @@ comparisonPanel = new ComparisonPanel(compareRootEl, sim, getTranslator, {
   onClose: () => {
     syncCompareButton();
     setTimeout(() => workbench.resize(), 20);
+  },
+  getLabName: () => {
+    const activeLab = labManager.getActiveLab();
+    return activeLab?.customName || `Lab ${activeLab?.number || 1}`;
   },
 });
 
@@ -1472,6 +1481,8 @@ function refreshChrome(forceInspector = false) {
 
   if (benchHintEl) benchHintEl.textContent = t('pourBetweenHint');
   if (resetBtnEl) resetBtnEl.textContent = `↺ ${t('resetBench')}`;
+  if (snapBtnEl) snapBtnEl.textContent = t('btnBenchSnapshot');
+  if (printReportBtnEl) printReportBtnEl.textContent = t('btnPrintReport');
 
   document.querySelectorAll('.mobile-tab-btn').forEach((btn) => {
     const tab = btn.dataset.tab;
@@ -1514,6 +1525,48 @@ resetBtnEl?.addEventListener('click', () => {
   comparisonPanel?.setOpen(false);
   sim.setupPreset('clean');
   refreshChrome(true);
+});
+
+snapBtnEl?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  snapMenuEl?.classList.toggle('hidden');
+});
+document.addEventListener('click', (e) => {
+  if (snapMenuEl && !snapMenuEl.classList.contains('hidden') && !e.target.closest('#bench-snapshot-wrap')) {
+    snapMenuEl.classList.add('hidden');
+  }
+});
+snapMenuEl?.querySelectorAll('.bench-snap-opt').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    snapMenuEl.classList.add('hidden');
+    const fmt = btn.dataset.snapFmt || 'png';
+    const activeLab = labManager.getActiveLab();
+    const labName = activeLab?.customName || `Lab ${activeLab?.number || 1}`;
+    workbench?.render();
+    exportWorkbenchSnapshotAsset({
+      format: fmt,
+      workbenchCanvas: canvasEl,
+      isDark: appState.theme !== 'light' && appState.theme !== 'olivia' && appState.theme !== 'ctrl',
+      sim,
+      labName,
+      lang: appState.lang,
+    });
+    showToast(`📷 ${fmt.toUpperCase()} (${labName})`);
+  });
+});
+printReportBtnEl?.addEventListener('click', () => {
+  const activeLab = labManager.getActiveLab();
+  const labName = activeLab?.customName || `Lab ${activeLab?.number || 1}`;
+  workbench?.render();
+  openPrintableLabReport({
+    sim,
+    workbenchCanvas: canvasEl,
+    isDark: appState.theme !== 'light' && appState.theme !== 'olivia' && appState.theme !== 'ctrl',
+    labName,
+    t: getTranslator(),
+    lang: appState.lang,
+    reportRootEl: printReportRootEl,
+  });
 });
 
 // Customizable Keyboard Shortcuts Registry & Modal

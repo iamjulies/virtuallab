@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v5-build-19';
+const CACHE_NAME = 'virlab-beta-v5-build-20';
 const ASSETS = [
   './',
   './index.html',
@@ -33,6 +33,7 @@ const ASSETS = [
   './src/audio/soundEngine.js',
   './src/storage/workspaceStorage.js',
   './src/storage/xlsxExport.js',
+  './src/storage/reportExport.js',
   './src/data/constants.js',
   './src/data/vesselGeometry.js',
   './src/data/i18n.js',

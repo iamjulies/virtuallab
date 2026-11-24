@@ -1853,3 +1853,130 @@ table {
   border-bottom: 3.5px solid transparent;
   border-right: 6px solid currentColor;
 }
+
+/* Prompt 80: Bench Snapshot Dropdown & Printable Vector Lab Report */
+.bench-snapshot-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 60;
+  min-width: 118px;
+  padding: 4px;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bench-snapshot-menu.hidden {
+  display: none;
+}
+.bench-snap-opt {
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  border-radius: 0.35rem;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+}
+.bench-snap-opt:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.print-only-report {
+  display: none;
+}
+
+@media print {
+  html, body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  #device-frame-wrap,
+  #dosing-modal-root,
+  #toast-banner {
+    display: none !important;
+  }
+  .print-only-report {
+    display: block !important;
+    font-family: system-ui, -apple-system, sans-serif;
+    padding: 12px 18px;
+    color: #0f172a;
+  }
+  .print-report-hdr {
+    border-bottom: 2px solid #0f172a;
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+  }
+  .print-report-hdr h1 {
+    font-size: 18px;
+    margin: 0 0 4px 0;
+  }
+  .print-report-hdr p {
+    font-size: 11px;
+    color: #475569;
+    margin: 0;
+  }
+  .print-bench-img-wrap img {
+    width: 100%;
+    max-height: 360px;
+    object-fit: contain;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    margin-bottom: 12px;
+  }
+  .print-report-page h2 {
+    font-size: 14px;
+    margin: 12px 0 6px 0;
+    border-bottom: 1px solid #cbd5e1;
+    padding-bottom: 3px;
+  }
+  .print-vessel-card {
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    break-inside: avoid;
+  }
+  .print-vessel-card h3 {
+    font-size: 13px;
+    margin: 0 0 4px 0;
+  }
+  .print-metrics-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-size: 11px;
+    font-family: ui-monospace, monospace;
+    margin-bottom: 6px;
+  }
+  .print-vessel-card table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10.5px;
+    margin-bottom: 4px;
+  }
+  .print-vessel-card th,
+  .print-vessel-card td {
+    border-bottom: 1px solid #e2e8f0;
+    padding: 3px 6px;
+    text-align: left;
+  }
+  .print-muted {
+    font-size: 11px;
+    color: #64748b;
+  }
+  .print-log-list {
+    font-size: 10.5px;
+    padding-left: 18px;
+    margin: 0;
+  }
+}

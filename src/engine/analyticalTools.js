@@ -149,13 +149,24 @@ export function computeBeerLambertReading(vessel, wavelengthNm = 525) {
 
   for (const [spId, nMol] of Object.entries(vessel.moles || {})) {
     if (!Number.isFinite(nMol) || nMol <= 1e-10) continue;
-    const tbl = CHROMOPHORE_EPSILON[spId];
-    if (!tbl || !(tbl[wl] > 0)) continue;
+    const sp = SPECIES[spId];
     let effMol = nMol;
     if (spId === 'Phenolphthalein_aq') {
       effMol = nMol * Math.max(0, computePhenolphthaleinAlpha(ph, vessel.phenBleachFrac || 0));
     }
     const conc = effMol / liqL;
+    if (Array.isArray(sp?.uvVisBands) && sp.uvVisBands.length > 0) {
+      let epsWl = 0;
+      for (const b of sp.uvVisBands) {
+        const sig = b.sigmaNm || (b.fwhmNm ? b.fwhmNm / 2.3548 : 30);
+        const z = (wl - b.lambdaNm) / Math.max(4, sig);
+        if (Math.abs(z) < 4.2 && b.eps > 0) epsWl += b.eps * Math.exp(-0.5 * z * z);
+      }
+      if (epsWl > 0) A += epsWl * bCm * conc;
+      continue;
+    }
+    const tbl = CHROMOPHORE_EPSILON[spId];
+    if (!tbl || !(tbl[wl] > 0)) continue;
     A += tbl[wl] * bCm * conc;
   }
 
@@ -328,8 +339,17 @@ export function computeUvVisSpectrum(vessel, stepNm = 5) {
       continue;
     }
 
-    const tblBands = UVVIS_BANDS[spId];
     const conc = effMol / effLiqL;
+    if (Array.isArray(sp?.uvVisBands) && sp.uvVisBands.length > 0) {
+      for (const b of sp.uvVisBands) {
+        const sig = b.sigmaNm || (b.fwhmNm ? b.fwhmNm / 2.3548 : 28);
+        const tag = `${sp.formula || spId} (${b.lambdaNm} nm)`;
+        activeBands.push([b.lambdaNm, sig, (b.eps || 0) * conc, b.tagVi || tag, b.tagEn || tag]);
+      }
+      continue;
+    }
+
+    const tblBands = UVVIS_BANDS[spId];
     if (tblBands) {
       for (const [cNm, sig, eps, lVi, lEn] of tblBands) {
         activeBands.push([cNm, sig, eps * conc, lVi, lEn]);
@@ -572,7 +592,7 @@ export function computeIrSpectrum(vessel, options = {}) {
     addBand('water_bg', waterScale);
   }
 
-  // Compile active IR oscillators
+  // Compile active IR oscillators (functionalGroups + optional SPECIES.irBands overrides)
   const oscillators = [];
   for (const [grpKey, strength] of Object.entries(bandScores)) {
     if (strength <= 0.015) continue;
@@ -587,6 +607,21 @@ export function computeIrSpectrum(vessel, options = {}) {
         key: d.key,
         vi: d.vi,
         en: d.en,
+      });
+    }
+  }
+  for (const { spId, sp, nMol } of contributions) {
+    if (!Array.isArray(sp?.irBands) || sp.irBands.length === 0) continue;
+    const wFrac = Math.min(1.8, (nMol / normDenom) * scaleFactor);
+    for (const b of sp.irBands) {
+      const fwhm = b.fwhm || 30;
+      oscillators.push({
+        wn: b.wn,
+        sigma: Math.max(8, fwhm / 2),
+        amp: (b.strength ?? 0.85) * wFrac,
+        key: b.key || `${spId}_${b.wn}`,
+        vi: b.labelVi || `${sp.formula || spId} (${b.wn} cm⁻¹)`,
+        en: b.labelEn || `${sp.formula || spId} (${b.wn} cm⁻¹)`,
       });
     }
   }
@@ -704,7 +739,8 @@ function computeVesselEluentStrength(vessel) {
   let weightedElu = 0;
   for (const [spId, nMol] of Object.entries(vessel.moles || {})) {
     if (!Number.isFinite(nMol) || nMol <= 1e-6) continue;
-    const str = ELUENT_STRENGTH[spId];
+    const sp = SPECIES[spId];
+    const str = typeof sp?.eluentStrength === 'number' ? sp.eluentStrength : ELUENT_STRENGTH[spId];
     if (str == null) continue;
     sumWeight += nMol;
     weightedElu += nMol * str;

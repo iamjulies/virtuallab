@@ -56,7 +56,8 @@
     import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
     import { ParticleSystem } from '../src/canvas/particles.js';
     import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod, renderTlcPlate } from '../src/canvas/toolRenderer.js';
-    import { resolveTlcUvActive } from '../src/engine/analyticalTools.js';
+    import { resolveTlcUvActive, computeBeerLambertReading, computeUvVisSpectrum, computeIrSpectrum } from '../src/engine/analyticalTools.js';
+    import { buildPdfBytesFromCanvas, composeWorkbenchSnapshotCanvas } from '../src/storage/reportExport.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
     import { DosingModal } from '../src/ui/dosingModal.js';
     import { ComparisonPanel } from '../src/ui/comparisonPanel.js';
@@ -120,6 +121,7 @@
       computeSolidVolumeMl,
       computeSolutionVisuals,
       computeVesselElectrochemicalMetrics,
+      computeVesselAroma,
       estimateVesselEsterificationMetrics,
       solutionFreezingPointK,
     } from '../src/engine/equilibrium.js';
@@ -142,7 +144,7 @@
       routeGasPacketToTarget,
     } from '../src/engine/gasNetwork.js';
     import { checkFlameLoopInteractions } from '../src/engine/apparatusTools.js';
-    import { stepVesselSolidBodies } from '../src/engine/liquidSurfacePhysics.js';
+    import { stepVesselSolidBodies, computeLiquidViscosityFactor } from '../src/engine/liquidSurfacePhysics.js';
     import { runOrganicV5Tests } from './organic_v5_tests.js';
 
     const results = [];
@@ -2481,7 +2483,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.19';
+      const expectedBuild = 'virlab_beta_v5+build.20';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -10255,6 +10257,63 @@
         'Prompt 79 invariants: TLC uvActive/polymer filtering & UV-254 culling, 0.05-step rate sliders, split Inspector cards & ΔH_rxn subscript',
         noPolymerMigration && uvFlagOk && uvOnlyRendersActive && ratesOk && hasSplitCards && sepSliderOk && pipSliderOk && burSliderOk,
         `noPoly=${noPolymerMigration}, uvFlag=${uvFlagOk}, uvRender=${uvOnlyRendersActive}(${normalCount}->${fillsUv}), rates=${ratesOk}, split=${hasSplitCards}, sepUI=${sepSliderOk}, pipUI=${pipSliderOk}, burUI=${burSliderOk}`
+      );
+    }
+
+    // TEST: Prompt 80 — Export PNG/JPG/PDF/CSV & Bench Snapshot, Bath SVG Cleanliness & Property-Driven SPECIES Metadata Engine
+    {
+      const sim80 = new LabSimulation();
+
+      // 1) Property-driven viscosity from SPECIES metadata (Glycerol/Oil/Starch vs Water + temp decay)
+      const vWater = sim80.createApparatus('beaker_250', 200, 400);
+      vWater.moles = { H2O_l: 5.0 };
+      const vGly = sim80.createApparatus('beaker_250', 300, 400);
+      vGly.moles = { C3H5OH_3_l: 2.0 };
+      const viscW = computeLiquidViscosityFactor(vWater);
+      const viscG = computeLiquidViscosityFactor(vGly);
+      vGly.tempK = 358.15;
+      const viscGHot = computeLiquidViscosityFactor(vGly);
+      const viscOk = Math.abs(viscW - 1.0) < 0.05 && viscG > 3.5 && viscGHot < viscG;
+
+      // 2) Property-driven molarConductivity override + AzoDye_s uvVisBands & irBands
+      SPECIES.__MockIon_aq = { id: '__MockIon_aq', formula: 'Mock⁺(aq)', phase: 'aq', charge: 1, molarConductivity: 210.0, molarMass: 40 };
+      SPECIES.__MockCounter_aq = { id: '__MockCounter_aq', formula: 'MockCl⁻(aq)', phase: 'aq', charge: -1, molarConductivity: 75.0, molarMass: 35.5 };
+      const vCond = sim80.createApparatus('beaker_250', 400, 400);
+      vCond.moles = { H2O_l: 5.55, __MockIon_aq: 0.1, __MockCounter_aq: 0.1 }; // ~0.1 M in 100 mL
+      const condRes = computeVesselElectrochemicalMetrics(vCond, 7.0, 0.1);
+      delete SPECIES.__MockIon_aq;
+      delete SPECIES.__MockCounter_aq;
+      const condOk = condRes.conductivityMSCm > 150;
+
+      // 3) uvVisBands & irBands from SPECIES metadata (AzoDye_s) + custom aromaProfile
+      const vAzo = sim80.createApparatus('beaker_250', 500, 400);
+      vAzo.moles = { C2H5OH_l: 0.05, AzoDye_s: 0.05 };
+      const blAzo = computeBeerLambertReading(vAzo, 420);
+      const uvAzo = computeUvVisSpectrum(vAzo, 5);
+      const irAzo = computeIrSpectrum(vAzo, { subtractWater: true, stepCm: 15 });
+      const aromaEth = computeVesselAroma(vAzo);
+      const azoOk =
+        blAzo.absorbance > 0.5 &&
+        uvAzo.maxA > 1.0 &&
+        uvAzo.peaks.some((p) => Math.abs(p.nm - 348) <= 15) &&
+        irAzo.peaks.some((p) => Math.abs(p.wn - 1418) <= 30) &&
+        aromaEth?.key === 'aromaAlcohol';
+
+      // 4) Pure-JS 1-page PDF 1.4 (DCTDecode) + white-matte Bench Snapshot composition + GHS hazards metadata
+      const snapCvs = composeWorkbenchSnapshotCanvas({ workbenchCanvas: document.createElement('canvas'), isDark: true, sim: sim80, labName: 'Prompt80Test', lang: 'en' });
+      const pdfBytes = buildPdfBytesFromCanvas(snapCvs);
+      const pdfStr = new TextDecoder().decode(pdfBytes.slice(0, 120)) + new TextDecoder().decode(pdfBytes.slice(-64));
+      const pdfOk = pdfBytes.length > 500 && pdfStr.startsWith('%PDF-1.4') && pdfStr.includes('%%EOF');
+      const schemaOk =
+        Array.isArray(SPECIES.H2SO4_l?.ghsHazards) &&
+        SPECIES.H2SO4_l.ghsHazards.includes('corrosive') &&
+        SPECIES.C6H14_l?.eluentStrength === 0.01 &&
+        Boolean(I18N.vi.btnBenchSnapshot && I18N.en.btnBenchSnapshot && I18N.vi.btnPrintReport && I18N.en.btnPrintReport);
+
+      assert(
+        'Prompt 80 invariants: Property-driven SPECIES schema (viscosity, molarConductivity, uvVisBands, irBands, eluentStrength, aroma, GHS) & zero-dep PDF/Snapshot compositor',
+        viscOk && condOk && azoOk && pdfOk && schemaOk,
+        `visc=${viscOk}(W=${viscW.toFixed(2)},G=${viscG.toFixed(2)}->${viscGHot.toFixed(2)}), cond=${condOk}(${condRes.conductivityMSCm.toFixed(1)}), azo=${azoOk}(A420=${blAzo.absorbance.toFixed(2)},uvMax=${uvAzo.maxA.toFixed(2)}), pdf=${pdfOk}(len=${pdfBytes.length}), schema=${schemaOk}`
       );
     }
 

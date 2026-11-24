@@ -3,6 +3,7 @@ import { CONSTANTS } from '../data/constants.js';
 import { I18N } from '../data/i18n.js';
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computePH } from '../engine/equilibrium.js';
+import { renderExportActionsBarHtml, exportCompareChartAsset } from '../storage/reportExport.js';
 
 const COMPARE_SLOT_TAGS = ['A', 'B', 'C'];
 const COMPARE_SLOT_COLORS = ['#38bdf8', '#f472b6', '#34d399'];
@@ -239,8 +240,9 @@ export class ComparisonPanel {
         <div class="compare-cards-col">
           ${cardsHtml}
         </div>
-        <div class="compare-chart-wrap">
+        <div class="compare-chart-wrap flex flex-col gap-1.5">
           <canvas id="compare-chart-canvas" class="compare-chart-canvas"></canvas>
+          ${renderExportActionsBarHtml({ idPrefix: 'cmp', label: t('exportImageCsvLabel') })}
         </div>
       </div>
     `;
@@ -264,6 +266,15 @@ export class ComparisonPanel {
       btn.addEventListener('click', () => {
         this.metric = btn.getAttribute('data-compare-metric') || 'rate';
         this.render(true);
+      });
+    });
+
+    this.rootEl.querySelectorAll('.exp-act-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const fmt = btn.dataset.expFmt || 'png';
+        const lang = this.sim?.environment?.lang || document?.documentElement?.lang || 'vi';
+        const labName = this.callbacks?.getLabName?.() || 'Lab';
+        exportCompareChartAsset({ format: fmt, sim: this.sim, metric: this.metric, t, lang, labName });
       });
     });
 

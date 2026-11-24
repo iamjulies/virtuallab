@@ -33,6 +33,13 @@ import {
 import { computeCaOOptimizationScore } from '../engine/chemistry.js';
 import { soundEngine } from '../audio/soundEngine.js';
 import { downloadCompositionXlsx } from '../storage/xlsxExport.js';
+import {
+  renderExportActionsBarHtml,
+  exportSpectrometerAsset,
+  exportAnalyticalProbeAsset,
+  exportVesselMoleChartAsset,
+  exportTlcPlateAsset,
+} from '../storage/reportExport.js';
 
 const SPECTRO_CHART_PAD = { L: 24, R: 8, T: 12, B: 22 };
 
@@ -1448,6 +1455,7 @@ export class InspectorPanel {
               <span class="font-mono" id="live-phc-pts">${(item.history || []).length} pts</span>
             </div>
             <canvas id="analytical-chart" width="270" height="104" class="w-full h-24 rounded border border-theme/50"></canvas>
+            ${renderExportActionsBarHtml({ idPrefix: 'probe', label: t('exportImageCsvLabel') })}
           </div>
           <div class="flex flex-wrap gap-1.5">
             ${
@@ -1549,6 +1557,7 @@ export class InspectorPanel {
                    <div class="flex flex-wrap gap-1 text-[10px]" id="live-col-peaks"></div>`
                 : ''
             }
+            ${renderExportActionsBarHtml({ idPrefix: 'spectro', label: t('exportImageCsvLabel') })}
           </div>
           <div class="flex flex-wrap gap-1.5">
             ${
@@ -1586,6 +1595,7 @@ export class InspectorPanel {
           <div class="flex flex-col gap-1 max-h-40 overflow-y-auto text-xs" id="live-tlc-spots">
             ${renderTlcSpotsListHtml(spots, langCode === 'en' ? 'Dip TLC plate into an organic mixture to separate spots' : 'Nhúng bản mỏng vào cốc chứa chất hữu cơ để chạy sắc ký')}
           </div>
+          ${renderExportActionsBarHtml({ idPrefix: 'tlc', label: t('exportImageCsvLabel') })}
           <div class="flex flex-wrap gap-1.5">
             ${
               stands.length > 0 || item.clampedToId
@@ -2494,6 +2504,7 @@ export class InspectorPanel {
               </div>
               <canvas id="vessel-mole-chart" width="320" height="115" class="w-full h-[115px] rounded-lg bg-surface-alt border border-theme"></canvas>
               <div id="chart-legend" class="flex flex-wrap gap-2 mt-1.5 text-[11px]"></div>
+              ${renderExportActionsBarHtml({ idPrefix: 'mole', label: t('exportImageCsvLabel') })}
             </div>
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
               <h4 class="text-xs font-semibold text-muted mb-1.5">${t('activeReactionsTitle')}</h4>
@@ -2687,6 +2698,31 @@ export class InspectorPanel {
     });
 
     if (!item) return;
+
+    this.container.querySelectorAll('.exp-act-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const prefix = btn.dataset.expPrefix;
+        const fmt = btn.dataset.expFmt || 'png';
+        const labsMeta = this.callbacks.getLabsMeta?.();
+        const activeLab = labsMeta?.labs?.[labsMeta.activeIndex];
+        const labTitle = activeLab?.customName || `Lab ${activeLab?.number || 1}`;
+        const lang = this.lastLangCode || 'vi';
+        if (prefix === 'mole' && item.kind === 'vessel') {
+          exportVesselMoleChartAsset({ format: fmt, vessel: item, t, lang, labName: labTitle });
+        } else if (prefix === 'probe' && item.kind === 'ph_conductometer') {
+          exportAnalyticalProbeAsset({ format: fmt, item, t, lang, labName: labTitle });
+        } else if (prefix === 'spectro' && item.kind === 'colorimeter') {
+          if ((item.spectroMode || 'uvvis_kinetics') === 'uvvis_kinetics') {
+            exportAnalyticalProbeAsset({ format: fmt, item, t, lang, labName: labTitle });
+          } else {
+            const contactV = item.contactVesselId ? this.sim.getItem(item.contactVesselId) : null;
+            exportSpectrometerAsset({ format: fmt, item, vessel: contactV, t, lang, labName: labTitle });
+          }
+        } else if (prefix === 'tlc' && item.kind === 'tlc_plate') {
+          exportTlcPlateAsset({ format: fmt, plate: item, uvLight: Boolean(this.sim.environment?.uvLight), t, lang, labName: labTitle });
+        }
+      });
+    });
 
     this.container.querySelector('#ins-move-lab-btn')?.addEventListener('click', () => {
       const sel = this.container.querySelector('#ins-move-lab-select');

@@ -5,22 +5,53 @@ import { SPECIES } from '../data/species.js';
 const WAVE_N = 20;
 
 /**
- * Estimate dimensionless liquid viscosity multiplier (>= 1.0) from vessel composition & temperature.
- * Pure water/ethanol ~ 1.0 (oscillates 3-4 cycles); conc. H2SO4 or concentrated brine/alkali -> 2.6..4.0 (overdamped).
+ * Estimate dimensionless liquid viscosity multiplier (>= 0.75) from SPECIES metadata
+ * (`viscosityRel298` / `viscosityCp298`), ionic solute strength, and Andrade temperature scaling.
+ * Pure water/ethanol ~ 1.0; Glycerol, oils/fats (isFat), Starch/Albumin colloids, or conc. H2SO4 -> 2.5..4.8.
  */
 export function computeLiquidViscosityFactor(vessel) {
   if (!vessel?.moles) return 1.0;
   const m = vessel.moles;
-  const nH2O = m.H2O_l || 0;
-  const nH2SO4 = m.H2SO4_l || 0;
-  const nAlk = (m.Na_aq || 0) + (m.K_aq || 0) + (m.OH_aq || 0);
-  const nSol = nAlk + (m.SO4_2_aq || 0) + (m.HSO4_aq || 0) + (m.Cu2_aq || 0) + (m.Cl_aq || 0);
-  const totAq = Math.max(1e-5, nH2O + nH2SO4);
-  const acidFrac = nH2SO4 / totAq;
-  const solRatio = nSol / totAq;
+  let weightedVisc = 0;
+  let totalLiqBasis = 0;
+  let soluteMol = 0;
+
+  for (const [spId, n] of Object.entries(m)) {
+    if (!Number.isFinite(n) || n <= 1e-10) continue;
+    const sp = SPECIES[spId];
+    if (!sp) continue;
+
+    if (sp.phase === 'aq') {
+      if (Number.isFinite(sp.viscosityRel298) || Number.isFinite(sp.viscosityCp298)) {
+        const rel = Number.isFinite(sp.viscosityRel298) ? sp.viscosityRel298 : Math.max(0.4, sp.viscosityCp298 / 0.89);
+        weightedVisc += n * Math.max(0.45, Math.min(8.0, rel));
+        totalLiqBasis += n;
+      } else {
+        soluteMol += n * (Math.abs(sp.charge || 0) >= 2 ? 1.25 : 1.0);
+      }
+      continue;
+    }
+
+    if (sp.phase !== 'l') continue;
+    let rel = 1.0;
+    if (Number.isFinite(sp.viscosityRel298)) {
+      rel = sp.viscosityRel298;
+    } else if (Number.isFinite(sp.viscosityCp298)) {
+      rel = Math.max(0.55, Math.min(5.2, Math.pow(Math.max(0.2, sp.viscosityCp298) / 0.89, 0.38)));
+    } else if (sp.isFat) {
+      rel = 4.0;
+    } else if (spId === 'H2SO4_l') {
+      rel = 3.5;
+    }
+    weightedVisc += n * Math.max(0.45, Math.min(8.0, rel));
+    totalLiqBasis += n;
+  }
+
+  const baseVisc = totalLiqBasis > 1e-8 ? weightedVisc / totalLiqBasis : 1.0;
+  const solRatio = soluteMol / Math.max(1e-5, totalLiqBasis);
   const T = Math.max(240, vessel.tempK || CONSTANTS.T_STD_K);
-  const tempFactor = Math.pow(298.15 / Math.min(420, T), 0.55);
-  return Math.max(0.75, Math.min(4.2, (1.0 + acidFrac * 2.5 + solRatio * 1.15) * tempFactor));
+  const tempFactor = Math.pow(298.15 / Math.min(430, T), 0.55);
+  return Math.max(0.75, Math.min(4.8, (baseVisc + solRatio * 1.15) * tempFactor));
 }
 
 /**

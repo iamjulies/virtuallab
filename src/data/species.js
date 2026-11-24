@@ -1,6 +1,36 @@
 /**
  * Chemical Species Database & Starter Pure Reagents.
  * Atomic weights derived consistently so mass conservation holds to machine precision.
+ *
+ * ============================================================================
+ * PROPERTY-DRIVEN METADATA SCHEMA (SPECIES[id]) — Prompt 80 Standard
+ * ============================================================================
+ * 1. Core Identity:
+ *    id, formula, name, phase ('s' | 'l' | 'aq' | 'g'), molarMass (g/mol),
+ *    atoms ({ C, H, O, N, ... }), charge (integer for 'aq' ions).
+ * 2. Thermodynamics & Phase Change:
+ *    cp (J/(mol·K)), density (g/mL), meltTempK, boilTempK, dHFusJ, dHVapJ,
+ *    dHCombustJ, autoIgnitionK, flashPointK, partialMolarVolMl, noMelt.
+ * 3. Phase Stratification & Solubility:
+ *    liquidGroup ('aqueous' | 'water_miscible_organic' | 'light_organic' |
+ *                 'organic_light' | 'heavy_organic' | 'organic_heavy'),
+ *    partitionKow (octanol-water K_ow), vaporPressureAtm298, vaporSpeciesId,
+ *    isPrecipitate, isPolymer, isFat, isSoapIon, isSoapSolid.
+ * 4. Viscosity & Electrochemistry:
+ *    viscosityCp298 (dynamic viscosity at 298.15 K in cP; 0.89 for H2O),
+ *    viscosityRel298 (dimensionless ratio relative to H2O; alternative to Cp),
+ *    molarConductivity (limiting molar conductivity λ⁰ in mS·cm²/mmol at 298 K).
+ * 5. Optical Spectroscopy & Chromatography:
+ *    color, visualType, renderLayer, extinctionRGB, opticalCoeff,
+ *    uvActive / isUV (boolean UV-254 quenching), tlcColor (hex), tlcPolarity (0..1),
+ *    eluentStrength (0.0..1.0 solvent strength for TLC mobile phase),
+ *    uvVisBands ([{ lambdaNm, eps, fwhmNm?, sigmaNm?, tagVi?, tagEn? }]),
+ *    irBands ([{ wn, fwhm?, strength?, labelVi, labelEn, key? }]),
+ *    functionalGroups ({ isArene, isAlkene, isPrimaryAlcohol, hasAldehydeGroup, ... }).
+ * 6. Aroma & GHS Laboratory Safety:
+ *    aromaProfile ({ key, minMol, tone?, category? }),
+ *    ghsHazards (Array of 'flammable' | 'corrosive' | 'toxic' | 'oxidizer').
+ * ============================================================================
  */
 import { HYDROCARBON_SPECIES } from './organic/hydrocarbons.js';
 import { OXYGEN_SPECIES } from './organic/oxygen_compounds.js';
@@ -7140,26 +7170,26 @@ const ORGANIC_PROPERTY_METADATA = {
   CH4_g: { atoms: { C: 1, H: 4 }, autoIgnitionK: 810.15, dHCombustJ: -890300, functionalGroups: { isAlkane: true, legacyHandled: true } },
   C2H4_g: { atoms: { C: 2, H: 4 }, autoIgnitionK: 723.15, dHCombustJ: -1411000, functionalGroups: { isAlkene: true, legacyHandled: true } },
   C2H2_g: { atoms: { C: 2, H: 2 }, autoIgnitionK: 578.15, dHCombustJ: -1300000, functionalGroups: { hasTripleBondTerminal: true, legacyHandled: true } },
-  CH3OH_l: { atoms: { C: 1, H: 4, O: 1 }, autoIgnitionK: 658.15, dHCombustJ: -726000, functionalGroups: { isPrimaryAlcohol: true, legacyHandled: true } },
-  C2H5OH_l: { atoms: { C: 2, H: 6, O: 1 }, autoIgnitionK: 636.15, dHCombustJ: -1367000, functionalGroups: { isPrimaryAlcohol: true, legacyHandled: true } },
-  CH3COOH_l: { atoms: { C: 2, H: 4, O: 2 }, autoIgnitionK: 736.15, dHCombustJ: -874000, functionalGroups: { isCarboxylicAcid: true, legacyHandled: true } },
-  C3H5OH_3_l: { atoms: { C: 3, H: 8, O: 3 }, autoIgnitionK: 643.15, dHCombustJ: -1655000, functionalGroups: { hasVicinalDiol: true, legacyHandled: true } },
-  HCHO_aq: { atoms: { C: 1, H: 2, O: 1 }, functionalGroups: { hasAldehydeGroup: true, legacyHandled: true }, uvActive: false },
-  CH3CHO_l: { atoms: { C: 2, H: 4, O: 1 }, autoIgnitionK: 458.15, dHCombustJ: -1167000, functionalGroups: { hasAldehydeGroup: true, legacyHandled: true }, uvActive: false },
-  C6H6_l: { atoms: { C: 6, H: 6 }, autoIgnitionK: 771.15, dHCombustJ: -3268000, functionalGroups: { isArene: true, legacyHandled: true }, uvActive: true },
+  CH3OH_l: { atoms: { C: 1, H: 4, O: 1 }, autoIgnitionK: 658.15, dHCombustJ: -726000, functionalGroups: { isPrimaryAlcohol: true, legacyHandled: true }, eluentStrength: 0.95, viscosityCp298: 0.54, aromaProfile: { key: 'aromaAlcohol', minMol: 0.01, category: 'alcohol', tone: 'text-main border-theme bg-surface-alt' }, ghsHazards: ['flammable', 'toxic'] },
+  C2H5OH_l: { atoms: { C: 2, H: 6, O: 1 }, autoIgnitionK: 636.15, dHCombustJ: -1367000, functionalGroups: { isPrimaryAlcohol: true, legacyHandled: true }, eluentStrength: 0.88, viscosityCp298: 1.07, aromaProfile: { key: 'aromaAlcohol', minMol: 0.01, category: 'alcohol', tone: 'text-main border-theme bg-surface-alt' }, ghsHazards: ['flammable'] },
+  CH3COOH_l: { atoms: { C: 2, H: 4, O: 2 }, autoIgnitionK: 736.15, dHCombustJ: -874000, functionalGroups: { isCarboxylicAcid: true, legacyHandled: true }, viscosityCp298: 1.13, aromaProfile: { key: 'aromaVinegar', minMol: 0.005, category: 'vinegar', tone: 'text-amber-300 border-amber-500/40 bg-amber-500/10' }, ghsHazards: ['corrosive', 'flammable'] },
+  C3H5OH_3_l: { atoms: { C: 3, H: 8, O: 3 }, autoIgnitionK: 643.15, dHCombustJ: -1655000, functionalGroups: { hasVicinalDiol: true, legacyHandled: true }, viscosityCp298: 934.0, viscosityRel298: 4.1 },
+  HCHO_aq: { atoms: { C: 1, H: 2, O: 1 }, functionalGroups: { hasAldehydeGroup: true, legacyHandled: true }, uvActive: false, ghsHazards: ['toxic'] },
+  CH3CHO_l: { atoms: { C: 2, H: 4, O: 1 }, autoIgnitionK: 458.15, dHCombustJ: -1167000, functionalGroups: { hasAldehydeGroup: true, legacyHandled: true }, uvActive: false, ghsHazards: ['flammable'] },
+  C6H6_l: { atoms: { C: 6, H: 6 }, autoIgnitionK: 771.15, dHCombustJ: -3268000, functionalGroups: { isArene: true, legacyHandled: true }, uvActive: true, eluentStrength: 0.32, viscosityCp298: 0.60, ghsHazards: ['flammable', 'toxic'] },
   C6H6_s: { atoms: { C: 6, H: 6 }, functionalGroups: { isArene: true, legacyHandled: true }, uvActive: true },
   C6H5Br_l: { atoms: { C: 6, H: 5, Br: 1 }, functionalGroups: { isArene: true, isHaloalkane: true, legacyHandled: true }, uvActive: true },
   C6H5Cl_l: { atoms: { C: 6, H: 5, Cl: 1 }, functionalGroups: { isArene: true, isHaloalkane: true, legacyHandled: true }, uvActive: true },
   C6H5NO2_l: { atoms: { C: 6, H: 5, N: 1, O: 2 }, functionalGroups: { isArene: true, hasNitroGroup: true, legacyHandled: true }, uvActive: true },
-  C6H5CH3_l: { atoms: { C: 7, H: 8 }, functionalGroups: { isArene: true, legacyHandled: true }, uvActive: true },
-  C6H5C2H5_l: { atoms: { C: 8, H: 10 }, functionalGroups: { isArene: true, legacyHandled: true }, uvActive: true },
+  C6H5CH3_l: { atoms: { C: 7, H: 8 }, functionalGroups: { isArene: true, legacyHandled: true }, uvActive: true, eluentStrength: 0.29, viscosityCp298: 0.56, ghsHazards: ['flammable', 'toxic'] },
+  C6H5C2H5_l: { atoms: { C: 8, H: 10 }, functionalGroups: { isArene: true, legacyHandled: true }, uvActive: true, ghsHazards: ['flammable'] },
   C6H5COCH3_l: { atoms: { C: 8, H: 8, O: 1 }, functionalGroups: { isArene: true, isKetone: true, legacyHandled: true }, uvActive: true },
-  C6H5OH_l: { atoms: { C: 6, H: 6, O: 1 }, functionalGroups: { isArene: true, isPhenol: true, legacyHandled: true }, uvActive: true },
-  C6H5OH_s: { atoms: { C: 6, H: 6, O: 1 }, functionalGroups: { isArene: true, isPhenol: true, legacyHandled: true }, uvActive: true },
+  C6H5OH_l: { atoms: { C: 6, H: 6, O: 1 }, functionalGroups: { isArene: true, isPhenol: true, legacyHandled: true }, uvActive: true, ghsHazards: ['corrosive', 'toxic'] },
+  C6H5OH_s: { atoms: { C: 6, H: 6, O: 1 }, functionalGroups: { isArene: true, isPhenol: true, legacyHandled: true }, uvActive: true, ghsHazards: ['corrosive', 'toxic'] },
   C6H5CH2Br_l: { atoms: { C: 7, H: 7, Br: 1 }, functionalGroups: { isArene: true, isHaloalkane: true, legacyHandled: true }, uvActive: true },
   BrC6H4CH3_l: { atoms: { C: 7, H: 7, Br: 1 }, functionalGroups: { isArene: true, legacyHandled: true }, uvActive: true },
   NO2C6H4CH3_l: { atoms: { C: 7, H: 7, N: 1, O: 2 }, functionalGroups: { isArene: true, hasNitroGroup: true, legacyHandled: true }, uvActive: true },
-  C6H5COOC2H5_l: { atoms: { C: 9, H: 10, O: 2 }, functionalGroups: { isArene: true, isEster: true, legacyHandled: true }, uvActive: true },
+  C6H5COOC2H5_l: { atoms: { C: 9, H: 10, O: 2 }, functionalGroups: { isArene: true, isEster: true, legacyHandled: true }, uvActive: true, aromaProfile: { key: 'aromaEsterFruity', minMol: 0.003, category: 'ester_fruity', tone: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' } },
   C6H4_NO2_2_s: { atoms: { C: 6, H: 4, N: 2, O: 4 }, functionalGroups: { isArene: true, hasNitroGroup: true, legacyHandled: true }, uvActive: true },
   C12H10_s: { atoms: { C: 12, H: 10 }, functionalGroups: { isArene: true, legacyHandled: true }, uvActive: true },
   C6H2Br3OH_s: { atoms: { C: 6, H: 3, Br: 3, O: 1 }, functionalGroups: { isArene: true, isPhenol: true, legacyHandled: true }, uvActive: true },
@@ -7169,12 +7199,35 @@ const ORGANIC_PROPERTY_METADATA = {
   C6H4_SO3H_2_s: { atoms: { C: 6, H: 6, S: 2, O: 6 }, functionalGroups: { isArene: true, legacyHandled: true }, uvActive: true },
   C6H5COOH_s: { atoms: { C: 7, H: 6, O: 2 }, functionalGroups: { isArene: true, isCarboxylicAcid: true, legacyHandled: true }, uvActive: true },
   C6H2_NO2_3CH3_s: { atoms: { C: 7, H: 5, N: 3, O: 6 }, functionalGroups: { isArene: true, hasNitroGroup: true, legacyHandled: true }, uvActive: true },
-  CH2CHCHO_l: { atoms: { C: 3, H: 4, O: 1 }, functionalGroups: { isAlkene: true, hasAldehydeGroup: true, legacyHandled: true }, uvActive: true },
+  CH2CHCHO_l: { atoms: { C: 3, H: 4, O: 1 }, functionalGroups: { isAlkene: true, hasAldehydeGroup: true, legacyHandled: true }, uvActive: true, ghsHazards: ['flammable', 'toxic'] },
   CH3CHCHCHO_l: { atoms: { C: 4, H: 6, O: 1 }, functionalGroups: { isAlkene: true, hasAldehydeGroup: true, legacyHandled: true }, uvActive: true },
-  CH2CHCOOH_l: { atoms: { C: 3, H: 4, O: 2 }, functionalGroups: { isAlkene: true, isCarboxylicAcid: true, legacyHandled: true }, uvActive: true },
+  CH2CHCOOH_l: { atoms: { C: 3, H: 4, O: 2 }, functionalGroups: { isAlkene: true, isCarboxylicAcid: true, legacyHandled: true }, uvActive: true, ghsHazards: ['corrosive', 'flammable'] },
   CH3CHCHCOOH_s: { atoms: { C: 4, H: 6, O: 2 }, functionalGroups: { isAlkene: true, isCarboxylicAcid: true, legacyHandled: true }, uvActive: true },
   C4H2O3_s: { atoms: { C: 4, H: 2, O: 3 }, functionalGroups: { isAlkene: true, isEster: true, legacyHandled: true }, uvActive: true },
-  Br2_l: { uvActive: true },
+  Br2_l: { uvActive: true, ghsHazards: ['corrosive', 'toxic', 'oxidizer'] },
+  H2O_l: { eluentStrength: 0.95, viscosityCp298: 0.89, viscosityRel298: 1.0 },
+  C6H14_l: { eluentStrength: 0.01, viscosityCp298: 0.30, ghsHazards: ['flammable'] },
+  C6H12_l: { eluentStrength: 0.05, viscosityCp298: 0.32, ghsHazards: ['flammable'] },
+  C3H7OH_l: { eluentStrength: 0.82, viscosityCp298: 1.94, aromaProfile: { key: 'aromaAlcohol', minMol: 0.01, category: 'alcohol', tone: 'text-main border-theme bg-surface-alt' }, ghsHazards: ['flammable'] },
+  C5H11OH_l: { eluentStrength: 0.72, viscosityCp298: 3.7, aromaProfile: { key: 'aromaAlcohol', minMol: 0.01, category: 'alcohol', tone: 'text-main border-theme bg-surface-alt' }, ghsHazards: ['flammable'] },
+  CHCl3_l: { eluentStrength: 0.40, viscosityCp298: 0.54, ghsHazards: ['toxic'] },
+  CH3COOC2H5_l: { eluentStrength: 0.58, viscosityCp298: 0.43, aromaProfile: { key: 'aromaEsterFruity', minMol: 0.003, category: 'ester_fruity', tone: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' }, ghsHazards: ['flammable'] },
+  CH3COOC3H7_l: { eluentStrength: 0.56, aromaProfile: { key: 'aromaEsterFruity', minMol: 0.003, category: 'ester_fruity', tone: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' }, ghsHazards: ['flammable'] },
+  CH3COOCH3_l: { eluentStrength: 0.60, aromaProfile: { key: 'aromaEsterFruity', minMol: 0.003, category: 'ester_fruity', tone: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' }, ghsHazards: ['flammable'] },
+  CH3COOC5H11_l: { aromaProfile: { key: 'aromaEsterFruity', minMol: 0.003, category: 'ester_fruity', tone: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' }, ghsHazards: ['flammable'] },
+  HCOOCH3_l: { eluentStrength: 0.58, aromaProfile: { key: 'aromaEsterFruity', minMol: 0.003, category: 'ester_fruity', tone: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' }, ghsHazards: ['flammable'] },
+  HCOOC2H5_l: { eluentStrength: 0.56, aromaProfile: { key: 'aromaEsterFruity', minMol: 0.003, category: 'ester_fruity', tone: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' }, ghsHazards: ['flammable'] },
+  CH3COCH3_l: { eluentStrength: 0.56, viscosityCp298: 0.31, ghsHazards: ['flammable'] },
+  C2H5OC2H5_l: { eluentStrength: 0.38, viscosityCp298: 0.22, aromaProfile: { key: 'aromaEther', minMol: 0.003, category: 'ether', tone: 'text-purple-300 border-purple-500/40 bg-purple-500/10' }, ghsHazards: ['flammable'] },
+  HCOOH_l: { viscosityCp298: 1.61, aromaProfile: { key: 'aromaVinegar', minMol: 0.005, category: 'vinegar', tone: 'text-amber-300 border-amber-500/40 bg-amber-500/10' }, ghsHazards: ['corrosive', 'flammable'] },
+  H2SO4_l: { viscosityCp298: 24.2, viscosityRel298: 3.5, ghsHazards: ['corrosive', 'oxidizer'] },
+  HNO3_l: { viscosityCp298: 0.75, ghsHazards: ['corrosive', 'oxidizer'] },
+  HCl_aq: { ghsHazards: ['corrosive'] },
+  NaOH_s: { ghsHazards: ['corrosive'] },
+  KMnO4_s: { ghsHazards: ['oxidizer'] },
+  H2O2_aq: { ghsHazards: ['oxidizer', 'corrosive'] },
+  C57H104O6_l: { viscosityCp298: 65.0 },
+  C6H5NH2_l: { viscosityCp298: 3.85, ghsHazards: ['toxic'] },
 };
 
 for (const sp of Object.values(SPECIES)) {

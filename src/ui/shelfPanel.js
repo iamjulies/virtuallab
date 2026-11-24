@@ -1,5 +1,5 @@
 import { APPARATUS, APPARATUS_CATEGORIES, APPARATUS_ORDER } from '../data/apparatus.js';
-import { REAGENT_CATEGORIES, STARTER_REAGENTS } from '../data/species.js';
+import { REAGENT_CATEGORIES, SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { drawReagentBottle } from '../canvas/reagentRenderer.js';
 
 function apparatusSvg(typeId) {
@@ -458,17 +458,24 @@ export class ShelfPanel {
             ${(this.activeReagentCategory === 'all'
               ? STARTER_REAGENTS
               : STARTER_REAGENTS.filter((r) => r.category === this.activeReagentCategory)
-            ).map((reg) => `
+            ).map((reg) => {
+              const hazards = SPECIES[reg.speciesId]?.ghsHazards || [];
+              const ghsMap = { flammable: '🔥', corrosive: '☣️', toxic: '☠️', oxidizer: '⚡' };
+              const ghsKeyMap = { flammable: 'ghsFlammable', corrosive: 'ghsCorrosive', toxic: 'ghsToxic', oxidizer: 'ghsOxidizer' };
+              const hazardBadges = hazards.map((h) => ghsMap[h] || '').join('');
+              const hazardTip = hazards.length ? `GHS: ${hazards.map((h) => t(ghsKeyMap[h] || h)).join(', ')}` : '';
+              return `
               <div
                 role="button"
                 tabindex="0"
                 data-reagent-id="${reg.id}"
+                ${hazardTip ? `title="${hazardTip}"` : ''}
                 class="reagent-card w-full flex items-center justify-between gap-2 p-1.5 rounded-lg border border-theme bg-surface-alt hover:border-accent transition text-left cursor-grab active:cursor-grabbing select-none"
               >
                 <div class="flex items-center gap-2 min-w-0 pointer-events-none">
                   ${reagentIconSvg(reg)}
                   <div class="min-w-0">
-                    <div class="text-xs font-semibold truncate">${t(reg.i18nKey)}</div>
+                    <div class="text-xs font-semibold truncate">${t(reg.i18nKey)}${hazardBadges ? ` <span class="text-[10px]">${hazardBadges}</span>` : ''}</div>
                     <div class="text-xs text-muted truncate">${t(reg.descKey)}</div>
                   </div>
                 </div>
@@ -476,7 +483,8 @@ export class ShelfPanel {
                   ${reg.kind === 'solid' ? 'g' : 'mL'}
                 </span>
               </div>
-            `).join('')}
+            `;
+            }).join('')}
           </div>
         </div>
 
