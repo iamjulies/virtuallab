@@ -4,6 +4,7 @@ import {
   getCondenserPorts,
   getItemRotatedHalfExtentY,
   getProbeTipPos,
+  getSepFunnelMountY,
   getStandGeometry,
   getSyringeGeometry,
   getTubeDestTipPos,
@@ -849,9 +850,15 @@ export class LabWorkbenchCanvas {
       this._pipetteWheelTs = now;
       const doseMl = hit.dropDoseMl || 1.0;
       const spec = APPARATUS[hit.typeId] || APPARATUS.pipette_10;
-      const tgt = this.findVesselAt(hit.x, hit.y + spec.height / 2 + 24, hit.id, false);
+      const tgt = this.findVesselAt(hit.x, hit.y + spec.height / 2 + 24, hit.id, true);
       const syrTgt = !tgt ? this.findSyringeAt(hit.x, hit.y + spec.height / 2 + 24) : null;
-      if (tgt && tgt.kind === 'vessel' && !tgt.isShattered && !tgt.isStoppered) {
+      const validPipContainer =
+        tgt &&
+        !tgt.isShattered &&
+        !tgt.isBroken &&
+        (tgt.kind === 'vessel' || tgt.kind === 'separatory_funnel' || tgt.kind === 'filter_funnel' || tgt.kind === 'burette') &&
+        (tgt.kind === 'burette' ? true : !tgt.isStoppered);
+      if (validPipContainer) {
         if (deltaY > 0) {
           if ((hit.volumeMl || 0) > 0.005) {
             soundEngine.playDropPlink(0.95);
@@ -1012,7 +1019,7 @@ export class LabWorkbenchCanvas {
         this.dropTargetVesselId = null;
         return null;
       }
-      const hoverVessel = this.findVesselAt(pt.x, pt.y, null, false);
+      const hoverVessel = this.findVesselAt(pt.x, pt.y, null, payloadId === 'pipette_10');
       const hoverSyr = payloadId === 'pipette_10' && !hoverVessel ? this.findSyringeAt(pt.x, pt.y) : null;
       const clampedX = Math.max(60, Math.min(BENCH_LOGICAL_W - 60, pt.x));
       const clampedY = Math.min(BENCH_FLOOR_Y - (spec.height || 80) / 2 + 2, Math.max(65, pt.y));
@@ -1069,7 +1076,7 @@ export class LabWorkbenchCanvas {
         }
       }
 
-      if (created && hoverVessel && payloadId === 'pipette_10' && !hoverVessel.isShattered && !hoverVessel.isStoppered) {
+      if (created && hoverVessel && payloadId === 'pipette_10' && !hoverVessel.isShattered && !hoverVessel.isBroken && (hoverVessel.kind === 'burette' || !hoverVessel.isStoppered) && hoverVessel.kind !== 'spoon') {
         const drew = this.sim.pipetteDrawFromVessel(hoverVessel.id, created.capacityMl || 10.0, created);
         if (drew > 0) {
           const hSpec = APPARATUS[hoverVessel.typeId];
@@ -1721,7 +1728,7 @@ export class LabWorkbenchCanvas {
         const tgt = this.findVesselAt(item.x, item.y + 18, item.id, false);
         this.dropTargetVesselId = tgt && !tgt.isStoppered ? tgt.id : null;
       } else if (item.kind === 'separatory_funnel') {
-        const tgt = this.findVesselAt(item.x, item.y + 38, item.id, false);
+        const tgt = this.findVesselAt(item.x, item.y + 82, item.id, false);
         this.dropTargetVesselId = tgt && !tgt.isInverted ? tgt.id : null;
       } else if (item.kind === 'rubber_stopper' && !item.attachedToId) {
         const mTgt = this.findMouthTargetAt(item.x, item.y, 'stopper');
@@ -1773,9 +1780,15 @@ export class LabWorkbenchCanvas {
         this.dragState.targetTilt = 0;
         if (item.kind !== 'filter_funnel') this.dropTargetVesselId = null;
       } else if (item.kind === 'pipette' && !item.isBroken) {
-        const tgt = this.findVesselAt(item.x, item.y + spec.height * 0.28);
+        const tgt = this.findVesselAt(item.x, item.y + spec.height * 0.28, item.id, true);
         const syrTgt = !tgt ? this.findSyringeAt(item.x, item.y + spec.height * 0.28) : null;
-        if (tgt && !tgt.isShattered && !tgt.isStoppered) {
+        const validPipTgt =
+          tgt &&
+          !tgt.isShattered &&
+          !tgt.isBroken &&
+          (tgt.kind === 'vessel' || tgt.kind === 'separatory_funnel' || tgt.kind === 'filter_funnel' || tgt.kind === 'burette') &&
+          (tgt.kind === 'burette' ? true : !tgt.isStoppered);
+        if (validPipTgt) {
           this.dragState.pipetteTargetId = tgt.id;
           this.dropTargetVesselId = tgt.id;
           item.tiltAngle = -0.14;
@@ -2038,9 +2051,10 @@ export class LabWorkbenchCanvas {
             }
           } else if (item.kind === 'separatory_funnel' && !this.dragState.pourTargetId) {
             const dragMoved = Math.hypot(item.x - this.dragState.startX, item.y - this.dragState.startY);
-            const tgt = this.findVesselAt(item.x, item.y + 52, null, false);
+            const tgt = this.findVesselAt(item.x, item.y + 82, item.id, false);
             if (tgt && !tgt.isInverted && Math.abs(item.x - tgt.x) <= 30) {
-              if (dragMoved <= 6 || tgt.id !== this.dragState.unmountHoldoffId || Math.abs(item.y - (tgt.y - APPARATUS[tgt.typeId].height / 2 - 42)) <= 42) {
+              const mountY = tgt.y + getSepFunnelMountY(APPARATUS[tgt.typeId], APPARATUS.separatory_funnel);
+              if (dragMoved <= 6 || tgt.id !== this.dragState.unmountHoldoffId || Math.abs(item.y - mountY) <= 56) {
                 this.sim.mountSeparatoryFunnel(item.id, tgt.id);
                 if (this.dragState.unmountHoldoffId !== tgt.id) didStateChange = true;
               }
@@ -2091,7 +2105,13 @@ export class LabWorkbenchCanvas {
           item.hoveredActionLabel = null;
           if (pipTargetId) {
             const tgt = this.sim.getItem(pipTargetId);
-            if (tgt && tgt.kind === 'vessel' && !tgt.isShattered && !tgt.isStoppered) {
+            const isValidPip =
+              tgt &&
+              !tgt.isShattered &&
+              !tgt.isBroken &&
+              (tgt.kind === 'vessel' || tgt.kind === 'separatory_funnel' || tgt.kind === 'filter_funnel' || tgt.kind === 'burette') &&
+              (tgt.kind === 'burette' ? true : !tgt.isStoppered);
+            if (isValidPip) {
               this._upgradeDragToFullUndo();
               soundEngine.playDropPlink(0.95);
               if ((item.volumeMl || 0) <= 0.05) {

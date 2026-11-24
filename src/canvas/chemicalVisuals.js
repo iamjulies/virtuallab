@@ -715,6 +715,64 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
           ctx.arc(0, -r * 0.3, flareR, 0, Math.PI * 2);
           ctx.fill();
         }
+      } else if (vType === 'rice_grain') {
+        // Distinct oval polished white rice grains
+        const rx = r * 1.15;
+        const ry = r * 0.56;
+        const rg = ctx.createLinearGradient(-rx, -ry, rx, ry);
+        rg.addColorStop(0, '#ffffff');
+        rg.addColorStop(0.65, '#f8fafc');
+        rg.addColorStop(1, '#e2e8f0');
+        ctx.fillStyle = rg;
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 0.6;
+        ctx.beginPath();
+        ctx.ellipse(-rx * 0.18, -ry * 0.22, rx * 0.45, ry * 0.18, 0, 0, Math.PI);
+        ctx.stroke();
+      } else if (vType === 'cotton_fiber') {
+        // Fluffy multi-lobed cotton tufts with delicate fibrous wisps
+        const cr = r * 0.92;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 0.65;
+        for (const [lx, ly, lr] of [
+          [-cr * 0.45, cr * 0.1, cr * 0.55],
+          [cr * 0.42, cr * 0.12, cr * 0.52],
+          [0, -cr * 0.28, cr * 0.64],
+          [-cr * 0.1, cr * 0.34, cr * 0.48],
+        ]) {
+          ctx.beginPath();
+          ctx.arc(lx, ly, lr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+        ctx.strokeStyle = 'rgba(241, 245, 249, 0.95)';
+        ctx.lineWidth = 0.75;
+        ctx.beginPath();
+        ctx.moveTo(-cr * 0.7, -cr * 0.1);
+        ctx.quadraticCurveTo(0, -cr * 0.75, cr * 0.72, cr * 0.15);
+        ctx.stroke();
+      } else if (vType === 'egg_white') {
+        // Viscous translucent-cream egg white (albumen) gel globules
+        const rx = r * 1.45;
+        const ry = r * 0.68;
+        const eg = ctx.createRadialGradient(-rx * 0.25, -ry * 0.25, ry * 0.15, 0, 0, rx);
+        eg.addColorStop(0, 'rgba(255, 255, 255, 0.88)');
+        eg.addColorStop(0.55, 'rgba(254, 249, 195, 0.68)');
+        eg.addColorStop(1, 'rgba(254, 240, 138, 0.42)');
+        ctx.fillStyle = eg;
+        ctx.strokeStyle = 'rgba(202, 138, 4, 0.35)';
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
       } else {
         // Fallback polygon crystal/grain for any future solid visualType
         ctx.beginPath();

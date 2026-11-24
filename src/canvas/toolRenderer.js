@@ -386,6 +386,26 @@ export function renderSeparatoryFunnel(ctx, item, isSelected, isDropTarget, isDa
     ctx.stroke();
   }
 
+  // Uncapped shaking splash droplets out the open neck
+  if ((item.spillAnimTimer || 0) > 0.02 && item.isStoppered === false) {
+    const spillCol = item.spillColor || 'rgba(186, 230, 253, 0.88)';
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, item.spillAnimTimer / 0.6);
+    ctx.fillStyle = spillCol;
+    ctx.strokeStyle = spillCol;
+    ctx.lineWidth = 1.6;
+    for (let s = -2; s <= 2; s++) {
+      if (s === 0) continue;
+      const phaseT = ((timeNow * 4.2 + Math.abs(s) * 0.22) % 1);
+      const sx = x + s * (5 + phaseT * 11);
+      const sy = neckTopY - Math.sin(phaseT * Math.PI) * 18 + phaseT * 10;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   const layerBadge =
     strat?.layers?.length >= 2
       ? ` · ${strat.layers.length} ${langCode === 'en' ? 'layers' : 'lớp'}`
@@ -662,15 +682,46 @@ export function renderBurette(ctx, item, isSelected, isDropTarget, isDark, timeN
   ctx.fill();
   ctx.stroke();
 
-  // Liquid column inside burette
+  // Liquid column inside burette (supports stratified multi-phase mixtures & homogeneous solutions)
   const liqL = computeLiquidVolumeL(item.moles, item.tempK);
-  const liqMl = Math.min(50, liqL * 1000);
+  const strat = item.liquidStratification || computePhaseStratification(item.moles, item.tempK, spec, 0);
+  const liqMl = Math.min(50, strat?.totalLiqMl || liqL * 1000);
   if (liqMl > 0.02) {
     const colH = colBotY - colTopY;
     const fillH = colH * (liqMl / 50);
-    const vis = computeSolutionVisuals(item.moles, liqL, computePH(item.moles, liqL, item.tempK), 1.4, item.phenBleachFrac || 0);
-    ctx.fillStyle = vis.css;
-    ctx.fillRect(x - halfW + 1.5, colBotY - fillH, halfW * 2 - 3, fillH);
+    if (strat?.layers?.length >= 2) {
+      let curBot = colBotY;
+      for (let li = 0; li < strat.layers.length; li++) {
+        const layer = strat.layers[li];
+        const lFrac = Math.max(0.04, layer.volMl / Math.max(0.1, strat.totalLiqMl || liqMl));
+        const lH = lFrac * fillH;
+        const lTop = curBot - lH;
+        const layerMoles = {};
+        for (const [spId, n] of Object.entries(item.moles || {})) {
+          const sp = SPECIES[spId];
+          if (!sp || n <= 0) continue;
+          const grp = sp.phase === 'aq' ? 'aqueous' : sp.liquidGroup || 'aqueous';
+          if (grp === layer.phaseKey) layerMoles[spId] = n;
+        }
+        const lL = Math.max(1e-5, layer.volMl / 1000);
+        const lVis = computeSolutionVisuals(layerMoles, lL, computePH(layerMoles, lL, item.tempK), 1.4, item.phenBleachFrac || 0, item.phenIrrevFrac || 0);
+        ctx.fillStyle = lVis.css;
+        ctx.fillRect(x - halfW + 1.5, lTop, halfW * 2 - 3, curBot - lTop + 0.5);
+        if (li > 0) {
+          ctx.strokeStyle = 'rgba(255,255,255,0.68)';
+          ctx.lineWidth = 0.9;
+          ctx.beginPath();
+          ctx.moveTo(x - halfW + 1.5, curBot);
+          ctx.lineTo(x + halfW - 1.5, curBot);
+          ctx.stroke();
+        }
+        curBot = lTop;
+      }
+    } else {
+      const vis = computeSolutionVisuals(item.moles, liqL, computePH(item.moles, liqL, item.tempK), 1.4, item.phenBleachFrac || 0, item.phenIrrevFrac || 0);
+      ctx.fillStyle = vis.css;
+      ctx.fillRect(x - halfW + 1.5, colBotY - fillH, halfW * 2 - 3, fillH);
+    }
     ctx.strokeStyle = 'rgba(255,255,255,0.7)';
     ctx.lineWidth = 1;
     ctx.beginPath();

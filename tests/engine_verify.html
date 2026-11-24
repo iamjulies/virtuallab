@@ -26,6 +26,7 @@
       getCondenserPorts,
       getItemRotatedHalfExtentY,
       getProbeTipPos,
+      getSepFunnelMountY,
       getStandGeometry,
       getSyringeGeometry,
       getTubeDestTipPos,
@@ -125,7 +126,7 @@
     import { ShelfPanel } from '../src/ui/shelfPanel.js';
     import { InspectorPanel } from '../src/ui/inspectorPanel.js';
     import { LabWorkbenchCanvas } from '../src/canvas/workbench.js';
-    import { I18N } from '../src/data/i18n.js';
+    import { I18N, getApparatusUsageGuide } from '../src/data/i18n.js';
     import { findClipYForVolume, findTiltClipY3D, getInnerPolygonPx, getVesselHoldVolumeMl } from '../src/data/vesselGeometry.js';
     import { downloadCompositionXlsx, sanitizeLabFilenameSlug } from '../src/storage/xlsxExport.js';
     import { ensureConcField, injectLocalPlume, stepLiquidConcField } from '../src/engine/liquidField.js';
@@ -2479,7 +2480,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.17';
+      const expectedBuild = 'virlab_beta_v5+build.18';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -9674,6 +9675,7 @@
       simSep.attachToStand(sepExt.id, standSep.id);
       const rcvBottom = simSep.createApparatus('beaker_250', 460, 430);
       sepExt.moles = { C2H5Br_l: 0.15, H2O_l: 1.0, CH3COOC2H5_l: 0.15 }; // ~11.2 mL heavy, ~18 mL aq, ~14.7 mL light
+      simSep.toggleSeparatoryStopper(sepExt.id, true);
       simSep.shakeSeparatoryFunnel(sepExt.id);
       for (let i = 0; i < 60; i++) simSep.step(0.05); // settle emulsion
       simSep.setSeparatoryValveFlow(sepExt.id, 0.8);
@@ -9961,14 +9963,14 @@
       const sfSpec = APPARATUS.separatory_funnel;
       const rimTop = erl.y - APPARATUS.erlenmeyer_250.height / 2;
       const funnelStemTipY = sep.y + sfSpec.height / 2 - 2;
-      const funnelTaperEndY = (sep.y - sfSpec.height / 2) + 114;
+      const funnelBulbMaxY = (sep.y - sfSpec.height / 2) + 74;
       const condTopY = cond.y - (APPARATUS.liebig_condenser.width / 2);
       const funnelAlignOk =
         sfSpec.height >= 260 &&
         Math.abs(sep.x - erl.x + 8) < 1.5 &&
         Math.abs(sep.x - cond.x) >= 24 &&
         funnelStemTipY >= rimTop + 4 &&
-        funnelTaperEndY < condTopY;
+        funnelBulbMaxY < condTopY;
 
       // 2) HCHO and HCOOH removed from STARTER_REAGENTS, both preparable from CH3OH
       const noDirectHchoHcooh =
@@ -10003,7 +10005,7 @@
       assert(
         'Prompt 64 invariants: Funnel stem penetrates stopper bore cleanly beside condenser, HCHO/HCOOH removed from shelf & synthesized from CH3OH, pure MeOH & Glycerol liquid volumes render properly',
         funnelAlignOk && noDirectHchoHcooh && prepFromMeohOk && liqVisualOk,
-        `funnel=${funnelAlignOk}(stemY=${funnelStemTipY.toFixed(1)}>=${(rimTop+4).toFixed(1)},taper=${funnelTaperEndY.toFixed(1)}<condTop=${condTopY.toFixed(1)},dx=${Math.abs(sep.x-cond.x).toFixed(1)}), shelf=${noDirectHchoHcooh}(n=${STARTER_REAGENTS.length}), prep=${prepFromMeohOk}(HCHO=${(vPrepAld.moles.HCHO_aq||0).toFixed(3)},HCOOH=${(vPrepAcid.moles.HCOOH_l||0).toFixed(3)}), liq=${liqVisualOk}(meMl=${meVolMl.toFixed(1)},glMl=${glVolMl.toFixed(1)})`
+        `funnel=${funnelAlignOk}(stemY=${funnelStemTipY.toFixed(1)}>=${(rimTop+4).toFixed(1)},bulbMaxY=${funnelBulbMaxY.toFixed(1)}&lt;condTop=${condTopY.toFixed(1)},dx=${Math.abs(sep.x-cond.x).toFixed(1)}), shelf=${noDirectHchoHcooh}(n=${STARTER_REAGENTS.length}), prep=${prepFromMeohOk}(HCHO=${(vPrepAld.moles.HCHO_aq||0).toFixed(3)},HCOOH=${(vPrepAcid.moles.HCOOH_l||0).toFixed(3)}), liq=${liqVisualOk}(meMl=${meVolMl.toFixed(1)},glMl=${glVolMl.toFixed(1)})`
       );
     }
 
@@ -10061,6 +10063,78 @@
     }
 
     runOrganicV5Tests(assert);
+
+    // ==================== Prompt 78: Sep Funnel / Burette / Pipette Mixtures, Uncapped Spill, Deeper Mount, Bio Assets & Usage Guides ====================
+    {
+      const sim78 = new LabSimulation();
+
+      // 1) Tilt-pouring liquid-liquid extraction mixture (Water + Benzene) into open separatory funnel & burette
+      const standSrc = sim78.createApparatus('retort_stand', 190, 360);
+      const bSrc = sim78.createApparatus('beaker_250', 210, 175);
+      sim78.attachToStand(bSrc.id, standSrc.id);
+      bSrc.moles = { H2O_l: 1.5, C6H6_l: 0.25 }; // ~27 mL water + ~22 mL benzene
+      const sep = sim78.createApparatus('separatory_funnel', 268, 346);
+      sim78.setVesselTiltDeg(bSrc.id, 88, 1);
+      for (let i = 0; i < 14; i++) sim78.step(0.1);
+      sim78.setVesselTiltDeg(bSrc.id, 0, 1);
+      const sepStrat = computePhaseStratification(sep.moles, sep.tempK, APPARATUS.separatory_funnel, 0);
+      const tiltPourSepOk = (sep.moles.H2O_l || 0) > 0.2 && (sep.moles.C6H6_l || 0) > 0.03 && sepStrat.layers.length === 2;
+
+      // 2) Shaking unstoppered separatory funnel splashes & logs spill alert; stoppered retains all
+      const beforeShakeWater = sep.moles.H2O_l || 0;
+      sim78.toggleSeparatoryStopper(sep.id, false);
+      sim78.shakeSeparatoryFunnel(sep.id);
+      const afterUncappedShake = sep.moles.H2O_l || 0;
+      const spillAlertLogged = sim78.logs.some((l) => l.key === 'alertSepFunnelUncappedSpill');
+      sim78.toggleSeparatoryStopper(sep.id, true);
+      sim78.shakeSeparatoryFunnel(sep.id);
+      const afterStopperedShake = sep.moles.H2O_l || 0;
+      const uncappedSpillOk =
+        afterUncappedShake < beforeShakeWater * 0.7 &&
+        afterUncappedShake > beforeShakeWater * 0.5 &&
+        spillAlertLogged &&
+        Math.abs(afterStopperedShake - afterUncappedShake) < 1e-6;
+
+      // 3) Pipette draws multi-phase mixture from unstoppered separatory funnel and dispenses into burette
+      sim78.toggleSeparatoryStopper(sep.id, false);
+      const pip = sim78.createApparatus('pipette_10', 380, 420);
+      const bur = sim78.createApparatus('burette_50', 460, 360);
+      const drewMl = sim78.pipetteDrawFromVessel(sep.id, 6.0, pip);
+      const pipMixOk = drewMl >= 5.5 && (pip.moles.H2O_l || 0) > 0.01 && (pip.moles.C6H6_l || 0) > 0.002;
+      const dispMl = sim78.pipetteDispenseToVessel(bur.id, 4.0, pip);
+      for (let i = 0; i < 4; i++) sim78.step(0.05);
+      const burStrat = bur.liquidStratification || computePhaseStratification(bur.moles, bur.tempK, APPARATUS.burette_50, 0);
+      const burMixOk = dispMl >= 3.8 && (bur.moles.H2O_l || 0) > 0.005 && (bur.moles.C6H6_l || 0) > 0.001 && burStrat.layers.length >= 2;
+
+      // 4) Deeper separatory funnel mounting inside round_flask_1000 neck
+      const rf1000 = sim78.createApparatus('round_flask_1000', 620, 360);
+      sim78.mountSeparatoryFunnel(sep.id, rf1000.id);
+      const rfRimY = rf1000.y - APPARATUS.round_flask_1000.height / 2;
+      const sepStemEndY = sep.y + APPARATUS.separatory_funnel.height / 2 - 2;
+      const mountDepthPx = sepStemEndY - rfRimY;
+      const deepMountOk = mountDepthPx >= 60 && mountDepthPx <= 90;
+
+      // 5) Biological solids visuals + reagent styles + instrument usage guides
+      const bioVisualsOk =
+        SPECIES.Starch_s.visualType === 'rice_grain' &&
+        SPECIES.Cellulose_s.visualType === 'cotton_fiber' &&
+        SPECIES.Albumin_s.visualType === 'egg_white' &&
+        STARTER_REAGENTS.find((r) => r.id === 'starch')?.bottleStyle?.vesselForm === 'rice_sack' &&
+        STARTER_REAGENTS.find((r) => r.id === 'cellulose')?.bottleStyle?.vesselForm === 'cotton_plant' &&
+        STARTER_REAGENTS.find((r) => r.id === 'albumin')?.bottleStyle?.vesselForm === 'chicken_egg' &&
+        STARTER_REAGENTS.find((r) => r.id === 'glucose')?.bottleStyle?.bottleMotif === 'grape' &&
+        STARTER_REAGENTS.find((r) => r.id === 'fructose')?.bottleStyle?.bottleMotif === 'honey' &&
+        STARTER_REAGENTS.find((r) => r.id === 'sucrose')?.bottleStyle?.bottleMotif === 'sugarcane';
+      const guidesOk = ['colorimeter', 'ph_conductometer', 'tlc_plate', 'dc_power', 'volt_ammeter', 'separatory_funnel', 'burette_50', 'pipette_10'].every(
+        (id) => getApparatusUsageGuide(id, 'vi').length > 40 && getApparatusUsageGuide(id, 'en').length > 40
+      );
+
+      assert(
+        'Prompt 78 invariants: Tilt-pour liquid mixture -> sep funnel/burette, uncapped shake spill, pipette mixture draw/dispense, deep funnel mount, bio assets & tool usage guides',
+        tiltPourSepOk && uncappedSpillOk && pipMixOk && burMixOk && deepMountOk && bioVisualsOk && guidesOk,
+        `tiltSep=${tiltPourSepOk}(layers=${sepStrat.layers.length}), uncappedSpill=${uncappedSpillOk}(${beforeShakeWater.toFixed(2)}->${afterUncappedShake.toFixed(2)}->${afterStopperedShake.toFixed(2)}), pipMix=${pipMixOk}(drew=${drewMl.toFixed(2)}), burMix=${burMixOk}(disp=${dispMl.toFixed(2)},layers=${burStrat.layers.length}), mountDepth=${mountDepthPx.toFixed(1)}px(${deepMountOk}), bio=${bioVisualsOk}, guides=${guidesOk}`
+      );
+    }
 
     // Render test report
     const passed = results.filter(r => r.pass).length;

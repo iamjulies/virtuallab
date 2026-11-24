@@ -1,4 +1,4 @@
-import { APPARATUS, getCondenserPorts, getProbeTipPos, getVesselEndPorts } from '../data/apparatus.js';
+import { APPARATUS, getCondenserPorts, getProbeTipPos, getSepFunnelMountY, getVesselEndPorts } from '../data/apparatus.js';
 import { CONSTANTS } from '../data/constants.js';
 import { SPECIES, createZeroGasMap } from '../data/species.js';
 import {
@@ -273,6 +273,14 @@ function stepFilterFunnel(sim, funnel, dt) {
  * - Extraction mode: computes stratified layers (organic_heavy / aqueous / organic_light), supports shaking & settling,
  *   and selectively drains the bottom-most dense phase cleanly, stopping automatically at the phase interface!
  */
+function matchesStratifiedLayer(sp, bottomLayer) {
+  if (!sp || (sp.phase !== 'l' && sp.phase !== 'aq')) return false;
+  if (!bottomLayer) return true;
+  if (bottomLayer.phaseKey === 'organic_heavy') return sp.phase === 'l' && sp.liquidGroup === 'organic_heavy';
+  if (bottomLayer.phaseKey === 'organic_light') return sp.phase === 'l' && sp.liquidGroup === 'organic_light';
+  return sp.phase === 'aq' || (sp.phase === 'l' && (sp.liquidGroup || 'aqueous') === 'aqueous');
+}
+
 function stepSeparatoryFunnel(sim, funnel, dt) {
   funnel.activeDrop = false;
   funnel.drainRateMlS = 0;
@@ -281,10 +289,17 @@ function stepSeparatoryFunnel(sim, funnel, dt) {
   if ((funnel.emulsionTimer || 0) > 0) {
     funnel.emulsionTimer = Math.max(0, funnel.emulsionTimer - dt);
   }
+  if ((funnel.spillAnimTimer || 0) > 0) {
+    funnel.spillAnimTimer = Math.max(0, funnel.spillAnimTimer - dt);
+  }
 
   const sfSpec = APPARATUS.separatory_funnel;
+  const solMl0 = computeSolidVolumeMl(funnel.moles);
+  if (computeLiquidVolumeL(funnel.moles, funnel.tempK) * 1000 > 0.01) {
+    stepVesselChemistry(funnel, dt, { environment: sim.environment });
+  }
   const solMl = computeSolidVolumeMl(funnel.moles);
-  const strat = computePhaseStratification(funnel.moles, funnel.tempK, sfSpec, solMl);
+  const strat = computePhaseStratification(funnel.moles, funnel.tempK, sfSpec, Math.max(solMl0, solMl));
   funnel.liquidStratification = strat;
   const totalLiqMl = strat.totalLiqMl || 0;
   funnel.activeLayerKey = strat.layers[0]?.phaseKey || null;
@@ -305,7 +320,7 @@ function stepSeparatoryFunnel(sim, funnel, dt) {
     }
   }
   if (!target) {
-    const tipY = funnel.y + (sfSpec?.height || 174) * 0.5 - 6;
+    const tipY = funnel.y + (sfSpec?.height || 276) * 0.5 - 6;
     target = findOpenVesselBelowPoint(sim.items, funnel.x, tipY, 56, -8, 280);
   }
 
@@ -324,17 +339,9 @@ function stepSeparatoryFunnel(sim, funnel, dt) {
   funnel.dispensedMl = (funnel.dispensedMl || 0) + moveMl;
 
   // Color of draining bottom phase or bulk solution
-  const matchesTargetPhase = (sp) => {
-    if (!sp || (sp.phase !== 'l' && sp.phase !== 'aq')) return false;
-    if (!bottomLayer) return true;
-    if (bottomLayer.phaseKey === 'organic_heavy') return sp.phase === 'l' && sp.liquidGroup === 'organic_heavy';
-    if (bottomLayer.phaseKey === 'organic_light') return sp.phase === 'l' && sp.liquidGroup === 'organic_light';
-    return sp.phase === 'aq' || (sp.phase === 'l' && (sp.liquidGroup || 'aqueous') === 'aqueous');
-  };
-
   const layerMoles = {};
   for (const [id, n] of Object.entries(funnel.moles)) {
-    if (n > 0 && matchesTargetPhase(SPECIES[id])) layerMoles[id] = n;
+    if (n > 0 && matchesStratifiedLayer(SPECIES[id], bottomLayer)) layerMoles[id] = n;
   }
   const layerL = Math.max(1e-5, refVolMl / 1000);
   funnel.drainColor = computeSolutionVisuals(
@@ -349,11 +356,12 @@ function stepSeparatoryFunnel(sim, funnel, dt) {
   const cDstBefore = target ? computeHeatCapacityJK(target) : 0;
   const oldDstPhen = target ? target.moles.Phenolphthalein_aq || 0 : 0;
   const oldDstBleach = target ? target.phenBleachFrac || 0 : 0;
+  const oldDstIrrev = target ? target.phenIrrevFrac || 0 : 0;
   let movedPhen = 0;
   let cMoved = 0;
 
   for (const [spId, n] of Object.entries(funnel.moles)) {
-    if (n <= 0 || !matchesTargetPhase(SPECIES[spId])) continue;
+    if (n <= 0 || !matchesStratifiedLayer(SPECIES[spId], bottomLayer)) continue;
     const dMol = n * frac;
     funnel.moles[spId] = n - dMol;
     if (funnel.moles[spId] < 1e-13) delete funnel.moles[spId];
@@ -368,6 +376,7 @@ function stepSeparatoryFunnel(sim, funnel, dt) {
     if (movedPhen > 0) {
       const totP = oldDstPhen + movedPhen;
       target.phenBleachFrac = totP > 1e-14 ? (oldDstPhen * oldDstBleach + movedPhen * (funnel.phenBleachFrac || 0)) / totP : 0;
+      target.phenIrrevFrac = totP > 1e-14 ? (oldDstPhen * oldDstIrrev + movedPhen * (funnel.phenIrrevFrac || 0)) / totP : 0;
     }
     if (cDstBefore + cMoved > 0) {
       target.tempK = (cDstBefore * target.tempK + cMoved * funnel.tempK) / (cDstBefore + cMoved);
@@ -397,20 +406,28 @@ function stepSeparatoryFunnel(sim, funnel, dt) {
 
 /**
  * Burette stopcock drip / continuous stream strictly vertically along burette.x into vessel underneath.
+ * Supports multi-component mixtures & density-stratified liquid phases.
  */
 function stepBurette(sim, burette, dt) {
   burette.activeTargetId = null;
   burette.streamingNow = false;
 
+  const burSpec = APPARATUS.burette_50;
+  const liqL0 = computeLiquidVolumeL(burette.moles, burette.tempK);
+  if (liqL0 * 1000 > 0.002) {
+    stepVesselChemistry(burette, dt, { environment: sim.environment });
+  }
+  const strat = computePhaseStratification(burette.moles, burette.tempK, burSpec, 0);
+  burette.liquidStratification = strat;
   const rate = burette.valveRateMlS || 0;
   const liqL = computeLiquidVolumeL(burette.moles, burette.tempK);
-  const liqMl = liqL * 1000;
+  const liqMl = strat?.totalLiqMl || liqL * 1000;
   if (rate <= 0 || liqMl <= 0.002) {
     if (liqMl <= 0.002 && rate > 0) burette.valveRateMlS = 0;
     return;
   }
 
-  const tipY = burette.y + (APPARATUS.burette_50?.height || 204) / 2;
+  const tipY = burette.y + (burSpec?.height || 204) / 2;
   const target = findOpenVesselBelowPoint(sim.items, burette.x, tipY - 12, 54, -8, 320);
   // Also allow dripping into a filter funnel positioned below burette
   let dropTarget = target;
@@ -420,39 +437,58 @@ function stepBurette(sim, burette, dt) {
     );
   }
 
-  const dispenseMl = Math.min(liqMl, rate * dt);
+  const bottomLayer = strat?.layers?.length >= 2 ? strat.layers[0] : null;
+  const refVolMl = bottomLayer ? bottomLayer.volMl : liqMl;
+  const dispenseMl = Math.min(refVolMl, rate * dt);
   if (dispenseMl <= 1e-6) return;
-  const frac = Math.min(1, dispenseMl / Math.max(1e-6, liqMl));
+  const frac = Math.min(1, dispenseMl / Math.max(1e-6, refVolMl));
 
   burette.streamingNow = true;
   burette.dispensedMl = (burette.dispensedMl || 0) + dispenseMl;
   burette.activeTargetId = dropTarget ? dropTarget.id : null;
+
+  const layerMoles = {};
+  for (const [id, n] of Object.entries(burette.moles)) {
+    if (n > 0 && matchesStratifiedLayer(SPECIES[id], bottomLayer)) layerMoles[id] = n;
+  }
+  const layerL = Math.max(1e-5, refVolMl / 1000);
   burette.streamColor = computeSolutionVisuals(
-    burette.moles,
-    liqL,
-    computePH(burette.moles, liqL, burette.tempK),
+    layerMoles,
+    layerL,
+    computePH(layerMoles, layerL, burette.tempK),
     2.0,
-    burette.phenBleachFrac || 0
+    burette.phenBleachFrac || 0,
+    burette.phenIrrevFrac || 0
   ).css;
 
   const cDst = dropTarget ? computeHeatCapacityJK(dropTarget) : 0;
+  const oldDstPhen = dropTarget ? dropTarget.moles.Phenolphthalein_aq || 0 : 0;
+  const oldDstBleach = dropTarget ? dropTarget.phenBleachFrac || 0 : 0;
+  const oldDstIrrev = dropTarget ? dropTarget.phenIrrevFrac || 0 : 0;
+  let movedPhen = 0;
   let cMoved = 0;
 
   for (const [spId, n] of Object.entries(burette.moles)) {
-    if (n <= 0) continue;
-    const sp = SPECIES[spId];
-    if (!sp || (sp.phase !== 'l' && sp.phase !== 'aq')) continue;
+    if (n <= 0 || !matchesStratifiedLayer(SPECIES[spId], bottomLayer)) continue;
     const dMol = n * frac;
     burette.moles[spId] = n - dMol;
     if (burette.moles[spId] < 1e-13) delete burette.moles[spId];
     if (dropTarget) {
+      if (spId === 'Phenolphthalein_aq') movedPhen = dMol;
       dropTarget.moles[spId] = (dropTarget.moles[spId] || 0) + dMol;
-      cMoved += dMol * Math.max(0, sp.cp || 0);
+      cMoved += dMol * Math.max(0, SPECIES[spId]?.cp || 0);
     }
   }
 
-  if (dropTarget && cDst + cMoved > 0) {
-    dropTarget.tempK = (cDst * dropTarget.tempK + cMoved * burette.tempK) / (cDst + cMoved);
+  if (dropTarget) {
+    if (movedPhen > 0) {
+      const totP = oldDstPhen + movedPhen;
+      dropTarget.phenBleachFrac = totP > 1e-14 ? (oldDstPhen * oldDstBleach + movedPhen * (burette.phenBleachFrac || 0)) / totP : 0;
+      dropTarget.phenIrrevFrac = totP > 1e-14 ? (oldDstPhen * oldDstIrrev + movedPhen * (burette.phenIrrevFrac || 0)) / totP : 0;
+    }
+    if (cDst + cMoved > 0) {
+      dropTarget.tempK = (cDst * dropTarget.tempK + cMoved * burette.tempK) / (cDst + cMoved);
+    }
   }
 }
 
@@ -1310,7 +1346,7 @@ export function syncDockedToolPositions(sim) {
       const isDualHole = v.isStoppered && v.stopperMode === 'dual_hole';
       const hasRefluxOnSame = sim.items.some((c) => c.kind === 'condenser' && !c.isBroken && c.refluxMode && c.refluxVesselId === v.id);
       it.x = v.x - (hasRefluxOnSame ? 8 : isDualHole || v.connectedTargetId ? 6 : 0);
-      it.y = v.y - vSpec.height / 2 - (sfSpec?.height || 276) * 0.464;
+      it.y = v.y + getSepFunnelMountY(vSpec, sfSpec, hasRefluxOnSame);
       it.vy = 0;
       it.fallStartY = null;
     }

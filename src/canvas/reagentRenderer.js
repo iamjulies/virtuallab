@@ -14,6 +14,305 @@ function getGhostHost() {
   return _ghostHostEl;
 }
 
+function drawBottleMotifCanvas(ctx, motif, cx, cy) {
+  if (!motif) return;
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (motif === 'grape') {
+    ctx.strokeStyle = '#15803d';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(0, -10);
+    ctx.quadraticCurveTo(3, -13, 6, -11);
+    ctx.stroke();
+    const grapes = [[-3.5, -5], [0.5, -5.5], [4.5, -5], [-1.8, -1.5], [2.2, -1.5], [0.2, 2.5]];
+    for (const [gx, gy] of grapes) {
+      ctx.fillStyle = '#7c3aed';
+      ctx.strokeStyle = '#c4b5fd';
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.arc(gx, gy, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  } else if (motif === 'honey') {
+    ctx.fillStyle = '#f59e0b';
+    ctx.strokeStyle = '#92400e';
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.roundRect(-5, -6, 10, 9, 3.5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fde047';
+    ctx.beginPath();
+    ctx.ellipse(0, -6, 5.2, 1.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath();
+    ctx.arc(4, 5, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (motif === 'sugarcane') {
+    ctx.strokeStyle = '#16a34a';
+    ctx.lineWidth = 3.0;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-4, 6);
+    ctx.lineTo(2, -9);
+    ctx.moveTo(1, 7);
+    ctx.lineTo(6.5, -7);
+    ctx.stroke();
+    ctx.strokeStyle = '#dcfce7';
+    ctx.lineWidth = 1.0;
+    for (const [nx, ny] of [[-2.2, 1.5], [-0.4, -3], [3, 2], [4.8, -2.5]]) {
+      ctx.beginPath();
+      ctx.moveTo(nx - 1.5, ny - 0.6);
+      ctx.lineTo(nx + 1.5, ny + 0.6);
+      ctx.stroke();
+    }
+  } else if (motif === 'benzene_ring') {
+    ctx.strokeStyle = '#d97706';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (i * Math.PI) / 3 - Math.PI / 6;
+      const px = Math.cos(a) * 6;
+      const py = Math.sin(a) * 6;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 2.8, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (motif === 'alcohol_flame') {
+    ctx.fillStyle = '#0ea5e9';
+    ctx.beginPath();
+    ctx.moveTo(0, -7);
+    ctx.quadraticCurveTo(5, 0, 0, 6);
+    ctx.quadraticCurveTo(-5, 0, 0, -7);
+    ctx.fill();
+  } else if (motif === 'glacial_ice') {
+    ctx.fillStyle = '#f43f5e';
+    ctx.beginPath();
+    ctx.moveTo(0, -6);
+    ctx.lineTo(4.5, 0);
+    ctx.lineTo(0, 6);
+    ctx.lineTo(-4.5, 0);
+    ctx.closePath();
+    ctx.fill();
+  } else if (motif === 'oil_drop' || motif === 'triol_drop') {
+    ctx.fillStyle = motif === 'oil_drop' ? '#eab308' : '#14b8a6';
+    ctx.beginPath();
+    ctx.moveTo(0, -6.5);
+    ctx.quadraticCurveTo(5.5, 1, 0, 6);
+    ctx.quadraticCurveTo(-5.5, 1, 0, -6.5);
+    ctx.fill();
+  } else if (motif === 'amino') {
+    ctx.fillStyle = 'rgba(168, 85, 247, 0.75)';
+    ctx.beginPath();
+    ctx.moveTo(0, -5.5);
+    ctx.lineTo(5, 0);
+    ctx.lineTo(0, 5.5);
+    ctx.lineTo(-5, 0);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawRiceSackCanvas(ctx, style, uncapped, labelAlpha) {
+  // Tied woven burlap rice sack
+  ctx.save();
+  // Sack top frill & cord
+  if (!uncapped) {
+    ctx.fillStyle = '#d97706';
+    ctx.strokeStyle = '#92400e';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-16, -48);
+    ctx.lineTo(-7, -34);
+    ctx.lineTo(7, -34);
+    ctx.lineTo(16, -48);
+    ctx.quadraticCurveTo(0, -42, -16, -48);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  // Main bulging burlap bag body
+  const sackGrad = ctx.createLinearGradient(-34, -30, 34, 48);
+  sackGrad.addColorStop(0, '#fef3c7');
+  sackGrad.addColorStop(0.55, '#fde68a');
+  sackGrad.addColorStop(1, '#d97706');
+  ctx.fillStyle = sackGrad;
+  ctx.strokeStyle = '#92400e';
+  ctx.lineWidth = 2.0;
+  ctx.beginPath();
+  ctx.moveTo(-14, -34);
+  ctx.lineTo(14, -34);
+  ctx.quadraticCurveTo(36, -12, 34, 34);
+  ctx.quadraticCurveTo(32, 52, 16, 52);
+  ctx.lineTo(-16, 52);
+  ctx.quadraticCurveTo(-32, 52, -34, 34);
+  ctx.quadraticCurveTo(-36, -12, -14, -34);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Twine tie around sack neck
+  ctx.strokeStyle = '#78350f';
+  ctx.lineWidth = 3.2;
+  ctx.beginPath();
+  ctx.moveTo(-15, -33);
+  ctx.lineTo(15, -33);
+  ctx.stroke();
+
+  // Center stamped crest with rice grains
+  if (labelAlpha > 0.05) {
+    ctx.fillStyle = 'rgba(255, 251, 235, 0.92)';
+    ctx.strokeStyle = '#b45309';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.ellipse(0, 12, 22, 17, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Drawn white rice grains inside emblem
+    for (const [rx, ry, ang] of [[-7, 6, -0.4], [0, 4, 0.1], [7, 7, 0.5]]) {
+      ctx.save();
+      ctx.translate(rx, ry);
+      ctx.rotate(ang);
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 4.4, 2.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.fillStyle = '#78350f';
+    ctx.font = 'bold 9.5px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(style.shortLabel || 'STARCH', 0, 20);
+  }
+  ctx.restore();
+}
+
+function drawCottonPlantCanvas(ctx, style, pluckProgress = 0) {
+  ctx.save();
+  // Small terracotta flower pot / base stem
+  ctx.fillStyle = '#b45309';
+  ctx.strokeStyle = '#78350f';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-18, 30);
+  ctx.lineTo(18, 30);
+  ctx.lineTo(14, 52);
+  ctx.lineTo(-14, 52);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Stems & branches
+  ctx.strokeStyle = '#15803d';
+  ctx.lineWidth = 3.2;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0, 30);
+  ctx.lineTo(0, -24);
+  ctx.moveTo(0, 8);
+  ctx.quadraticCurveTo(-14, 0, -20, -10);
+  ctx.moveTo(0, 0);
+  ctx.quadraticCurveTo(14, -8, 20, -18);
+  ctx.stroke();
+
+  // Leaves
+  ctx.fillStyle = '#22c55e';
+  for (const [lx, ly, rot] of [[-12, 16, -0.6], [12, 12, 0.6]]) {
+    ctx.save();
+    ctx.translate(lx, ly);
+    ctx.rotate(rot);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 9, 4.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Fluffy cotton bolls at tips
+  const bolls = [
+    [-20, -12, 1.0],
+    [20, -20, 1.0],
+    [0, -28, Math.max(0.2, 1 - pluckProgress * 0.7)],
+  ];
+  for (const [bx, by, sc] of bolls) {
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.scale(sc, sc);
+    // Brown calyx bracts
+    ctx.strokeStyle = '#65a30d';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-9, 6);
+    ctx.lineTo(0, 10);
+    ctx.lineTo(9, 6);
+    ctx.stroke();
+    // Puffy cotton clouds
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1;
+    for (const [cx, cy, r] of [[-5, 1, 6.5], [5, 1, 6.5], [0, -4, 7.5], [0, 3, 6]]) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawEggCanvas(ctx, style, labelAlpha) {
+  ctx.save();
+  const eggGrad = ctx.createRadialGradient(-10, -16, 4, 0, 4, 46);
+  eggGrad.addColorStop(0, '#fffbeb');
+  eggGrad.addColorStop(0.55, '#fde68a');
+  eggGrad.addColorStop(1, '#d97706');
+  ctx.fillStyle = eggGrad;
+  ctx.strokeStyle = '#92400e';
+  ctx.lineWidth = 2.0;
+  ctx.beginPath();
+  ctx.moveTo(0, -46);
+  ctx.bezierCurveTo(22, -46, 32, -8, 30, 16);
+  ctx.bezierCurveTo(28, 38, 15, 48, 0, 48);
+  ctx.bezierCurveTo(-15, 48, -28, 38, -30, 16);
+  ctx.bezierCurveTo(-32, -8, -22, -46, 0, -46);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Shell shine highlight
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+  ctx.beginPath();
+  ctx.ellipse(-11, -18, 5, 12, -0.25, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (labelAlpha > 0.05) {
+    ctx.fillStyle = 'rgba(255, 251, 235, 0.85)';
+    ctx.beginPath();
+    ctx.roundRect(-18, 6, 36, 17, 4);
+    ctx.fill();
+    ctx.fillStyle = '#78350f';
+    ctx.font = 'bold 10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(style.shortLabel || 'Alb', 0, 14.5);
+  }
+  ctx.restore();
+}
+
 /**
  * Draw detailed, realistically sized, color-accurate stock chemical bottle/jar centered at (cx, cy).
  * Base dimensions at scale=1 match ISO 70-85mm bench vessels (~78x126 px).
@@ -30,6 +329,21 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
   const style = reg.bottleStyle || {};
   const isLiquid = reg.kind === 'liquid';
   const vesselForm = style.vesselForm || (isLiquid ? 'winchester' : 'jar');
+  if (vesselForm === 'rice_sack') {
+    drawRiceSackCanvas(ctx, style, uncapped, labelAlpha);
+    ctx.restore();
+    return;
+  }
+  if (vesselForm === 'cotton_plant') {
+    drawCottonPlantCanvas(ctx, style, 0);
+    ctx.restore();
+    return;
+  }
+  if (vesselForm === 'chicken_egg') {
+    drawEggCanvas(ctx, style, labelAlpha);
+    ctx.restore();
+    return;
+  }
   const glassMat = style.glassMaterial || 'clear';
   const isDropper = vesselForm === 'dropper';
   const isAmber = glassMat === 'amber';
@@ -237,7 +551,7 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
     }
   }
 
-  // Printed Lab Chemical Label Band across center of bottle
+  // Printed Lab Chemical Label Band across center of bottle (+ botanical/hazard emblem if configured)
   if (labelAlpha > 0.05) {
     const labY = shoulderY + 18;
     const labH = 30;
@@ -246,11 +560,15 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
     ctx.fillRect(-labW / 2, labY, labW, labH);
     ctx.fillStyle = style.accentColor || '#0ea5e9';
     ctx.fillRect(-labW / 2, labY, labW, 5);
+    const hasMotif = Boolean(style.bottleMotif);
     ctx.fillStyle = '#0f172a';
     ctx.font = `bold ${isDropper ? 9.5 : 11}px system-ui, sans-serif`;
-    ctx.textAlign = 'center';
+    ctx.textAlign = hasMotif ? 'left' : 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(style.shortLabel || reg.formula, 0, labY + 18);
+    ctx.fillText(style.shortLabel || reg.formula, hasMotif ? -labW / 2 + 6 : 0, labY + 18);
+    if (hasMotif) {
+      drawBottleMotifCanvas(ctx, style.bottleMotif, labW / 2 - 14, labY + 17);
+    }
   }
 
   // Vertical glass specular reflection highlight
@@ -447,6 +765,147 @@ export function renderActiveReagentTransfer(ctx, anim, targetVessel, spec, botto
       ctx.beginPath();
       ctx.arc(bx, by, 2.3, 0, Math.PI * 2);
       ctx.fill();
+    }
+    ctx.restore();
+  } else if (reg.bottleStyle?.vesselForm === 'rice_sack') {
+    // STARCH: Tilt burlap rice sack above vessel mouth & pour white rice grains / flour directly in!
+    const fadeAlpha = progress < 0.1 ? progress / 0.1 : progress > 0.88 ? (1 - progress) / 0.12 : 1;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, fadeAlpha));
+    const sackTilt = -0.85 - Math.sin(progress * Math.PI) * 0.25;
+    drawReagentBottle(ctx, reg, targetVessel.x + 38, rimY - 52, 0.86, {
+      tiltRad: sackTilt,
+      uncapped: true,
+      isDark,
+    });
+    if (progress > 0.15 && progress < 0.92) {
+      const p = (progress - 0.15) / 0.77;
+      for (let i = 0; i < 12; i++) {
+        const gp = (p * 1.6 + i * 0.08) % 1;
+        const gx = targetVessel.x + 8 - gp * 12 + Math.sin(i * 2.1) * 4;
+        const gy = rimY - 32 + gp * (bottomY - rimY + 18);
+        ctx.save();
+        ctx.translate(gx, gy);
+        ctx.rotate(i * 0.55 + progress * 4);
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 3.6, 1.8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  } else if (reg.bottleStyle?.vesselForm === 'cotton_plant') {
+    // CELLULOSE: Cotton plant beside vessel -> pluck cotton tuft from branch & drop into vessel!
+    const fadeAlpha = progress < 0.1 ? progress / 0.1 : progress > 0.88 ? (1 - progress) / 0.12 : 1;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, fadeAlpha));
+    const plantX = targetVessel.x + Math.max(82, spec.width * 0.72);
+    const plantY = rimY - 12;
+    ctx.save();
+    ctx.translate(plantX, plantY);
+    ctx.scale(0.9, 0.9);
+    drawCottonPlantCanvas(ctx, reg.bottleStyle, Math.min(1, progress * 1.4));
+    ctx.restore();
+
+    let tuftX = plantX;
+    let tuftY = plantY - 25;
+    if (progress < 0.55) {
+      const p = progress / 0.55;
+      const ease = p * p * (3 - 2 * p);
+      tuftX = plantX + (targetVessel.x - plantX) * ease;
+      tuftY = (plantY - 25) * (1 - ease) + (rimY - 24) * ease - Math.sin(p * Math.PI) * 28;
+    } else {
+      const p = (progress - 0.55) / 0.45;
+      tuftX = targetVessel.x + Math.sin(p * Math.PI * 3) * 4;
+      tuftY = rimY - 24 + p * (bottomY - rimY + 10);
+    }
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 0.9;
+    for (const [cx, cy, r] of [[-4, 1, 5], [4, 1, 5], [0, -3, 5.8], [0, 2, 4.5]]) {
+      ctx.beginPath();
+      ctx.arc(tuftX + cx, tuftY + cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  } else if (reg.bottleStyle?.vesselForm === 'chicken_egg') {
+    // ALBUMIN: Crack egg open in two shell halves -> stream translucent egg white (lòng trắng) while keeping golden yolk (lòng đỏ) inside!
+    const fadeAlpha = progress < 0.1 ? progress / 0.1 : progress > 0.88 ? (1 - progress) / 0.12 : 1;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, fadeAlpha));
+    const cxEgg = targetVessel.x;
+    const cyEgg = rimY - 46;
+    const crackOpen = Math.max(0, Math.min(1, (progress - 0.18) / 0.25));
+    const tiltSep = crackOpen * 0.52;
+
+    // Left cracked eggshell half holding the bright golden yolk cleanly!
+    ctx.save();
+    ctx.translate(cxEgg - 4 - crackOpen * 13, cyEgg - crackOpen * 2);
+    ctx.rotate(-tiltSep);
+    ctx.fillStyle = '#fde68a';
+    ctx.strokeStyle = '#92400e';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(-18, -14);
+    ctx.quadraticCurveTo(-22, 16, 0, 18);
+    ctx.lineTo(4, 10);
+    ctx.lineTo(-3, 2);
+    ctx.lineTo(3, -7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Intact bright orange-yellow yolk retained inside the left half shell!
+    ctx.fillStyle = '#f59e0b';
+    ctx.strokeStyle = '#d97706';
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.arc(-5, 6, 7.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(254, 240, 138, 0.75)';
+    ctx.beginPath();
+    ctx.arc(-7, 4, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Right cracked eggshell half
+    ctx.save();
+    ctx.translate(cxEgg + 4 + crackOpen * 13, cyEgg - crackOpen * 2);
+    ctx.rotate(tiltSep);
+    ctx.fillStyle = '#fde68a';
+    ctx.strokeStyle = '#92400e';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(18, -14);
+    ctx.quadraticCurveTo(22, 16, 0, 18);
+    ctx.lineTo(-4, 10);
+    ctx.lineTo(3, 2);
+    ctx.lineTo(-3, -7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    // Viscous translucent cream egg white (albumen) pouring down cleanly into vessel
+    if (progress > 0.25 && progress < 0.92) {
+      const p = (progress - 0.25) / 0.67;
+      const topStream = cyEgg + 12;
+      const botStream = Math.min(bottomY - 6, topStream + p * (bottomY - topStream) * 1.45);
+      ctx.strokeStyle = 'rgba(254, 249, 195, 0.88)';
+      ctx.lineWidth = 5.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cxEgg, topStream);
+      ctx.quadraticCurveTo(cxEgg + Math.sin(timeNow * 14) * 3, (topStream + botStream) * 0.5, cxEgg, botStream);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.82)';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
     }
     ctx.restore();
   } else {

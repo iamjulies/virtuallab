@@ -187,6 +187,9 @@ function handleVisualAlert(type, vessel, meta) {
   } else if (type === 'drop_spill') {
     workbench.triggerShake(4.2, 0.20);
     showToast(`💧 ${t('alertDropSpill')}`);
+  } else if (type === 'sep_spill') {
+    workbench.triggerShake(5.5, 0.26);
+    showToast(t('alertSepFunnelUncappedSpill'));
   } else if (type === 'syringe_plunger_pop') {
     workbench.triggerShake(6.0, 0.26);
     showToast(`⚠️ ${t('alertSyringePlungerPop')}`);

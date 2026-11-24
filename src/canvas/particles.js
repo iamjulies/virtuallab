@@ -885,6 +885,29 @@ export class ParticleSystem {
       return;
     }
 
+    if (type === 'sep_spill') {
+      const col = meta?.liquidColor || 'rgba(186, 230, 253, 0.9)';
+      const neckY = y - 122;
+      for (let i = 0; i < 18; i++) {
+        const ang = -Math.PI / 2 + (Math.random() - 0.5) * 1.45;
+        const spd = 70 + Math.random() * 95;
+        this.particles.push({
+          kind: 'drip',
+          x: x + (Math.random() - 0.5) * 10,
+          y: neckY + Math.random() * 6,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd,
+          r: 2.2 + Math.random() * 1.8,
+          stopY: 482,
+          life: 0,
+          maxLife: 0.72 + Math.random() * 0.28,
+          color: col,
+          splashed: false,
+        });
+      }
+      return;
+    }
+
     if (type === 'pipette_drop') {
       const pip = meta?.pipette;
       const tipX = pip ? pip.x : x;

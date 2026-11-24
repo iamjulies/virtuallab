@@ -12,6 +12,7 @@ import {
   clampItemToStandY,
   getItemRotatedHalfExtentY,
   getProbeTipPos,
+  getSepFunnelMountY,
   getStandGeometry,
   getSyringeGeometry,
   getVesselEndPorts,
@@ -1223,8 +1224,8 @@ export class LabSimulation {
         }
       } else if (item.kind === 'separatory_funnel' && sup.kind === 'vessel' && !sup.isShattered && !sup.isInverted) {
         const rimTop = sup.y - supSpec.height / 2;
-        const candY = rimTop - spec.height * 0.464;
-        if (dx <= 28 && (alreadyOnSup || item.y <= rimTop + 14) && candY < bestCenterY) {
+        const candY = sup.y + getSepFunnelMountY(supSpec, spec);
+        if (dx <= 28 && (alreadyOnSup || item.y <= rimTop + 40) && candY < bestCenterY) {
           bestCenterY = candY;
           bestSupport = sup;
         }
@@ -2825,7 +2826,7 @@ export class LabSimulation {
         : 6;
       v.particleCounts[reg.speciesId] =
         (v.particleCounts[reg.speciesId] || 0) + particleCount;
-      if (options.fine) {
+      if (options.fine && reg.id !== 'albumin') {
         v.groundPowderMap = v.groundPowderMap || {};
         v.groundPowderMap[reg.speciesId] = true;
         if (v.flattenedMetalMap?.[reg.speciesId]) delete v.flattenedMetalMap[reg.speciesId];
@@ -3810,12 +3811,19 @@ export class LabSimulation {
   }
 
   /**
-   * Pipette operations: draw up to 10 mL from vessel or reagent, or dispense dropwise to a vessel.
+   * Pipette operations: draw up to 10 mL from any open liquid container (vessel, funnel, burette, reagent),
+   * preserving full liquid-liquid/aqueous mixtures, or dispense into any open container.
    */
   pipetteDrawFromVessel(vesselId, drawMl = 10.0, targetPipette = null) {
     const src = this.getItem(vesselId);
     const pip = targetPipette || this.pipette;
-    if (!src || src.kind !== 'vessel' || src.isShattered || !pip || pip.isBroken) return 0;
+    const isValidSrc =
+      src &&
+      (src.kind === 'vessel' || src.kind === 'separatory_funnel' || src.kind === 'filter_funnel' || src.kind === 'burette') &&
+      !src.isShattered &&
+      !src.isBroken &&
+      (src.kind === 'burette' ? true : !src.isStoppered);
+    if (!isValidSrc || !pip || pip.isBroken) return 0;
     const cap = pip.capacityMl || 10.0;
     const availRoom = cap - (pip.volumeMl || 0);
     if (availRoom <= 0.01) return 0;
@@ -3824,15 +3832,7 @@ export class LabSimulation {
     const srcLiqMl = srcLiqL * 1000;
     if (srcLiqMl <= 0.01) return 0;
 
-    const srcSpec = APPARATUS[src.typeId];
-    const vis = computeSolutionVisuals(
-      src.moles,
-      srcLiqL,
-      computePH(src.moles, srcLiqL, src.tempK),
-      srcSpec.opticalPathCm,
-      src.phenBleachFrac,
-      src.phenIrrevFrac || 0
-    );
+    const srcSpec = APPARATUS[src.typeId] || APPARATUS.beaker_250;
     const actual = Math.min(availRoom, srcLiqMl, drawMl);
     const frac = actual / srcLiqMl;
     const oldVol = pip.volumeMl || 0;
@@ -3856,9 +3856,22 @@ export class LabSimulation {
       pip.phenIrrevFrac = totP > 1e-14 ? (oldPhen * (pip.phenIrrevFrac || 0) + movedPhen * (src.phenIrrevFrac || 0)) / totP : 0;
     }
     pip.tempK = oldVol + actual > 0 ? (oldVol * (pip.tempK || src.tempK) + actual * src.tempK) / (oldVol + actual) : src.tempK;
-    pip.volumeMl = oldVol + actual;
-    pip.sourceLabel = `${srcSpec.id} ${src.label}`;
+    const pipLiqL = computeLiquidVolumeL(pip.moles, pip.tempK);
+    pip.volumeMl = Math.min(cap, Math.max(oldVol + actual, pipLiqL * 1000));
+    const vis = computeSolutionVisuals(
+      pip.moles,
+      Math.max(1e-5, pipLiqL),
+      computePH(pip.moles, pipLiqL, pip.tempK),
+      1.6,
+      pip.phenBleachFrac,
+      pip.phenIrrevFrac || 0
+    );
+    pip.liquidStratification = computePhaseStratification(pip.moles, pip.tempK, APPARATUS.pipette_10, 0);
+    pip.sourceLabel = oldVol > 0.05 ? `${pip.sourceLabel || ''} + ${src.label}`.slice(0, 28) : `${srcSpec.id} ${src.label}`;
     pip.liquidColor = vis.css;
+    if (src.kind === 'separatory_funnel' || src.kind === 'burette') {
+      src.liquidStratification = computePhaseStratification(src.moles, src.tempK, srcSpec, computeSolidVolumeMl(src.moles));
+    }
 
     if (pip.kind === 'pipette') {
       pip.drawAnimTimer = 0.68;
@@ -3951,10 +3964,13 @@ export class LabSimulation {
     for (const [spId, molPerMl] of Object.entries(reg.perMl)) {
       pip.moles[spId] = (pip.moles[spId] || 0) + molPerMl * actual;
     }
-    pip.volumeMl = (pip.volumeMl || 0) + actual;
+    const oldVol = pip.volumeMl || 0;
+    pip.volumeMl = oldVol + actual;
     pip.tempK = this.environment.tempK;
-    pip.sourceLabel = reg.formula;
-    pip.liquidColor = reg.id === 'phen' ? 'rgba(244, 114, 182, 0.45)' : 'rgba(186, 230, 253, 0.72)';
+    pip.sourceLabel = oldVol > 0.05 ? `${pip.sourceLabel || ''} + ${reg.formula}`.slice(0, 28) : reg.formula;
+    const pipLiqL = computeLiquidVolumeL(pip.moles, pip.tempK);
+    pip.liquidColor = computeSolutionVisuals(pip.moles, Math.max(1e-5, pipLiqL), computePH(pip.moles, pipLiqL, pip.tempK), 1.6, pip.phenBleachFrac || 0, pip.phenIrrevFrac || 0).css;
+    pip.liquidStratification = computePhaseStratification(pip.moles, pip.tempK, APPARATUS.pipette_10, 0);
     pip.drawAnimTimer = 0.55;
     pip.drawAnimColor = pip.liquidColor;
     this.selectedId = pip.id;
@@ -3965,11 +3981,24 @@ export class LabSimulation {
   pipetteDispenseToVessel(vesselId, dropMl = 0.05, sourcePipette = null) {
     const dst = this.getItem(vesselId);
     const pip = sourcePipette || this.pipette;
-    if (!dst || dst.kind !== 'vessel' || dst.isShattered || !pip || pip.isBroken) return 0;
+    const isValidDst =
+      dst &&
+      (dst.kind === 'vessel' || dst.kind === 'separatory_funnel' || dst.kind === 'filter_funnel' || dst.kind === 'burette') &&
+      !dst.isShattered &&
+      !dst.isBroken &&
+      (dst.kind === 'burette' ? true : !dst.isStoppered);
+    if (!isValidDst || !pip || pip.isBroken) return 0;
     if ((pip.volumeMl || 0) <= 1e-5) return 0;
 
-    const dstSpec = APPARATUS[dst.typeId];
-    const actual = Math.min(pip.volumeMl, Math.max(0.05, dropMl));
+    const dstSpec = APPARATUS[dst.typeId] || APPARATUS.beaker_250;
+    let maxHeadroom = pip.volumeMl;
+    if (dst.kind === 'burette' || dst.kind === 'separatory_funnel') {
+      const capMl = dst.kind === 'burette' ? 50.0 : APPARATUS.separatory_funnel?.maxVolumeMl || 100.0;
+      const curDstMl = computeLiquidVolumeL(dst.moles, dst.tempK) * 1000;
+      maxHeadroom = Math.max(0, capMl - curDstMl);
+    }
+    const actual = Math.min(pip.volumeMl, maxHeadroom, Math.max(0.05, dropMl));
+    if (actual <= 1e-5) return 0;
     const frac = actual / pip.volumeMl;
     const pipColor = pip.liquidColor || 'rgba(186, 230, 253, 0.85)';
 
@@ -4002,10 +4031,15 @@ export class LabSimulation {
     if (cOld + cAdd > 0) {
       dst.tempK = (cOld * dst.tempK + cAdd * (pip.tempK || this.environment.tempK)) / (cOld + cAdd);
     }
-    if (((pip.moles?.OH_aq || 0) > 1e-7 || (pip.moles?.NH3_aq || 0) > 1e-7) && (dst.moles.Phenolphthalein_aq || 0) > 1e-8) {
-      injectLocalPlume(dst, 'pink', 0.5 + (Math.random() - 0.5) * 0.14, 0.12, 0.95);
-    } else if ((pip.moles?.Cu2_aq || 0) > 1e-6) {
-      injectLocalPlume(dst, 'copper', 0.5 + (Math.random() - 0.5) * 0.14, 0.14, 0.65);
+    if (dst.kind === 'vessel') {
+      if (((pip.moles?.OH_aq || 0) > 1e-7 || (pip.moles?.NH3_aq || 0) > 1e-7) && (dst.moles.Phenolphthalein_aq || 0) > 1e-8) {
+        injectLocalPlume(dst, 'pink', 0.5 + (Math.random() - 0.5) * 0.14, 0.12, 0.95);
+      } else if ((pip.moles?.Cu2_aq || 0) > 1e-6) {
+        injectLocalPlume(dst, 'copper', 0.5 + (Math.random() - 0.5) * 0.14, 0.14, 0.65);
+      }
+    } else if (dst.kind === 'separatory_funnel' || dst.kind === 'burette') {
+      stepVesselChemistry(dst, 0.04, { environment: this.environment });
+      dst.liquidStratification = computePhaseStratification(dst.moles, dst.tempK, dstSpec, computeSolidVolumeMl(dst.moles));
     }
 
     pip.volumeMl = Math.max(0, pip.volumeMl - actual);
@@ -4016,13 +4050,18 @@ export class LabSimulation {
       pip.phenIrrevFrac = 0;
       pip.sourceLabel = '';
       pip.liquidColor = null;
+      pip.liquidStratification = null;
+    } else {
+      const remL = computeLiquidVolumeL(pip.moles, pip.tempK);
+      pip.liquidColor = computeSolutionVisuals(pip.moles, Math.max(1e-5, remL), computePH(pip.moles, remL, pip.tempK), 1.6, pip.phenBleachFrac || 0, pip.phenIrrevFrac || 0).css;
+      pip.liquidStratification = computePhaseStratification(pip.moles, pip.tempK, APPARATUS.pipette_10, 0);
     }
 
     if (pip.kind === 'pipette') {
       pip.dispenseAnimTimer = 0.48;
       pip.dispenseAnimColor = pipColor;
       pip.dispenseToX = dst.x;
-      pip.dispenseToY = dst.y - dstSpec.height * 0.12;
+      pip.dispenseToY = dst.kind === 'separatory_funnel' || dst.kind === 'burette' ? dst.y - dstSpec.height * 0.42 : dst.y - dstSpec.height * 0.12;
       if (this.visualHooks.onAlert) {
         this.visualHooks.onAlert('pipette_drop', dst, {
           pipette: pip,
@@ -4032,7 +4071,7 @@ export class LabSimulation {
       }
     }
 
-    this.checkOverflow(dst);
+    if (dst.kind === 'vessel') this.checkOverflow(dst);
     this.recomputeScaleReadings();
     this.emitChange();
     return actual;
@@ -5295,11 +5334,46 @@ export class LabSimulation {
   shakeSeparatoryFunnel(funnelId) {
     const f = this.getItem(funnelId);
     if (!f || f.kind !== 'separatory_funnel' || f.isBroken) return false;
-    const liqMl = computeLiquidVolumeL(f.moles, f.tempK) * 1000;
+    const liqL = computeLiquidVolumeL(f.moles, f.tempK);
+    const liqMl = liqL * 1000;
     if (liqMl <= 0.05) return false;
+
+    const uncappedSpill = f.isStoppered === false;
+    if (uncappedSpill) {
+      const spillFrac = 0.35;
+      const spillMl = liqMl * spillFrac;
+      const visCss = computeSolutionVisuals(
+        f.moles,
+        Math.max(1e-5, liqL),
+        computePH(f.moles, liqL, f.tempK),
+        3.0,
+        f.phenBleachFrac || 0,
+        f.phenIrrevFrac || 0
+      ).css;
+      for (const [spId, n] of Object.entries(f.moles || {})) {
+        if (n <= 0) continue;
+        const rem = n * (1 - spillFrac);
+        if (rem < 1e-13) delete f.moles[spId];
+        else f.moles[spId] = rem;
+      }
+      f.spillAnimTimer = 1.45;
+      f.spillColor = visCss;
+      this.addLog({
+        type: 'alert',
+        key: 'alertSepFunnelUncappedSpill',
+        vesselLabel: f.label,
+      });
+      if (this.visualHooks.onAlert) {
+        this.visualHooks.onAlert('sep_spill', f, {
+          liquidColor: visCss,
+          spillMl,
+        });
+      }
+    }
+
     f.emulsionTimer = 2.6;
     f.stirTimer = Math.max(f.stirTimer || 0, 2.6);
-    stepVesselChemistry(f, 0.25, this.environment, { timeSec: this.timeSec });
+    stepVesselChemistry(f, 0.25, { environment: this.environment });
     f.liquidStratification = computePhaseStratification(
       f.moles,
       f.tempK,
@@ -5311,6 +5385,7 @@ export class LabSimulation {
       key: 'logSepFunnelShake',
       vesselLabel: f.label,
     });
+    this.recomputeScaleReadings();
     this.emitChange();
     return true;
   }
@@ -5328,6 +5403,7 @@ export class LabSimulation {
     if (!v || v.kind !== 'vessel' || v.isShattered || v.isInverted) return false;
     f.mountedOnVesselId = v.id;
     f.clampedToId = null;
+    syncDockedToolPositions(this);
     const vSpec = APPARATUS[v.typeId];
     if (vSpec?.stopperable && !vSpec.hasTwoEnds) {
       this.ensureAttachedStopper(v.id, 'main', 'dual_hole');
@@ -5459,20 +5535,32 @@ export class LabSimulation {
     let bestScore = Infinity;
     for (const cand of this.items) {
       const cSpec = APPARATUS[cand.typeId] || APPARATUS.beaker_250;
+      const isCandClosed =
+        cand.kind === 'burette'
+          ? false
+          : cand.kind === 'separatory_funnel'
+          ? Boolean(cand.isStoppered)
+          : Boolean(cand.isStoppered);
       if (
         cand.id === v.id ||
-        (cand.kind !== 'vessel' && cand.kind !== 'filter_funnel') ||
+        (cand.kind !== 'vessel' && cand.kind !== 'filter_funnel' && cand.kind !== 'separatory_funnel' && cand.kind !== 'burette') ||
         cand.isShattered ||
         cand.isBroken ||
-        cand.isStoppered ||
+        isCandClosed ||
         (cSpec.hasLid && cand.lidState === 'closed') ||
         cand.isInverted
       ) {
         continue;
       }
       const dx = Math.abs(cand.x - pourX);
-      if (dx <= Math.max(48, cSpec.width * 0.55) && cand.y >= v.y - 28) {
-        const score = dx - (cand.kind === 'filter_funnel' ? 28 : 0);
+      const candTopY = cand.y - (cSpec.height || 90) * 0.5;
+      const candBotY = cand.y + (cSpec.height || 90) * 0.5;
+      const inVertRange =
+        cand.kind === 'separatory_funnel' || cand.kind === 'burette'
+          ? candBotY >= spoutY - 36 && candTopY <= spoutY + 95
+          : cand.y >= v.y - 28;
+      if (dx <= Math.max(48, cSpec.width * 0.55) && inVertRange) {
+        const score = dx - (cand.kind === 'filter_funnel' || cand.kind === 'separatory_funnel' || cand.kind === 'burette' ? 28 : 0);
         if (score < bestScore) {
           bestScore = score;
           dst = cand;
@@ -5503,8 +5591,13 @@ export class LabSimulation {
       if (curLiqMl > vHoldMl + 0.02) {
         const visc = computeLiquidViscosityFactor(v);
         const excessMl = curLiqMl - vHoldMl;
-        const dMl = Math.min(excessMl, (Math.max(1.2, excessMl * 3.2) / Math.pow(visc, 0.42)) * dt);
-        const frac = Math.min(1, dMl / curLiqMl);
+        let dMl = Math.min(excessMl, (Math.max(1.2, excessMl * 3.2) / Math.pow(visc, 0.42)) * dt);
+        if (dst && (dst.kind === 'burette' || dst.kind === 'separatory_funnel')) {
+          const dstCapMl = dst.kind === 'burette' ? 50.0 : APPARATUS.separatory_funnel?.maxVolumeMl || 100.0;
+          const dstCurMl = computeLiquidVolumeL(dst.moles, dst.tempK) * 1000;
+          dMl = Math.min(dMl, Math.max(0, dstCapMl - dstCurMl));
+        }
+        const frac = curLiqMl > 1e-6 ? Math.min(1, dMl / curLiqMl) : 0;
         liqOutFrac = frac;
         const visColor = computeSolutionVisuals(
           v.moles,
@@ -5514,18 +5607,26 @@ export class LabSimulation {
           v.phenBleachFrac || 0,
           v.phenIrrevFrac || 0
         ).css;
-        if (dst) {
-          if (v.kind === 'vessel' && (dst.kind === 'vessel' || dst.kind === 'filter_funnel')) {
-            // Tilt pouring liquid only carries dissolved ions/liquids here; solids follow hydrodynamic + gravity solid step below
+        if (dst && frac > 1e-9) {
+          const cDstBefore = computeHeatCapacityJK(dst);
+          const oldDstPhen = dst.moles.Phenolphthalein_aq || 0;
+          const oldDstBleach = dst.phenBleachFrac || 0;
+          const oldDstIrrev = dst.phenIrrevFrac || 0;
+          let movedPhen = 0;
+          let cMoved = 0;
+          if (v.kind === 'vessel' && (dst.kind === 'vessel' || dst.kind === 'filter_funnel' || dst.kind === 'separatory_funnel' || dst.kind === 'burette')) {
+            // Tilt pouring liquid carries liquids/dissolved ions/immiscible organics into vessels, funnels & burettes
             for (const [spId, n] of Object.entries({ ...v.moles })) {
               const sp = SPECIES[spId];
               if (!sp) continue;
               if (sp.phase === 'l' || sp.phase === 'aq' || isSolidMoltenAtTemp(sp, v.tempK, v.moles)) {
                 const mv = n * frac;
+                if (spId === 'Phenolphthalein_aq') movedPhen = mv;
                 const rem = n - mv;
                 if (rem < 1e-12) delete v.moles[spId];
                 else v.moles[spId] = rem;
                 dst.moles[spId] = (dst.moles[spId] || 0) + mv;
+                cMoved += mv * Math.max(0, sp.cp || 0);
               }
             }
             if (dst.kind === 'vessel') {
@@ -5536,23 +5637,36 @@ export class LabSimulation {
               const sp = SPECIES[spId];
               if (!sp || (sp.phase !== 'l' && sp.phase !== 'aq')) continue;
               const mv = n * frac;
+              if (spId === 'Phenolphthalein_aq') movedPhen = mv;
               const rem = n - mv;
               if (rem < 1e-12) delete v.moles[spId];
               else v.moles[spId] = rem;
               dst.moles[spId] = (dst.moles[spId] || 0) + mv;
+              cMoved += mv * Math.max(0, sp.cp || 0);
             }
+          }
+          if (movedPhen > 0) {
+            const totP = oldDstPhen + movedPhen;
+            dst.phenBleachFrac = totP > 1e-14 ? (oldDstPhen * oldDstBleach + movedPhen * (v.phenBleachFrac || 0)) / totP : 0;
+            dst.phenIrrevFrac = totP > 1e-14 ? (oldDstPhen * oldDstIrrev + movedPhen * (v.phenIrrevFrac || 0)) / totP : 0;
+          }
+          if (cDstBefore + cMoved > 0) {
+            dst.tempK = (cDstBefore * dst.tempK + cMoved * v.tempK) / (cDstBefore + cMoved);
+          }
+          if (dst.kind === 'separatory_funnel' || dst.kind === 'burette') {
+            dst.liquidStratification = computePhaseStratification(dst.moles, dst.tempK, dstSpec, computeSolidVolumeMl(dst.moles));
           }
           this.activePourStream = {
             fromX: spoutX,
             fromY: spoutY,
             toX: dst.x,
-            toY: dst.y - (dstSpec?.height || 90) * 0.25,
+            toY: dst.kind === 'separatory_funnel' || dst.kind === 'burette' ? dst.y - (dstSpec?.height || 180) * 0.44 : dst.y - (dstSpec?.height || 90) * 0.25,
             color: visColor || 'rgba(186, 230, 253, 0.85)',
             rateMlS: dMl / Math.max(1e-4, dt),
             timer: 0.14,
             pouredMl: 0,
           };
-        } else {
+        } else if (!dst) {
           for (const [spId, n] of Object.entries({ ...v.moles })) {
             const sp = SPECIES[spId];
             if (sp && (sp.phase === 'l' || sp.phase === 'aq')) {

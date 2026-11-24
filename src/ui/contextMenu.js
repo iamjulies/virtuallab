@@ -1,4 +1,5 @@
 import { APPARATUS } from '../data/apparatus.js';
+import { getApparatusUsageGuide } from '../data/i18n.js';
 import { SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { kelvinToCelsius } from '../data/constants.js';
 import { buildVlabFilename, VLAB_SCOPES } from '../storage/workspaceStorage.js';
@@ -247,8 +248,13 @@ export class FloatingContextUI {
       extLinks.push({ label: '🌐 Wikipedia ↗', href: `https://en.wikipedia.org/w/index.php?search=${appWikiQ}` });
     }
 
+    const usageGuideText =
+      kind !== 'reagent'
+        ? getApparatusUsageGuide(item?.typeId || typeId, langCode)
+        : '';
+
     this.dialogEl.innerHTML = `
-      <div class="storage-modal-card" style="max-width:480px">
+      <div class="storage-modal-card" style="max-width:520px">
         <div class="storage-modal-header">
           <div>
             <h2 class="text-sm sm:text-base font-bold">${title}</h2>
@@ -269,6 +275,14 @@ export class FloatingContextUI {
               )
               .join('')}
           </div>
+          ${
+            usageGuideText
+              ? `<div class="mt-2.5 p-2.5 rounded-lg border border-sky-500/35 bg-sky-500/10 flex flex-col gap-1">
+                  <div class="text-xs font-bold text-sky-400">${t('apparatusUsageTitle')}</div>
+                  <div class="text-xs text-main leading-relaxed whitespace-pre-line">${usageGuideText}</div>
+                </div>`
+              : ''
+          }
           ${
             extLinks.length > 0
               ? `<div class="flex flex-wrap items-center gap-2 pt-2">${extLinks

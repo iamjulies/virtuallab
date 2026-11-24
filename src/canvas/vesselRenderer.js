@@ -1447,21 +1447,45 @@ export function renderPipette(ctx, item, isSelected, isDark, langCode = 'vi', ti
     ctx.translate(-x, -y);
   }
 
-  // Top Silicone squeezing bulb
+  // Top Silicone squeezing bulb (pink heart bulb for "you seem pretty sad for a girl so in love" theme!)
+  const isOliviaTheme = getCurrentCanvasTheme() === 'olivia';
   const bulbW = 10 - bulbPinch;
-  ctx.fillStyle = '#0284c7';
-  ctx.strokeStyle = isSelected ? '#3b82f6' : '#0369a1';
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.moveTo(x - 6, top + 28);
-  ctx.quadraticCurveTo(x - bulbW - 2, top + 12, x, top + 2);
-  ctx.quadraticCurveTo(x + bulbW + 2, top + 12, x + 6, top + 28);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
+  if (isOliviaTheme) {
+    const heartW = 13.5 - bulbPinch * 0.65;
+    const baseY = top + 27;
+    const lobeY = top + 2;
+    ctx.fillStyle = '#f472b6';
+    ctx.strokeStyle = isSelected ? '#db2777' : '#be185d';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(x, baseY);
+    ctx.bezierCurveTo(x - heartW * 1.15, baseY - 8, x - heartW * 1.25, lobeY + 3, x - heartW * 0.52, lobeY + 2);
+    ctx.bezierCurveTo(x - heartW * 0.14, lobeY + 1.2, x, lobeY + 6.5, x, lobeY + 9.2);
+    ctx.bezierCurveTo(x, lobeY + 6.5, x + heartW * 0.14, lobeY + 1.2, x + heartW * 0.52, lobeY + 2);
+    ctx.bezierCurveTo(x + heartW * 1.25, lobeY + 3, x + heartW * 1.15, baseY - 8, x, baseY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Glossy left-lobe highlight on pink heart bulb
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.42)';
+    ctx.beginPath();
+    ctx.ellipse(x - heartW * 0.45, lobeY + 8, 2.2, 3.6, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = '#0284c7';
+    ctx.strokeStyle = isSelected ? '#3b82f6' : '#0369a1';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(x - 6, top + 28);
+    ctx.quadraticCurveTo(x - bulbW - 2, top + 12, x, top + 2);
+    ctx.quadraticCurveTo(x + bulbW + 2, top + 12, x + 6, top + 28);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
 
   // Locking plastic collar
-  ctx.fillStyle = '#334155';
+  ctx.fillStyle = isOliviaTheme ? '#9d174d' : '#334155';
   ctx.fillRect(x - 7, top + 26, 14, 6);
 
   // Graduated borosilicate glass barrel -> tapered capillary tip
@@ -1478,15 +1502,47 @@ export function renderPipette(ctx, item, isSelected, isDark, langCode = 'vi', ti
   ctx.fillStyle = pal.glassFill;
   ctx.fill();
 
-  // Internal liquid filled inside pipette tube
+  // Internal liquid filled inside pipette tube (supports stratified liquid-liquid mixtures!)
   if (fillRatio > 0.004) {
     ctx.save();
     ctx.clip();
     const usableH = taperTop - (bodyTop + 6);
     const liqTopY = taperTop - fillRatio * usableH;
-    const liqCol = item.liquidColor || 'rgba(56, 189, 248, 0.78)';
-    ctx.fillStyle = liqCol;
-    ctx.fillRect(x - 8, liqTopY, 16, bottom - liqTopY);
+    const pipStrat = item.liquidStratification;
+    if (pipStrat?.layers?.length >= 2) {
+      let curBot = bottom;
+      const colSpan = bottom - liqTopY;
+      for (let li = 0; li < pipStrat.layers.length; li++) {
+        const layer = pipStrat.layers[li];
+        const lFrac = Math.max(0.05, layer.volMl / Math.max(0.1, pipStrat.totalLiqMl || volMl));
+        const lH = lFrac * colSpan;
+        const lTop = curBot - lH;
+        const layerMoles = {};
+        for (const [spId, n] of Object.entries(item.moles || {})) {
+          const sp = SPECIES[spId];
+          if (!sp || n <= 0) continue;
+          const grp = sp.phase === 'aq' ? 'aqueous' : sp.liquidGroup || 'aqueous';
+          if (grp === layer.phaseKey) layerMoles[spId] = n;
+        }
+        const lL = Math.max(1e-5, layer.volMl / 1000);
+        const lVis = computeSolutionVisuals(layerMoles, lL, computePH(layerMoles, lL, item.tempK), 1.6, item.phenBleachFrac || 0, item.phenIrrevFrac || 0);
+        ctx.fillStyle = lVis.css;
+        ctx.fillRect(x - 8, lTop, 16, curBot - lTop + 0.5);
+        if (li > 0) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+          ctx.lineWidth = 1.0;
+          ctx.beginPath();
+          ctx.moveTo(x - 6, curBot);
+          ctx.lineTo(x + 6, curBot);
+          ctx.stroke();
+        }
+        curBot = lTop;
+      }
+    } else {
+      const liqCol = item.liquidColor || 'rgba(56, 189, 248, 0.78)';
+      ctx.fillStyle = liqCol;
+      ctx.fillRect(x - 8, liqTopY, 16, bottom - liqTopY);
+    }
 
     // Rising glow shimmer during suction
     if (isSucking) {

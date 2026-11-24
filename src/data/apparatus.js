@@ -1186,6 +1186,16 @@ export const APPARATUS = {
   },
 };
 
+export function getSepFunnelMountY(vesselSpec, sfSpec = null, hasRefluxOnSame = false) {
+  const vH = vesselSpec?.height || 140;
+  const sfH = (sfSpec || APPARATUS.separatory_funnel)?.height || 276;
+  const rimTop = -vH / 2;
+  const baseDepth = Math.max(28, Math.min(78, vH * 0.35));
+  const targetDepthPx = hasRefluxOnSame ? Math.max(28, baseDepth - 8) : baseDepth;
+  const stemTipOffset = sfH / 2 - 2;
+  return rimTop + targetDepthPx - stemTipOffset;
+}
+
 export const APPARATUS_CATEGORIES = [
   { id: 'all', i18nKey: 'catAll' },
   { id: 'vessels', i18nKey: 'catVessels' },

@@ -34,6 +34,8 @@ import { computeCaOOptimizationScore } from '../engine/chemistry.js';
 import { soundEngine } from '../audio/soundEngine.js';
 import { downloadCompositionXlsx } from '../storage/xlsxExport.js';
 
+const SPECTRO_CHART_PAD = { L: 24, R: 8, T: 12, B: 22 };
+
 function renderFlipButtonHtml(item, t) {
   if (!APPARATUS[item.typeId]?.flippable) return '';
   return `<button type="button" id="ins-flip-x" class="px-2 py-1 rounded-lg border ${
@@ -264,6 +266,47 @@ function buildLiquidRowsHtml(liqData) {
     .join('');
 }
 
+function buildContainerLiquidTableCardHtml(item, t, tempK) {
+  const liqTabData = computeLiquidSpeciesTableData(item.moles || {}, tempK);
+  const rhoTxt = liqTabData.mixDensity > 0 ? `ρ=${liqTabData.mixDensity.toFixed(3)} g/mL` : '';
+  return `
+    <div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-1.5">
+      <div class="flex items-center justify-between gap-2">
+        <h4 class="text-[11px] font-bold uppercase tracking-wider text-muted">${t('liquidTableTitle')}</h4>
+        <span class="text-[10px] font-mono text-sky-400" id="live-mix-density">${rhoTxt}</span>
+      </div>
+      <div id="sp-liq-box">
+        ${
+          liqTabData.rows.length === 0
+            ? `<p class="text-xs text-muted">${item.isBroken ? t('alertToolBreak') : t('emptyLiquidMsg')}</p>`
+            : `<div class="overflow-x-auto max-h-40 overflow-y-auto">
+                <table class="w-full text-[11px]">
+                  <thead>
+                    <tr class="text-muted border-b border-theme text-left">
+                      <th class="pb-1 font-medium">${t('colSpecies')}</th>
+                      <th class="pb-1 font-medium text-right">${t('colMoles')}</th>
+                      <th class="pb-1 font-medium text-right">${t('colMass')}</th>
+                      <th class="pb-1 font-medium text-right">${t('colVolumeMl')}</th>
+                      <th class="pb-1 font-medium text-right">${t('colConc')}</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sp-liq-body">${buildLiquidRowsHtml(liqTabData)}</tbody>
+                </table>
+              </div>`
+        }
+      </div>
+    </div>
+  `;
+}
+
+function updateLiveLiquidContainerSection(container, item, envTempK) {
+  const liqTabData = computeLiquidSpeciesTableData(item.moles || {}, item.tempK ?? envTempK);
+  const rhoEl = container.querySelector('#live-mix-density');
+  if (rhoEl) rhoEl.textContent = liqTabData.mixDensity > 0 ? `ρ=${liqTabData.mixDensity.toFixed(3)} g/mL` : '';
+  const bodyEl = container.querySelector('#sp-liq-body');
+  if (bodyEl) bodyEl.innerHTML = buildLiquidRowsHtml(liqTabData);
+}
+
 function buildSolidRowsHtml(item, t) {
   const entries = Object.entries(item.moles || {})
     .filter(([spId, n]) => SPECIES[spId]?.phase === 's' && hasDisplayableSpeciesAmount(spId, n))
@@ -433,7 +476,8 @@ export class InspectorPanel {
       return `b|${item.id}|${item.typeId}|${item.airHoleOpen !== false ? 1 : 0}|${langCode}|${logLen}`;
     }
     if (item.kind === 'pipette') {
-      return `p|${item.id}|${item.isBroken}|${Math.round((item.dropDoseMl || 1) * 100)}|${langCode}|${logLen}`;
+      const spKeys = Object.keys(item.moles || {}).filter((k) => hasDisplayableSpeciesAmount(k, item.moles[k])).sort().join(',');
+      return `p|${item.id}|${item.isBroken}|${Math.round((item.dropDoseMl || 1) * 100)}|${spKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'scale') {
       return `s|${item.id}|${Math.abs(item.tareG) > 0.001}|${langCode}|${logLen}`;
@@ -813,6 +857,7 @@ export class InspectorPanel {
             </div>
           </div>
           <p class="text-[11px] text-muted leading-relaxed">${t('pipetteBenchHint')}</p>
+          ${item.isBroken ? '' : buildContainerLiquidTableCardHtml(item, t, item.tempK ?? this.sim.environment.tempK)}
           <button type="button" id="ins-clear-pipette" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('pipetteClear')}</button>
         </div>
       `;
@@ -1125,6 +1170,7 @@ export class InspectorPanel {
                     <button type="button" id="ins-bur-fill" class="px-2.5 py-1 rounded bg-accent text-white text-xs font-semibold">+25 mL</button>
                   </div>
                 </div>
+                ${buildContainerLiquidTableCardHtml(item, t, item.tempK ?? this.sim.environment.tempK)}
                 ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
               </div>`
           }
@@ -1221,6 +1267,7 @@ export class InspectorPanel {
                     <button type="button" id="ins-sep-fill" class="px-2.5 py-1 rounded bg-accent text-white text-xs font-semibold">+25 mL</button>
                   </div>
                 </div>
+                ${buildContainerLiquidTableCardHtml(item, t, item.tempK ?? this.sim.environment.tempK)}
                 ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
                 <p class="text-[11px] text-muted leading-snug">${t('sepDropHint')}</p>`
           }
@@ -2993,7 +3040,9 @@ export class InspectorPanel {
           const onHoverMove = (ev) => {
             const rect = specCanvas.getBoundingClientRect();
             if (!rect.width) return;
-            const frac = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+            const canvasX = ((ev.clientX - rect.left) / rect.width) * specCanvas.width;
+            const plotW = Math.max(20, specCanvas.width - SPECTRO_CHART_PAD.L - SPECTRO_CHART_PAD.R);
+            const frac = Math.max(0, Math.min(1, (canvasX - SPECTRO_CHART_PAD.L) / plotW));
             this._spectroHoverFrac = frac;
             this.drawAnalyticalChart(item);
           };
@@ -3295,6 +3344,7 @@ export class InspectorPanel {
       const dEl = this.container.querySelector('#live-bur-disp');
       if (vEl) vEl.textContent = `${liqMl.toFixed(2)} / 50.0 mL`;
       if (dEl) dEl.textContent = `${(item.dispensedMl || 0).toFixed(2)} mL`;
+      updateLiveLiquidContainerSection(this.container, item, this.sim.environment.tempK);
       return;
     }
     if (item.kind === 'bath') {
@@ -3320,6 +3370,7 @@ export class InspectorPanel {
       const liqMl = computeLiquidVolumeL(item.moles, item.tempK) * 1000;
       if (vEl) vEl.textContent = `${liqMl.toFixed(2)} / 100.0 mL`;
       if (dEl) dEl.textContent = `${(item.dispensedMl || 0).toFixed(2)} mL`;
+      updateLiveLiquidContainerSection(this.container, item, this.sim.environment.tempK);
       return;
     }
 
@@ -3408,6 +3459,7 @@ export class InspectorPanel {
       const sEl = this.container.querySelector('#live-pip-src');
       if (vEl) vEl.textContent = `${(item.volumeMl || 0).toFixed(2)} / 10.00 mL`;
       if (sEl) sEl.textContent = item.sourceLabel || '—';
+      updateLiveLiquidContainerSection(this.container, item, this.sim.environment.tempK);
       return;
     }
 
@@ -3747,10 +3799,10 @@ export class InspectorPanel {
     const isEn = lang === 'en' || t('specModeIr') === 'FT-IR Scan';
     const contactV = item.contactVesselId ? this.sim.getItem(item.contactVesselId) : null;
 
-    const padL = 24;
-    const padR = 8;
-    const padT = 12;
-    const padB = 22;
+    const padL = SPECTRO_CHART_PAD.L;
+    const padR = SPECTRO_CHART_PAD.R;
+    const padT = SPECTRO_CHART_PAD.T;
+    const padB = SPECTRO_CHART_PAD.B;
     const plotW = Math.max(20, w - padL - padR);
     const plotH = Math.max(20, h - padT - padB);
 
@@ -3838,15 +3890,25 @@ export class InspectorPanel {
         ctx.fillText(label, labelX, labelY);
       }
 
-      // Hover crosshair + exact readout
+      // Hover crosshair + exact cursor-aligned interpolated readout
       if (this._spectroHoverFrac != null && ir.points.length > 0) {
         const targetWn = 4000 - this._spectroHoverFrac * 3600;
         let nearest = ir.points[0];
         for (const pt of ir.points) {
           if (Math.abs(pt.wn - targetWn) < Math.abs(nearest.wn - targetWn)) nearest = pt;
         }
-        const hx = xToPx(nearest.wn);
-        const hy = yToPx(nearest.T);
+        let interpT = nearest.T;
+        for (let i = 0; i < ir.points.length - 1; i++) {
+          const p0 = ir.points[i];
+          const p1 = ir.points[i + 1];
+          if (p0.wn >= targetWn && p1.wn <= targetWn && p0.wn !== p1.wn) {
+            const u = (p0.wn - targetWn) / (p0.wn - p1.wn);
+            interpT = p0.T + (p1.T - p0.T) * u;
+            break;
+          }
+        }
+        const hx = xToPx(targetWn);
+        const hy = yToPx(interpT);
         ctx.strokeStyle = isDark ? 'rgba(56,189,248,0.65)' : 'rgba(2,132,199,0.65)';
         ctx.setLineDash([3, 3]);
         ctx.beginPath();
@@ -3859,9 +3921,10 @@ export class InspectorPanel {
         ctx.arc(hx, hy, 3.2, 0, Math.PI * 2);
         ctx.fill();
 
-        const nearPeak = ir.peaks.find((pk) => Math.abs(pk.wn - nearest.wn) <= 85);
+        const dispWn = Math.round(targetWn);
+        const nearPeak = ir.peaks.find((pk) => Math.abs(pk.wn - dispWn) <= 85);
         const pkTxt = nearPeak ? ` · ${isEn ? nearPeak.labelEn : nearPeak.labelVi}` : '';
-        if (hoverEl) hoverEl.textContent = `${nearest.wn} cm⁻¹ · ${nearest.T.toFixed(1)}% T${pkTxt}`;
+        if (hoverEl) hoverEl.textContent = `${dispWn} cm⁻¹ · ${interpT.toFixed(1)}% T${pkTxt}`;
       } else if (hoverEl) {
         hoverEl.textContent = contactV ? t('specHoverHint') : t('specNoVessel');
       }
@@ -3952,8 +4015,20 @@ export class InspectorPanel {
       for (const pt of uv.points) {
         if (Math.abs(pt.nm - targetNm) < Math.abs(nearest.nm - targetNm)) nearest = pt;
       }
-      const hx = xToPx(nearest.nm);
-      const hy = yToPx(nearest.A);
+      let interpA = nearest.A;
+      let interpT = nearest.T;
+      for (let i = 0; i < uv.points.length - 1; i++) {
+        const p0 = uv.points[i];
+        const p1 = uv.points[i + 1];
+        if (p0.nm <= targetNm && p1.nm >= targetNm && p1.nm !== p0.nm) {
+          const u = (targetNm - p0.nm) / (p1.nm - p0.nm);
+          interpA = p0.A + (p1.A - p0.A) * u;
+          interpT = p0.T + (p1.T - p0.T) * u;
+          break;
+        }
+      }
+      const hx = xToPx(targetNm);
+      const hy = yToPx(interpA);
       ctx.strokeStyle = isDark ? 'rgba(251,191,36,0.7)' : 'rgba(217,119,6,0.7)';
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
@@ -3966,9 +4041,10 @@ export class InspectorPanel {
       ctx.arc(hx, hy, 3.2, 0, Math.PI * 2);
       ctx.fill();
 
-      const nearPeak = uv.peaks.find((pk) => Math.abs(pk.nm - nearest.nm) <= 22);
+      const dispNm = Math.round(targetNm);
+      const nearPeak = uv.peaks.find((pk) => Math.abs(pk.nm - dispNm) <= 22);
       const pkTxt = nearPeak ? ` · ${isEn ? nearPeak.labelEn : nearPeak.labelVi}` : '';
-      if (hoverEl) hoverEl.textContent = `${nearest.nm} nm (${nearest.nm < 380 ? 'UV' : 'Vis'}) · A=${nearest.A.toFixed(3)} · ${nearest.T.toFixed(1)}% T${pkTxt}`;
+      if (hoverEl) hoverEl.textContent = `${dispNm} nm (${dispNm < 380 ? 'UV' : 'Vis'}) · A=${interpA.toFixed(3)} · ${interpT.toFixed(1)}% T${pkTxt}`;
     } else if (hoverEl) {
       hoverEl.textContent = contactV ? t('specHoverHint') : t('specNoVessel');
     }

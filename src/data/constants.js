@@ -1,7 +1,7 @@
 /**
  * Physical & chemical constants (SI / IUPAC standard units).
  */
-export const APP_VERSION_TAG = 'virlab_beta_v5+build.17';
+export const APP_VERSION_TAG = 'virlab_beta_v5+build.18';
 
 export const CONSTANTS = {
   // Ideal gas constant

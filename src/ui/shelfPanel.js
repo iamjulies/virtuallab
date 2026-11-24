@@ -98,11 +98,95 @@ function apparatusSvg(typeId) {
   }
 }
 
+function shelfMotifSvg(motif) {
+  switch (motif) {
+    case 'grape':
+      return `<g transform="translate(15,15)">
+        <path d="M5 1c1.5-1.5 3.5-1 4 0" stroke="#16a34a" stroke-width="1.3" fill="none"/>
+        <circle cx="3.5" cy="4.5" r="2" fill="#7c3aed"/><circle cx="7" cy="4.5" r="2" fill="#8b5cf6"/>
+        <circle cx="5.2" cy="7.5" r="2" fill="#6d28d9"/><circle cx="8.5" cy="7.5" r="2" fill="#7c3aed"/>
+        <circle cx="6.8" cy="10.4" r="1.9" fill="#5b21b6"/>
+      </g>`;
+    case 'honey':
+      return `<g transform="translate(16,15)">
+        <path d="M2 3h8v5a4 4 0 01-8 0V3z" fill="#f59e0b" stroke="#b45309" stroke-width="0.9"/>
+        <ellipse cx="6" cy="3" rx="4" ry="1.4" fill="#fde047" stroke="#b45309" stroke-width="0.8"/>
+        <path d="M8 7v4.5a1 1 0 002 0V7z" fill="#fbbf24"/>
+      </g>`;
+    case 'sugarcane':
+      return `<g transform="translate(17,13)">
+        <path d="M2 16l6-13M5 17l5.5-11" stroke="#16a34a" stroke-width="2.4" stroke-linecap="round"/>
+        <path d="M3.2 12l2.2 1M5 8.5l2.2 1M6.8 5l2.2 1" stroke="#bbf7d0" stroke-width="1"/>
+        <path d="M7.5 3c2-1.5 4-1 5 1" stroke="#22c55e" stroke-width="1.3" fill="none"/>
+      </g>`;
+    case 'benzene_ring':
+      return `<g transform="translate(13,17)">
+        <polygon points="5,0 9.5,2.5 9.5,7.5 5,10 0.5,7.5 0.5,2.5" fill="none" stroke="#fbbf24" stroke-width="1.25"/>
+        <circle cx="5" cy="5" r="2.2" fill="none" stroke="#fde68a" stroke-width="1"/>
+      </g>`;
+    case 'alcohol_flame':
+      return `<path d="M18 17c-2.2 2.4-2.5 4.8 0 6.5 2.5-1.7 2.2-4.1 0-6.5z" fill="#38bdf8" stroke="#e0f2fe" stroke-width="0.6"/>`;
+    case 'glacial_ice':
+      return `<polygon points="18,16 21,19 18,23 15,19" fill="#fda4af" stroke="#ffe4e6" stroke-width="0.8"/>`;
+    case 'skull_toxic':
+      return `<circle cx="18" cy="19.5" r="2.6" fill="none" stroke="#7dd3fc" stroke-width="1.2"/>`;
+    case 'triol_drop':
+      return `<path d="M18 16c-2 2.5-2.8 4.4 0 6 2.8-1.6 2-3.5 0-6z" fill="#2dd4bf" stroke="#ccfbf1" stroke-width="0.7"/>`;
+    case 'oil_drop':
+      return `<path d="M18 15c-2.8 3.2-3.6 5.8 0 7.6 3.6-1.8 2.8-4.4 0-7.6z" fill="#facc15" stroke="#fef08a" stroke-width="0.8"/>`;
+    case 'amino':
+      return `<polygon points="18,16 22,19.5 18,23 14,19.5" fill="rgba(216,180,254,0.85)" stroke="#a855f7" stroke-width="0.9"/>`;
+    default:
+      return '';
+  }
+}
+
 function reagentIconSvg(reg) {
   const style = reg.bottleStyle || {};
   const capCol = style.shelfCapColor || style.capColor || '#334155';
   const fillCol = style.shelfFill || 'rgba(148,163,184,0.18)';
   const strokeCol = style.shelfStroke || '#64748b';
+  const motifSvg = shelfMotifSvg(style.bottleMotif);
+
+  if (style.vesselForm === 'rice_sack') {
+    return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0 pointer-events-none">
+      <path d="M13 5l5 2 5-2-2 5h-6z" fill="#d97706" stroke="#92400e" stroke-width="1.2"/>
+      <path d="M12 10h12c3.5 4 5 11 4 19a3 3 0 01-3 3H11a3 3 0 01-3-3c-1-8 .5-15 4-19z" fill="#fde68a" stroke="#b45309" stroke-width="1.4"/>
+      <line x1="12.5" y1="10.5" x2="23.5" y2="10.5" stroke="#92400e" stroke-width="1.8"/>
+      <ellipse cx="18" cy="21" rx="6" ry="5.5" fill="#fffbeb" stroke="#d97706" stroke-width="0.9"/>
+      <ellipse cx="16.5" cy="20" rx="2.2" ry="1.1" transform="rotate(-25 16.5 20)" fill="#ffffff" stroke="#94a3b8" stroke-width="0.6"/>
+      <ellipse cx="20" cy="22" rx="2.2" ry="1.1" transform="rotate(20 20 22)" fill="#ffffff" stroke="#94a3b8" stroke-width="0.6"/>
+    </svg>`;
+  }
+
+  if (style.vesselForm === 'cotton_plant') {
+    return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0 pointer-events-none">
+      <path d="M18 32V16M18 24l-6-4M18 21l6-4" stroke="#15803d" stroke-width="2.1" stroke-linecap="round" fill="none"/>
+      <path d="M14 28c2 1 6 1 8 0" stroke="#166534" stroke-width="1.6" stroke-linecap="round"/>
+      <circle cx="11" cy="18" r="3.6" fill="#ffffff" stroke="#94a3b8" stroke-width="1"/>
+      <circle cx="13.5" cy="15.8" r="2.8" fill="#ffffff" stroke="#cbd5e1" stroke-width="0.8"/>
+      <circle cx="25" cy="16" r="3.6" fill="#ffffff" stroke="#94a3b8" stroke-width="1"/>
+      <circle cx="22.5" cy="13.8" r="2.8" fill="#ffffff" stroke="#cbd5e1" stroke-width="0.8"/>
+      <circle cx="18" cy="11" r="4.2" fill="#ffffff" stroke="#94a3b8" stroke-width="1.1"/>
+      <circle cx="15.5" cy="8.8" r="3.1" fill="#ffffff" stroke="#cbd5e1" stroke-width="0.8"/>
+      <circle cx="20.6" cy="9.2" r="2.9" fill="#ffffff" stroke="#cbd5e1" stroke-width="0.8"/>
+      <path d="M14.5 14l3.5 1.8 3.5-1.8" stroke="#65a30d" stroke-width="1.4" fill="none"/>
+    </svg>`;
+  }
+
+  if (style.vesselForm === 'chicken_egg') {
+    return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0 pointer-events-none">
+      <defs>
+        <radialGradient id="eggG" cx="38%" cy="32%" r="68%">
+          <stop offset="0%" stop-color="#fffbeb"/>
+          <stop offset="55%" stop-color="#fde68a"/>
+          <stop offset="100%" stop-color="#d97706"/>
+        </radialGradient>
+      </defs>
+      <path d="M18 4.5c5.8 0 10.2 9.5 10.2 16.5A10.2 10.2 0 0118 31.5 10.2 10.2 0 017.8 21C7.8 14 12.2 4.5 18 4.5z" fill="url(#eggG)" stroke="#b45309" stroke-width="1.4"/>
+      <ellipse cx="14.5" cy="12" rx="2.1" ry="4" transform="rotate(-18 14.5 12)" fill="rgba(255,255,255,0.6)"/>
+    </svg>`;
+  }
 
   if (style.vesselForm === 'dropper') {
     return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0 pointer-events-none">
@@ -126,6 +210,7 @@ function reagentIconSvg(reg) {
       <rect x="12.5" y="3" width="11" height="4" rx="1" fill="${capCol}"/>
       <rect x="11" y="${liqY}" width="14" height="${liqH}" fill="${liqCol}"/>
       ${fumeSvg}
+      ${motifSvg}
     </svg>`;
   }
 
@@ -149,8 +234,8 @@ function reagentIconSvg(reg) {
   } else if (contentsKind === 'white_crystals') {
     contentsSvg = `
       <rect x="11" y="14" width="14" height="6" rx="1" fill="rgba(248, 250, 252, 0.88)"/>
-      <rect x="12" y="23" width="5" height="5" fill="rgba(248, 250, 252, 0.72)" stroke="#f8fafc" stroke-width="0.5"/>
-      <rect x="19" y="24" width="5" height="4" fill="rgba(226, 232, 240, 0.72)" stroke="#f8fafc" stroke-width="0.5"/>`;
+      <rect x="12" y="23" width="5" height="5" fill="${style.solidColor || 'rgba(248, 250, 252, 0.72)'}" stroke="#cbd5e1" stroke-width="0.6"/>
+      <rect x="19" y="24" width="5" height="4" fill="${style.solidColor || 'rgba(226, 232, 240, 0.72)'}" stroke="#cbd5e1" stroke-width="0.6"/>`;
   } else {
     contentsSvg = `
       <circle cx="13" cy="27" r="2.6" fill="${style.solidColor || '#ffffff'}" stroke="#94a3b8" stroke-width="0.7"/>
@@ -168,6 +253,7 @@ function reagentIconSvg(reg) {
     <rect x="${jarX}" y="9" width="${jarW}" height="23" rx="3.5" fill="${fillCol}" stroke="${strokeCol}" stroke-width="1.5"/>
     <rect x="${capX}" y="4.5" width="${capW}" height="4.5" rx="1.2" fill="${capCol}"/>
     ${contentsSvg}
+    ${motifSvg}
   </svg>`;
 }
 

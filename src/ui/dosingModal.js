@@ -384,19 +384,36 @@ export class DosingModal {
 
             ${
               isSolid
-                ? `
+                ? st.reagentId === 'albumin'
+                  ? `
+              <div class="flex items-center justify-between gap-2 text-xs">
+                <span class="text-muted">${t('singleFormLabel')}</span>
+                <span class="px-2.5 py-1 rounded border border-accent bg-accent/15 font-semibold text-xs">🥚 ${t('eggWhiteForm')}</span>
+              </div>
+              `
+                  : (() => {
+                      const formOpts =
+                        st.reagentId === 'fe'
+                          ? [t('ironNailForm'), t('ironPowderForm')]
+                          : st.reagentId === 'starch'
+                          ? [`🌾 ${t('riceGrainsForm')}`, `🥣 ${t('riceFlourForm')}`]
+                          : st.reagentId === 'cellulose'
+                          ? [`☁️ ${t('cottonFluffForm')}`, `🌬️ ${t('cottonPowderForm')}`]
+                          : [t('coarseLump'), t('fineGranules')];
+                      return `
               <div class="flex items-center justify-between gap-2 text-xs">
                 <span class="text-muted">${t('solidParticleCount')}</span>
                 <div class="flex gap-1.5">
                   <button type="button" id="gran-coarse" class="px-2.5 py-1 rounded border ${
                     !st.fine ? 'border-accent bg-accent/15 font-semibold' : 'border-theme bg-surface-alt text-muted'
-                  }">${st.reagentId === 'fe' ? t('ironNailForm') : t('coarseLump')}</button>
+                  }">${formOpts[0]}</button>
                   <button type="button" id="gran-fine" class="px-2.5 py-1 rounded border ${
                     st.fine ? 'border-accent bg-accent/15 font-semibold' : 'border-theme bg-surface-alt text-muted'
-                  }">${st.reagentId === 'fe' ? t('ironPowderForm') : t('fineGranules')}</button>
+                  }">${formOpts[1]}</button>
                 </div>
               </div>
-              `
+              `;
+                    })()
                 : `
               <div class="p-2.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-1.5">
                 <div class="flex items-center justify-between text-xs">
