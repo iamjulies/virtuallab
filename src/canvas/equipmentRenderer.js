@@ -1,0 +1,1812 @@
+/**
+ * Auxiliary Equipment & Canvas Theme/Label/Path Renderers (Refactor 81).
+ */
+import {
+  APPARATUS,
+  getClampNeckOffsetY,
+  getCondenserPorts,
+  getStandGeometry,
+  getSyringeGeometry,
+  getVesselEndPorts,
+  getVesselTubingPort,
+} from '../data/apparatus.js';
+import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
+import { findClipYForVolume, findTiltClipY3D, getInnerPolygonPx } from '../data/vesselGeometry.js';
+import { SPECIES } from '../data/species.js';
+import {
+  computeLiquidVolumeL,
+  computePH,
+  computePhaseStratification,
+  computeSolidVolumeMl,
+  computeSolutionVisuals,
+} from '../engine/equilibrium.js';
+import {
+  ALL_GASES,
+  buildCombinedSyringeLiquidMoles,
+  buildCombinedSyringeTotalMoles,
+  computeSyringeFrozenVolumeMl,
+  computeSyringeGasVolumeMl,
+  computeSyringeLiquidVolumeMl,
+  computeSyringeTotalVolumeMl,
+  computeCondenserOutletGeometry,
+  computeTubingGeometry,
+  cubicBezierPoint,
+  getSyringeNozzlePos,
+  samplePolylineAt,
+} from '../engine/gasNetwork.js';
+
+/**
+ * Lightweight vector halo glow replacing expensive Canvas2D software ctx.shadowBlur.
+ * Strokes the active path in 3 widening translucent outer passes without clearing it.
+ */
+export function strokeHaloGlow(ctx, glowColor, baseWidth = 2.0, alphaScale = 1.0) {
+  if (!glowColor) return;
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = glowColor;
+  const layers = [
+    [baseWidth + 10, 0.13],
+    [baseWidth + 5.5, 0.23],
+    [baseWidth + 2.4, 0.42],
+  ];
+  for (const [lw, a] of layers) {
+    ctx.lineWidth = lw;
+    ctx.globalAlpha = a * alphaScale;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+export function strokeSelectionGlow(ctx, isSelected, isDropTarget, baseWidth = 2.0) {
+  if (isDropTarget) {
+    strokeHaloGlow(ctx, '#10b981', baseWidth);
+  } else if (isSelected) {
+    strokeHaloGlow(ctx, '#3b82f6', baseWidth);
+  }
+}
+
+export function cylinderFillHeightFraction(areaFrac) {
+  const f = Math.max(0, Math.min(1, areaFrac));
+  if (f <= 0) return 0;
+  if (f >= 1) return 1;
+  let theta = Math.PI * (0.25 + f * 1.5);
+  const target = 2 * Math.PI * f;
+  for (let k = 0; k < 4; k++) {
+    const err = theta - Math.sin(theta) - target;
+    const d = Math.max(0.05, 1 - Math.cos(theta));
+    theta -= err / d;
+  }
+  return Math.max(0, Math.min(1, 0.5 * (1 - Math.cos(theta * 0.5))));
+}
+
+export function getThemePalette(isDark) {
+  return isDark
+    ? {
+        glassStroke: 'rgba(148, 163, 184, 0.82)',
+        glassHighlight: 'rgba(255, 255, 255, 0.24)',
+        glassFill: 'rgba(148, 163, 184, 0.08)',
+        tickStroke: 'rgba(241, 245, 249, 0.68)',
+        tickMinor: 'rgba(226, 232, 240, 0.36)',
+        enamelText: 'rgba(241, 245, 249, 0.78)',
+        writePatchBg: 'rgba(248, 250, 252, 0.14)',
+        writePatchBorder: 'rgba(241, 245, 249, 0.38)',
+        textPrimary: '#f1f5f9',
+        textMuted: '#94a3b8',
+        badgeBg: 'rgba(15, 23, 42, 0.85)',
+        badgeBorder: 'rgba(71, 85, 105, 0.9)',
+        scaleBody: '#1e293b',
+        scaleBorder: '#475569',
+        scalePan: '#94a3b8',
+        lcdBg: '#064e3b',
+        lcdText: '#34d399',
+        tubeColor: '#475569',
+        burnerMetal: '#64748b',
+      }
+    : {
+        glassStroke: 'rgba(71, 85, 105, 0.78)',
+        glassHighlight: 'rgba(255, 255, 255, 0.62)',
+        glassFill: 'rgba(226, 232, 240, 0.22)',
+        tickStroke: 'rgba(30, 41, 59, 0.58)',
+        tickMinor: 'rgba(51, 65, 85, 0.32)',
+        enamelText: 'rgba(15, 23, 42, 0.68)',
+        writePatchBg: 'rgba(255, 255, 255, 0.65)',
+        writePatchBorder: 'rgba(100, 116, 139, 0.42)',
+        textPrimary: '#0f172a',
+        textMuted: '#475569',
+        badgeBg: 'rgba(255, 255, 255, 0.9)',
+        badgeBorder: 'rgba(203, 213, 225, 0.95)',
+        scaleBody: '#e2e8f0',
+        scaleBorder: '#94a3b8',
+        scalePan: '#64748b',
+        lcdBg: '#0f172a',
+        lcdText: '#4ade80',
+        tubeColor: '#334155',
+        burnerMetal: '#475569',
+      };
+}
+
+/**
+ * Map VesselGeometry profile points [yCm, rCm] onto canvas pixels at (x, y).
+ * Unified helper backing glass outline, liquid interior clip, meniscus, ticks & particles.
+ */
+export function mapProfileToCanvas(spec, x, y, padPx = 0) {
+  const geomDef = spec.geometry;
+  const w = spec.width;
+  const h = spec.height;
+  const top = y - h / 2;
+  const bottom = y + h / 2;
+  const footH = spec.shape === 'cylinder' ? 9 : 3.5;
+  const baseBottom = padPx > 0 ? bottom - footH : bottom - (spec.shape === 'cylinder' ? 8 : 0);
+  const topY = top + (padPx > 0 ? 4 : 0);
+  const spanH = Math.max(10, baseBottom - topY);
+
+  const scaleX = (w / 2) / geomDef.bodyMaxRadiusCm;
+  const scaleY = spanH / geomDef.maxHeightCm;
+
+  const pts = geomDef.profilePoints.map(([yCm, rCm]) => ({
+    cy: baseBottom - yCm * scaleY,
+    rx: Math.max(0, rCm * scaleX - padPx),
+  }));
+
+  return { pts, top, bottom, baseBottom, spanH, scaleX, scaleY };
+}
+
+/**
+ * Exact volume (mL) -> vertical Y coordinate & inner fluid geometry from VesselGeometry slices.
+ * Ensures graduation tick marks, meniscus width, particle bounds & Dalton evaporation match 1:1.
+ */
+export function computeVesselFluidGeometry(spec, y, volMl = 0) {
+  const geomDef = spec.geometry;
+  const { top, bottom, baseBottom, spanH, scaleX, scaleY } = mapProfileToCanvas(spec, xFallback(spec), y, 2.2);
+  const state = geomDef.getLiquidState(volMl);
+  const volumeMlToState = (ml) => {
+    const st = geomDef.getLiquidState(ml);
+    return {
+      cy: baseBottom - st.fillRatio * spanH,
+      halfWPx: Math.max(2, st.radiusCm * scaleX - 2.2),
+      surfaceAreaCm2: st.surfaceAreaCm2,
+    };
+  };
+
+  return {
+    top,
+    bottom,
+    interiorBottom: baseBottom,
+    interiorHeight: spanH,
+    scaleX,
+    scaleY,
+    neckHalf: spec.neckRadius || 18.5,
+    surfaceY: baseBottom - state.fillRatio * spanH,
+    surfaceHalfWPx: Math.max(2, state.radiusCm * scaleX - 2.2),
+    volumeMlToY: (ml) => volumeMlToState(ml).cy,
+    volumeMlToState,
+  };
+}
+
+function xFallback() {
+  return 0;
+}
+
+let _labelFrameActive = false;
+let _allowedLabelIds = null;
+let _currentLabelItemId = null;
+let _deferredPills = [];
+let _textCaseMode = false;
+let _currentCanvasTheme = 'dark';
+
+export function getCurrentCanvasTheme() {
+  return _currentCanvasTheme;
+}
+
+export function formatCanvasText(text) {
+  const s = String(text ?? '');
+  if (_textCaseMode === 'lower' || _textCaseMode === true) return s.toLowerCase();
+  if (_textCaseMode === 'upper') return s.toUpperCase();
+  return s;
+}
+
+export function beginCanvasLabelFrame(allowedIds = null, caseMode = false, themeName = null) {
+  _labelFrameActive = Boolean(allowedIds);
+  _allowedLabelIds = allowedIds;
+  _currentLabelItemId = null;
+  _deferredPills = [];
+  _textCaseMode = caseMode === true ? 'lower' : caseMode || false;
+  if (themeName) _currentCanvasTheme = themeName;
+}
+
+export function setCurrentLabelItemId(id) {
+  _currentLabelItemId = id || null;
+}
+
+export function flushCanvasLabelFrame(ctx) {
+  if (_deferredPills.length > 0) {
+    for (const p of _deferredPills) {
+      renderLabelPillImmediate(ctx, p.cx, p.cy, p.text, p.opts);
+    }
+  }
+  _labelFrameActive = false;
+  _allowedLabelIds = null;
+  _currentLabelItemId = null;
+  _deferredPills = [];
+}
+
+function renderLabelPillImmediate(ctx, cx, cy, text, opts = {}) {
+  const { pal, borderColor, font = '600 11px system-ui, sans-serif', alpha = 1.0, height = 20 } = opts;
+  const drawText = formatCanvasText(text);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = font;
+  const textW = Math.max(44, ctx.measureText(drawText).width + 14);
+  ctx.fillStyle = pal.badgeBg;
+  ctx.strokeStyle = borderColor || pal.badgeBorder;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(cx - textW / 2, cy, textW, height, 6);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = pal.textPrimary;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(drawText, cx, cy + height / 2 + 0.5);
+  ctx.restore();
+}
+
+export function drawLabelPill(ctx, cx, cy, text, opts = {}) {
+  if (_labelFrameActive) {
+    const itemId = opts.itemId ?? _currentLabelItemId;
+    const isMatched = opts.alwaysShow
+      ? true
+      : Array.isArray(opts.itemIds)
+      ? opts.itemIds.some((id) => _allowedLabelIds?.has(id))
+      : Boolean(itemId && _allowedLabelIds?.has(itemId));
+    if (!isMatched) return;
+    if (!opts.immediate) {
+      _deferredPills.push({ cx, cy, text, opts });
+      return;
+    }
+  }
+  renderLabelPillImmediate(ctx, cx, cy, text, opts);
+}
+
+function getDominantSyringeGasFormula(syringe, langCode) {
+  const parts = [];
+  let total = 0;
+  for (const g of ALL_GASES) total += syringe.gasMoles?.[g] || 0;
+  if (total <= 1e-10) return langCode === 'vi' ? 'Khí' : 'Gas';
+  const sorted = ALL_GASES
+    .map((g) => ({ id: g, n: syringe.gasMoles?.[g] || 0 }))
+    .filter((x) => x.n > 1e-8 && (x.n / total >= 0.04 || x.n > 5e-5))
+    .sort((a, b) => b.n - a.n);
+  for (const item of sorted.slice(0, 2)) {
+    parts.push(SPECIES[item.id]?.formula || item.id);
+  }
+  return parts.length > 0 ? parts.join(' + ') : langCode === 'vi' ? 'Khí' : 'Gas';
+}
+
+/**
+ * Trace the outer glass silhouette path directly from VesselGeometry profilePoints.
+ */
+export function traceVesselPath(ctx, spec, x, y, sagFrac = 0) {
+  if (spec.isHorizontalTube) {
+    const hw = spec.width / 2;
+    const hh = spec.height / 2;
+    ctx.beginPath();
+    ctx.roundRect(x - hw, y - hh, spec.width, spec.height, 4);
+    return;
+  }
+  if (spec.isUTube) {
+    const dx = spec.limbSpacingX || 28;
+    const rOut = spec.tubeOuterR || 13;
+    const topY = y - spec.height / 2 + 2;
+    const bottomY = y + spec.height / 2 - 2;
+    const bendCy = bottomY - (dx + rOut);
+    ctx.beginPath();
+    // Outer U contour
+    ctx.moveTo(x - dx - rOut, topY);
+    ctx.lineTo(x - dx - rOut, bendCy);
+    ctx.arc(x, bendCy, dx + rOut, Math.PI, 0, true);
+    ctx.lineTo(x + dx + rOut, topY);
+    // Inner U contour
+    ctx.moveTo(x - dx + rOut, topY);
+    ctx.lineTo(x - dx + rOut, bendCy);
+    ctx.arc(x, bendCy, dx - rOut, Math.PI, 0, true);
+    ctx.lineTo(x + dx - rOut, topY);
+    return;
+  }
+  const { pts, bottom, baseBottom } = mapProfileToCanvas(spec, x, y, 0);
+  const lastIdx = pts.length - 1;
+  const spoutLeftExtra = spec.shape === 'beaker' || spec.shape === 'cylinder' ? 3.5 : 0;
+  const sagPx = sagFrac > 0.01 ? sagFrac * 13.0 : 0;
+
+  ctx.beginPath();
+  // Top-left rim -> descend left wall across bottom fillet -> cross base (sags under high heat!) -> ascend right wall
+  ctx.moveTo(x - pts[lastIdx].rx - spoutLeftExtra, pts[lastIdx].cy);
+  for (let i = lastIdx - 1; i >= 0; i--) {
+    const droop = i <= 1 ? sagPx * (1 - i * 0.45) : 0;
+    ctx.lineTo(x - pts[i].rx, pts[i].cy + droop);
+  }
+  if (sagPx > 0.2) {
+    ctx.quadraticCurveTo(x, pts[0].cy + sagPx * 1.45, x + pts[0].rx, pts[0].cy + sagPx);
+  } else {
+    ctx.lineTo(x + pts[0].rx, pts[0].cy);
+  }
+  for (let i = 1; i <= lastIdx; i++) {
+    const droop = i <= 1 ? sagPx * (1 - i * 0.45) : 0;
+    ctx.lineTo(x + pts[i].rx, pts[i].cy + droop);
+  }
+
+  // Graduated cylinder stable pedestal base foot
+  if (spec.shape === 'cylinder') {
+    const halfBase = spec.width / 2 + 11;
+    ctx.moveTo(x - halfBase, bottom);
+    ctx.lineTo(x + halfBase, bottom);
+    ctx.lineTo(x + pts[0].rx, baseBottom);
+    ctx.lineTo(x - pts[0].rx, baseBottom);
+    ctx.closePath();
+  }
+}
+
+/**
+ * Trace closed interior liquid-clipping area directly from VesselGeometry profilePoints.
+ */
+export function traceVesselInteriorClip(ctx, spec, x, y, sagFrac = 0) {
+  if (spec.isHorizontalTube) {
+    const hw = spec.width / 2 - 2.5;
+    const hh = spec.height / 2 - 2.5;
+    ctx.beginPath();
+    ctx.roundRect(x - hw, y - hh, hw * 2, hh * 2, 2.5);
+    return;
+  }
+  if (spec.isUTube) {
+    const dx = spec.limbSpacingX || 28;
+    const rIn = (spec.tubeOuterR || 13) - 2.4;
+    const topY = y - spec.height / 2 + 2;
+    const bottomY = y + spec.height / 2 - 4.4;
+    const bendCy = bottomY - (dx + rIn);
+    ctx.beginPath();
+    ctx.moveTo(x - dx - rIn, topY);
+    ctx.lineTo(x - dx - rIn, bendCy);
+    ctx.arc(x, bendCy, dx + rIn, Math.PI, 0, true);
+    ctx.lineTo(x + dx + rIn, topY);
+    ctx.lineTo(x + dx - rIn, topY);
+    ctx.lineTo(x + dx - rIn, bendCy);
+    ctx.arc(x, bendCy, dx - rIn, 0, Math.PI, false);
+    ctx.lineTo(x - dx + rIn, topY);
+    ctx.closePath();
+    return;
+  }
+  const pad = spec.shape === 'beaker' || spec.shape === 'crucible' ? 2.6 : 2.1;
+  const { pts } = mapProfileToCanvas(spec, x, y, pad);
+  const lastIdx = pts.length - 1;
+  const sagPx = sagFrac > 0.01 ? sagFrac * 12.0 : 0;
+
+  ctx.beginPath();
+  ctx.moveTo(x - pts[lastIdx].rx, pts[lastIdx].cy);
+  for (let i = lastIdx - 1; i >= 0; i--) {
+    const droop = i <= 1 ? sagPx * (1 - i * 0.45) : 0;
+    ctx.lineTo(x - pts[i].rx, pts[i].cy + droop);
+  }
+  if (sagPx > 0.2) {
+    ctx.quadraticCurveTo(x, pts[0].cy + sagPx * 1.4, x + pts[0].rx, pts[0].cy + sagPx);
+  } else {
+    ctx.lineTo(x + pts[0].rx, pts[0].cy);
+  }
+  for (let i = 1; i <= lastIdx; i++) {
+    const droop = i <= 1 ? sagPx * (1 - i * 0.45) : 0;
+    ctx.lineTo(x + pts[i].rx, pts[i].cy + droop);
+  }
+  ctx.closePath();
+}
+
+export function renderScale(ctx, item, isSelected, isDark, timeNow) {
+  const spec = APPARATUS.scale;
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const w = spec.width;
+  const h = spec.height;
+  const top = y - h / 2;
+
+  ctx.save();
+
+  // Weighing pan
+  ctx.fillStyle = pal.scalePan;
+  ctx.fillRect(x - spec.panWidth / 2, top, spec.panWidth, 6);
+  ctx.fillRect(x - 16, top + 6, 32, 6);
+
+  // Main body
+  ctx.fillStyle = pal.scaleBody;
+  ctx.strokeStyle = isSelected ? '#3b82f6' : pal.scaleBorder;
+  ctx.lineWidth = isSelected ? 2.2 : 1.4;
+  ctx.beginPath();
+  ctx.roundRect(x - w / 2, top + 12, w, h - 12, 8);
+  if (isSelected) strokeHaloGlow(ctx, '#3b82f6', 2.2);
+  ctx.fill();
+  ctx.stroke();
+
+  // LCD screen
+  const lcdW = w - 26;
+  const lcdH = 26;
+  const lcdX = x - lcdW / 2;
+  const lcdY = top + 20;
+  ctx.fillStyle = pal.lcdBg;
+  ctx.beginPath();
+  ctx.roundRect(lcdX, lcdY, lcdW, lcdH, 4);
+  ctx.fill();
+
+  const val = item.measuredG || 0;
+  const text = `${val.toFixed(2)} g`;
+  ctx.fillStyle = pal.lcdText;
+  ctx.font = 'bold 14px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, lcdX + lcdW - 8, lcdY + lcdH / 2 + 1);
+
+  if (Math.abs(item.tareG) > 0.005) {
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(formatCanvasText('TARE'), lcdX + 6, lcdY + lcdH / 2 + 1);
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Low-resolution retro CRT / old-TV pixelated flame block renderer for the Ctrl (2017) theme.
+ */
+function drawRetroTvFlame(ctx, cx, baseY, maxW, maxH, palette, timeNow, pxStep = 4) {
+  const cols = Math.max(3, Math.round((maxW * 2) / pxStep));
+  const rows = Math.max(4, Math.round(maxH / pxStep));
+  const flickSeed = Math.floor(timeNow * 11);
+  ctx.save();
+  for (let r = 0; r < rows; r++) {
+    const ryFrac = r / Math.max(1, rows - 1); // 0 = base, 1 = tip
+    const envelope = Math.sin((1 - ryFrac * 0.88) * Math.PI * 0.5) * (1 - ryFrac * 0.38);
+    const sway = Math.round(Math.sin(flickSeed * 1.7 + r * 0.9 + cx) * (ryFrac > 0.35 ? 1 : 0));
+    const rowSpan = Math.max(1, Math.round(cols * envelope));
+    const halfSpan = Math.floor(rowSpan / 2);
+    for (let c = -halfSpan; c <= halfSpan; c++) {
+      const rxFrac = Math.abs(c) / Math.max(1, halfSpan + 0.35);
+      // Old-TV CRT scanline alpha variation across alternating rows
+      const scanAlpha = r % 2 === 0 ? 0.95 : 0.82;
+      const hash = Math.abs(Math.sin((r * 31 + c * 17 + flickSeed) * 12.9898) * 43758.5453) % 1;
+      if (ryFrac > 0.72 && hash < 0.28) continue;
+      let fill = palette.outer;
+      if (ryFrac < 0.52 && rxFrac < 0.45) {
+        fill = palette.core;
+      } else if (ryFrac < 0.76 && rxFrac < 0.72) {
+        fill = palette.mid;
+      }
+      if (palette.hotDot && r === Math.round(rows * 0.52) && c === 0) {
+        fill = palette.hotDot;
+      }
+      ctx.globalAlpha = scanAlpha;
+      ctx.fillStyle = fill;
+      const px = Math.round((cx + (c + sway) * pxStep) - pxStep * 0.5);
+      const py = Math.round(baseY - (r + 1) * pxStep);
+      ctx.fillRect(px, py, pxStep - 0.5, pxStep - 0.5);
+    }
+  }
+  ctx.restore();
+}
+
+export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
+  const spec = APPARATUS[item.typeId] || APPARATUS.burner;
+  const isBunsen = item.typeId === 'bunsen_burner';
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const airOpen = isBunsen ? item.airHoleOpen !== false : true;
+  const powerTbl = isBunsen && !airOpen ? spec.yellowPowerLevelsW : spec.powerLevelsW;
+  const powerW = item.powerW ?? (powerTbl[item.flameLevel || 0] || 0);
+  const maxRefW = isBunsen && !airOpen ? (spec.yellowPowerLevelsW[3] || 820) : (spec.maxPowerW || 650);
+  const powerFrac = Math.max(0, Math.min(1, powerW / maxRefW));
+  const w = spec.width;
+  const h = spec.height;
+  const top = y - h / 2;
+  const bottom = y + h / 2;
+
+  ctx.save();
+  if (isSelected) {
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(x - w / 2 - 4, top - 4, w + 8, h + 8);
+    ctx.setLineDash([]);
+  }
+
+  if (isBunsen) {
+    // Integrated forged-iron tripod frame reaching up to top + 10 (50 px above burner nozzle)
+    ctx.strokeStyle = pal.burnerMetal;
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x - 38, top + 12);
+    ctx.lineTo(x - 50, bottom);
+    ctx.moveTo(x + 38, top + 12);
+    ctx.lineTo(x + 50, bottom);
+    ctx.stroke();
+
+    // Cast-iron heavy octagonal pedestal base + side brass gas hose barb
+    ctx.fillStyle = isDark ? '#334155' : '#475569';
+    ctx.strokeStyle = isDark ? '#64748b' : '#1e293b';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(x - 32, bottom - 12, 64, 12, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#d97706';
+    ctx.fillRect(x + 10, bottom - 22, 18, 5);
+
+    // Metallic burner barrel chimney up to nozzle (bottom - 68)
+    const barrelGrad = ctx.createLinearGradient(x - 7, 0, x + 7, 0);
+    barrelGrad.addColorStop(0, '#64748b');
+    barrelGrad.addColorStop(0.45, '#e2e8f0');
+    barrelGrad.addColorStop(1, '#475569');
+    ctx.fillStyle = barrelGrad;
+    ctx.fillRect(x - 6, bottom - 68, 12, 56);
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - 6, bottom - 68, 12, 56);
+
+    // Brass rotating Air Collar sleeve around lower barrel + visible circular air intake port when OPEN
+    ctx.fillStyle = '#d97706';
+    ctx.fillRect(x - 8, bottom - 30, 16, 12);
+    if (airOpen) {
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(x, bottom - 24, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    }
+
+    if (powerW > 0) {
+      const fBaseY = bottom - 68;
+      const scale = 0.65 + powerFrac * 1.15;
+      const wobble = Math.sin(timeNow * 24 + x) * (airOpen ? 0.9 : 2.6);
+      const fH = (airOpen ? 46 : 42) * scale;
+      const fW = (airOpen ? 9.5 : 12.5) * scale;
+
+      const isBeilstein = (item.beilsteinTimer || 0) > 0;
+      const isFlameTest = !isBeilstein && (item.flameTestTimer || 0) > 0 && item.flameTestColor;
+
+      if (_currentCanvasTheme === 'ctrl') {
+        const palTv = isBeilstein
+          ? { outer: '#059669', mid: '#10b981', core: '#6ee7b7' }
+          : isFlameTest
+          ? { outer: item.flameTestColor, mid: item.flameTestColor, core: '#ffffff' }
+          : airOpen
+          ? { outer: '#2563eb', mid: '#38bdf8', core: '#7dd3fc', hotDot: '#e0f2fe' }
+          : { outer: '#ea580c', mid: '#facc15', core: '#fef08a' };
+        drawRetroTvFlame(ctx, x, fBaseY, fW, fH, palTv, timeNow, 4);
+      } else {
+        const outerGrad = ctx.createLinearGradient(x, fBaseY, x, fBaseY - fH);
+        if (isBeilstein) {
+          outerGrad.addColorStop(0, 'rgba(16, 185, 129, 0.95)');
+          outerGrad.addColorStop(1, 'rgba(110, 231, 183, 0.08)');
+        } else if (isFlameTest) {
+          outerGrad.addColorStop(0, item.flameTestColor);
+          outerGrad.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
+        } else if (airOpen) {
+          outerGrad.addColorStop(0, 'rgba(37, 99, 235, 0.88)');
+          outerGrad.addColorStop(0.55, 'rgba(56, 189, 248, 0.56)');
+          outerGrad.addColorStop(1, 'rgba(139, 92, 246, 0.0)');
+        } else {
+          outerGrad.addColorStop(0, 'rgba(249, 115, 22, 0.88)');
+          outerGrad.addColorStop(0.45, 'rgba(250, 204, 21, 0.94)');
+          outerGrad.addColorStop(1, 'rgba(254, 240, 138, 0.0)');
+        }
+
+        // Outer mantle flame
+        ctx.beginPath();
+        ctx.moveTo(x - fW, fBaseY);
+        ctx.quadraticCurveTo(x - fW * 1.05, fBaseY - fH * 0.55, x + wobble, fBaseY - fH);
+        ctx.quadraticCurveTo(x + fW * 1.05, fBaseY - fH * 0.55, x + fW, fBaseY);
+        ctx.closePath();
+        ctx.fillStyle = outerGrad;
+        ctx.fill();
+
+        // Inner crisp reducing cone (sharp electric cyan cone at center of roaring Bunsen!)
+        if (airOpen && !isBeilstein && !isFlameTest) {
+          const coneH = fH * 0.54;
+          ctx.beginPath();
+          ctx.moveTo(x - fW * 0.52, fBaseY);
+          ctx.lineTo(x + wobble * 0.3, fBaseY - coneH);
+          ctx.lineTo(x + fW * 0.52, fBaseY);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(125, 211, 252, 0.95)';
+          ctx.fill();
+
+          // Highlight hottest oxidizing tip zone (~1500 °C) just above inner blue cone apex
+          ctx.fillStyle = 'rgba(224, 242, 254, 0.9)';
+          ctx.beginPath();
+          ctx.arc(x + wobble * 0.3, fBaseY - coneH - 2, 2.1, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      const flameBadge = isBeilstein
+        ? `🔥 ${Math.round(powerW)} W · CuCl₂*`
+        : isFlameTest
+        ? `🔥 ${Math.round(powerW)} W · ${item.flameTestIon}`
+        : `🔥 ${Math.round(powerW)} W · ${airOpen ? '~1400°C Blue' : '~800°C Yellow'}`;
+      drawLabelPill(ctx, x, bottom + 6, flameBadge, {
+        pal,
+        borderColor: isBeilstein ? '#10b981' : isFlameTest ? item.flameTestColor : airOpen ? '#38bdf8' : '#f59e0b',
+        font: '600 10.5px system-ui, sans-serif',
+        height: 18,
+      });
+    }
+
+    // Integrated tripod ring bar & glowing ceramic-center gauze drawn across top + 10
+    ctx.strokeStyle = pal.burnerMetal;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(x - 46, top + 10);
+    ctx.lineTo(x + 46, top + 10);
+    ctx.stroke();
+
+    ctx.fillStyle =
+      powerW > 0
+        ? `rgba(249, 115, 22, ${0.24 + powerFrac * 0.56})`
+        : isDark ? 'rgba(226, 232, 240, 0.48)' : 'rgba(148, 163, 184, 0.52)';
+    ctx.strokeStyle = isDark ? 'rgba(148, 163, 184, 0.5)' : 'rgba(100, 116, 139, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x - 32, top + 6.5, 64, 5.5, 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.restore();
+    return;
+  }
+
+  // Tripod stand + wire gauze (Spirit Lamp burner)
+  ctx.strokeStyle = pal.burnerMetal;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(x - 46, top + 10);
+  ctx.lineTo(x + 46, top + 10);
+  ctx.moveTo(x - 36, top + 12);
+  ctx.lineTo(x - 48, bottom);
+  ctx.moveTo(x + 36, top + 12);
+  ctx.lineTo(x + 48, bottom);
+  ctx.stroke();
+
+  // Ceramic gauze center glows with live burner wattage
+  ctx.fillStyle =
+    powerW > 0
+      ? `rgba(249, 115, 22, ${0.18 + powerFrac * 0.42})`
+      : 'rgba(148, 163, 184, 0.35)';
+  ctx.fillRect(x - 32, top + 6, 64, 5);
+
+  // Alcohol burner glass/brass reservoir
+  ctx.fillStyle = isDark ? 'rgba(148, 163, 184, 0.2)' : 'rgba(203, 213, 225, 0.55)';
+  ctx.strokeStyle = pal.glassStroke;
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.roundRect(x - 24, bottom - 34, 48, 34, 8);
+  ctx.fill();
+  ctx.stroke();
+
+  // Ethanol inside burner
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+  ctx.fillRect(x - 22, bottom - 20, 44, 17);
+
+  // Brass wick collar
+  ctx.fillStyle = '#d97706';
+  ctx.fillRect(x - 7, bottom - 41, 14, 7);
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(x - 2, bottom - 47, 4, 6);
+
+  // Continuous wattage flickering flame
+  if (powerW > 0) {
+    const scale = 0.48 + powerFrac * 1.44;
+    const wobble = Math.sin(timeNow * 16 + x) * (1.4 + powerFrac * 1.6);
+    const fBaseY = bottom - 46;
+    const fH = 34 * scale;
+    const fW = 10.5 * scale;
+
+    const isBeilstein = (item.beilsteinTimer || 0) > 0;
+    const isFlameTest = !isBeilstein && (item.flameTestTimer || 0) > 0 && item.flameTestColor;
+
+    if (_currentCanvasTheme === 'ctrl') {
+      const palTv = isBeilstein
+        ? { outer: '#059669', mid: '#34d399', core: '#a7f3d0' }
+        : isFlameTest
+        ? { outer: item.flameTestColor, mid: item.flameTestColor, core: '#ffffff' }
+        : { outer: '#f97316', mid: '#fde047', core: '#38bdf8' };
+      drawRetroTvFlame(ctx, x, fBaseY, fW, fH, palTv, timeNow, 4);
+    } else {
+      const outerGrad = ctx.createRadialGradient(x, fBaseY - fH * 0.35, 2, x, fBaseY - fH * 0.35, fH * (isBeilstein || isFlameTest ? 1.05 : 0.8));
+      if (isBeilstein) {
+        outerGrad.addColorStop(0, 'rgba(110, 231, 183, 0.96)');
+        outerGrad.addColorStop(0.5, 'rgba(16, 185, 129, 0.88)');
+        outerGrad.addColorStop(1, 'rgba(5, 150, 105, 0.0)');
+      } else if (isFlameTest) {
+        const fCol = item.flameTestColor;
+        outerGrad.addColorStop(0, '#ffffff');
+        outerGrad.addColorStop(0.35, fCol);
+        outerGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      } else {
+        outerGrad.addColorStop(0, 'rgba(253, 224, 71, 0.95)');
+        outerGrad.addColorStop(0.55, 'rgba(249, 115, 22, 0.78)');
+        outerGrad.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+      }
+
+      ctx.beginPath();
+      ctx.moveTo(x - fW * (isBeilstein || isFlameTest ? 1.18 : 1), fBaseY);
+      ctx.quadraticCurveTo(x - fW * 1.15, fBaseY - fH * 0.5, x + wobble, fBaseY - fH * (isBeilstein || isFlameTest ? 1.18 : 1));
+      ctx.quadraticCurveTo(x + fW * 1.15, fBaseY - fH * 0.5, x + fW * (isBeilstein || isFlameTest ? 1.18 : 1), fBaseY);
+      ctx.closePath();
+      ctx.fillStyle = outerGrad;
+      ctx.fill();
+
+      // Inner blue/emerald cone
+      ctx.beginPath();
+      ctx.moveTo(x - fW * 0.5, fBaseY);
+      ctx.quadraticCurveTo(x, fBaseY - fH * 0.55, x + fW * 0.5, fBaseY);
+      ctx.closePath();
+      ctx.fillStyle = isBeilstein ? 'rgba(52, 211, 153, 0.92)' : isFlameTest ? item.flameTestColor : 'rgba(56, 189, 248, 0.88)';
+      ctx.fill();
+    }
+
+    // Compact live power badge (+ Beilstein / Flame Test ion)
+    const flameBadge = isBeilstein
+      ? `🔥 ${Math.round(powerW)} W · CuCl₂*`
+      : isFlameTest
+      ? `🔥 ${Math.round(powerW)} W · ${item.flameTestIon}`
+      : `🔥 ${Math.round(powerW)} W`;
+    drawLabelPill(ctx, x, bottom + 6, flameBadge, {
+      pal,
+      borderColor: isBeilstein ? '#10b981' : isFlameTest ? item.flameTestColor : powerFrac > 0.6 ? '#f97316' : '#f59e0b',
+      font: '600 10.5px system-ui, sans-serif',
+      height: 18,
+    });
+  }
+
+  ctx.restore();
+}
+
+function renderBrokenSyringe(ctx, item, pal, isSelected) {
+  const { x, y } = item;
+  const spec = APPARATUS.gas_syringe;
+  const bottom = y + spec.height / 2;
+
+  ctx.save();
+  if (item.spilledPuddleColor) {
+    ctx.fillStyle = item.spilledPuddleColor;
+    ctx.globalAlpha = 0.68;
+    ctx.beginPath();
+    ctx.ellipse(x - (item.flippedX ? -10 : 10), bottom - 1, 78, 5.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Cracked Luer tip + shattered barrel base fragments
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillRect(item.flippedX ? x + 94 : x - 110, bottom - 14, 16, 7);
+  ctx.fillStyle = pal.glassFill;
+  ctx.strokeStyle = isSelected ? '#3b82f6' : '#ef4444';
+  ctx.lineWidth = isSelected ? 2 : 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x - 86, bottom - 22);
+  ctx.lineTo(x - 42, bottom - 8);
+  ctx.lineTo(x - 10, bottom - 19);
+  ctx.lineTo(x + 28, bottom - 5);
+  ctx.lineTo(x + 64, bottom - 15);
+  ctx.lineTo(x + 68, bottom - 1);
+  ctx.lineTo(x - 86, bottom - 1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Scattered glass splinters
+  for (let i = 0; i < 12; i++) {
+    const sx = x - 70 + i * 14 + Math.sin(i * 7.1) * 5;
+    const sy = bottom - 3 - (i % 3) * 3;
+    ctx.fillStyle = 'rgba(224, 242, 254, 0.72)';
+    ctx.beginPath();
+    ctx.moveTo(sx - 5, sy + 2);
+    ctx.lineTo(sx + 4, sy - 4);
+    ctx.lineTo(sx + 6, sy + 3);
+    ctx.closePath();
+    ctx.fill();
+  }
+  drawLabelPill(ctx, x, bottom - 44, `${item.label} · 💥`, {
+    pal,
+    borderColor: '#ef4444',
+    font: '600 10.5px system-ui, sans-serif',
+    height: 19,
+  });
+  ctx.restore();
+}
+
+export function renderRetortStand(ctx, stand, isSelected, isDark) {
+  const spec = APPARATUS.retort_stand;
+  const pal = getThemePalette(isDark);
+  const { x, y } = stand;
+  const w = spec.width;
+  const h = spec.height;
+  const extPx = Math.max(0, Math.min(200, stand.extendPx || 0));
+  const top = y - h / 2 - extPx;
+  const baseTop = y - h / 2;
+  const bottom = y + h / 2;
+  const { rodX } = getStandGeometry(stand);
+
+  ctx.save();
+  if (stand.landingTilt) {
+    ctx.translate(x, bottom);
+    ctx.rotate(stand.landingTilt * 0.4);
+    ctx.translate(-x, -bottom);
+  }
+  // Heavy cast-iron base plate resting on bench
+  ctx.fillStyle = isDark ? '#334155' : '#475569';
+  ctx.strokeStyle = isSelected ? '#3b82f6' : isDark ? '#64748b' : '#1e293b';
+  ctx.lineWidth = isSelected ? 2 : 1.4;
+  ctx.beginPath();
+  ctx.roundRect(x - w / 2, bottom - 12, w, 12, 3);
+  if (isSelected) strokeHaloGlow(ctx, '#3b82f6', 2.0);
+  ctx.fill();
+  ctx.stroke();
+
+  // Boss socket collar at base of stainless rod
+  ctx.fillStyle = isDark ? '#475569' : '#64748b';
+  ctx.fillRect(rodX - 7, bottom - 22, 14, 10);
+
+  // 304 Stainless steel vertical rod (telescoping upper & lower shafts)
+  const rodGrad = ctx.createLinearGradient(rodX - 3.5, 0, rodX + 3.5, 0);
+  rodGrad.addColorStop(0, '#64748b');
+  rodGrad.addColorStop(0.45, '#e2e8f0');
+  rodGrad.addColorStop(1, '#475569');
+  ctx.fillStyle = rodGrad;
+  ctx.fillRect(rodX - 3, top + 8, 6, h + extPx - 22);
+
+  // Telescopic locking sleeve collar when extended
+  if (extPx > 2) {
+    ctx.fillStyle = isDark ? '#475569' : '#334155';
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 1;
+    ctx.fillRect(rodX - 5.5, baseTop + 10, 11, 9);
+    ctx.strokeRect(rodX - 5.5, baseTop + 10, 11, 9);
+  }
+
+  // Draggable finial cap handle at rod top (pull up/down to extend stand height)
+  ctx.beginPath();
+  ctx.arc(rodX, top + 8, 6.0, 0, Math.PI * 2);
+  ctx.fillStyle = isSelected || extPx > 0 ? '#f59e0b' : '#94a3b8';
+  ctx.strokeStyle = isDark ? '#0f172a' : '#ffffff';
+  ctx.lineWidth = 1.4;
+  ctx.fill();
+  ctx.stroke();
+
+  drawLabelPill(ctx, rodX, top - 16, extPx > 0 ? `${stand.label} · +${Math.round(extPx / 1.15)}mm` : stand.label, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : pal.badgeBorder,
+    font: '600 10px system-ui, sans-serif',
+    height: 17,
+  });
+  ctx.restore();
+}
+
+export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
+  if (!stand || !clampedItem || clampedItem.isShattered || clampedItem.isBroken) return;
+  const stSpec = APPARATUS.retort_stand;
+  const { rodX, rodSide, armDir } = getStandGeometry(stand);
+  const extPx = Math.max(0, Math.min(200, stand.extendPx || 0));
+  const standTop = stand.y - stSpec.height / 2 - extPx;
+  const standBot = stand.y + stSpec.height / 2;
+  const spec = APPARATUS[clampedItem.typeId];
+  const isSyr = clampedItem.kind === 'gas_syringe';
+
+  let attachX = clampedItem.x;
+  let attachY = clampedItem.y + getClampNeckOffsetY(spec);
+  if (isSyr) {
+    const { barrelLeft, barrelRight } = getSyringeGeometry(clampedItem);
+    // Grip rear/middle barrel section horizontally closest to stand rod without crossing the graduations
+    attachX = Math.max(barrelLeft + 32, Math.min(barrelRight - 14, rodX + armDir * 24));
+  }
+  // Keep bosshead clamp strictly mounted along the stainless steel rod shaft
+  attachY = Math.max(standTop + 14, Math.min(standBot - 22, attachY));
+
+  ctx.save();
+  // Bosshead block mounted on stainless steel rod
+  ctx.fillStyle = isDark ? '#475569' : '#334155';
+  ctx.strokeStyle = isDark ? '#94a3b8' : '#1e293b';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.roundRect(rodX - 8, attachY - 9, 16, 18, 3);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillRect(rodSide > 0 ? rodX + 8 : rodX - 14, attachY - 3, 6, 6);
+
+  // Horizontal stainless clamp extension rod (stops cleanly at barrel/neck grip edge)
+  const jawRadius = isSyr ? (spec.barrelH || 54) / 2 + 2 : Math.max(6, (spec.neckRadius || 16) + 2);
+  const armEndX = isSyr ? attachX : attachX + (rodX >= attachX ? jawRadius : -jawRadius);
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(rodX, attachY);
+  ctx.lineTo(armEndX, attachY);
+  ctx.stroke();
+
+  // Dual rubberized prong jaws clasping top/bottom (syringe) or left/right (vertical glassware neck)
+  ctx.strokeStyle = isDark ? '#cbd5e1' : '#1e293b';
+  ctx.lineWidth = 3.2;
+  ctx.lineCap = 'round';
+  if (isSyr) {
+    ctx.beginPath();
+    ctx.arc(attachX, attachY, jawRadius, -Math.PI * 0.5 - 0.52, -Math.PI * 0.5 + 0.52);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(attachX, attachY, jawRadius, Math.PI * 0.5 - 0.52, Math.PI * 0.5 + 0.52);
+    ctx.stroke();
+    ctx.fillStyle = '#64748b';
+    ctx.beginPath();
+    ctx.arc(attachX, attachY, 4, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.arc(attachX, attachY, jawRadius, -0.58, 0.58);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(attachX, attachY, jawRadius, Math.PI - 0.58, Math.PI + 0.58);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 'vi', timeNow = 0) {
+  const spec = APPARATUS.gas_syringe;
+  const pal = getThemePalette(isDark);
+  if (item.isBroken) {
+    renderBrokenSyringe(ctx, item, pal, isSelected);
+    return;
+  }
+
+  const { x, y } = item;
+  const syrGeom = getSyringeGeometry(item);
+  const { barrelDir, barrelW, barrelH, collarH, frontX, rearX, barrelLeft, barrelRight, nozzleX, travelStartX, travelSpan } = syrGeom;
+  const barrelTop = y - barrelH / 2;
+
+  const gasVolMl = computeSyringeGasVolumeMl(item, env);
+  const syrTempK = item.tempK ?? env.tempK;
+  const overflowL = computeLiquidVolumeL(item.overflowMoles || {}, syrTempK);
+  const overflowMl = overflowL * 1000;
+  const condensedWaterMl = ((item.condensedWaterMol || 0) * SPECIES.H2O_l.molarMass) / 0.997;
+  const condensedEtOHMl = ((item.condensedEtOHMol || 0) * SPECIES.C2H5OH_l.molarMass) / SPECIES.C2H5OH_l.density;
+  const condensedMl = condensedWaterMl + condensedEtOHMl;
+  const nh4clMol = item.overflowMoles?.NH4Cl_s || 0;
+  const frozenMl = computeSyringeFrozenVolumeMl(item);
+  const totalLiqMl = overflowMl + condensedMl;
+  const totalFluidMl = totalLiqMl + frozenMl;
+  const totalVolMl = computeSyringeTotalVolumeMl(item, env);
+
+  // Calibrate stroke: 0 mL tick aligns near front face; plunger advances along barrelDir
+  const ratio = Math.max(0, Math.min(1, totalVolMl / spec.maxVolumeMl));
+  const plungerFaceX = travelStartX + barrelDir * (ratio * travelSpan);
+  const frontInnerX = frontX + barrelDir * 2;
+  const minChamberFace = frontX + barrelDir * 3;
+  const activeChamberFace =
+    barrelDir > 0 ? Math.max(minChamberFace, plungerFaceX) : Math.min(minChamberFace, plungerFaceX);
+  const chamberLeft = Math.min(frontInnerX, activeChamberFace);
+  const chamberRight = Math.max(frontInnerX, activeChamberFace);
+  const chamberW = Math.max(0, chamberRight - chamberLeft);
+
+  const syrTempC = kelvinToCelsius(syrTempK);
+  const overP = (item.internalPressureBar || env.pressureBar) - env.pressureBar;
+
+  // Determine chamber gas tint dynamically from SPECIES.syringeFillColor (colored gases take precedence over steam)
+  let gasChamberFill = 'rgba(186, 230, 253, 0.14)';
+  for (const gId of ALL_GASES) {
+    if ((item.gasMoles?.[gId] || 0) <= 1e-6) continue;
+    const fill = SPECIES[gId]?.syringeFillColor;
+    if (!fill) continue;
+    gasChamberFill = typeof fill === 'string' ? fill : (isDark ? fill.dark : fill.light);
+    if (gId !== 'H2O_g') break;
+  }
+
+  ctx.save();
+  if (item.landingTilt) {
+    ctx.translate(x, y);
+    ctx.rotate(item.landingTilt * 0.45);
+    ctx.translate(-x, -y);
+  }
+
+  // Ground puddle beneath if dropped and spilled liquid
+  if (item.spilledPuddleColor && !item.clampedToId) {
+    ctx.save();
+    ctx.fillStyle = item.spilledPuddleColor;
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.ellipse(frontX - barrelDir * 8, barrelTop + barrelH + 10, 26, 3.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Stainless steel / Chrome Luer-Lock precision connector tip on nozzle end (left or right if flipped)
+  const tipMinX = Math.min(nozzleX, frontX - barrelDir * 7);
+  const collarMinX = Math.min(frontX, frontX - barrelDir * 8);
+  ctx.fillStyle = '#94a3b8';
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 1;
+  ctx.fillRect(tipMinX, y - 3.5, 11, 7);
+  ctx.strokeRect(tipMinX, y - 3.5, 11, 7);
+  ctx.fillStyle = '#cbd5e1';
+  ctx.fillRect(collarMinX, y - 7, 8, 14);
+  ctx.strokeRect(collarMinX, y - 7, 8, 14);
+
+  // Interactive tubing port indicator ring on syringe nozzle tip
+  ctx.save();
+  const syrConnected = Boolean(item.connectedFromId);
+  ctx.fillStyle = syrConnected ? '#0ea5e9' : pal.badgeBg;
+  ctx.strokeStyle = '#0ea5e9';
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.arc(nozzleX, y, 4.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Borosilicate 3.3 Barrel (Ø 47.8 mm OD) + Rear Flared Flange (Ø 57 mm OD)
+  ctx.fillStyle = pal.glassFill;
+  ctx.strokeStyle =
+    overP >= 0.35
+      ? '#ef4444'
+      : isSelected
+      ? '#3b82f6'
+      : syrTempC >= 60
+      ? '#f59e0b'
+      : pal.glassStroke;
+  ctx.lineWidth = isSelected || overP >= 0.35 ? 2.2 : 1.7;
+  ctx.beginPath();
+  ctx.roundRect(barrelLeft, barrelTop, barrelW, barrelH, 5);
+  if (isSelected) strokeHaloGlow(ctx, '#3b82f6', 2.2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = pal.glassFill;
+  ctx.beginPath();
+  ctx.roundRect(rearX - (barrelDir > 0 ? 4 : 3), y - collarH / 2, 7, collarH, 3);
+  ctx.fill();
+  ctx.stroke();
+
+  // Inner chamber strictly clipped to [frontInnerX .. plungerFaceX]
+  if (chamberW > 0.5) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(barrelLeft + 2, barrelTop + 2, barrelW - 4, barrelH - 4, 4);
+    ctx.clip();
+    ctx.beginPath();
+    ctx.rect(chamberLeft, barrelTop + 2, chamberW, barrelH - 4);
+    ctx.clip();
+
+    const innerTop = barrelTop + 2;
+    const innerH = barrelH - 4;
+    const innerBot = innerTop + innerH;
+
+    // 1. Gas phase color fill inside expanded chamber
+    if (gasVolMl > 0.05) {
+      ctx.fillStyle = gasChamberFill;
+      ctx.fillRect(chamberLeft, innerTop, chamberW, innerH);
+    }
+
+    // 2. Unified aqueous liquid + condensate + frozen ice strictly confined ahead of plunger face!
+    if (totalFluidMl > 0.002) {
+      const combMoles = buildCombinedSyringeTotalMoles(item);
+      const liqMoles = buildCombinedSyringeLiquidMoles(item);
+      const combL = computeLiquidVolumeL(liqMoles, syrTempK);
+      let liqColor = isDark ? 'rgba(56, 189, 248, 0.62)' : 'rgba(14, 165, 233, 0.55)';
+      if (combL > 1e-8) {
+        liqColor = computeSolutionVisuals(
+          combMoles,
+          combL,
+          computePH(liqMoles, combL, syrTempK),
+          4.29,
+          item.overflowBleachFrac || 0
+        ).css;
+      }
+
+      const iceFrac = frozenMl / Math.max(1e-6, totalFluidMl);
+      const iceFill = isDark ? 'rgba(224, 242, 254, 0.78)' : 'rgba(186, 230, 253, 0.84)';
+      const iceEdge = isDark ? 'rgba(248, 250, 252, 0.72)' : 'rgba(56, 189, 248, 0.65)';
+
+      if (chamberW < 8) {
+        const miniFrac = Math.max(0.16, Math.min(1, totalFluidMl / 2.2));
+        const miniH = innerH * miniFrac;
+        const poolY = innerBot - miniH;
+        const iceH = miniH * iceFrac;
+        if (totalLiqMl > 0.002) {
+          ctx.fillStyle = liqColor;
+          ctx.fillRect(chamberLeft, poolY + iceH, chamberW, miniH - iceH);
+        }
+        if (frozenMl > 0.002) {
+          ctx.fillStyle = iceFill;
+          ctx.fillRect(chamberLeft, poolY, chamberW, Math.max(2, iceH));
+        }
+        ctx.strokeStyle = frozenMl > 0.002 ? iceEdge : 'rgba(255, 255, 255, 0.68)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(chamberLeft, poolY);
+        ctx.lineTo(chamberRight, poolY);
+        ctx.stroke();
+      } else {
+        const areaFrac = totalFluidMl / Math.max(totalFluidMl + gasVolMl, 1e-6);
+        const hFrac = cylinderFillHeightFraction(areaFrac);
+        const poolH = Math.max(2.5, innerH * hFrac);
+        const poolY = innerBot - poolH;
+        const iceH = poolH * iceFrac;
+
+        if (totalLiqMl > 0.002) {
+          ctx.fillStyle = liqColor;
+          ctx.fillRect(chamberLeft, poolY + iceH, chamberW, Math.max(0, poolH - iceH));
+        }
+        if (frozenMl > 0.002) {
+          ctx.fillStyle = iceFill;
+          ctx.fillRect(chamberLeft, poolY, chamberW, Math.max(2.2, iceH));
+          ctx.strokeStyle = iceEdge;
+          ctx.lineWidth = 0.85;
+          ctx.beginPath();
+          for (let k = 0; k < Math.min(6, Math.floor(chamberW / 14)); k++) {
+            const cx = chamberLeft + 6 + k * 14;
+            ctx.moveTo(cx, poolY + 1);
+            ctx.lineTo(cx + 5, poolY + Math.min(iceH, 5));
+          }
+          ctx.stroke();
+        }
+
+        if (hFrac < 0.985) {
+          ctx.strokeStyle = frozenMl > 0.002 ? iceEdge : 'rgba(255, 255, 255, 0.68)';
+          ctx.lineWidth = 1.1;
+          ctx.beginPath();
+          ctx.moveTo(chamberLeft, poolY);
+          ctx.lineTo(chamberRight, poolY);
+          ctx.stroke();
+        }
+      }
+
+      if (condensedMl > 0.002 && syrTempK >= 273.15 && chamberW >= 12) {
+        ctx.fillStyle = 'rgba(186, 230, 253, 0.84)';
+        const nDrops = Math.min(10, Math.max(3, Math.floor(chamberW / 12)));
+        for (let i = 0; i < nDrops; i++) {
+          const dx = chamberLeft + 4 + ((i * 0.618 + 0.13) % 1) * Math.max(4, chamberW - 8);
+          const dy = innerTop + 4 + ((i * 0.37) % 1) * Math.max(6, innerH * 0.55);
+          ctx.beginPath();
+          ctx.arc(dx, dy, 1.1 + (i % 3) * 0.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      if (nh4clMol > 1e-6 || (item.nh4clSmokeTimer || 0) > 0) {
+        const sAlpha = Math.min(0.85, Math.max((item.nh4clSmokeTimer || 0) * 0.3, Math.min(1, nh4clMol * 250) * 0.72));
+        if ((item.nh4clSmokeTimer || 0) > 0) {
+          ctx.fillStyle = `rgba(248, 250, 252, ${(0.22 * Math.min(1, item.nh4clSmokeTimer)).toFixed(2)})`;
+          ctx.fillRect(chamberLeft, innerTop, chamberW, innerH);
+        }
+        if (nh4clMol > 1e-6) {
+          ctx.fillStyle = `rgba(248, 250, 252, ${sAlpha.toFixed(2)})`;
+          const nSpecks = Math.min(18, Math.max(4, Math.floor(chamberW / 8)));
+          for (let k = 0; k < nSpecks; k++) {
+            const sx = chamberLeft + 4 + ((k * 0.618 + 0.11) % 1) * Math.max(4, chamberW - 8);
+            const sy = innerBot - 2.5 - (k % 3) * 1.4;
+            ctx.beginPath();
+            ctx.arc(sx, sy, 1.3 + (k % 2) * 0.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+    }
+
+    // Outer/inner rime frost layer on cold syringe walls
+    const syrFrost = Math.min(1, item.frostOpacity || 0);
+    if (syrFrost > 0.03) {
+      const fGrad = ctx.createLinearGradient(barrelLeft, barrelTop, barrelLeft, barrelTop + barrelH);
+      fGrad.addColorStop(0, isDark ? `rgba(224, 242, 254, ${0.42 * syrFrost})` : `rgba(186, 230, 253, ${0.52 * syrFrost})`);
+      fGrad.addColorStop(0.5, isDark ? `rgba(241, 245, 249, ${0.12 * syrFrost})` : `rgba(224, 242, 254, ${0.22 * syrFrost})`);
+      fGrad.addColorStop(1, isDark ? `rgba(224, 242, 254, ${0.38 * syrFrost})` : `rgba(186, 230, 253, ${0.46 * syrFrost})`);
+      ctx.fillStyle = fGrad;
+      ctx.fillRect(chamberLeft, innerTop, chamberW, innerH);
+      ctx.strokeStyle = isDark ? `rgba(248, 250, 252, ${0.55 * syrFrost})` : `rgba(14, 165, 233, ${0.45 * syrFrost})`;
+      ctx.lineWidth = 0.85;
+      for (let i = 0; i < 6; i++) {
+        const fx = chamberLeft + 4 + ((i * 0.618 + 0.1) % 1) * Math.max(6, chamberW - 8);
+        const fy = innerTop + 5 + ((i * 0.41) % 1) * Math.max(6, innerH - 10);
+        ctx.beginPath();
+        ctx.moveTo(fx - 2.6, fy);
+        ctx.lineTo(fx + 2.6, fy);
+        ctx.moveTo(fx, fy - 2.6);
+        ctx.lineTo(fx, fy + 2.6);
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  // Active inflow jet ripples spraying through Luer-Lock into barrel
+  if ((item.inflowLiquidTimer || 0) > 0 && (item.inflowLiquidRateMlS || 0) > 0.05) {
+    const jetCol = item.inflowLiquidColor || 'rgba(186, 230, 253, 0.9)';
+    const pulse = (timeNow * 14) % 1;
+    const endJet = frontX + barrelDir * (10 + pulse * 18);
+    ctx.save();
+    ctx.strokeStyle = jetCol;
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(frontX - barrelDir * 14, y);
+    ctx.lineTo(barrelDir > 0 ? Math.min(chamberRight, endJet) : Math.max(chamberLeft, endJet), y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Rear collar spill stream when full 250 mL syringe overflows
+  if ((item.overflowOutRateMlS || 0) > 0.5) {
+    const rearEdgeX = rearX + barrelDir * 3;
+    const wobble = Math.sin((timeNow || 0) * 18) * 1.8;
+    ctx.save();
+    ctx.strokeStyle = item.overflowOutColor || 'rgba(186, 230, 253, 0.88)';
+    ctx.lineWidth = Math.min(6, 2.4 + Math.sqrt(item.overflowOutRateMlS) * 0.3);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(rearEdgeX, y + 10);
+    ctx.quadraticCurveTo(rearEdgeX + barrelDir * 18 + wobble, y + 32, rearEdgeX + barrelDir * 24, y + 70);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Active parabolic water stream discharging from Luer nozzle downward!
+  if ((item.dischargeLiquidRateMlS || 0) > 0.15 && item.dischargeArc && item.dischargeArc.points?.length >= 2) {
+    const arcPts = item.dischargeArc.points;
+    ctx.save();
+    ctx.strokeStyle = item.dischargeColor || 'rgba(186, 230, 253, 0.9)';
+    ctx.lineWidth = Math.min(5.2, 2.0 + Math.sqrt(item.dischargeLiquidRateMlS) * 0.32);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(arcPts[0].x, arcPts[0].y);
+    for (let i = 1; i < arcPts.length; i++) {
+      ctx.lineTo(arcPts[i].x, arcPts[i].y);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.42)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Ground-glass frosted plunger piston + twin black PTFE O-ring seals + pull rod
+  const pistonW = 16;
+  const pistonMinX = Math.min(plungerFaceX, plungerFaceX + barrelDir * pistonW);
+  const rodStartX = plungerFaceX + barrelDir * pistonW;
+  const rodTailX = plungerFaceX + barrelDir * (travelSpan * 0.42 + 44);
+  ctx.fillStyle = isDark ? 'rgba(203, 213, 225, 0.35)' : 'rgba(241, 245, 249, 0.72)';
+  ctx.strokeStyle = pal.glassStroke;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(pistonMinX, barrelTop + 4, pistonW, barrelH - 8, 2);
+  ctx.fill();
+  ctx.stroke();
+  // Dual PTFE Teflon sealing rings
+  ctx.fillStyle = '#0f172a';
+  const seal1 = plungerFaceX + barrelDir * 2;
+  const seal2 = plungerFaceX + barrelDir * 10.5;
+  ctx.fillRect(barrelDir > 0 ? seal1 : seal1 - 3.2, barrelTop + 3, 3.2, barrelH - 6);
+  ctx.fillRect(barrelDir > 0 ? seal2 : seal2 - 3.2, barrelTop + 3, 3.2, barrelH - 6);
+  // Frosted glass plunger rod + ring grip
+  const rodSpan = Math.max(16, Math.abs(rodTailX - rodStartX));
+  const rodRectX = barrelDir > 0 ? rodStartX : rodStartX - rodSpan;
+  ctx.fillStyle = isDark ? 'rgba(148, 163, 184, 0.65)' : 'rgba(100, 116, 139, 0.6)';
+  ctx.fillRect(rodRectX, y - 4.5, rodSpan, 9);
+  ctx.strokeStyle = pal.glassStroke;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.roundRect(barrelDir > 0 ? rodTailX : rodTailX - 8, y - 16, 8, 32, 3);
+  ctx.stroke();
+
+  // Ceramic enamel graduations every 10 mL (0..250 mL) + major numeric ticks every 50 mL (never mirrored!)
+  ctx.font = '600 7.5px system-ui, sans-serif';
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'center';
+  for (let ml = 0; ml <= 250; ml += 10) {
+    const tx = travelStartX + barrelDir * ((ml / 250) * travelSpan);
+    const isMajor50 = ml % 50 === 0;
+    const len = isMajor50 ? 11 : 6;
+    ctx.strokeStyle = isMajor50 ? pal.tickStroke : pal.tickMinor;
+    ctx.lineWidth = isMajor50 ? 1.15 : 0.8;
+    ctx.beginPath();
+    ctx.moveTo(tx, barrelTop);
+    ctx.lineTo(tx, barrelTop + len);
+    ctx.stroke();
+    if (isMajor50) {
+      ctx.fillStyle = pal.enamelText;
+      ctx.fillText(String(ml), tx, barrelTop + 12);
+    }
+  }
+  ctx.fillStyle = pal.enamelText;
+  ctx.font = '600 7px system-ui, sans-serif';
+  ctx.textAlign = barrelDir > 0 ? 'right' : 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('250 mL · ±1.5% · ID 42.9mm', barrelDir > 0 ? barrelRight - 10 : barrelLeft + 10, barrelTop + barrelH - 4);
+
+  // Live Gas + Liquid + Temperature Badge below syringe
+  const gasTag = getDominantSyringeGasFormula(item, langCode);
+  const syrPhaseIcon = frozenMl > totalLiqMl ? '❄️' : '💧';
+  let labelText;
+  if (totalFluidMl > 0.2 && gasVolMl > 0.5) {
+    labelText = `💨 ${gasTag} ${gasVolMl.toFixed(1)} + ${syrPhaseIcon} ${totalFluidMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
+  } else if (overflowMl > 0.2 || frozenMl > 0.2) {
+    labelText =
+      langCode === 'vi'
+        ? `${syrPhaseIcon} ${frozenMl > totalLiqMl ? 'Băng' : 'Tràn vào'}: ${totalFluidMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`
+        : `${syrPhaseIcon} ${frozenMl > totalLiqMl ? 'Ice' : 'Liquid'}: ${totalFluidMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
+  } else {
+    labelText = `${gasTag}: ${gasVolMl.toFixed(1)} mL · ${syrTempC.toFixed(0)}°C`;
+  }
+  if (nh4clMol > 1e-6) {
+    labelText += ` · 🧂 ${(nh4clMol * 1000).toFixed(2)}mmol NH₄Cl`;
+  }
+  if (overP > 0.08) {
+    labelText += ` · +${overP.toFixed(2)} bar`;
+  }
+  const badgeTopY = y + collarH / 2 + 6;
+  drawLabelPill(ctx, x, badgeTopY, labelText, {
+    pal,
+    borderColor: overP >= 0.35 ? '#ef4444' : isSelected ? '#3b82f6' : syrTempC >= 55 ? '#f59e0b' : pal.badgeBorder,
+    font: '600 11.5px system-ui, sans-serif',
+    height: 22,
+  });
+
+  // Condensation or Syringe 250mL-Overflow secondary status badge
+  const isCondensing = (item.lastCondenseRateMolS || 0) > 1e-6;
+  const isSpillingOut = (item.overflowOutRateMlS || 0) > 0.5;
+  if (isSpillingOut) {
+    const ovText =
+      langCode === 'vi'
+        ? '💧 Đầy 250 mL — Nước tràn khỏi xilanh!'
+        : '💧 250 mL Full — Syringe overflowing!';
+    drawLabelPill(ctx, x, badgeTopY + 26, ovText, {
+      pal,
+      borderColor: '#ef4444',
+      font: '600 10.5px system-ui, sans-serif',
+      height: 20,
+    });
+  } else if (condensedMl > 0.0005 || isCondensing) {
+    const condSpeciesTag =
+      condensedWaterMl > 0.0005 && condensedEtOHMl > 0.0005
+        ? 'H₂O + C₂H₅OH'
+        : condensedEtOHMl > 0.0005
+        ? 'C₂H₅OH(l)'
+        : 'H₂O(l)';
+    const condText =
+      langCode === 'vi'
+        ? `💧 Ngưng tụ: ${condensedMl.toFixed(2)} mL ${condSpeciesTag}${isCondensing ? ' · Đang ngưng!' : ''}`
+        : `💧 Condensed: ${condensedMl.toFixed(2)} mL ${condSpeciesTag}${isCondensing ? ' · Condensing!' : ''}`;
+    drawLabelPill(ctx, x, badgeTopY + 26, condText, {
+      pal,
+      borderColor: isCondensing ? '#0ea5e9' : '#38bdf8',
+      font: '600 10.5px system-ui, sans-serif',
+      height: 20,
+      alpha: isCondensing ? 0.96 + Math.sin(timeNow * 6) * 0.04 : 0.94,
+    });
+  }
+
+  ctx.restore();
+}
+
+export function renderPipette(ctx, item, isSelected, isDark, langCode = 'vi', timeNow = 0) {
+  const spec = APPARATUS.pipette_10;
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const h = spec.height;
+  const top = y - h / 2;
+  const bottom = y + h / 2;
+
+  if (item.isBroken) {
+    ctx.save();
+    ctx.strokeStyle = isSelected ? '#3b82f6' : '#ef4444';
+    ctx.lineWidth = 1.4;
+    ctx.fillStyle = pal.glassFill;
+    ctx.beginPath();
+    ctx.moveTo(x - 16, bottom - 12);
+    ctx.lineTo(x + 12, bottom - 6);
+    ctx.lineTo(x + 6, bottom - 1);
+    ctx.lineTo(x - 14, bottom - 1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    drawLabelPill(ctx, x, bottom - 32, `${item.label} · 💥`, {
+      pal,
+      borderColor: '#ef4444',
+      font: '600 10px system-ui, sans-serif',
+      height: 17,
+    });
+    ctx.restore();
+    return;
+  }
+
+  const cap = item.capacityMl || 10.0;
+  const volMl = Math.max(0, Math.min(cap, item.volumeMl || 0));
+  const fillRatio = volMl / cap;
+  const isSucking = (item.drawAnimTimer || 0) > 0;
+  const isDripping = (item.dispenseAnimTimer || 0) > 0;
+  const bulbPinch = isSucking
+    ? Math.sin(((item.drawAnimTimer || 0) / 0.68) * Math.PI) * 2.8
+    : isDripping
+    ? -Math.sin(((item.dispenseAnimTimer || 0) / 0.48) * Math.PI) * 2.4
+    : 0;
+
+  ctx.save();
+
+  // Tilted slight ergonomic angle while dragged or wobbling from impact
+  const totTilt = (item.tiltAngle || 0) + (item.landingTilt || 0);
+  if (totTilt) {
+    ctx.translate(x, y);
+    ctx.rotate(totTilt);
+    ctx.translate(-x, -y);
+  }
+
+  // Top Silicone squeezing bulb (pink heart bulb for "you seem pretty sad for a girl so in love" theme!)
+  const isOliviaTheme = getCurrentCanvasTheme() === 'olivia';
+  const bulbW = 10 - bulbPinch;
+  if (isOliviaTheme) {
+    const heartW = 13.5 - bulbPinch * 0.65;
+    const baseY = top + 27;
+    const lobeY = top + 2;
+    ctx.fillStyle = '#f472b6';
+    ctx.strokeStyle = isSelected ? '#db2777' : '#be185d';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(x, baseY);
+    ctx.bezierCurveTo(x - heartW * 1.15, baseY - 8, x - heartW * 1.25, lobeY + 3, x - heartW * 0.52, lobeY + 2);
+    ctx.bezierCurveTo(x - heartW * 0.14, lobeY + 1.2, x, lobeY + 6.5, x, lobeY + 9.2);
+    ctx.bezierCurveTo(x, lobeY + 6.5, x + heartW * 0.14, lobeY + 1.2, x + heartW * 0.52, lobeY + 2);
+    ctx.bezierCurveTo(x + heartW * 1.25, lobeY + 3, x + heartW * 1.15, baseY - 8, x, baseY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Glossy left-lobe highlight on pink heart bulb
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.42)';
+    ctx.beginPath();
+    ctx.ellipse(x - heartW * 0.45, lobeY + 8, 2.2, 3.6, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = '#0284c7';
+    ctx.strokeStyle = isSelected ? '#3b82f6' : '#0369a1';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(x - 6, top + 28);
+    ctx.quadraticCurveTo(x - bulbW - 2, top + 12, x, top + 2);
+    ctx.quadraticCurveTo(x + bulbW + 2, top + 12, x + 6, top + 28);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Locking plastic collar
+  ctx.fillStyle = isOliviaTheme ? '#9d174d' : '#334155';
+  ctx.fillRect(x - 7, top + 26, 14, 6);
+
+  // Graduated borosilicate glass barrel -> tapered capillary tip
+  const bodyTop = top + 32;
+  const taperTop = bottom - 34;
+  ctx.beginPath();
+  ctx.moveTo(x - 6, bodyTop);
+  ctx.lineTo(x + 6, bodyTop);
+  ctx.lineTo(x + 6, taperTop);
+  ctx.lineTo(x + 1.8, bottom - 2);
+  ctx.lineTo(x - 1.8, bottom - 2);
+  ctx.lineTo(x - 6, taperTop);
+  ctx.closePath();
+  ctx.fillStyle = pal.glassFill;
+  ctx.fill();
+
+  // Internal liquid filled inside pipette tube (supports stratified liquid-liquid mixtures!)
+  if (fillRatio > 0.004) {
+    ctx.save();
+    ctx.clip();
+    const usableH = taperTop - (bodyTop + 6);
+    const liqTopY = taperTop - fillRatio * usableH;
+    const pipStrat = item.liquidStratification;
+    if (pipStrat?.layers?.length >= 2) {
+      let curBot = bottom;
+      const colSpan = bottom - liqTopY;
+      for (let li = 0; li < pipStrat.layers.length; li++) {
+        const layer = pipStrat.layers[li];
+        const lFrac = Math.max(0.05, layer.volMl / Math.max(0.1, pipStrat.totalLiqMl || volMl));
+        const lH = lFrac * colSpan;
+        const lTop = curBot - lH;
+        const layerMoles = {};
+        for (const [spId, n] of Object.entries(item.moles || {})) {
+          const sp = SPECIES[spId];
+          if (!sp || n <= 0) continue;
+          const grp = sp.phase === 'aq' ? 'aqueous' : sp.liquidGroup || 'aqueous';
+          if (grp === layer.phaseKey) layerMoles[spId] = n;
+        }
+        const lL = Math.max(1e-5, layer.volMl / 1000);
+        const lVis = computeSolutionVisuals(layerMoles, lL, computePH(layerMoles, lL, item.tempK), 1.6, item.phenBleachFrac || 0, item.phenIrrevFrac || 0);
+        ctx.fillStyle = lVis.css;
+        ctx.fillRect(x - 8, lTop, 16, curBot - lTop + 0.5);
+        if (li > 0) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+          ctx.lineWidth = 1.0;
+          ctx.beginPath();
+          ctx.moveTo(x - 6, curBot);
+          ctx.lineTo(x + 6, curBot);
+          ctx.stroke();
+        }
+        curBot = lTop;
+      }
+    } else {
+      const liqCol = item.liquidColor || 'rgba(56, 189, 248, 0.78)';
+      ctx.fillStyle = liqCol;
+      ctx.fillRect(x - 8, liqTopY, 16, bottom - liqTopY);
+    }
+
+    // Rising glow shimmer during suction
+    if (isSucking) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+      const waveY = bottom - ((timeNow * 180) % (bottom - bodyTop));
+      ctx.fillRect(x - 6, waveY, 12, 6);
+    }
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(x - 6, liqTopY);
+    ctx.quadraticCurveTo(x, liqTopY + 1.8, x + 6, liqTopY);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Outer glass stroke & graduated tick marks (2..10 mL)
+  ctx.beginPath();
+  ctx.moveTo(x - 6, bodyTop);
+  ctx.lineTo(x + 6, bodyTop);
+  ctx.lineTo(x + 6, taperTop);
+  ctx.lineTo(x + 1.8, bottom - 2);
+  ctx.lineTo(x - 1.8, bottom - 2);
+  ctx.lineTo(x - 6, taperTop);
+  ctx.closePath();
+  ctx.strokeStyle = isSelected ? '#3b82f6' : pal.glassStroke;
+  ctx.lineWidth = isSelected ? 2 : 1.5;
+  if (isSelected) strokeHaloGlow(ctx, '#3b82f6', 2.0);
+  ctx.stroke();
+
+  ctx.strokeStyle = pal.tickStroke;
+  ctx.lineWidth = 0.9;
+  for (let m = 2; m <= 10; m += 2) {
+    const ty = taperTop - (m / 10) * (taperTop - (bodyTop + 6));
+    ctx.beginPath();
+    ctx.moveTo(x - 5.5, ty);
+    ctx.lineTo(x + 0.5, ty);
+    ctx.stroke();
+  }
+
+  // Floating status badge above silicone bulb
+  const badgeText =
+    item.hoveredActionLabel ||
+    `${item.label} · ${volMl.toFixed(2)} mL`;
+  drawLabelPill(ctx, x, top - 24, badgeText, {
+    pal,
+    borderColor: isSucking ? '#10b981' : isDripping ? '#38bdf8' : isSelected ? '#3b82f6' : pal.badgeBorder,
+    font: '600 10.5px system-ui, sans-serif',
+    height: 19,
+  });
+
+  ctx.restore();
+}
+
+export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCode = 'vi') {
+  const pal = getThemePalette(isDark);
+  for (const v of items) {
+    const tid = v.connectedTargetId || v.connectedSyringeId;
+    if (v.kind !== 'vessel' || !tid) continue;
+    const target = items.find((it) => it.id === tid);
+    if (!target) continue;
+    if (target.kind === 'condenser' && target.refluxMode && target.refluxVesselId === v.id) continue;
+
+    const geom = computeTubingGeometry(v, target);
+    const { p0, p1, p2, p3, points, arcLengthCm, capacityMl } = geom;
+
+    ctx.save();
+    // Outer translucent silicone/rubber tubing jacket traced cleanly along over-mouth polyline
+    ctx.strokeStyle = isDark ? 'rgba(71, 85, 105, 0.72)' : 'rgba(51, 65, 85, 0.62)';
+    ctx.lineWidth = 7;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    if (points.length >= 2) {
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    } else {
+      ctx.moveTo(p0.x, p0.y);
+      ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+    }
+    ctx.stroke();
+
+    // Inner bore dark contrast channel
+    ctx.strokeStyle = isDark ? 'rgba(15, 23, 42, 0.62)' : 'rgba(241, 245, 249, 0.45)';
+    ctx.lineWidth = 4.2;
+    ctx.stroke();
+
+    // Specular tubing highlight
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // Liquid column physically filling and moving inside the tube up to fillFraction
+    const tubeVolMl = computeLiquidVolumeL(v.tubeMoles || {}, v.tubeTempK || v.tempK) * 1000;
+    const fillFrac = Math.max(0, Math.min(1, tubeVolMl / Math.max(0.1, capacityMl)));
+    if (fillFrac > 0.004 && points.length >= 2) {
+      const exactIdx = fillFrac * (points.length - 1);
+      const maxIdx = Math.min(points.length - 1, Math.floor(exactIdx));
+      const fracTail = exactIdx - maxIdx;
+
+      ctx.save();
+      ctx.strokeStyle = v.tubeColor || 'rgba(186, 230, 253, 0.9)';
+      ctx.lineWidth = 4.2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i <= maxIdx; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      if (maxIdx < points.length - 1 && fracTail > 0.01) {
+        const a = points[maxIdx];
+        const b = points[maxIdx + 1];
+        ctx.lineTo(a.x + (b.x - a.x) * fracTail, a.y + (b.y - a.y) * fracTail);
+      }
+      ctx.stroke();
+
+      // Animated bright liquid flow slugs surging along filled length when pumping or sucking (Ammonia Fountain)
+      const isFountainPull = (target.fountainFlowMlS || 0) > 0.5;
+      if ((v.tubeLiquidFlowTimer || 0) > 0 || isFountainPull) {
+        ctx.fillStyle = isFountainPull ? (target.fountainFlowColor || 'rgba(244, 114, 182, 0.85)') : 'rgba(255, 255, 255, 0.72)';
+        const dir = isFountainPull ? -1 : 1;
+        for (let k = 0; k < 5; k++) {
+          const raw = (timeNow * (isFountainPull ? 2.2 : 1.4) * dir + k * 0.2) % 1;
+          const tFlow = ((raw + 1) % 1) * (isFountainPull ? 1.0 : fillFrac);
+          const fPt = points.length >= 2 ? samplePolylineAt(points, tFlow) : cubicBezierPoint(tFlow, p0, p1, p2, p3);
+          ctx.beginPath();
+          ctx.arc(fPt.x, fPt.y, isFountainPull ? 2.6 : 1.9, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    // Pouring stream from tubing outlet into receiving Vessel B
+    if ((v.tubeLiquidSpillRateMlS || 0) > 0.2 && target.kind === 'vessel' && !target.isShattered) {
+      const tSpec = APPARATUS[target.typeId];
+      const dstLiqMl = computeLiquidVolumeL(target.moles, target.tempK) * 1000;
+      const dstGeom = computeVesselFluidGeometry(tSpec, target.y, dstLiqMl + computeSolidVolumeMl(target.moles));
+      const wobble = Math.sin((timeNow || 0) * 18) * 1.8;
+      ctx.save();
+      ctx.strokeStyle = v.tubeLiquidSpillColor || v.tubeColor || 'rgba(186, 230, 253, 0.88)';
+      ctx.lineWidth = Math.min(5, 2.2 + Math.sqrt(v.tubeLiquidSpillRateMlS) * 0.3);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(p3.x, p3.y);
+      ctx.quadraticCurveTo(p3.x + wobble, (p3.y + dstGeom.surfaceY) * 0.5, p3.x, Math.max(p3.y + 8, dstGeom.surfaceY + 2));
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Draggable depth tip bead on upright OR inverted receiving vessel tubing outlet
+    if (target.kind === 'vessel' && !target.isShattered) {
+      const isSubmerged = target.isInverted
+        ? (v.tubeSubmersionRatio ?? 0.72) <= 0.75
+        : (v.tubeSubmersionRatio ?? 0.72) >= 0.4;
+      ctx.save();
+      ctx.fillStyle = isSubmerged ? '#0284c7' : '#f59e0b';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(p3.x, p3.y, 4.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Animated steam/gas flow pulses & tubing geometry/temperature label
+    const isGasFlowing = (v.tubeFlowBannerTimer || 0) > 0 && v.tubeFlowFormula;
+    if (isGasFlowing) {
+      const alpha = Math.min(1, v.tubeFlowBannerTimer / 0.45);
+      const isSteamTube = v.tubeFlowFormula.includes('H₂O');
+      const pulseCol = v.tubeFlowFormula.includes('Cl₂')
+        ? 'rgba(217, 249, 157, 0.92)'
+        : isSteamTube
+        ? 'rgba(224, 242, 254, 0.95)'
+        : 'rgba(125, 211, 252, 0.88)';
+      for (let i = 0; i < 4; i++) {
+        const tCurve = ((timeNow * 1.15) + i * 0.25) % 1;
+        const pt = cubicBezierPoint(tCurve, p0, p1, p2, p3);
+        ctx.globalAlpha = alpha * (0.55 + Math.sin(tCurve * Math.PI) * 0.4);
+        ctx.fillStyle = pulseCol;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, isSteamTube ? 3.1 : 2.3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    const midPt = cubicBezierPoint(0.48, p0, p1, p2, p3);
+    if (tubeVolMl > 0.04 || (v.tubeLiquidFlowTimer || 0) > 0) {
+      const liqText = `💧 Ø6mm·${arcLengthCm.toFixed(0)}cm: ${Math.min(tubeVolMl, capacityMl).toFixed(1)}/${capacityMl.toFixed(1)} mL`;
+      drawLabelPill(ctx, midPt.x, midPt.y - 28, liqText, {
+        pal,
+        borderColor: '#38bdf8',
+        font: '600 10.5px system-ui, sans-serif',
+        height: 19,
+        itemIds: [v.id, target.id],
+      });
+    } else if (isGasFlowing) {
+      const tFlowC = kelvinToCelsius(v.tubeFlowTempK ?? v.tempK);
+      const alpha = Math.min(1, v.tubeFlowBannerTimer / 0.45);
+      drawLabelPill(ctx, midPt.x, midPt.y - 26, `→ ${v.tubeFlowFormula} · ${tFlowC.toFixed(0)}°C`, {
+        pal,
+        borderColor: tFlowC >= 95 ? '#f59e0b' : '#38bdf8',
+        font: '600 10.5px system-ui, sans-serif',
+        height: 19,
+        alpha,
+        itemIds: [v.id, target.id],
+      });
+    }
+
+    ctx.restore();
+  }
+
+  // Render Liebig Condenser outlet delivery tubing into receiving vessel
+  for (const cond of items) {
+    if (cond.kind !== 'condenser' || cond.isBroken || !cond.outletTargetId) continue;
+    const receiver = items.find((it) => it.id === cond.outletTargetId && !it.isShattered);
+    if (!receiver) continue;
+    const { p0, p1, p2, p3, points } = computeCondenserOutletGeometry(cond, receiver);
+    ctx.save();
+    ctx.strokeStyle = isDark ? 'rgba(56, 189, 248, 0.72)' : 'rgba(14, 165, 233, 0.65)';
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    if (points.length >= 2) {
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    } else {
+      ctx.moveTo(p0.x, p0.y);
+      ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = isDark ? 'rgba(186, 230, 253, 0.55)' : 'rgba(241, 245, 249, 0.72)';
+    ctx.lineWidth = 2.6;
+    ctx.stroke();
+    if (cond.activeDrop) {
+      ctx.fillStyle = 'rgba(224, 242, 254, 0.92)';
+      for (let k = 0; k < 3; k++) {
+        const u = ((timeNow * 1.45 + k * 0.33) % 1);
+        const dp = points.length >= 2 ? samplePolylineAt(points, u) : cubicBezierPoint(u, p0, p1, p2, p3);
+        ctx.beginPath();
+        ctx.arc(dp.x, dp.y, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    if (receiver.kind === 'vessel' && !receiver.isShattered) {
+      const isSub = receiver.isInverted
+        ? (cond.tubeSubmersionRatio ?? 0.72) <= 0.75
+        : (cond.tubeSubmersionRatio ?? 0.72) >= 0.4;
+      ctx.fillStyle = isSub ? '#0284c7' : '#f59e0b';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(p3.x, p3.y, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+

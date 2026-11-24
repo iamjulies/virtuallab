@@ -2483,7 +2483,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.20';
+      const expectedBuild = 'virlab_beta_v5+build.21';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -10314,6 +10314,65 @@
         'Prompt 80 invariants: Property-driven SPECIES schema (viscosity, molarConductivity, uvVisBands, irBands, eluentStrength, aroma, GHS) & zero-dep PDF/Snapshot compositor',
         viscOk && condOk && azoOk && pdfOk && schemaOk,
         `visc=${viscOk}(W=${viscW.toFixed(2)},G=${viscG.toFixed(2)}->${viscGHot.toFixed(2)}), cond=${condOk}(${condRes.conductivityMSCm.toFixed(1)}), azo=${azoOk}(A420=${blAzo.absorbance.toFixed(2)},uvMax=${uvAzo.maxA.toFixed(2)}), pdf=${pdfOk}(len=${pdfBytes.length}), schema=${schemaOk}`
+      );
+    }
+
+    // TEST 218: Prompt 81 Refactor & Missing CSS Utilities Verification (build.21)
+    {
+      const cssText = await fetch('../styles/main.css').then((r) => r.text());
+      const requiredCssTokens = [
+        '.whitespace-pre-line',
+        '.whitespace-nowrap',
+        '.text-\\[13px\\]',
+        '.text-\\[10\\.5px\\]',
+        '.leading-snug',
+        '.break-all',
+      ];
+      const cssOk = requiredCssTokens.every((tok) => cssText.includes(tok));
+
+      const modReagents = await import('../src/data/reagents.js');
+      const modSpecies = await import('../src/data/species.js');
+      const modRxn = await import('../src/data/reactions.js');
+      const modI18n = await import('../src/data/i18n.js');
+      const modInorg = await import('../src/engine/inorganicSolvers.js');
+      const modOrgLeg = await import('../src/engine/organicLegacySolver.js');
+      const modIns = await import('../src/ui/inspectorPanel.js');
+      const modSim = await import('../src/engine/simulation.js');
+      const modVes = await import('../src/canvas/vesselRenderer.js');
+      const modWb = await import('../src/canvas/workbench.js');
+
+      const exportsOk =
+        Boolean(modReagents.REAGENTS && modSpecies.REAGENTS === modSpecies.STARTER_REAGENTS) &&
+        Boolean(modSpecies.SPECIES.H2O_l && modRxn.REACTIONS.length >= 320 && modI18n.I18N.vi.appSubtitle && modI18n.I18N.en.appSubtitle) &&
+        typeof modInorg.stepHalogenRedoxAndAlkali === 'function' &&
+        typeof modInorg.stepSulfurChemistry === 'function' &&
+        typeof modInorg.stepCarbideAndCarbonChemistry === 'function' &&
+        typeof modInorg.stepCarbonateAndCO2Equilibria === 'function' &&
+        typeof modInorg.stepAmmineComplexEquilibria === 'function' &&
+        typeof modInorg.stepPhosphorusChemistry === 'function' &&
+        typeof modInorg.stepSiliconAndChromiumChemistry === 'function' &&
+        typeof modOrgLeg.stepOrganicChemistry === 'function' &&
+        typeof modIns.InspectorPanel === 'function' &&
+        typeof modSim.LabSimulation === 'function' &&
+        typeof modSim.SIM_BENCH_FLOOR_Y === 'number' &&
+        typeof modSim.computeSyringeGasVolumeMl === 'function' &&
+        typeof modVes.renderVessel === 'function' &&
+        typeof modVes.renderScale === 'function' &&
+        typeof modVes.renderBurner === 'function' &&
+        typeof modVes.renderRetortStand === 'function' &&
+        typeof modVes.renderRetortClampJaw === 'function' &&
+        typeof modVes.renderGasSyringe === 'function' &&
+        typeof modVes.renderPipette === 'function' &&
+        typeof modVes.renderTubingConnections === 'function' &&
+        typeof modWb.LabWorkbenchCanvas === 'function' &&
+        modWb.BENCH_LOGICAL_W === 1000 &&
+        modWb.BENCH_LOGICAL_H === 560 &&
+        modWb.BENCH_FLOOR_Y === 482;
+
+      assert(
+        'Prompt 81 invariants: CSS utilities (.whitespace-pre-line, .whitespace-nowrap, .text-[13px], .text-[10.5px], .leading-snug, .break-all) & modular barrel exports intact',
+        cssOk && exportsOk,
+        `cssOk=${cssOk}, exportsOk=${exportsOk}, reactions=${modRxn.REACTIONS.length}, version=${modI18n.I18N.en.appSubtitle}`
       );
     }
 
