@@ -234,6 +234,7 @@ export const STARTER_REAGENTS = [
       shelfLiquidFill: 'rgba(226,232,240,0.42)',
     },
     densityGPerMl: 1.189,
+    ghsHazards: ['corrosive'],
     // 1 mL of 37% w/w HCl (density 1.189 g/mL): 0.43993 g HCl + 0.74907 g H2O
     perMl: {
       H_aq: (1.189 * 0.37) / (AW.H + AW.Cl),
@@ -274,6 +275,7 @@ export const STARTER_REAGENTS = [
       shelfLiquidFill: 'rgba(186,230,253,0.40)',
     },
     densityGPerMl: 0.907,
+    ghsHazards: ['corrosive', 'toxic'],
     // 1 mL of 25% w/w NH3 (density 0.907 g/mL): 0.22675 g NH3 + 0.68025 g H2O
     perMl: {
       NH3_aq: (0.907 * 0.25) / (AW.N + 3 * AW.H),
@@ -402,6 +404,7 @@ export const STARTER_REAGENTS = [
     swatch: '#fef08a',
     bottleType: 'winchester_bottle',
     densityGPerMl: 1.405,
+    ghsHazards: ['corrosive', 'oxidizer'],
     bottleStyle: {
       vesselForm: 'winchester',
       glassMaterial: 'amber',

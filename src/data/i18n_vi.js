@@ -1,6 +1,6 @@
 export const I18N_VI = {
   appTitle: 'ChemLab Studio',
-  appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.26',
+  appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.27',
   toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
   quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
   quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -975,6 +975,7 @@ export const I18N_VI = {
   missionPrintBtn: 'In Phiếu',
   close: 'Đóng',
   missionShelfScoped: 'Kệ đã khóa các món ngoài phạm vi bài thực hành.',
+  missionAllowedOnlyBtn: 'Chỉ hiện món được dùng',
   missionLockedShelfTip: 'Mục này bị khóa ngoài phạm vi dụng cụ/hóa chất của bài thực hành hiện tại.',
   blindUnknownBadge: 'Bình ẩn danh',
   blindUnknownTitle: 'Quan sát trực quan (Ẩn công thức)',

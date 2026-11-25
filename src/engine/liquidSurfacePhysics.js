@@ -63,6 +63,9 @@ export function ensureSurfaceWave(vessel) {
       n: WAVE_N,
       h: new Float32Array(WAVE_N),
       v: new Float32Array(WAVE_N),
+      viscosityFactor: 1.0,
+      viscTiltLag: 0,
+      viscousFilmLevel: 0,
     };
   }
   return vessel._surfaceWave;
@@ -92,12 +95,38 @@ export function stepVesselSurfaceWaves(vessel, dt, horizAccel = 0, angularVel = 
   const h = sw.h;
   const v = sw.v;
   const visc = computeLiquidViscosityFactor(vessel);
-  const kSpring = 36.0 / Math.max(0.75, Math.sqrt(visc));
-  const cSpread = 58.0 / Math.max(0.85, Math.pow(visc, 0.3));
-  const damp = 1.45 * Math.pow(visc, 1.35);
+  sw.viscosityFactor = visc;
+  const isViscous = visc >= 1.65;
+  const kSpring = 36.0 / Math.max(0.75, Math.pow(visc, 0.68));
+  const cSpread = isViscous ? Math.min(82.0, 56.0 + visc * 6.5) : 58.0 / Math.max(0.85, Math.pow(visc, 0.3));
+  const damp = 1.52 * Math.pow(visc, 1.38);
 
   const clampedAcc = Math.max(-180, Math.min(180, horizAccel));
   const clampedAng = Math.max(-12, Math.min(12, angularVel));
+  const inertiaScale = 1 / (1 + Math.max(0, visc - 1.2) * 0.42);
+
+  // Sluggish free-surface tilt lag & wall film retention for thick/viscous fluids
+  const targetTilt = (vessel.tiltAngle || 0) + (vessel.landingTilt || 0);
+  const lagFollow = Math.min(1, (18.0 / Math.pow(visc, 1.45)) * dt);
+  sw.viscTiltLag = (sw.viscTiltLag || 0) + (targetTilt - (sw.viscTiltLag || 0)) * lagFollow;
+  const tiltSlip = Math.abs(targetTilt - (sw.viscTiltLag || 0));
+  const motionExc =
+    Math.abs(targetTilt) > 0.08 ||
+    Math.abs(clampedAcc) > 12 ||
+    Math.abs(clampedAng) > 0.45 ||
+    tiltSlip > 0.02 ||
+    sw.active;
+  if (isViscous) {
+    const targetFilm = Math.min(1.0, (visc - 1.35) / 2.2);
+    if (motionExc) {
+      sw.viscousFilmLevel = Math.min(targetFilm, Math.max(sw.viscousFilmLevel || 0, targetFilm * 0.65) + dt * 1.4);
+    } else {
+      const drainRate = 0.082 / Math.pow(visc, 0.85);
+      sw.viscousFilmLevel = Math.max(0, (sw.viscousFilmLevel || 0) - drainRate * dt);
+    }
+  } else {
+    sw.viscousFilmLevel = Math.max(0, (sw.viscousFilmLevel || 0) - dt * 1.8);
+  }
 
   let maxMag = 0;
   let meanH = 0;
@@ -106,7 +135,7 @@ export function stepVesselSurfaceWaves(vessel, dt, horizAccel = 0, angularVel = 
     const right = i < WAVE_N - 1 ? h[i + 1] : h[i];
     const spreadForce = (left + right - 2 * h[i]) * cSpread;
     const normCenter = (i / (WAVE_N - 1)) * 2 - 1; // [-1 .. +1]
-    const inertialForce = -normCenter * (clampedAcc * 0.24 + clampedAng * 22.0);
+    const inertialForce = -normCenter * (clampedAcc * 0.24 + clampedAng * 22.0) * inertiaScale;
     const acc = -kSpring * h[i] + spreadForce + inertialForce - damp * v[i];
     v[i] += acc * dt;
     h[i] += v[i] * dt;

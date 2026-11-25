@@ -1081,7 +1081,7 @@ export class LabWorkbenchCanvas {
       } else if (item.kind === 'burner') {
         renderBurner(ctx, item, isSelected, this.isDark, timeNow);
       } else if (item.kind === 'bath') {
-        renderIceBath(ctx, item, isSelected, this.isDark, timeNow, this.langCode);
+        renderIceBath(ctx, item, isSelected, this.isDark, timeNow, this.langCode, this.sim.environment?.opticsMode || 'normal');
       } else if (item.kind === 'diffusion_tube') {
         renderDiffusionTube(ctx, item, isSelected, isDropTgt, this.isDark, this.langCode);
       } else if (item.kind === 'gas_syringe') {
@@ -2040,10 +2040,17 @@ export class LabWorkbenchCanvas {
       for (const it of this.sim.items) {
         if (it.isShattered || it.isBroken) continue;
         if (it.kind === 'bath') {
-          const bC = it.bathMode === 'ice_salt' ? -10 : 0;
+          const bC = it.bathTargetC ?? (it.bathMode === 'ice_salt' ? -10 : 0);
           obsMinC = Math.min(obsMinC, bC);
-          splatHeat(it.x, it.y, 92, 52, bC, 0.94);
+          obsMaxC = Math.max(obsMaxC, bC);
+          splatHeat(it.x, it.y, 92, 52, bC, 0.96);
           splatHeat(it.x, BENCH_FLOOR_Y + 6, 125, 22, (bC + ambC) * 0.5, 0.55);
+          if (bC > ambC + 8) {
+            const plumeC = ambC + (bC - ambC) * 0.52;
+            splatHeat(it.x, it.y - 44, 72, 38, plumeC, 0.58);
+          } else if (bC < ambC - 8) {
+            splatHeat(it.x, it.y - 26, 72, 24, (bC + ambC) * 0.5, 0.42);
+          }
         } else if (it.kind === 'burner' && (it.powerW || 0) > 0) {
           const isBlue = it.typeId === 'bunsen_burner' && it.airHoleOpen !== false;
           const peakC = isBlue ? 1350 : 920;
@@ -2101,7 +2108,7 @@ export class LabWorkbenchCanvas {
       }
 
       const pixels = this._thermalImgData.data;
-      const spanLow = -15;
+      const spanLow = Math.min(-20, obsMinC);
       const spanHigh = Math.max(120, obsMaxC);
       const mapTempNorm = (c) => {
         if (c <= 28) {

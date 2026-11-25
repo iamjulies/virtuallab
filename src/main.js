@@ -2328,6 +2328,9 @@ applyThemeAndDevice();
 setMobileTab('bench');
 refreshChrome(true);
 
+// Auto-restore persisted Firebase Auth session on boot / F5 (non-blocking & offline-safe)
+cloudSync.ensureFirebaseLoaded().catch(() => {});
+
 // Auto-launch assignment if URL has ?exam=CHEM-XXXX
 try {
   const urlExam = new URLSearchParams(window.location.search).get('exam');

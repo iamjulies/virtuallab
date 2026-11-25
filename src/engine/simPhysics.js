@@ -782,9 +782,11 @@ export function breakToolOnDropImpl(sim, item) {
       item.valveRateMlS = 0;
       item.streamingNow = false;
     }
-    if (item.kind === 'filter_funnel') {
+    if (item.kind === 'filter_funnel' || item.kind === 'separatory_funnel') {
       item.mountedOnVesselId = null;
       item.isFiltering = false;
+      item.valveOpen = false;
+      item.activeDrop = false;
     }
     if (item.kind === 'diffusion_tube') {
       item.leftGasId = null;
@@ -839,6 +841,7 @@ export function handleLandingImpactImpl(sim, item, dropDistPx, impactVy, support
           item.kind === 'condenser' ||
           item.kind === 'salt_bridge' ||
           item.kind === 'filter_funnel' ||
+          item.kind === 'separatory_funnel' ||
           item.kind === 'diffusion_tube' ||
           item.kind === 'bath')
       ) {

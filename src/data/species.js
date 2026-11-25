@@ -242,7 +242,56 @@ const ORGANIC_PROPERTY_METADATA = {
   H2O2_aq: { ghsHazards: ['oxidizer', 'corrosive'] },
   C57H104O6_l: { viscosityCp298: 65.0 },
   C6H5NH2_l: { viscosityCp298: 3.85, ghsHazards: ['toxic'] },
+  Na_s: { ghsHazards: ['flammable', 'corrosive'] },
+  K_s: { ghsHazards: ['flammable', 'corrosive'] },
+  AgNO3_s: { ghsHazards: ['corrosive', 'oxidizer'] },
+  BaCl2_2H2O_s: { ghsHazards: ['toxic'] },
+  K2Cr2O7_s: { ghsHazards: ['toxic', 'oxidizer'] },
+  I2_s: { ghsHazards: ['toxic', 'corrosive'] },
+  S_s: { ghsHazards: ['flammable'] },
+  CaC2_s: { ghsHazards: ['flammable', 'corrosive'] },
+  P_red_s: { ghsHazards: ['flammable'] },
+  NaNO2_s: { ghsHazards: ['toxic', 'oxidizer'] },
+  NH3_aq: { ghsHazards: ['corrosive', 'toxic'] },
+  NH3_g: { ghsHazards: ['corrosive', 'toxic'] },
+  KOH_s: { ghsHazards: ['corrosive'] },
+  Ba_OH_2_s: { ghsHazards: ['corrosive', 'toxic'] },
+  Ba_OH_2_8H2O_s: { ghsHazards: ['corrosive', 'toxic'] },
+  H2SO4_aq: { ghsHazards: ['corrosive'] },
+  HNO3_aq: { ghsHazards: ['corrosive', 'oxidizer'] },
 };
+
+const GHS_HAZARD_ORDER = ['flammable', 'corrosive', 'toxic', 'oxidizer'];
+
+/**
+ * Resolve deduplicated GHS hazard flags for any pure or multi-component reagent entry.
+ */
+export function getReagentGhsHazards(reg) {
+  if (!reg) return [];
+  const found = new Set();
+  const addList = (arr) => {
+    if (!Array.isArray(arr)) return;
+    for (const h of arr) {
+      if (!h) continue;
+      found.add(h === 'irritant' ? 'corrosive' : h);
+    }
+  };
+  addList(reg.ghsHazards);
+  if (reg.speciesId) addList(SPECIES[reg.speciesId]?.ghsHazards);
+  if (reg.perMl && typeof reg.perMl === 'object') {
+    for (const spId of Object.keys(reg.perMl)) {
+      if (spId === 'H2O_l') continue;
+      addList(SPECIES[spId]?.ghsHazards);
+    }
+  }
+  if (reg.components && typeof reg.components === 'object') {
+    for (const spId of Object.keys(reg.components)) {
+      if (spId === 'H2O_l') continue;
+      addList(SPECIES[spId]?.ghsHazards);
+    }
+  }
+  return GHS_HAZARD_ORDER.filter((h) => found.has(h)).concat([...found].filter((h) => !GHS_HAZARD_ORDER.includes(h)));
+}
 
 for (const sp of Object.values(SPECIES)) {
   if (sp && sp.phase === 's' && sp.meltTempK && !sp.noMelt && !sp.dHFusJ) {

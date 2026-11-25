@@ -41,6 +41,7 @@
       SPECIES,
       STARTER_REAGENTS,
       getGasRelativeAirDensity,
+      getReagentGhsHazards,
       getSpeciesFusionHeatJ,
       isSolidMoltenAtTemp,
     } from '../src/data/species.js';
@@ -153,7 +154,7 @@
       routeGasPacketToTarget,
     } from '../src/engine/gasNetwork.js';
     import { checkFlameLoopInteractions } from '../src/engine/apparatusTools.js';
-    import { stepVesselSolidBodies, computeLiquidViscosityFactor } from '../src/engine/liquidSurfacePhysics.js';
+    import { stepVesselSolidBodies, computeLiquidViscosityFactor, stepVesselSurfaceWaves } from '../src/engine/liquidSurfacePhysics.js';
     import { runOrganicV5Tests } from './organic_v5_tests.js';
 
     const results = [];
@@ -2492,7 +2493,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.25';
+      const expectedBuild = 'virlab_beta_v5+build.27';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -11028,6 +11029,83 @@
         'Build 26 invariants: Verified-email Admin guard (duwchao@gmail.com), random GV-XXXXXX code generation, Admin create/list/revoke invites, VI/EN i18n',
         genCodeOk && adminTrueOk && adminUnverifiedBlockedOk && adminOtherBlockedOk && nonAdminCreateBlocked && adminCrudOk && i18nAdminOk,
         `gen=${genCodeOk}, adm=${adminTrueOk}, unver=${adminUnverifiedBlockedOk}, oth=${adminOtherBlockedOk}, blk=${nonAdminCreateBlocked}, crud=${adminCrudOk}, i18n=${i18nAdminOk}`
+      );
+    }
+
+    // TEST 224: Prompt 87 (virlab_beta_v5+build.27) — Separatory Funnel Shatter, Unified GHS Multi-Ion Lookup, Necked-Flask Hold Capacity, 2D Viscosity Wall Film & Allowed-Only Filter i18n
+    {
+      // 1) Separatory funnel shatters on tall drop & cleans state
+      const simSep = new LabSimulation();
+      const sf = simSep.createApparatus('separatory_funnel', 260, 260);
+      simSep.addReagentToVessel(sf.id, 'h2o', 40, { silentAnim: true });
+      sf.valveOpen = true;
+      simSep.handleLandingImpact(sf, 250, 520, null);
+      const sepShatterOk =
+        sf.isBroken === true &&
+        sf.valveOpen === false &&
+        sf.mountedOnVesselId === null &&
+        Object.keys(sf.moles || {}).length === 0 &&
+        Boolean(sf.spilledPuddleColor);
+
+      // 2) Unified GHS hazards for multi-ion / solution / pure reagents
+      const findReg = (id) => STARTER_REAGENTS.find((r) => r.id === id);
+      const gHcl = getReagentGhsHazards(findReg('hcl_37'));
+      const gHno3 = getReagentGhsHazards(findReg('hno3_68'));
+      const gH2so4 = getReagentGhsHazards(findReg('h2so4_98'));
+      const gPhen = getReagentGhsHazards(findReg('phen'));
+      const gNh3 = getReagentGhsHazards(findReg('nh3_25'));
+      const gH2o = getReagentGhsHazards(findReg('h2o'));
+      const ghsUnifiedOk =
+        gHcl.includes('corrosive') &&
+        gHno3.includes('corrosive') &&
+        gHno3.includes('oxidizer') &&
+        gH2so4.includes('corrosive') &&
+        gPhen.includes('flammable') &&
+        gNh3.includes('corrosive') &&
+        gH2o.length === 0;
+
+      // 3) Necked-flask physical hold capacity (round_flask_250 w/ 246.8 mL does NOT overflow at 35 deg mild tilt, drains steeply at 95 deg)
+      const holdRbf35 = getVesselHoldVolumeMl(APPARATUS.round_flask_250, 35);
+      const simRbf = new LabSimulation();
+      const rf250 = simRbf.createApparatus('round_flask_250', 220, 410);
+      simRbf.addReagentToVessel(rf250.id, 'h2o', 246.8, { silentAnim: true, silentEmit: true });
+      simRbf.setVesselTiltDeg(rf250.id, 35, 1);
+      stepSeconds(simRbf, 1.5, 0.05);
+      const mlAfter35 = computeLiquidVolumeL(rf250.moles, rf250.tempK) * 1000;
+      simRbf.setVesselTiltDeg(rf250.id, 95, 1);
+      stepSeconds(simRbf, 2.5, 0.05);
+      const mlAfter95 = computeLiquidVolumeL(rf250.moles, rf250.tempK) * 1000;
+      const neckHoldOk = holdRbf35 > 250 && Math.abs(mlAfter35 - 246.8) < 1.0 && mlAfter95 < 75;
+
+      // 4) 2D Viscosity sluggish film retention vs water
+      const simVisc = new LabSimulation();
+      const bGlyc = simVisc.createApparatus('beaker_250', 180, 420);
+      simVisc.addReagentToVessel(bGlyc.id, 'glycerol', 60, { silentAnim: true });
+      const bWater = simVisc.createApparatus('beaker_250', 340, 420);
+      simVisc.addReagentToVessel(bWater.id, 'h2o', 60, { silentAnim: true });
+      const glycVisc = computeLiquidViscosityFactor(bGlyc);
+      bGlyc.tiltAngle = 0.25;
+      bWater.tiltAngle = 0.25;
+      stepVesselSurfaceWaves(bGlyc, 0.02, 40, 2.0);
+      stepVesselSurfaceWaves(bWater, 0.02, 40, 2.0);
+      const filmGlycActive = bGlyc._surfaceWave?.viscousFilmLevel || 0;
+      bGlyc.tiltAngle = 0;
+      bWater.tiltAngle = 0;
+      for (let k = 0; k < 40; k++) {
+        stepVesselSurfaceWaves(bGlyc, 0.05, 0, 0);
+        stepVesselSurfaceWaves(bWater, 0.05, 0, 0);
+      }
+      const filmGlycClinging = bGlyc._surfaceWave?.viscousFilmLevel || 0;
+      const filmWaterZero = bWater._surfaceWave?.viscousFilmLevel || 0;
+      const viscFilmOk = glycVisc >= 3.0 && filmGlycActive > 0.35 && filmGlycClinging > 0.15 && filmWaterZero < 0.01;
+
+      // 5) Shelf Allowed-Only filter bilingual keys
+      const i18n87Ok = Boolean(I18N.vi.missionAllowedOnlyBtn && I18N.en.missionAllowedOnlyBtn);
+
+      assert(
+        'Build 27 invariants (Prompt 87): separatory funnel shatter, unified GHS lookup, necked-flask hold capacity (no premature spill at 35°), 2D viscous film retention & Allowed-Only shelf filter i18n',
+        sepShatterOk && ghsUnifiedOk && neckHoldOk && viscFilmOk && i18n87Ok,
+        `sep=${sepShatterOk}, ghs=${ghsUnifiedOk}, neck=${neckHoldOk}(h35=${holdRbf35.toFixed(1)},m35=${mlAfter35.toFixed(1)},m95=${mlAfter95.toFixed(1)}), visc=${viscFilmOk}(v=${glycVisc.toFixed(2)},fg=${filmGlycClinging.toFixed(2)}), i18n=${i18n87Ok}`
       );
     }
 

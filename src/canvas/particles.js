@@ -251,6 +251,10 @@ export class ParticleSystem {
     const surfaceY = geom.surfaceY;
     const halfW = Math.max(6, geom.surfaceHalfWPx || spec.width * 0.34);
 
+    const bubbleVisc = Math.max(1.0, vessel._surfaceWave?.viscosityFactor || 1.0);
+    const bubbleRiseScale = 1 / Math.pow(bubbleVisc, 0.72);
+    const bubbleLifeScale = Math.pow(bubbleVisc, 0.55);
+
     // 1. Gas bubbles (H2 / O2 / CO2) inside liquid
     const gasIntensity = metrics.gasRateH2 + metrics.gasRateO2 + (metrics.gasRateCO2 || 0);
     if (gasIntensity > 1e-6 && liqMl > 0.2) {
@@ -272,12 +276,12 @@ export class ParticleSystem {
           kind: 'bubble',
           x: px,
           y: py,
-          vx: (Math.random() - 0.5) * 14,
-          vy: -(38 + Math.random() * 45),
+          vx: (Math.random() - 0.5) * 14 * bubbleRiseScale,
+          vy: -(38 + Math.random() * 45) * bubbleRiseScale,
           r: 1.4 + Math.random() * 2.4,
           minY: surfaceY + 1,
           life: 0,
-          maxLife: 1.5,
+          maxLife: 1.5 * bubbleLifeScale,
           color: 'rgba(255,255,255,0.72)',
         });
       }
@@ -291,12 +295,12 @@ export class ParticleSystem {
           kind: 'bubble',
           x: vessel.x + (Math.random() - 0.5) * halfW * 1.5,
           y: bottomY - 3,
-          vx: (Math.random() - 0.5) * 12,
-          vy: -(55 + Math.random() * 55),
+          vx: (Math.random() - 0.5) * 12 * bubbleRiseScale,
+          vy: -(55 + Math.random() * 55) * bubbleRiseScale,
           r: 1.8 + Math.random() * 3.0,
           minY: surfaceY + 1,
           life: 0,
-          maxLife: 1.4,
+          maxLife: 1.4 * bubbleLifeScale,
           color: 'rgba(240,249,255,0.8)',
         });
       }
@@ -995,19 +999,29 @@ export class ParticleSystem {
         const excessMl = meta?.excessMl || 2;
         const tiltDeg = meta?.tiltDeg || 45;
         const isCoanda = excessMl < 3.5 && tiltDeg < 74;
-        const count = Math.min(7, Math.max(2, Math.round((meta?.rateMlS || 4) * 0.45)));
+        const rateMlS = Math.max(0.2, meta?.rateMlS || 2.5);
+        const count =
+          rateMlS < 2.2
+            ? Math.random() < rateMlS * 0.45
+              ? 1
+              : 0
+            : Math.min(6, Math.max(1, Math.round(rateMlS * 0.35)));
         for (let i = 0; i < count; i++) {
           const vxInit = isCoanda
             ? -lipDir * (10 + Math.random() * 6)
             : lipDir * (28 + Math.min(62, excessMl * 3.8)) / Math.pow(visc, 0.48) + (Math.random() - 0.5) * 8;
+          const rDrop =
+            (rateMlS < 4 ? 2.5 + Math.min(1.2, rateMlS * 0.3) : 3.5 + Math.min(1.6, Math.sqrt(rateMlS) * 0.25)) +
+            (visc > 1.8 ? 0.85 : 0) +
+            Math.random() * 0.7;
           this.particles.push({
             kind: 'metaball_drop',
-            x: fx + (Math.random() - 0.5) * 4,
-            y: fy + (Math.random() - 0.5) * 3,
+            x: fx + (Math.random() - 0.5) * 3,
+            y: fy + (Math.random() - 0.5) * 2.5,
             vx: vxInit,
             vy: (18 + Math.random() * 18) / Math.sqrt(visc),
             g: 1080 / Math.pow(visc, 0.25),
-            r: 4.4 + (visc > 1.8 ? 1.0 : 0) + Math.random() * 1.4,
+            r: rDrop,
             coandaTimer: isCoanda ? 0.16 : 0,
             lipDir,
             stopY: meta?.toY ?? BENCH_FLOOR_Y,
@@ -1950,7 +1964,7 @@ export class ParticleSystem {
         const data = img.data;
         for (let idx = 3; idx < data.length; idx += 4) {
           const a = data[idx];
-          data[idx] = a > 105 ? 232 : 0;
+          data[idx] = a > 98 ? Math.min(215, Math.round((a - 92) * 1.45)) : 0;
         }
         mctx.putImageData(img, minX, minY);
         ctx.save();

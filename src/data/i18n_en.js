@@ -1,6 +1,6 @@
 export const I18N_EN = {
   appTitle: 'ChemLab Studio',
-  appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.26',
+  appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.27',
   toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
   quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
   quickPresetsHoldTitle: 'Guided Experiments (Hold F · Release to close)',
@@ -967,6 +967,7 @@ export const I18N_EN = {
   missionPrintBtn: 'Print Report',
   close: 'Close',
   missionShelfScoped: 'Shelf filtered to allowed apparatus & reagents for this mission.',
+  missionAllowedOnlyBtn: 'Allowed Only',
   missionLockedShelfTip: 'Locked outside the allowed scope for the current practical mission.',
   blindUnknownBadge: 'Blind Unknown',
   blindUnknownTitle: 'Visual Observation (Formula Hidden)',

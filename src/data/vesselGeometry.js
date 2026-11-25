@@ -268,18 +268,22 @@ function sumSlabsVolumeBelow(slabs, cutY, cosT, absSinT) {
 export function getVesselHoldVolumeMl(spec, thetaDeg, maxCapOverride = null) {
   const maxCap = maxCapOverride ?? spec?.maxVolumeMl ?? 250;
   const clAngle = Math.max(0, Math.min(180, Number(thetaDeg) || 0));
-  if (clAngle <= 0.1) return maxCap;
   const geom = spec?.geometry;
   if (geom && Array.isArray(geom.slices) && geom.slices.length > 0 && Array.isArray(geom._tiltedSlabs || geom.slices)) {
+    const maxV = Math.max(1e-6, geom.maxVolumeMl || maxCap);
+    if (clAngle <= 0.1) return maxCapOverride ?? maxV;
     const { slabs, lipX, lipY } = getTiltSlabFrame(spec, geom);
     const tiltRad = (clAngle * Math.PI) / 180;
     const cosT = Math.cos(tiltRad);
     const absSinT = Math.abs(Math.sin(tiltRad));
     const rimWorldY = lipY * cosT + lipX * absSinT;
     const heldRaw = sumSlabsVolumeBelow(slabs, rimWorldY, cosT, absSinT);
-    const maxV = Math.max(1e-6, geom.maxVolumeMl || maxCap);
-    return Math.max(0, Math.min(maxCap, heldRaw * (maxCap / maxV)));
+    if (maxCapOverride != null) {
+      return Math.max(0, Math.min(maxCapOverride, heldRaw * (maxCapOverride / maxV)));
+    }
+    return Math.max(0, Math.min(maxV, heldRaw));
   }
+  if (clAngle <= 0.1) return maxCap;
   const { vertices, totalAreaPx } = getInnerPolygonPx(spec);
   return getMaxHoldVolume(vertices, totalAreaPx, maxCap, clAngle);
 }

@@ -1834,7 +1834,7 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
         : 'rgba(125, 211, 252, 0.88)';
       for (let i = 0; i < 4; i++) {
         const tCurve = ((timeNow * 1.15) + i * 0.25) % 1;
-        const pt = cubicBezierPoint(tCurve, p0, p1, p2, p3);
+        const pt = points.length >= 2 ? samplePolylineAt(points, tCurve) : cubicBezierPoint(tCurve, p0, p1, p2, p3);
         ctx.globalAlpha = alpha * (0.55 + Math.sin(tCurve * Math.PI) * 0.4);
         ctx.fillStyle = pulseCol;
         ctx.beginPath();
@@ -1844,7 +1844,7 @@ export function renderTubingConnections(ctx, items, isDark, timeNow = 0, langCod
       ctx.globalAlpha = 1;
     }
 
-    const midPt = cubicBezierPoint(0.48, p0, p1, p2, p3);
+    const midPt = points.length >= 2 ? samplePolylineAt(points, 0.48) : cubicBezierPoint(0.48, p0, p1, p2, p3);
     if (tubeVolMl > 0.04 || (v.tubeLiquidFlowTimer || 0) > 0) {
       const liqText = `💧 Ø6mm·${arcLengthCm.toFixed(0)}cm: ${Math.min(tubeVolMl, capacityMl).toFixed(1)}/${capacityMl.toFixed(1)} mL`;
       drawLabelPill(ctx, midPt.x, midPt.y - 28, liqText, {

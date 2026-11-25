@@ -2427,7 +2427,7 @@ function getBathMilestoneImage(tempC) {
   return cached && cached.complete && cached.naturalWidth > 0 ? cached : null;
 }
 
-export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCode = 'vi') {
+export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCode = 'vi', opticsMode = 'normal') {
   const pal = getThemePalette(isDark);
   const spec = APPARATUS[item.typeId] || { width: 146, height: 68 };
   const w = spec.width;
@@ -2523,24 +2523,58 @@ export function renderIceBath(ctx, item, isSelected, isDark, timeNow = 0, langCo
   ctx.fill();
   ctx.stroke();
 
-  // Inner thermal bath medium (fallback gradient + per-milestone SVG asset texture)
-  const liqGrad = ctx.createLinearGradient(0, top + 12, 0, top + h - 4);
-  liqGrad.addColorStop(0, topCol);
-  liqGrad.addColorStop(1, botCol);
-  ctx.fillStyle = liqGrad;
-  ctx.beginPath();
-  ctx.roundRect(left + 6, top + 12, w - 12, h - 18, [3, 3, 9, 9]);
-  ctx.fill();
-
-  const milestoneImg = getBathMilestoneImage(bathC);
-  if (milestoneImg) {
-    ctx.save();
-    ctx.globalAlpha = 0.55;
+  // Inner thermal bath medium (fallback gradient + per-milestone SVG asset texture, or FLIR thermal signature)
+  if (opticsMode === 'thermal') {
+    let flirTop = 'rgba(13, 148, 136, 0.88)';
+    let flirBot = 'rgba(6, 182, 212, 0.82)';
+    if (bathC <= -12) {
+      flirTop = 'rgba(49, 46, 129, 0.94)';
+      flirBot = 'rgba(30, 27, 75, 0.96)';
+    } else if (bathC <= 5) {
+      flirTop = 'rgba(67, 56, 202, 0.90)';
+      flirBot = 'rgba(29, 78, 216, 0.92)';
+    } else if (bathC < 25) {
+      flirTop = 'rgba(2, 132, 199, 0.86)';
+      flirBot = 'rgba(37, 99, 235, 0.88)';
+    } else if (bathC <= 35) {
+      flirTop = 'rgba(20, 184, 166, 0.86)';
+      flirBot = 'rgba(13, 148, 136, 0.88)';
+    } else if (bathC <= 95) {
+      flirTop = 'rgba(250, 204, 21, 0.90)';
+      flirBot = 'rgba(249, 115, 22, 0.92)';
+    } else if (bathC <= 145) {
+      flirTop = 'rgba(251, 146, 60, 0.94)';
+      flirBot = 'rgba(239, 68, 68, 0.94)';
+    } else {
+      flirTop = 'rgba(254, 249, 195, 0.96)';
+      flirBot = 'rgba(249, 115, 22, 0.95)';
+    }
+    const flirGrad = ctx.createLinearGradient(0, top + 12, 0, top + h - 4);
+    flirGrad.addColorStop(0, flirTop);
+    flirGrad.addColorStop(1, flirBot);
+    ctx.fillStyle = flirGrad;
     ctx.beginPath();
     ctx.roundRect(left + 6, top + 12, w - 12, h - 18, [3, 3, 9, 9]);
-    ctx.clip();
-    ctx.drawImage(milestoneImg, left, top - 4, w, h + 4);
-    ctx.restore();
+    ctx.fill();
+  } else {
+    const liqGrad = ctx.createLinearGradient(0, top + 12, 0, top + h - 4);
+    liqGrad.addColorStop(0, topCol);
+    liqGrad.addColorStop(1, botCol);
+    ctx.fillStyle = liqGrad;
+    ctx.beginPath();
+    ctx.roundRect(left + 6, top + 12, w - 12, h - 18, [3, 3, 9, 9]);
+    ctx.fill();
+
+    const milestoneImg = getBathMilestoneImage(bathC);
+    if (milestoneImg) {
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      ctx.roundRect(left + 6, top + 12, w - 12, h - 18, [3, 3, 9, 9]);
+      ctx.clip();
+      ctx.drawImage(milestoneImg, left, top - 4, w, h + 4);
+      ctx.restore();
+    }
   }
 
   // Animated milestone-specific thermal features

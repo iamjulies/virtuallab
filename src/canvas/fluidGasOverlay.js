@@ -550,6 +550,18 @@ export class FluidGasOverlay {
         burners.push(it);
         continue;
       }
+      if (it.kind === 'bath' && !it.isBroken) {
+        const bathC = it.bathTargetC ?? (it.bathMode === 'ice_salt' ? -10 : 0);
+        const bathK = bathC + 273.15;
+        const dTK = bathK - envT;
+        if (dTK > 5) {
+          const dTNorm = Math.min(1.0, Math.pow(dTK / 145, 0.72));
+          heatVessels.push({ it, dTNorm, isBath: true, bathC });
+        } else if (opticsMode === 'thermal' && dTK < -5) {
+          heatVessels.push({ it, dTNorm: 0, isBath: true, isColdBath: true, bathC });
+        }
+        continue;
+      }
       if (it.kind !== 'vessel' || it.isShattered) continue;
       const spec = APPARATUS[it.typeId] || APPARATUS.beaker_250;
       const head = it.headspaceGasMoles || {};
@@ -675,10 +687,18 @@ export class FluidGasOverlay {
       this._splat(this.vel, uvX, uvY, 0.0011, [0, 0.25 * simDt * 6.0, 0, 0], 1);
     }
 
-    for (const { it, dTNorm } of heatVessels) {
+    for (const { it, dTNorm, isBath, isColdBath } of heatVessels) {
       const cx = it.x / BENCH_LOGICAL_W;
-      const cy = 1.0 - it.y / BENCH_LOGICAL_H;
-      this._splat(this.tempBuoy, cx, cy, 0.0018, [Math.min(0.85, dTNorm) * simDt * 4.2, 0, 0, 0], 1);
+      const cy = 1.0 - (isBath ? it.y - 10 : it.y) / BENCH_LOGICAL_H;
+      if (isBath && !isColdBath) {
+        this._splat(this.tempBuoy, cx, cy, 0.0026, [Math.min(0.92, dTNorm) * simDt * 4.5, 0, 0, 0], 1);
+        this._splat(this.vel, cx, cy, 0.0022, [0, 0.14 * dTNorm * simDt * 4.5, 0, 0], 1);
+      } else if (isColdBath) {
+        this._splat(this.tempBuoy, cx, cy, 0.0024, [0, 0.25 * simDt * 3.5, 0, 0], 1);
+        this._splat(this.vel, cx, cy, 0.0018, [0, -0.08 * simDt * 3.0, 0, 0], 1);
+      } else {
+        this._splat(this.tempBuoy, cx, cy, 0.0018, [Math.min(0.85, dTNorm) * simDt * 4.2, 0, 0, 0], 1);
+      }
     }
 
     for (const em of electrodeEmitters) {

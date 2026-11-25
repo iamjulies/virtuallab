@@ -1,5 +1,5 @@
 import { APPARATUS, APPARATUS_CATEGORIES, APPARATUS_ORDER } from '../data/apparatus.js';
-import { REAGENT_CATEGORIES, SPECIES, STARTER_REAGENTS } from '../data/species.js';
+import { REAGENT_CATEGORIES, STARTER_REAGENTS, getReagentGhsHazards } from '../data/species.js';
 import { drawReagentBottle } from '../canvas/reagentRenderer.js';
 import { getMissionById, isApparatusAllowedInMission, isReagentAllowedInMission } from '../data/missions.js';
 
@@ -266,6 +266,7 @@ export class ShelfPanel {
     this.callbacks = callbacks; // { onAddApparatus, onSelectReagent, onExternalDragMove, onExternalDrop }
     this.activeCategory = 'all';
     this.activeReagentCategory = 'all';
+    this.onlyAllowed = false;
     this.lastShelfSig = '';
     this._dragSession = null;
     this._boundPointer = false;
@@ -386,13 +387,9 @@ export class ShelfPanel {
   }
 
   getShelfSignature(t) {
-    const pipSig = this.sim.items
-      .filter((i) => i.kind === 'pipette')
-      .map((p) => `${p.id}:${(p.volumeMl || 0).toFixed(1)}:${this.sim.selectedId === p.id ? 1 : 0}`)
-      .join(',');
     const ms = this.sim?.missionState;
-    const missionSig = ms?.active ? `${ms.missionId}:${ms.mode}` : 'free';
-    return `${t('equipmentTitle')}|${this.activeCategory}|${this.activeReagentCategory}|${pipSig}|${missionSig}`;
+    const missionSig = ms?.active ? `${ms.missionId}:${ms.mode}:${this.onlyAllowed ? 1 : 0}` : 'free';
+    return `${t('equipmentTitle')}|${this.activeCategory}|${this.activeReagentCategory}|${missionSig}`;
   }
 
   render(t, force = false) {
@@ -401,20 +398,42 @@ export class ShelfPanel {
     if (!force && sig === this.lastShelfSig) return;
     this.lastShelfSig = sig;
 
-    const pipettes = this.sim.items.filter((i) => i.kind === 'pipette');
     const activeMission = this.sim?.missionState?.active
       ? (getMissionById(this.sim.missionState.missionId) || this.sim.missionState)
       : null;
-    const filteredApparatus =
+    const hideLocked = Boolean(activeMission && this.onlyAllowed);
+    const baseApparatus =
       this.activeCategory === 'all'
         ? APPARATUS_ORDER
         : APPARATUS_ORDER.filter((id) => APPARATUS[id]?.category === this.activeCategory);
+    const filteredApparatus = hideLocked
+      ? baseApparatus.filter((id) => isApparatusAllowedInMission(activeMission, id))
+      : baseApparatus;
+    const baseReagents =
+      this.activeReagentCategory === 'all'
+        ? STARTER_REAGENTS
+        : STARTER_REAGENTS.filter((r) => r.category === this.activeReagentCategory);
+    const filteredReagents = hideLocked
+      ? baseReagents.filter((r) => isReagentAllowedInMission(activeMission, r.id))
+      : baseReagents;
 
     this.container.innerHTML = `
       <div class="flex flex-col gap-3">
         ${
           activeMission
-            ? `<div class="p-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-[11px] text-amber-300 font-medium">🎯 ${t('missionShelfScoped')}</div>`
+            ? `<div class="p-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-[11px] text-amber-300 font-medium flex items-center justify-between gap-2">
+                <span class="min-w-0 leading-snug">🎯 ${t('missionShelfScoped')}</span>
+                <button
+                  type="button"
+                  id="btn-shelf-allowed-only"
+                  aria-pressed="${this.onlyAllowed ? 'true' : 'false'}"
+                  class="shrink-0 px-2 py-0.5 rounded-full border text-[10.5px] font-semibold transition cursor-pointer ${
+                    this.onlyAllowed
+                      ? 'border-accent bg-accent/20 text-accent shadow-sm'
+                      : 'border-theme bg-surface text-main hover:border-accent'
+                  }"
+                >${this.onlyAllowed ? '✓ ' : ''}${t('missionAllowedOnlyBtn')}</button>
+              </div>`
             : ''
         }
         <!-- Apparatus Section -->
@@ -471,11 +490,8 @@ export class ShelfPanel {
             }).join('')}
           </div>
           <div class="space-y-1.5" id="shelf-reagents-list">
-            ${(this.activeReagentCategory === 'all'
-              ? STARTER_REAGENTS
-              : STARTER_REAGENTS.filter((r) => r.category === this.activeReagentCategory)
-            ).map((reg) => {
-              const hazards = SPECIES[reg.speciesId]?.ghsHazards || [];
+            ${filteredReagents.map((reg) => {
+              const hazards = getReagentGhsHazards(reg);
               const ghsMap = { flammable: '🔥', corrosive: '☣️', toxic: '☠️', oxidizer: '⚡' };
               const ghsKeyMap = { flammable: 'ghsFlammable', corrosive: 'ghsCorrosive', toxic: 'ghsToxic', oxidizer: 'ghsOxidizer' };
               const hazardBadges = hazards.map((h) => ghsMap[h] || '').join('');
@@ -507,33 +523,13 @@ export class ShelfPanel {
             }).join('')}
           </div>
         </div>
-
-        <!-- Pipette 10 mL Bench Drag & Drop Tool Guide -->
-        <div class="p-2.5 rounded-lg border border-theme bg-surface-alt flex flex-col gap-1.5">
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-semibold">🧪 ${t('pipetteTool')}</span>
-            ${(() => {
-              const pipAllowed = !activeMission || isApparatusAllowedInMission(activeMission, 'pipette_10');
-              return `<button type="button" id="btn-add-pipette" ${pipAllowed ? '' : 'data-locked="1" title="' + t('missionLockedShelfTip') + '"'} class="px-2 py-0.5 rounded border border-theme bg-surface text-[11px] font-medium ${pipAllowed ? 'hover:border-accent' : 'opacity-40 cursor-not-allowed'}">${pipAllowed ? '+ Bench' : '🔒'}</button>`;
-            })()}
-          </div>
-          <p class="text-[11px] text-muted leading-relaxed">${t('pipetteEmpty')}</p>
-          ${
-            pipettes.length > 0
-              ? `<div class="flex flex-wrap gap-1 pt-1 border-t border-theme/50">
-                  ${pipettes
-                    .map(
-                      (p) => `<button type="button" class="bench-pip-select px-2 py-0.5 rounded border ${
-                        this.sim.selectedId === p.id ? 'border-accent bg-accent/15 font-semibold' : 'border-theme bg-surface text-muted'
-                      } text-[11px] font-mono" data-pip-id="${p.id}">🧪 ${p.label}: ${(p.volumeMl || 0).toFixed(1)}mL</button>`
-                    )
-                    .join('')}
-                </div>`
-              : ''
-          }
-        </div>
       </div>
     `;
+
+    this.container.querySelector('#btn-shelf-allowed-only')?.addEventListener('click', () => {
+      this.onlyAllowed = !this.onlyAllowed;
+      this.render(this.getLang(), true);
+    });
 
     // Category filter buttons (Apparatus + Reagents)
     this.container.querySelectorAll('.shelf-cat-btn').forEach((btn) => {
@@ -633,19 +629,5 @@ export class ShelfPanel {
       });
     });
 
-    // Quick add/select bench pipette
-    this.container.querySelector('#btn-add-pipette')?.addEventListener('click', (e) => {
-      if (e.currentTarget.dataset.locked === '1') {
-        this.callbacks.onLockedAttempt?.();
-        return;
-      }
-      if (this.callbacks.onAddApparatus) this.callbacks.onAddApparatus('pipette_10');
-    });
-    this.container.querySelectorAll('.bench-pip-select').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        this.sim.selectedId = btn.dataset.pipId;
-        this.sim.emitChange();
-      });
-    });
   }
 }

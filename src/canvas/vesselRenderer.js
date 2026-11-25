@@ -730,32 +730,43 @@ export function renderVessel(ctx, vessel, opts) {
         if (clipLocalY === -Infinity || Number.isFinite(clipLocalY)) {
           const drawTopY = clipLocalY === -Infinity ? -bigSpan : clipLocalY;
           const sw = vessel._surfaceWave;
+          const isViscousWave = (sw?.viscosityFactor || 1.0) >= 1.65;
           ctx.save();
           ctx.translate(x, y);
           ctx.rotate(-effTilt);
           ctx.fillStyle = vis.css;
           if (sw?.active && !hasIce && Number.isFinite(clipLocalY)) {
             const waveHalfSpan = Math.max(w, h) * 0.65;
+            const traceWaveTop = () => {
+              if (isViscousWave && sw.n >= 3) {
+                for (let wi = 0; wi < sw.n - 1; wi++) {
+                  const x0 = -waveHalfSpan + (wi / (sw.n - 1)) * waveHalfSpan * 2;
+                  const y0 = drawTopY + sw.h[wi];
+                  const x1 = -waveHalfSpan + ((wi + 1) / (sw.n - 1)) * waveHalfSpan * 2;
+                  const y1 = drawTopY + sw.h[wi + 1];
+                  ctx.quadraticCurveTo(x0, y0, (x0 + x1) * 0.5, (y0 + y1) * 0.5);
+                }
+              } else {
+                for (let wi = 0; wi < sw.n; wi++) {
+                  const wx = -waveHalfSpan + (wi / (sw.n - 1)) * waveHalfSpan * 2;
+                  ctx.lineTo(wx, drawTopY + sw.h[wi]);
+                }
+              }
+            };
             ctx.beginPath();
             ctx.moveTo(-bigSpan, bigSpan);
             ctx.lineTo(-bigSpan, drawTopY + sw.h[0]);
-            for (let wi = 0; wi < sw.n; wi++) {
-              const wx = -waveHalfSpan + (wi / (sw.n - 1)) * waveHalfSpan * 2;
-              ctx.lineTo(wx, drawTopY + sw.h[wi]);
-            }
+            traceWaveTop();
             ctx.lineTo(bigSpan, drawTopY + sw.h[sw.n - 1]);
             ctx.lineTo(bigSpan, bigSpan);
             ctx.closePath();
             ctx.fill();
             ctx.beginPath();
             ctx.moveTo(-bigSpan, drawTopY + sw.h[0]);
-            for (let wi = 0; wi < sw.n; wi++) {
-              const wx = -waveHalfSpan + (wi / (sw.n - 1)) * waveHalfSpan * 2;
-              ctx.lineTo(wx, drawTopY + sw.h[wi]);
-            }
+            traceWaveTop();
             ctx.lineTo(bigSpan, drawTopY + sw.h[sw.n - 1]);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
-            ctx.lineWidth = 1.6;
+            ctx.strokeStyle = isViscousWave ? 'rgba(255, 255, 255, 0.80)' : 'rgba(255, 255, 255, 0.72)';
+            ctx.lineWidth = isViscousWave ? 2.0 : 1.6;
             ctx.stroke();
           } else {
             ctx.fillRect(-bigSpan, drawTopY, bigSpan * 2, bigSpan - drawTopY);
@@ -804,20 +815,50 @@ export function renderVessel(ctx, vessel, opts) {
         }
       } else {
         const sw = vessel._surfaceWave;
+        const isViscousWave = (sw?.viscosityFactor || 1.0) >= 1.65;
         ctx.fillStyle = vis.css;
         if (sw?.active && !hasIce && !spec.isUTube) {
           ctx.beginPath();
           ctx.moveTo(x - w / 2, interiorBottom + 4);
           const spanHalf = Math.max(surfaceHalfWPx + 6, w * 0.48);
-          for (let wi = 0; wi < sw.n; wi++) {
-            const wx = x - spanHalf + (wi / (sw.n - 1)) * spanHalf * 2;
-            ctx.lineTo(wx, surfaceY + sw.h[wi]);
+          if (isViscousWave && sw.n >= 3) {
+            ctx.lineTo(x - spanHalf, surfaceY + sw.h[0]);
+            for (let wi = 0; wi < sw.n - 1; wi++) {
+              const x0 = x - spanHalf + (wi / (sw.n - 1)) * spanHalf * 2;
+              const y0 = surfaceY + sw.h[wi];
+              const x1 = x - spanHalf + ((wi + 1) / (sw.n - 1)) * spanHalf * 2;
+              const y1 = surfaceY + sw.h[wi + 1];
+              ctx.quadraticCurveTo(x0, y0, (x0 + x1) * 0.5, (y0 + y1) * 0.5);
+            }
+            ctx.lineTo(x + spanHalf, surfaceY + sw.h[sw.n - 1]);
+          } else {
+            for (let wi = 0; wi < sw.n; wi++) {
+              const wx = x - spanHalf + (wi / (sw.n - 1)) * spanHalf * 2;
+              ctx.lineTo(wx, surfaceY + sw.h[wi]);
+            }
           }
           ctx.lineTo(x + w / 2, interiorBottom + 4);
           ctx.closePath();
           ctx.fill();
         } else {
           ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
+        }
+        // Viscous liquid wall-clinging meniscus & slow-draining film trail
+        const filmLevel = sw?.viscousFilmLevel || 0;
+        if (filmLevel > 0.05 && !spec.isUTube) {
+          const filmReach = Math.min(surfaceY - top - 4, h * (0.14 + 0.16 * filmLevel));
+          if (filmReach > 4) {
+            ctx.save();
+            ctx.fillStyle = vis.css;
+            ctx.globalAlpha = Math.min(0.45, 0.24 * filmLevel);
+            const wallSpan = Math.max(6, surfaceHalfWPx + 8);
+            const filmW = 4.2 + filmLevel * 2.8;
+            ctx.beginPath();
+            ctx.roundRect(x - wallSpan - 2, surfaceY - filmReach, filmW, filmReach + 5, 3);
+            ctx.roundRect(x + wallSpan - filmW + 2, surfaceY - filmReach, filmW, filmReach + 5, 3);
+            ctx.fill();
+            ctx.restore();
+          }
         }
       }
 
