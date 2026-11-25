@@ -86,6 +86,8 @@
       loadFromLocalStorage,
       resetAllBenches,
       cloudSync,
+      ADMIN_OWNER_EMAIL,
+      generateRandomTeacherInviteCode,
     } from '../src/storage/workspaceStorage.js';
     import {
       computeCaOOptimizationScore,
@@ -10955,6 +10957,77 @@
         'Prompt 86 invariants: Atomic Teacher Invite redemption & guards, Engine-level apparatus/reagent lock, Exam rubric guide, Telemetry summary in PDF report, VI/EN i18n',
         engineLockOk && rubricHintUiOk && telemetryPdfOk && inviteOk && i18n86Ok,
         `engLock=${engineLockOk}, rubricUI=${rubricHintUiOk}, telPDF=${telemetryPdfOk}, invite=${inviteOk}, i18n=${i18n86Ok}`
+      );
+    }
+
+    // TEST 224: Admin One-Time Teacher Invite Generator, Verified-Email Guard, List & Revoke
+    {
+      const genCodeOk = /^GV-[A-Z0-9]{4,12}$/.test(generateRandomTeacherInviteCode(6));
+      const adminTrueOk = cloudSync.isAdmin({ uid: 'adm1', email: ADMIN_OWNER_EMAIL, emailVerified: true });
+      const adminUnverifiedBlockedOk = !cloudSync.isAdmin({ uid: 'adm2', email: ADMIN_OWNER_EMAIL, emailVerified: false });
+      const adminOtherBlockedOk = !cloudSync.isAdmin({ uid: 'stu1', email: 'student@school.edu.vn', emailVerified: true });
+
+      const adminStore = {};
+      const adminMods = {
+        doc: (_db, col, id) => `${col}/${id}`,
+        collection: (_db, col) => col,
+        query: (col) => col,
+        orderBy: () => ({}),
+        limit: () => ({}),
+        getDoc: async (path) => ({
+          exists: () => Boolean(adminStore[path]),
+          data: () => adminStore[path],
+        }),
+        setDoc: async (path, data) => {
+          adminStore[path] = { ...data };
+        },
+        deleteDoc: async (path) => {
+          delete adminStore[path];
+        },
+        getDocs: async (col) => {
+          const rows = Object.entries(adminStore)
+            .filter(([k]) => k.startsWith(`${col}/`))
+            .map(([k, v]) => ({ id: k.split('/')[1], data: () => v }));
+          return {
+            forEach: (cb) => rows.forEach(cb),
+          };
+        },
+      };
+
+      const adminUser = { uid: 'adm1', email: ADMIN_OWNER_EMAIL, emailVerified: true };
+      const nonAdminUser = { uid: 'stu1', email: 'other@gmail.com', emailVerified: true };
+      let nonAdminCreateBlocked = false;
+      try {
+        await cloudSync.createTeacherInvite({ label: 'Sneaky' }, { mods: adminMods, db: {}, user: nonAdminUser });
+      } catch (e) {
+        nonAdminCreateBlocked = e.message === 'ADMIN_ROLE_REQUIRED';
+      }
+
+      const createdInv = await cloudSync.createTeacherInvite(
+        { label: 'Cô Lan - THPT A', expiresHours: 24 },
+        { mods: adminMods, db: {}, user: adminUser }
+      );
+      const listed = await cloudSync.listTeacherInvites(25, { mods: adminMods, db: {}, user: adminUser });
+      await cloudSync.deleteTeacherInvite(createdInv.code, { mods: adminMods, db: {}, user: adminUser });
+      const listedAfterDel = await cloudSync.listTeacherInvites(25, { mods: adminMods, db: {}, user: adminUser });
+
+      const adminCrudOk =
+        /^GV-[A-Z0-9]{6}$/.test(createdInv.code) &&
+        createdInv.used === false &&
+        createdInv.usedBy === null &&
+        createdInv.usedAt === null &&
+        createdInv.label === 'Cô Lan - THPT A' &&
+        createdInv.expiresAt > Date.now() &&
+        listed.length === 1 &&
+        listed[0].code === createdInv.code &&
+        listedAfterDel.length === 0;
+
+      const i18nAdminOk = Boolean(I18N.vi.adminInvitePanelTitle && I18N.en.adminInvitePanelTitle);
+
+      assert(
+        'Build 26 invariants: Verified-email Admin guard (duwchao@gmail.com), random GV-XXXXXX code generation, Admin create/list/revoke invites, VI/EN i18n',
+        genCodeOk && adminTrueOk && adminUnverifiedBlockedOk && adminOtherBlockedOk && nonAdminCreateBlocked && adminCrudOk && i18nAdminOk,
+        `gen=${genCodeOk}, adm=${adminTrueOk}, unver=${adminUnverifiedBlockedOk}, oth=${adminOtherBlockedOk}, blk=${nonAdminCreateBlocked}, crud=${adminCrudOk}, i18n=${i18nAdminOk}`
       );
     }
 

@@ -1,6 +1,6 @@
 export const I18N_EN = {
   appTitle: 'ChemLab Studio',
-  appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.25',
+  appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.26',
   toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
   quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
   quickPresetsHoldTitle: 'Guided Experiments (Hold F · Release to close)',
@@ -1134,4 +1134,20 @@ export const I18N_EN = {
   rubricRuleQuant: 'Endpoint precision / yield / gas purity / stock preservation',
   rubricRuleIdent: 'Accurate conclusion (error ≤ 2%: 100%, ≤ 5%: 70%, ≤ 10%: 40%)',
   rubricRuleSafe: 'Lab safety (no shattered glass, spills, or toxic leaks; -0.5 pt/incident)',
+  // Build 26: Admin Teacher Invite Generator
+  adminInvitePanelTitle: 'Admin — One-Time Teacher Invites (GV-XXXXXX)',
+  adminInviteLabelPlaceholder: 'Note (e.g., Ms. Lan - Chem Dept)',
+  adminInviteExpNever: 'No expiration',
+  adminInviteExp24h: 'Expires in 24 hours',
+  adminInviteExp7d: 'Expires in 7 days',
+  adminInviteExp30d: 'Expires in 30 days',
+  adminInviteGenerateBtn: 'Generate Code',
+  adminInviteRefreshBtn: 'Refresh',
+  adminInviteCreatedToast: 'Created new Teacher Invite code',
+  adminInviteCopiedToast: 'Copied invite code',
+  adminInviteDeletedToast: 'Revoked invite code',
+  adminInviteEmpty: 'No invite codes created yet.',
+  adminInviteStatusFree: 'Ready',
+  adminInviteStatusUsed: 'Used',
+  adminInviteStatusExpired: 'Expired',
 };

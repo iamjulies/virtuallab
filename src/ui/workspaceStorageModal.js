@@ -23,6 +23,14 @@ service cloud.firestore {
   }
 }`;
 
+function escModalHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 export class WorkspaceStorageModal {
   constructor(labManager, getTranslator, callbacks = {}) {
     this.labManager = labManager;
@@ -35,10 +43,20 @@ export class WorkspaceStorageModal {
     this.feedbackType = ''; // 'error' | 'success' | ''
     this.lastGeneratedCode = '';
     this.lastAutoSaveTime = null;
+    this.adminInvites = [];
+    this.lastCreatedInvite = null;
+    this._adminInvitesLoaded = false;
     this.rootEl = null;
     this._ensureRoot();
 
     cloudSync.subscribe(() => {
+      if (!cloudSync.isAdmin()) {
+        this.adminInvites = [];
+        this.lastCreatedInvite = null;
+        this._adminInvitesLoaded = false;
+      } else if (this.isOpen && !this._adminInvitesLoaded) {
+        this._refreshAdminInvites();
+      }
       if (this.isOpen) this.render();
       this.callbacks.onAuthChange?.(cloudSync.user);
     });
@@ -73,6 +91,9 @@ export class WorkspaceStorageModal {
     }
     this.rootEl.classList.remove('hidden');
     cloudSync.ensureFirebaseLoaded().catch(() => {});
+    if (cloudSync.isAdmin() && !this._adminInvitesLoaded) {
+      this._refreshAdminInvites();
+    }
     this.render();
     if (focusTarget === 'auth' || focusTarget === 'login' || focusTarget === 'register') {
       setTimeout(() => this.rootEl?.querySelector('#input-cloud-email')?.focus(), 40);
@@ -91,6 +112,17 @@ export class WorkspaceStorageModal {
     else this.open();
   }
 
+  async _refreshAdminInvites() {
+    if (!cloudSync.isAdmin()) return;
+    try {
+      this._adminInvitesLoaded = true;
+      this.adminInvites = await cloudSync.listTeacherInvites(25);
+      if (this.isOpen) this.render();
+    } catch {
+      this._adminInvitesLoaded = false;
+    }
+  }
+
   _setFeedback(msg, type = 'error') {
     this.feedbackMsg = msg;
     this.feedbackType = type;
@@ -106,7 +138,13 @@ export class WorkspaceStorageModal {
     if (!this.rootEl) return;
     const t = this.getTranslator();
     const user = cloudSync.user;
-    const roleTag = user ? (cloudSync.isTeacher() ? ' · teacher' : ' · student') : '';
+    const roleTag = user
+      ? cloudSync.isAdmin()
+        ? ' · 👑 admin · teacher'
+        : cloudSync.isTeacher()
+        ? ' · teacher'
+        : ' · student'
+      : '';
     const examLocked = Boolean(this.labManager?.hasActiveExamLab?.());
     const timeStr = this.lastAutoSaveTime
       ? new Date(this.lastAutoSaveTime).toLocaleTimeString()
@@ -161,7 +199,71 @@ export class WorkspaceStorageModal {
                 </button>
               </div>
               ${
-                !cloudSync.isTeacher()
+                cloudSync.isAdmin()
+                  ? (() => {
+                      const nowMs = Date.now();
+                      const rowsHtml =
+                        this.adminInvites.length === 0
+                          ? `<div class="text-[11px] text-muted py-1">${t('adminInviteEmpty')}</div>`
+                          : this.adminInvites
+                              .map((inv) => {
+                                const expMs = inv.expiresAt?.toMillis ? inv.expiresAt.toMillis() : Number(inv.expiresAt || 0);
+                                const isExpired = !inv.used && expMs > 0 && expMs <= nowMs;
+                                const badgeHtml = inv.used
+                                  ? `<span class="text-sky-400">✅ ${t('adminInviteStatusUsed')}</span>`
+                                  : isExpired
+                                  ? `<span class="text-red-400">⌛ ${t('adminInviteStatusExpired')}</span>`
+                                  : `<span class="text-emerald-400">🟢 ${t('adminInviteStatusFree')}</span>`;
+                                const lbl = inv.label ? `<span class="text-muted truncate">${escModalHtml(inv.label)}</span>` : '';
+                                return `
+                                  <div class="flex items-center justify-between gap-1.5 py-1 px-1.5 rounded border border-theme/50 bg-surface text-[11px]">
+                                    <div class="flex items-center gap-1.5 min-w-0">
+                                      <code class="font-mono font-bold text-main shrink-0">${escModalHtml(inv.code)}</code>
+                                      ${badgeHtml}
+                                      ${lbl}
+                                    </div>
+                                    <div class="flex items-center gap-1 shrink-0">
+                                      ${
+                                        !inv.used && !isExpired
+                                          ? `<button type="button" class="btn-admin-copy-invite px-1.5 py-0.5 rounded border border-theme hover:border-accent text-[10px]" data-code="${escModalHtml(inv.code)}">📋</button>`
+                                          : ''
+                                      }
+                                      <button type="button" class="btn-admin-del-invite px-1.5 py-0.5 rounded border border-theme text-red-400 hover:bg-red-500/10 text-[10px]" data-code="${escModalHtml(inv.code)}">🗑️</button>
+                                    </div>
+                                  </div>`;
+                              })
+                              .join('');
+                      return `
+                        <div class="mt-2 pt-2 border-t border-theme/60 flex flex-col gap-1.5 text-[11px]">
+                          <div class="flex items-center justify-between gap-2">
+                            <span class="font-bold text-amber-300">👑 ${t('adminInvitePanelTitle')}</span>
+                            <button type="button" id="btn-admin-refresh-invites" class="px-2 py-0.5 rounded border border-theme bg-surface text-[10px] hover:border-accent">🔄 ${t('adminInviteRefreshBtn')}</button>
+                          </div>
+                          <div class="flex flex-wrap items-center gap-1.5">
+                            <input id="input-admin-invite-label" type="text" maxlength="120" placeholder="${t('adminInviteLabelPlaceholder')}"
+                              class="storage-input flex-1 min-w-[140px]" style="padding:0.25rem 0.5rem;font-size:11.5px" />
+                            <select id="sel-admin-invite-expiry" class="storage-input" style="max-width:148px;padding:0.25rem 0.45rem;font-size:11px">
+                              <option value="0">${t('adminInviteExpNever')}</option>
+                              <option value="24">${t('adminInviteExp24h')}</option>
+                              <option value="168">${t('adminInviteExp7d')}</option>
+                              <option value="720">${t('adminInviteExp30d')}</option>
+                            </select>
+                            <button type="button" id="btn-admin-gen-invite" class="storage-btn storage-btn-amber shrink-0" style="padding:0.25rem 0.65rem;font-size:11.5px">
+                              ✨ ${t('adminInviteGenerateBtn')}
+                            </button>
+                          </div>
+                          ${
+                            this.lastCreatedInvite
+                              ? `<div class="p-1.5 px-2 rounded border border-emerald-500/45 bg-emerald-500/10 flex items-center justify-between gap-2">
+                                  <span>🎉 <code class="font-mono font-bold text-emerald-300">${escModalHtml(this.lastCreatedInvite.code)}</code></span>
+                                  <button type="button" class="btn-admin-copy-invite px-2 py-0.5 rounded border border-emerald-500/50 bg-surface text-[10.5px] font-semibold" data-code="${escModalHtml(this.lastCreatedInvite.code)}">📋 Copy</button>
+                                </div>`
+                              : ''
+                          }
+                          <div id="admin-invite-list" class="flex flex-col gap-1 max-h-36 overflow-y-auto pr-0.5">${rowsHtml}</div>
+                        </div>`;
+                    })()
+                  : !cloudSync.isTeacher()
                   ? `<div class="mt-2 pt-2 border-t border-theme/60 flex flex-wrap items-center gap-1.5 text-[11px]">
                       <span class="font-semibold text-amber-300 shrink-0">🎓 ${t('teacherInviteSectionLabel')}:</span>
                       <input id="input-teacher-invite" type="text" maxlength="16" placeholder="GV-XXXXXX"
@@ -441,8 +543,64 @@ export class WorkspaceStorageModal {
     });
 
     this.rootEl.querySelector('#btn-cloud-signout')?.addEventListener('click', async () => {
+      this.adminInvites = [];
+      this.lastCreatedInvite = null;
+      this._adminInvitesLoaded = false;
       await cloudSync.signOutUser();
       this.render();
+    });
+
+    this.rootEl.querySelector('#btn-admin-gen-invite')?.addEventListener('click', async () => {
+      const label = this.rootEl.querySelector('#input-admin-invite-label')?.value?.trim() || '';
+      const expiresHours = Number(this.rootEl.querySelector('#sel-admin-invite-expiry')?.value || 0);
+      try {
+        const created = await cloudSync.createTeacherInvite({ label, expiresHours });
+        this.lastCreatedInvite = created;
+        try {
+          await navigator.clipboard?.writeText(created.code);
+        } catch {}
+        soundEngine.playUiClick();
+        this._setFeedback(`🎉 ${t('adminInviteCreatedToast')}: ${created.code}`, 'success');
+        this.callbacks.onNotify?.(`👑 ${t('adminInviteCreatedToast')}: ${created.code}`);
+        await this._refreshAdminInvites();
+      } catch (err) {
+        const txt = err?.message || t('toastCloudError');
+        this._setFeedback(`⚠️ ${txt}`, 'error');
+        this.callbacks.onNotify?.(`⚠️ ${txt}`);
+      }
+    });
+
+    this.rootEl.querySelector('#btn-admin-refresh-invites')?.addEventListener('click', async () => {
+      this._adminInvitesLoaded = false;
+      await this._refreshAdminInvites();
+    });
+
+    this.rootEl.querySelectorAll('.btn-admin-copy-invite').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const code = btn.dataset.code || '';
+        if (!code) return;
+        try {
+          await navigator.clipboard?.writeText(code);
+        } catch {}
+        soundEngine.playUiClick();
+        this.callbacks.onNotify?.(`📋 ${t('adminInviteCopiedToast')}: ${code}`);
+      });
+    });
+
+    this.rootEl.querySelectorAll('.btn-admin-del-invite').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const code = btn.dataset.code || '';
+        if (!code) return;
+        try {
+          await cloudSync.deleteTeacherInvite(code);
+          if (this.lastCreatedInvite?.code === code) this.lastCreatedInvite = null;
+          soundEngine.playUiClick();
+          this.callbacks.onNotify?.(`🗑️ ${t('adminInviteDeletedToast')}: ${code}`);
+          await this._refreshAdminInvites();
+        } catch (err) {
+          this.callbacks.onNotify?.(`⚠️ ${err?.message || t('toastCloudError')}`);
+        }
+      });
     });
 
     this.rootEl.querySelector('#btn-redeem-teacher-invite')?.addEventListener('click', async () => {

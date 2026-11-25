@@ -5,6 +5,27 @@ import { fnv1aHash32 } from '../engine/examProctor.js';
 export const WORKSPACE_SCHEMA_VERSION = '1.0.0';
 export const LOCAL_STORAGE_KEY = 'chemlab_workspace_autosave_v1';
 export const LOCAL_SHARED_PREFIX = 'chemlab_shared_bench_';
+export const ADMIN_OWNER_EMAIL = 'duwchao@gmail.com';
+
+const INVITE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+/**
+ * Generate a cryptographically random one-time Teacher Invite code matching ^GV-[A-Z0-9]{4,12}$.
+ */
+export function generateRandomTeacherInviteCode(len = 6) {
+  const safeLen = Math.max(4, Math.min(12, Number(len) || 6));
+  const bytes = new Uint8Array(safeLen);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < safeLen; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  let suffix = '';
+  for (let i = 0; i < safeLen; i++) {
+    suffix += INVITE_CODE_ALPHABET[bytes[i] % INVITE_CODE_ALPHABET.length];
+  }
+  return `GV-${suffix}`;
+}
 export const LOCAL_EXAM_PREFIX = 'chemlab_exam_assignment_';
 export const LOCAL_EXAM_SUB_PREFIX = 'chemlab_exam_sub_';
 
@@ -949,36 +970,50 @@ class CloudSyncController {
     this._notify();
   }
 
+  isAdmin(user = this.user) {
+    return Boolean(user?.emailVerified && String(user?.email || '').toLowerCase() === ADMIN_OWNER_EMAIL);
+  }
+
   isTeacher() {
-    return this.userProfile?.role === 'teacher';
+    return Boolean(this.isAdmin() || this.userProfile?.role === 'teacher');
   }
 
   /**
    * Authoritative server-backed role check against `users/{uid}` in Firestore.
-   * Client cannot elevate its own role beyond 'student' on create/update.
+   * Client cannot elevate its own role beyond 'student' on create/update
+   * unless verified project owner (isAdmin) or atomic teacher_invites redemption.
    */
   async syncUserRoleProfile(user = this.user) {
     if (!user?.uid) {
       this.userProfile = null;
       return null;
     }
+    const adminFlag = this.isAdmin(user);
     try {
       const mods = this.modules || (await this.ensureFirebaseLoaded());
       const userRef = mods.doc(this.db, 'users', user.uid);
       const snap = await mods.getDoc(userRef);
       if (snap.exists()) {
         const data = snap.data() || {};
+        if (adminFlag && data.role !== 'teacher') {
+          try {
+            await mods.updateDoc(userRef, {
+              role: 'teacher',
+              updatedAt: mods.serverTimestamp(),
+            });
+          } catch {}
+        }
         this.userProfile = {
           uid: user.uid,
           email: data.email || user.email || '',
           displayName: data.displayName || user.displayName || '',
-          role: data.role === 'teacher' ? 'teacher' : 'student',
+          role: adminFlag || data.role === 'teacher' ? 'teacher' : 'student',
         };
       } else {
         const initialProfile = {
           email: user.email || '',
           displayName: user.displayName || '',
-          role: 'student',
+          role: adminFlag ? 'teacher' : 'student',
           createdAt: mods.serverTimestamp(),
           updatedAt: mods.serverTimestamp(),
         };
@@ -987,7 +1022,7 @@ class CloudSyncController {
           uid: user.uid,
           email: initialProfile.email,
           displayName: initialProfile.displayName,
-          role: 'student',
+          role: initialProfile.role,
         };
       }
     } catch {
@@ -995,11 +1030,92 @@ class CloudSyncController {
         uid: user.uid,
         email: user.email || '',
         displayName: user.displayName || '',
-        role: 'student',
+        role: adminFlag ? 'teacher' : 'student',
       };
     }
     this._notify();
     return this.userProfile;
+  }
+
+  /**
+   * Create a new one-time Teacher Invite document in `teacher_invites/{code}` (Admin only).
+   */
+  async createTeacherInvite({ label = '', expiresHours = 0 } = {}, deps = {}) {
+    const mods = deps.mods || (await this.ensureFirebaseLoaded());
+    const db = deps.db || this.db;
+    const curUser = deps.user || this.user;
+    if (!curUser?.uid) throw new Error('AUTH_REQUIRED');
+    if (!this.isAdmin(curUser)) throw new Error('ADMIN_ROLE_REQUIRED');
+
+    const cleanLabel = String(label || '').trim().slice(0, 200);
+    const hrs = Number(expiresHours) || 0;
+    const nowMs = Date.now();
+    const expiresAt = hrs > 0 ? nowMs + hrs * 3600 * 1000 : null;
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const code = deps.code || generateRandomTeacherInviteCode(6);
+      const invRef = mods.doc(db, 'teacher_invites', code);
+      const existing = await mods.getDoc(invRef);
+      if (existing.exists() && !deps.code) continue;
+      const docPayload = {
+        code,
+        used: false,
+        usedBy: null,
+        usedAt: null,
+        label: cleanLabel || null,
+        expiresAt,
+        createdAt: nowMs,
+      };
+      await mods.setDoc(invRef, docPayload);
+      return docPayload;
+    }
+    throw new Error('INVITE_CREATE_FAILED');
+  }
+
+  /**
+   * List created `teacher_invites` documents (Admin only).
+   */
+  async listTeacherInvites(maxCount = 25, deps = {}) {
+    const mods = deps.mods || (await this.ensureFirebaseLoaded());
+    const db = deps.db || this.db;
+    const curUser = deps.user || this.user;
+    if (!curUser?.uid) throw new Error('AUTH_REQUIRED');
+    if (!this.isAdmin(curUser)) throw new Error('ADMIN_ROLE_REQUIRED');
+
+    const colRef = mods.collection(db, 'teacher_invites');
+    let snap;
+    try {
+      const q = mods.query(colRef, mods.orderBy('createdAt', 'desc'), mods.limit(maxCount));
+      snap = await mods.getDocs(q);
+    } catch {
+      snap = await mods.getDocs(mods.query(colRef, mods.limit(maxCount)));
+    }
+    const list = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data() || {};
+      list.push({ id: docSnap.id, ...d, code: d.code || docSnap.id });
+    });
+    list.sort((a, b) => {
+      const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : Number(a.createdAt || 0);
+      const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : Number(b.createdAt || 0);
+      return tb - ta;
+    });
+    return list;
+  }
+
+  /**
+   * Delete/revoke a Teacher Invite document (Admin only).
+   */
+  async deleteTeacherInvite(rawCode, deps = {}) {
+    const mods = deps.mods || (await this.ensureFirebaseLoaded());
+    const db = deps.db || this.db;
+    const curUser = deps.user || this.user;
+    if (!curUser?.uid) throw new Error('AUTH_REQUIRED');
+    if (!this.isAdmin(curUser)) throw new Error('ADMIN_ROLE_REQUIRED');
+    const code = String(rawCode || '').trim().toUpperCase();
+    if (!/^GV-[A-Z0-9]{4,12}$/.test(code)) throw new Error('INVITE_CODE_INVALID');
+    await mods.deleteDoc(mods.doc(db, 'teacher_invites', code));
+    return code;
   }
 
   /**

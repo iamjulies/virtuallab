@@ -1,6 +1,6 @@
 export const I18N_VI = {
   appTitle: 'ChemLab Studio',
-  appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.25',
+  appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.26',
   toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
   quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
   quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -1142,4 +1142,20 @@ export const I18N_VI = {
   rubricRuleQuant: 'Độ chính xác điểm dừng / hiệu suất / độ tinh khiết / bảo toàn mẫu',
   rubricRuleIdent: 'Kết luận chính xác (sai số ≤ 2%: 100%, ≤ 5%: 70%, ≤ 10%: 40%)',
   rubricRuleSafe: 'An toàn thí nghiệm (không vỡ/nổ bình, tràn hay rò khí độc; -0.5đ/sự cố)',
+  // Build 26: Admin Teacher Invite Generator
+  adminInvitePanelTitle: 'Admin — Cấp mã Giáo viên 1 lần (GV-XXXXXX)',
+  adminInviteLabelPlaceholder: 'Ghi chú (vd: Cô Lan - THPT A)',
+  adminInviteExpNever: 'Không giới hạn hạn dùng',
+  adminInviteExp24h: 'Hết hạn sau 24 giờ',
+  adminInviteExp7d: 'Hết hạn sau 7 ngày',
+  adminInviteExp30d: 'Hết hạn sau 30 ngày',
+  adminInviteGenerateBtn: 'Tạo mã GV',
+  adminInviteRefreshBtn: 'Tải lại',
+  adminInviteCreatedToast: 'Đã tạo mã Giáo viên mới',
+  adminInviteCopiedToast: 'Đã sao chép mã mời',
+  adminInviteDeletedToast: 'Đã thu hồi / xóa mã',
+  adminInviteEmpty: 'Chưa có mã mời nào trên hệ thống.',
+  adminInviteStatusFree: 'Sẵn sàng',
+  adminInviteStatusUsed: 'Đã dùng',
+  adminInviteStatusExpired: 'Hết hạn',
 };

@@ -11,7 +11,7 @@ rules_version = '2';
 // Collection: users/{uid}
 // Document ID: Firebase Auth UID
 // Fields:
-//   - role: string (required on create == 'student', immutable on update except student -> teacher via atomic invite redemption; 'student' | 'teacher')
+//   - role: string (required on create == 'student' except verified project admin == 'teacher', immutable on update except student -> teacher via atomic invite redemption or verified project admin; 'student' | 'teacher')
 //   - teacherInviteCode: string (optional, 1..32 chars; must match ^GV-[A-Z0-9]{4,12}$ when upgrading to 'teacher', immutable once set)
 //   - email: string | null (optional, 3..254 chars)
 //   - displayName: string (optional, 0..100 chars)
@@ -117,13 +117,14 @@ rules_version = '2';
 //
 // Collection: teacher_invites/{inviteCode}
 // Document ID: one-time teacher invite code matching ^GV-[A-Z0-9]{4,12}$
-// Fields (admin-provisioned via Console/Admin SDK; one-time atomic redemption by non-teacher user):
+// Fields (admin-managed via Admin UI / Console / Admin SDK; one-time atomic redemption by non-teacher user):
 //   - code: string (required, must equal {inviteCode}, ^GV-[A-Z0-9]{4,12}$, immutable)
 //   - used: bool (required, false -> true on one-time redemption)
 //   - usedBy: string | null (required on redemption == request.auth.uid, 1..128 chars)
 //   - usedAt: timestamp | null (required on redemption == request.time)
 //   - label: string | null (optional, 0..200 chars, immutable)
 //   - expiresAt: timestamp | number | null (optional, >= 0 if number, immutable)
+//   - createdAt: timestamp | number | null (optional, >= 0 if number, immutable)
 //
 // ===============================================================
 
@@ -142,11 +143,21 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == uid;
     }
 
-    // Derive teacher authority strictly from server-protected users/{uid}.role
-    function isTeacher() {
+    // Verified project owner email with full teacher and invite management privileges
+    function isAdmin() {
       return isAuthenticated() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+        'email_verified' in request.auth.token &&
+        request.auth.token.email_verified == true &&
+        'email' in request.auth.token &&
+        request.auth.token.email == 'duwchao@gmail.com';
+    }
+
+    // Derive teacher authority from verified project owner (isAdmin) or server-protected users/{uid}.role
+    function isTeacher() {
+      return isAdmin() ||
+        (isAuthenticated() &&
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher');
     }
 
     // Verify parent assignment exists and belongs to the requesting teacher
@@ -262,7 +273,8 @@ service cloud.firestore {
           'usedBy',
           'usedAt',
           'label',
-          'expiresAt'
+          'expiresAt',
+          'createdAt'
         ]) &&
         data.code is string &&
         data.code == inviteCode &&
@@ -271,7 +283,8 @@ service cloud.firestore {
         (data.usedBy == null || isValidString(data.usedBy, 1, 128)) &&
         (data.usedAt == null || data.usedAt is timestamp) &&
         (!('label' in data) || data.label == null || isValidString(data.label, 0, 200)) &&
-        (!('expiresAt' in data) || data.expiresAt == null || isValidTimestampOrEpoch(data.expiresAt));
+        (!('expiresAt' in data) || data.expiresAt == null || isValidTimestampOrEpoch(data.expiresAt)) &&
+        (!('createdAt' in data) || data.createdAt == null || isValidTimestampOrEpoch(data.createdAt));
     }
 
     function isValidWorkspaceDoc(data) {
@@ -528,14 +541,18 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isOwner(uid);
 
-      // Self-signup MUST set role == 'student' (never 'teacher' or 'admin')
+      // Self-signup MUST set role == 'student' (except verified project admin, who may create with role == 'teacher')
       allow create: if isOwner(uid) &&
         isValidUserProfile(request.resource.data, uid) &&
         'role' in request.resource.data &&
-        request.resource.data.role == 'student' &&
-        !('teacherInviteCode' in request.resource.data);
+        !('teacherInviteCode' in request.resource.data) &&
+        (
+          request.resource.data.role == 'student' ||
+          (isAdmin() && request.resource.data.role == 'teacher')
+        );
 
       // Users cannot tamper with uid/createdAt; role is immutable except when
+      // verified project admin (isAdmin() && isOwner(uid)) sets/keeps role == 'teacher', OR
       // upgrading student -> teacher via atomic one-time teacher_invites redemption
       allow update: if isOwner(uid) &&
         isValidUserProfile(request.resource.data, uid) &&
@@ -549,7 +566,10 @@ service cloud.firestore {
                 'role' in request.resource.data &&
                 request.resource.data.role == resource.data.role) ||
               (!('role' in resource.data) &&
-                (!('role' in request.resource.data) || request.resource.data.role == 'student'))
+                (!('role' in request.resource.data) || request.resource.data.role == 'student')) ||
+              (isAdmin() &&
+                'role' in request.resource.data &&
+                request.resource.data.role == 'teacher')
             )
           ) ||
           (
@@ -704,11 +724,17 @@ service cloud.firestore {
       }
     }
 
-    // 7. One-time Teacher Invite codes (admin-provisioned; atomic redemption)
+    // 7. One-time Teacher Invite codes (admin-managed; atomic redemption)
     match /teacher_invites/{inviteCode} {
-      allow get: if isAuthenticated() && isValidInviteCode(inviteCode);
-      allow list: if false;
-      allow create, delete: if false;
+      allow get: if isAdmin() || (isAuthenticated() && isValidInviteCode(inviteCode));
+      allow list: if isAdmin();
+
+      allow create: if isAdmin() &&
+        isValidInviteCode(inviteCode) &&
+        isValidTeacherInvite(request.resource.data, inviteCode) &&
+        request.resource.data.used == false &&
+        request.resource.data.usedBy == null &&
+        request.resource.data.usedAt == null;
 
       // Only an authenticated non-teacher user can redeem an unused, non-expired
       // invite ONCE via atomic WriteBatch together with users/{request.auth.uid}
@@ -724,10 +750,12 @@ service cloud.firestore {
         request.resource.data.used == true &&
         request.resource.data.usedBy == request.auth.uid &&
         request.resource.data.usedAt == request.time &&
-        areImmutableFieldsUnchanged(['code', 'label', 'expiresAt']) &&
+        areImmutableFieldsUnchanged(['code', 'label', 'expiresAt', 'createdAt']) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
         getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' &&
         getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.teacherInviteCode == inviteCode;
+
+      allow delete: if isAdmin();
     }
 
     // 8. Default deny all other collections and paths
