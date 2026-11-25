@@ -120,6 +120,8 @@ export function exportSnapshotForSim(sim) {
       compareVesselIds: Array.isArray(sim.compareVesselIds) ? [...sim.compareVesselIds] : [],
       pipette: JSON.parse(JSON.stringify(sim.pipette)),
       logs: JSON.parse(JSON.stringify(sim.logs.slice(0, 12))),
+      missionState: sim.missionState ? JSON.parse(JSON.stringify(sim.missionState)) : null,
+      missionTelemetry: sim.missionTelemetry ? JSON.parse(JSON.stringify(sim.missionTelemetry)) : null,
     };
 }
 
@@ -171,6 +173,12 @@ export function restoreSnapshotForSim(sim, snap) {
     }
     if (Array.isArray(snap.logs)) {
       sim.logs = JSON.parse(JSON.stringify(snap.logs));
+    }
+    if ('missionState' in snap) {
+      sim.missionState = snap.missionState ? JSON.parse(JSON.stringify(snap.missionState)) : null;
+    }
+    if ('missionTelemetry' in snap && snap.missionTelemetry) {
+      sim.missionTelemetry = JSON.parse(JSON.stringify(snap.missionTelemetry));
     }
     sim.activePourStream = null;
     sim.activeReagentTransfer = null;

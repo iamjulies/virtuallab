@@ -94,7 +94,7 @@ export class InspectorPanel {
       const caoSig = caoScore
         ? `${caoScore.points}:${caoScore.groundFine ? 1 : 0}${caoScore.ventedWhileHeating ? 1 : 0}${caoScore.roaringBlueZone ? 1 : 0}${caoScore.cooledProtected ? 1 : 0}`
         : 'n';
-      return `v|${atmMode}|${labSig}|${airFlags}|${item.id}|${item.isStoppered}|${item.lidState || 'open'}|${cmpFlag}|${softenFlag}|${sootFlag}|${mirrorFlag}|${resFlag}|${escSig}|${hasElec}|${caoSig}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${this.logMode}|${langCode}|${logLen}`;
+      return `v|${item.hideComposition ? 1 : 0}|${item.blindLabel || ''}|${atmMode}|${labSig}|${airFlags}|${item.id}|${item.isStoppered}|${item.lidState || 'open'}|${cmpFlag}|${softenFlag}|${sootFlag}|${mirrorFlag}|${resFlag}|${escSig}|${hasElec}|${caoSig}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${this.logMode}|${langCode}|${logLen}`;
     }
     if (item.kind === 'bath') {
       const nestedCnt = this.sim.items.filter((i) => i.submergedInBathId === item.id).length;
@@ -109,7 +109,7 @@ export class InspectorPanel {
     }
     if (item.kind === 'pipette') {
       const spKeys = Object.keys(item.moles || {}).filter((k) => hasDisplayableSpeciesAmount(k, item.moles[k])).sort().join(',');
-      return `p|${item.id}|${item.isBroken}|${spKeys}|${langCode}|${logLen}`;
+      return `p|${item.hideComposition ? 1 : 0}|${item.blindLabel || ''}|${item.id}|${item.isBroken}|${spKeys}|${langCode}|${logLen}`;
     }
     if (item.kind === 'scale') {
       return `s|${item.id}|${Math.abs(item.tareG) > 0.001}|${langCode}|${logLen}`;
@@ -1091,6 +1091,8 @@ export class InspectorPanel {
   }
 
   drawChart() {
+    const item = this.sim.getItem(this.sim.selectedId);
+    if (item?.hideComposition) return;
     drawVesselMoleChart(this);
   }
 }

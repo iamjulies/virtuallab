@@ -1,5 +1,6 @@
 import { APP_VERSION_TAG, CONSTANTS, kelvinToCelsius, waterBoilingPointK } from '../data/constants.js';
 import { PRESET_MENU_ITEMS } from '../data/presets.js';
+import { getMissionById } from '../data/missions.js';
 
 export class EnvironmentBar {
   constructor(container, sim, appState, callbacks) {
@@ -30,9 +31,25 @@ export class EnvironmentBar {
             <div class="flex items-center gap-1.5 whitespace-nowrap">
               <h1 class="text-sm font-bold leading-none whitespace-nowrap">${t('appTitle')}</h1>
               <span id="app-version-badge" class="text-[11px] font-mono px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-muted whitespace-nowrap">${APP_VERSION_TAG}</span>
-              <span class="env-compact-hide text-xs px-2 py-0.5 rounded-full border border-theme bg-surface-alt text-muted whitespace-nowrap">
-                ${theme === 'olivia' ? 'u + me = <3 · 🐝' : theme === 'ctrl' ? 'draft · 4:20 pm' : theme === 'sos' ? 'deep sea · sos' : t('modeFreeSandbox')}
-              </span>
+              ${(() => {
+                const ms = this.sim?.missionState;
+                const activeMission = ms?.active ? getMissionById(ms.missionId) : null;
+                const badgeText = activeMission
+                  ? `🎯 ${t(activeMission.shortTitleKey)}`
+                  : theme === 'olivia'
+                  ? 'u + me = <3 · 🐝'
+                  : theme === 'ctrl'
+                  ? 'draft · 4:20 pm'
+                  : theme === 'sos'
+                  ? 'deep sea · sos'
+                  : `⚗️ ${t('modeFreeSandbox')}`;
+                return `<button type="button" id="btn-mode-switch" title="${t('modeSwitchTip')}"
+                  class="text-xs px-2 py-0.5 rounded-full border ${
+                    activeMission
+                      ? 'border-accent bg-accent/20 text-accent font-bold'
+                      : 'border-theme bg-surface-alt text-muted hover:border-accent hover:text-main'
+                  } whitespace-nowrap transition cursor-pointer">${badgeText}</button>`;
+              })()}
             </div>
             <p class="env-compact-hide text-[11px] text-muted mt-0.5 hidden xl:block whitespace-nowrap">${t('appSubtitle')}</p>
           </div>
@@ -194,6 +211,10 @@ export class EnvironmentBar {
     this.container.querySelector('#btn-std-satp')?.addEventListener('click', () => {
       this.sim.environment.pressureBar = CONSTANTS.P_STD_BAR;
       this.sim.setAmbientTempK(CONSTANTS.T_STD_K);
+    });
+
+    this.container.querySelector('#btn-mode-switch')?.addEventListener('click', () => {
+      this.callbacks.onOpenMissions?.();
     });
 
     this.container.querySelector('#btn-uv-light')?.addEventListener('click', () => {

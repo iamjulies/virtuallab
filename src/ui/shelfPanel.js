@@ -1,6 +1,7 @@
 import { APPARATUS, APPARATUS_CATEGORIES, APPARATUS_ORDER } from '../data/apparatus.js';
 import { REAGENT_CATEGORIES, SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { drawReagentBottle } from '../canvas/reagentRenderer.js';
+import { getMissionById, isApparatusAllowedInMission, isReagentAllowedInMission } from '../data/missions.js';
 
 function apparatusSvg(typeId) {
   switch (typeId) {
@@ -389,7 +390,9 @@ export class ShelfPanel {
       .filter((i) => i.kind === 'pipette')
       .map((p) => `${p.id}:${(p.volumeMl || 0).toFixed(1)}:${this.sim.selectedId === p.id ? 1 : 0}`)
       .join(',');
-    return `${t('equipmentTitle')}|${this.activeCategory}|${this.activeReagentCategory}|${pipSig}`;
+    const ms = this.sim?.missionState;
+    const missionSig = ms?.active ? `${ms.missionId}:${ms.mode}` : 'free';
+    return `${t('equipmentTitle')}|${this.activeCategory}|${this.activeReagentCategory}|${pipSig}|${missionSig}`;
   }
 
   render(t, force = false) {
@@ -399,6 +402,7 @@ export class ShelfPanel {
     this.lastShelfSig = sig;
 
     const pipettes = this.sim.items.filter((i) => i.kind === 'pipette');
+    const activeMission = this.sim?.missionState?.active ? getMissionById(this.sim.missionState.missionId) : null;
     const filteredApparatus =
       this.activeCategory === 'all'
         ? APPARATUS_ORDER
@@ -406,6 +410,11 @@ export class ShelfPanel {
 
     this.container.innerHTML = `
       <div class="flex flex-col gap-3">
+        ${
+          activeMission
+            ? `<div class="p-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-[11px] text-amber-300 font-medium">🎯 ${t('missionShelfScoped')}</div>`
+            : ''
+        }
         <!-- Apparatus Section -->
         <div>
           <div class="flex items-center justify-between mb-1.5">
@@ -423,16 +432,21 @@ export class ShelfPanel {
             ${filteredApparatus
               .map((id) => {
                 const spec = APPARATUS[id];
+                const allowed = !activeMission || isApparatusAllowedInMission(activeMission, id);
                 return `
                   <div
                     role="button"
                     tabindex="0"
                     data-apparatus-id="${id}"
-                    class="apparatus-card flex items-center gap-1.5 p-1.5 rounded-lg border border-theme bg-surface-alt hover:border-accent transition text-left cursor-grab active:cursor-grabbing select-none"
-                    title="${t(spec.i18nKey)}"
+                    ${allowed ? '' : 'data-locked="1" aria-disabled="true"'}
+                    class="apparatus-card flex items-center gap-1.5 p-1.5 rounded-lg border border-theme bg-surface-alt transition text-left select-none ${
+                      allowed ? 'hover:border-accent cursor-grab active:cursor-grabbing' : 'opacity-40 cursor-not-allowed'
+                    }"
+                    title="${allowed ? t(spec.i18nKey) : t('missionLockedShelfTip')}"
                   >
                     <span class="text-accent shrink-0 pointer-events-none">${apparatusSvg(id)}</span>
-                    <span class="text-xs font-medium leading-tight line-clamp-2 pointer-events-none">${t(spec.i18nKey)}</span>
+                    <span class="text-xs font-medium leading-tight line-clamp-2 pointer-events-none flex-1">${t(spec.i18nKey)}</span>
+                    ${allowed ? '' : '<span class="text-[10px] shrink-0 pointer-events-none">🔒</span>'}
                   </div>
                 `;
               })
@@ -464,13 +478,17 @@ export class ShelfPanel {
               const ghsKeyMap = { flammable: 'ghsFlammable', corrosive: 'ghsCorrosive', toxic: 'ghsToxic', oxidizer: 'ghsOxidizer' };
               const hazardBadges = hazards.map((h) => ghsMap[h] || '').join('');
               const hazardTip = hazards.length ? `GHS: ${hazards.map((h) => t(ghsKeyMap[h] || h)).join(', ')}` : '';
+              const allowed = !activeMission || isReagentAllowedInMission(activeMission, reg.id);
               return `
               <div
                 role="button"
                 tabindex="0"
                 data-reagent-id="${reg.id}"
-                ${hazardTip ? `title="${hazardTip}"` : ''}
-                class="reagent-card w-full flex items-center justify-between gap-2 p-1.5 rounded-lg border border-theme bg-surface-alt hover:border-accent transition text-left cursor-grab active:cursor-grabbing select-none"
+                ${allowed ? '' : 'data-locked="1" aria-disabled="true"'}
+                title="${allowed ? hazardTip : t('missionLockedShelfTip')}"
+                class="reagent-card w-full flex items-center justify-between gap-2 p-1.5 rounded-lg border border-theme bg-surface-alt transition text-left select-none ${
+                  allowed ? 'hover:border-accent cursor-grab active:cursor-grabbing' : 'opacity-40 cursor-not-allowed'
+                }"
               >
                 <div class="flex items-center gap-2 min-w-0 pointer-events-none">
                   ${reagentIconSvg(reg)}
@@ -480,7 +498,7 @@ export class ShelfPanel {
                   </div>
                 </div>
                 <span class="text-xs px-1.5 py-0.5 rounded bg-surface border border-theme text-muted shrink-0 pointer-events-none">
-                  ${reg.kind === 'solid' ? 'g' : 'mL'}
+                  ${allowed ? (reg.kind === 'solid' ? 'g' : 'mL') : '🔒'}
                 </span>
               </div>
             `;
@@ -529,7 +547,9 @@ export class ShelfPanel {
     // Unified Pointer Drag + Click for Apparatus Cards (fixes native HTML5 button drag failures & works on touch/mouse/webview)
     this.container.querySelectorAll('.apparatus-card').forEach((el) => {
       const id = el.dataset.apparatusId;
+      const isLocked = el.dataset.locked === '1';
       el.addEventListener('pointerdown', (e) => {
+        if (isLocked) return;
         if (e.button !== 0 && e.pointerType === 'mouse') return;
         this._dragSession = {
           kind: 'apparatus',
@@ -542,17 +562,26 @@ export class ShelfPanel {
         };
       });
       el.addEventListener('click', () => {
+        if (isLocked) {
+          this.callbacks.onLockedAttempt?.();
+          return;
+        }
         if (this._lastPointerUpMs && Date.now() - this._lastPointerUpMs < 180) return;
         this.callbacks.onAddApparatus?.(id);
       });
       el.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
+          if (isLocked) {
+            this.callbacks.onLockedAttempt?.();
+            return;
+          }
           this.callbacks.onAddApparatus?.(id);
         }
       });
       el.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        if (isLocked) return;
         this.callbacks.onContextMenu?.(e.clientX, e.clientY, { kind: 'shelf_apparatus', typeId: id });
       });
     });
@@ -560,7 +589,9 @@ export class ShelfPanel {
     // Unified Pointer Drag + Click for Reagent Cards
     this.container.querySelectorAll('.reagent-card').forEach((el) => {
       const id = el.dataset.reagentId;
+      const isLocked = el.dataset.locked === '1';
       el.addEventListener('pointerdown', (e) => {
+        if (isLocked) return;
         if (e.button !== 0 && e.pointerType === 'mouse') return;
         this._dragSession = {
           kind: 'reagent',
@@ -573,17 +604,26 @@ export class ShelfPanel {
         };
       });
       el.addEventListener('click', () => {
+        if (isLocked) {
+          this.callbacks.onLockedAttempt?.();
+          return;
+        }
         if (this._lastPointerUpMs && Date.now() - this._lastPointerUpMs < 180) return;
         this.callbacks.onSelectReagent?.(id);
       });
       el.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
+          if (isLocked) {
+            this.callbacks.onLockedAttempt?.();
+            return;
+          }
           this.callbacks.onSelectReagent?.(id);
         }
       });
       el.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        if (isLocked) return;
         this.callbacks.onContextMenu?.(e.clientX, e.clientY, { kind: 'shelf_reagent', reagentId: id });
       });
     });

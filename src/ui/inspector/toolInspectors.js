@@ -305,7 +305,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             </div>
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
               <div class="text-xs font-semibold text-muted">${t('pipetteSourceLabel')}</div>
-              <div class="text-sm font-bold font-mono truncate mt-0.5" id="live-pip-src">${item.sourceLabel || '—'}</div>
+              <div class="text-sm font-bold font-mono truncate mt-0.5" id="live-pip-src">${item.hideComposition ? (item.blindLabel || '?') : (item.sourceLabel || '—')}</div>
             </div>
           </div>
           ${renderPrecisionControlHtml({
@@ -1687,7 +1687,7 @@ export function updateToolLiveNumbers(panel, item, t) {
       const sEl = panel.container.querySelector('#live-pip-src');
       const dropDose = item.dropDoseMl || 1.0;
       if (vEl) vEl.textContent = `${(item.volumeMl || 0).toFixed(2)} / 10.00 mL`;
-      if (sEl) sEl.textContent = item.sourceLabel || '—';
+      if (sEl) sEl.textContent = item.hideComposition ? (item.blindLabel || '?') : (item.sourceLabel || '—');
       syncPrecisionControlLive(panel.container, {
         sliderId: 'ins-pip-dose-slider',
         readoutId: 'live-pip-dose',

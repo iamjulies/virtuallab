@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>ChemLab Studio — virlab_beta_v5+build.22</title>
+  <title>ChemLab Studio — virlab_beta_v5+build.23</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./assets/icon.svg" />
   <meta name="theme-color" content="#2563eb" />
@@ -70,9 +70,12 @@
           <div id="comparison-panel-root" class="comparison-panel hidden"></div>
         </section>
 
-        <!-- Right Panel: Real-Time Telemetry, Species & Reaction Inspector -->
+        <!-- Right Panel: Practical Mission Dock + Real-Time Telemetry, Species & Reaction Inspector -->
         <aside id="panel-inspector" class="panel-card">
-          <div id="inspector-panel" class="h-full overflow-y-auto pr-1"></div>
+          <div class="h-full overflow-y-auto pr-1 flex flex-col">
+            <div id="mission-panel-dock" class="hidden shrink-0"></div>
+            <div id="inspector-panel" class="flex-1 min-h-0"></div>
+          </div>
         </aside>
       </main>
     </div>
@@ -80,6 +83,9 @@
 
   <!-- Precision Dosing & Pouring Modal -->
   <div id="dosing-modal-root" class="hidden"></div>
+
+  <!-- Practical Lab Missions & Assessment Modal (Prompt 83) -->
+  <div id="mission-modal-root" class="hidden"></div>
 
   <!-- Toast Alert Banner -->
   <div id="toast-banner" class="toast-banner hidden"></div>

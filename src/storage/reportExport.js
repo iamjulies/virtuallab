@@ -999,43 +999,76 @@ function escPrintHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function openPrintableLabReport({ sim, workbenchCanvas, isDark, labName, t, lang, reportRootEl }) {
+export function openPrintableLabReport({ sim, workbenchCanvas, isDark, labName, t, lang, reportRootEl, missionResult = null }) {
   if (!reportRootEl) return;
   const isEn = lang === 'en';
   const benchCanvas = composeWorkbenchSnapshotCanvas({ workbenchCanvas, isDark, sim, labName, lang });
   const benchImgUrl = benchCanvas.toDataURL('image/png');
   const vessels = sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered);
   const env = sim.environment || {};
+  const mEval = missionResult || sim.missionState?.lastEvaluation || null;
+
+  const missionHtml = mEval
+    ? `
+      <section class="print-mission-card">
+        <h2>${escPrintHtml(isEn ? 'Practical Assessment Sheet' : 'Phiếu Thực hành & Chấm điểm')} — ${escPrintHtml(t(mEval.titleKey))}</h2>
+        <div class="print-metrics-grid">
+          <span><strong>${escPrintHtml(isEn ? 'Score' : 'Điểm số')}:</strong> ${mEval.totalScore.toFixed(1)} / 10</span>
+          <span><strong>${escPrintHtml(isEn ? 'Grade' : 'Xếp loại')}:</strong> ${escPrintHtml(mEval.medal)} ${escPrintHtml(mEval.grade)}</span>
+          <span><strong>${escPrintHtml(isEn ? 'Mode' : 'Chế độ')}:</strong> ${escPrintHtml(mEval.mode === 'exam' ? t('missionModeExam') : t('missionModePractice'))}</span>
+          <span><strong>${escPrintHtml(isEn ? 'Time' : 'Thời gian')}:</strong> ${mEval.elapsedSec}s</span>
+        </div>
+        <table>
+          <thead><tr><th>${escPrintHtml(isEn ? 'Criterion' : 'Tiêu chí')}</th><th>${escPrintHtml(isEn ? 'Detail' : 'Chi tiết')}</th><th>${escPrintHtml(isEn ? 'Points' : 'Điểm')}</th></tr></thead>
+          <tbody>
+            ${mEval.criteriaResults
+              .map(
+                (cr) => `<tr><td>${escPrintHtml(t(cr.labelKey))}</td><td>${escPrintHtml(cr.detail || cr.status)}</td><td><strong>${cr.earned.toFixed(1)} / ${cr.maxPoints.toFixed(1)}</strong></td></tr>`
+              )
+              .join('')}
+          </tbody>
+        </table>
+        <p style="font-size:10.5px;margin:6px 0 0 0;"><strong>${escPrintHtml(t('missionEquationsTitle'))}:</strong> <code>${escPrintHtml(mEval.equationText)}</code></p>
+      </section>
+    `
+    : '';
 
   const vesselsHtml = vessels
     .map((v) => {
       const spec = APPARATUS[v.typeId] || {};
+      const isBlind = Boolean(v.hideComposition) && !mEval;
       const liqL = computeLiquidVolumeL(v.moles, v.tempK);
-      const ph = v.isFrozenSolid ? null : computePH(v.moles, liqL, v.tempK);
+      const ph = v.isFrozenSolid || isBlind ? null : computePH(v.moles, liqL, v.tempK);
       const localPBar = v.internalPressureBar ?? env.pressureBar ?? CONSTANTS.P_STD_BAR;
       const massG = computeContentsMassG(v.moles);
       const liqData = computeLiquidSpeciesTableData(v.moles, v.tempK);
-      const solids = Object.entries(v.moles || {})
-        .filter(([id, n]) => n > 1e-8 && SPECIES[id]?.phase === 's')
-        .map(([id, n]) => `${SPECIES[id].formula}: ${n.toFixed(4)} mol (${(n * SPECIES[id].molarMass).toFixed(2)} g)`);
-      const gases = GAS_DISPLAY_META.map((g) => {
-        const tot = (v.headspaceGasMoles?.[g.id] || 0) + (v.escapedGasMoles?.[g.id] || 0);
-        return tot > 1e-6 ? `${g.formula}: ${(tot * 1000).toFixed(2)} mmol` : '';
-      }).filter(Boolean);
+      const solids = isBlind
+        ? []
+        : Object.entries(v.moles || {})
+            .filter(([id, n]) => n > 1e-8 && SPECIES[id]?.phase === 's')
+            .map(([id, n]) => `${SPECIES[id].formula}: ${n.toFixed(4)} mol (${(n * SPECIES[id].molarMass).toFixed(2)} g)`);
+      const gases = isBlind
+        ? []
+        : GAS_DISPLAY_META.map((g) => {
+            const tot = (v.headspaceGasMoles?.[g.id] || 0) + (v.escapedGasMoles?.[g.id] || 0);
+            return tot > 1e-6 ? `${g.formula}: ${(tot * 1000).toFixed(2)} mmol` : '';
+          }).filter(Boolean);
 
       return `
         <section class="print-vessel-card">
-          <h3>${escPrintHtml(t(spec.i18nKey || v.typeId))} ${escPrintHtml(v.label)}</h3>
+          <h3>${escPrintHtml(t(spec.i18nKey || v.typeId))} ${escPrintHtml(isBlind ? (v.blindLabel || v.label) : v.label)}</h3>
           <div class="print-metrics-grid">
             <span>T = ${kelvinToCelsius(v.tempK).toFixed(1)}°C</span>
             <span>P = ${localPBar.toFixed(2)} bar</span>
             <span>pH = ${ph === null ? '—' : ph.toFixed(2)}</span>
             <span>V = ${(liqL * 1000).toFixed(2)} mL</span>
-            <span>m = ${massG.toFixed(2)} g</span>
-            <span>ρ = ${liqData.mixDensity > 0 ? liqData.mixDensity.toFixed(3) : '—'} g/mL</span>
+            <span>m = ${isBlind ? '🔒' : `${massG.toFixed(2)} g`}</span>
+            <span>ρ = ${isBlind ? '🔒' : liqData.mixDensity > 0 ? liqData.mixDensity.toFixed(3) : '—'} g/mL</span>
           </div>
           ${
-            liqData.rows.length > 0
+            isBlind
+              ? `<p class="print-muted">🔒 ${escPrintHtml(t('blindUnknownBadge'))}</p>`
+              : liqData.rows.length > 0
               ? `<table><thead><tr><th>${escPrintHtml(t('colSpecies'))}</th><th>mol</th><th>g</th><th>M</th></tr></thead><tbody>
                   ${liqData.rows.map((r) => `<tr><td>${r.formula}</td><td>${r.mol.toFixed(4)}</td><td>${r.massG.toFixed(3)}</td><td>${r.molarityM != null ? r.molarityM.toFixed(3) : '—'}</td></tr>`).join('')}
                 </tbody></table>`
@@ -1056,9 +1089,10 @@ export function openPrintableLabReport({ sim, workbenchCanvas, isDark, labName, 
   reportRootEl.innerHTML = `
     <div class="print-report-page">
       <header class="print-report-hdr">
-        <h1>ChemLab Studio — ${escPrintHtml(isEn ? 'Laboratory Report' : 'Báo cáo Thực hành Hóa học')}</h1>
+        <h1>ChemLab Studio — ${escPrintHtml(mEval ? (isEn ? 'Practical Assessment Sheet' : 'Phiếu Thực hành & Chấm điểm') : isEn ? 'Laboratory Report' : 'Báo cáo Thực hành Hóa học')}</h1>
         <p>${escPrintHtml(labName || 'Lab 1')} · ${new Date().toLocaleString()} · T = ${kelvinToCelsius(env.tempK ?? 298.15).toFixed(1)}°C · P = ${(env.pressureBar ?? 1.01325).toFixed(2)} bar</p>
       </header>
+      ${missionHtml}
       <div class="print-bench-img-wrap">
         <img src="${benchImgUrl}" alt="Workbench Snapshot" />
       </div>

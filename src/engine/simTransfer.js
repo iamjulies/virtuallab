@@ -22,6 +22,7 @@ import {
 } from '../data/apparatus.js';
 import { getInnerPolygonPx, getVesselHoldVolumeMl } from '../data/vesselGeometry.js';
 import { applyPresetScenario } from '../data/presets.js';
+import { ensureMissionTelemetry } from './missionEvaluator.js';
 import {
   calcSolidPourDischargeRate,
   calcSolidTransferRatio,
@@ -679,6 +680,10 @@ export function addReagentToVesselImpl(sim, vesselId, reagentId, amount, options
       }
     }
     if (amt <= 0) return false;
+    if (sim.missionState?.active && v.hideComposition && reg.id !== 'phenolphthalein') {
+      const tel = ensureMissionTelemetry(sim);
+      if (!tel.contaminatedBlindIds.includes(v.id)) tel.contaminatedBlindIds.push(v.id);
+    }
     if (!options?.silentUndo && !options?.silentEmit) sim.recordUndo();
 
     // Thermal capacity & ethanol-water excess enthalpy baseline before addition
@@ -1072,6 +1077,25 @@ export function pourBetweenVesselsImpl(sim, sourceId, targetId, volumeMl, shakeB
           : 0;
     }
 
+    if (sim.missionState?.active) {
+      const tel = ensureMissionTelemetry(sim);
+      const blindIds = sim.missionState.setupData?.blindVesselIds || [];
+      if (blindIds.includes(dst.id) && src.id !== dst.id) {
+        if (!tel.contaminatedBlindIds.includes(dst.id)) tel.contaminatedBlindIds.push(dst.id);
+      } else if (src.hideComposition && dst.kind === 'vessel') {
+        const sLbl = src.blindLabel || src.label || '?';
+        if (dstLiqBeforeMl <= 0.05) {
+          dst.hideComposition = true;
+          dst.blindLabel = sLbl;
+        } else if (dst.hideComposition) {
+          const curLbl = dst.blindLabel || dst.label || '?';
+          if (!curLbl.includes(sLbl)) dst.blindLabel = `${curLbl} + ${sLbl}`.slice(0, 18);
+        }
+        tel.usedPipetteTransfer = true;
+        if (!tel.sampledBlindLabels.includes(sLbl)) tel.sampledBlindLabels.push(sLbl);
+      }
+    }
+
     const hMixDstAfter = computeEthanolWaterExcessEnthalpyJ(dst.moles.H2O_l || 0, dst.moles.C2H5OH_l || 0, dstTempBefore);
     const mixHeatJ = Math.max(0, hMixDstBefore + frac * hMixSrcBefore - hMixDstAfter);
     if (
@@ -1211,6 +1235,10 @@ export function buretteDispenseDropImpl(sim, buretteId, dropMl = 0.05) {
     if (target) {
       target.buretteDeliveredMl = (target.buretteDeliveredMl || 0) + actualMl;
     }
+    if (sim.missionState?.active) {
+      const tel = ensureMissionTelemetry(sim);
+      tel.usedBuretteDrops = (tel.usedBuretteDrops || 0) + 1;
+    }
     const vis = computeSolutionVisuals(b.moles, liqL, computePH(b.moles, liqL, b.tempK), 2.0, b.phenBleachFrac || 0, b.phenIrrevFrac || 0);
     const tSpec = target ? APPARATUS[target.typeId] : null;
     const stopY = target && tSpec ? target.y - tSpec.height * 0.22 : SIM_BENCH_FLOOR_Y;
@@ -1327,6 +1355,20 @@ export function pipetteDrawFromVesselImpl(sim, vesselId, drawMl = 10.0, targetPi
     pip.liquidStratification = computePhaseStratification(pip.moles, pip.tempK, APPARATUS.pipette_10, 0);
     pip.sourceLabel = oldVol > 0.05 ? `${pip.sourceLabel || ''} + ${src.label}`.slice(0, 28) : `${srcSpec.id} ${src.label}`;
     pip.liquidColor = vis.css;
+    if (src.hideComposition) {
+      const sLbl = src.blindLabel || src.label || '?';
+      pip.hideComposition = oldVol <= 0.05 ? true : Boolean(pip.hideComposition);
+      pip.blindLabel = oldVol > 0.05 && pip.blindLabel ? `${pip.blindLabel}+${sLbl}`.slice(0, 18) : sLbl;
+      pip.sourceLabel = pip.blindLabel;
+      if (sim.missionState?.active) {
+        const tel = ensureMissionTelemetry(sim);
+        tel.usedPipetteTransfer = true;
+        if (!tel.sampledBlindLabels.includes(sLbl)) tel.sampledBlindLabels.push(sLbl);
+      }
+    } else if (oldVol <= 0.05) {
+      pip.hideComposition = false;
+      pip.blindLabel = null;
+    }
     if (src.kind === 'separatory_funnel' || src.kind === 'burette') {
       src.liquidStratification = computePhaseStratification(src.moles, src.tempK, srcSpec, computeSolidVolumeMl(src.moles));
     }
@@ -1461,6 +1503,24 @@ export function pipetteDispenseToVesselImpl(sim, vesselId, dropMl = 0.05, source
     const pipColor = pip.liquidColor || 'rgba(186, 230, 253, 0.85)';
 
     const cOld = computeHeatCapacityJK(dst);
+    const dstEmptyBefore = computeLiquidVolumeL(dst.moles, dst.tempK) * 1000 <= 0.05 && Object.keys(dst.moles || {}).every((k) => (dst.moles[k] || 0) <= 1e-8);
+    if (sim.missionState?.active) {
+      const tel = ensureMissionTelemetry(sim);
+      const blindIds = sim.missionState.setupData?.blindVesselIds || [];
+      if (blindIds.includes(dst.id)) {
+        if (!tel.contaminatedBlindIds.includes(dst.id)) tel.contaminatedBlindIds.push(dst.id);
+      } else if (pip.hideComposition && dst.kind === 'vessel') {
+        const pLbl = pip.blindLabel || '?';
+        if (dstEmptyBefore) {
+          dst.hideComposition = true;
+          dst.blindLabel = pLbl;
+        } else if (dst.hideComposition) {
+          const curLbl = dst.blindLabel || dst.label || '?';
+          if (!curLbl.includes(pLbl)) dst.blindLabel = `${curLbl} + ${pLbl}`.slice(0, 18);
+        }
+        tel.usedPipetteTransfer = true;
+      }
+    }
     const oldDstPhen = dst.moles.Phenolphthalein_aq || 0;
     const oldDstBleach = dst.phenBleachFrac || 0;
     let movedPhen = 0;
@@ -1509,6 +1569,8 @@ export function pipetteDispenseToVesselImpl(sim, vesselId, dropMl = 0.05, source
       pip.sourceLabel = '';
       pip.liquidColor = null;
       pip.liquidStratification = null;
+      pip.hideComposition = false;
+      pip.blindLabel = null;
     } else {
       const remL = computeLiquidVolumeL(pip.moles, pip.tempK);
       pip.liquidColor = computeSolutionVisuals(pip.moles, Math.max(1e-5, remL), computePH(pip.moles, remL, pip.tempK), 1.6, pip.phenBleachFrac || 0, pip.phenIrrevFrac || 0).css;

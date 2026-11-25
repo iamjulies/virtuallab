@@ -1718,9 +1718,11 @@ export function renderVessel(ctx, vessel, opts) {
   // Floating Vessel Status Pill below/above vessel (Temp + pH + Volume + Inverted Gas Formula)
   const tempC = kelvinToCelsius(vessel.tempK);
   const tDisp = Math.abs(tempC) < 0.05 ? 0 : tempC;
-  const ph = hasWater && !vessel.isFrozenSolid ? computePH(vessel.moles, liqL, vessel.tempK) : null;
-  const pillParts = [vessel.isInverted ? `🙃 ${vessel.label}` : vessel.label];
-  if (vessel.isInverted || Object.values(vessel.headspaceGasMoles || {}).some((n) => (n || 0) > 1e-6)) {
+  const isBlind = Boolean(vessel.hideComposition);
+  const ph = hasWater && !vessel.isFrozenSolid && !isBlind ? computePH(vessel.moles, liqL, vessel.tempK) : null;
+  const shownName = isBlind ? (vessel.blindLabel || vessel.label) : vessel.label;
+  const pillParts = [vessel.isInverted ? `🙃 ${shownName}` : shownName];
+  if (!isBlind && (vessel.isInverted || Object.values(vessel.headspaceGasMoles || {}).some((n) => (n || 0) > 1e-6))) {
     const gasEntries = Object.entries(vessel.headspaceGasMoles || {})
       .filter(([gId, n]) => gId !== 'H2O_g' && (n || 0) > 1e-6)
       .sort((a, b) => (b[1] || 0) - (a[1] || 0));

@@ -28,6 +28,7 @@ import {
 } from './storage/workspaceStorage.js';
 import { WorkspaceStorageModal } from './ui/workspaceStorageModal.js';
 import { StorageCabinetModal } from './ui/storageCabinetModal.js';
+import { MissionDockPanel, openMissionSelectorModal, openMissionResultModal } from './ui/missionPanel.js';
 import { exportWorkbenchSnapshotAsset, openPrintableLabReport } from './storage/reportExport.js';
 import {
   ShortcutsModal,
@@ -65,6 +66,8 @@ const headerEl = document.getElementById('env-bar');
 const labTabsEl = document.getElementById('lab-tabs-bar');
 const shelfEl = document.getElementById('shelf-panel');
 const inspectorEl = document.getElementById('inspector-panel');
+const missionDockEl = document.getElementById('mission-panel-dock');
+const missionModalEl = document.getElementById('mission-modal-root');
 const modalEl = document.getElementById('dosing-modal-root');
 const canvasEl = document.getElementById('workbench-canvas');
 const benchHintEl = document.getElementById('bench-hint-text');
@@ -620,6 +623,10 @@ const envBar = new EnvironmentBar(headerEl, sim, appState, {
     if (shortcutsModal.isOpen) shortcutsModal.close();
     else shortcutsModal.open();
   },
+  onOpenMissions: () => {
+    soundEngine.playUiClick();
+    openMissionHubModal();
+  },
   onDeviceChange: (mode) => {
     appState.deviceMode = mode;
     localStorage.setItem(STORAGE_DEVICE_KEY, mode);
@@ -709,6 +716,9 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
     shortcutTarget = 'canvas';
     openShelfContextMenu(clientX, clientY, payload);
   },
+  onLockedAttempt: () => {
+    showToast(`🔒 ${getTranslator()('missionLockedShelfTip')}`);
+  },
 });
 
 const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
@@ -789,6 +799,60 @@ const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
   },
 });
 
+function startMissionFlow(missionId, mode = 'practice') {
+  particles.clear();
+  comparisonPanel?.setOpen(false);
+  soundEngine.playGlassClink('beaker_250', 0.7);
+  sim.startMission(missionId, mode);
+  refreshChrome(true);
+  setTimeout(() => workbench?.resize?.(), 25);
+}
+
+function exitMissionFlow() {
+  particles.clear();
+  sim.exitMission();
+  sim.setupPreset('clean');
+  refreshChrome(true);
+}
+
+function showMissionResultFlow(evalResult) {
+  openMissionResultModal(missionModalEl, sim, evalResult, getTranslator(), {
+    onStartMission: (mid, mMode) => startMissionFlow(mid, mMode),
+    onExitMission: () => exitMissionFlow(),
+    onPrintResult: (res) => {
+      const activeLab = labManager.getActiveLab();
+      const labName = activeLab?.customName || `Lab ${activeLab?.number || 1}`;
+      workbench?.render();
+      openPrintableLabReport({
+        sim,
+        workbenchCanvas: canvasEl,
+        isDark: appState.theme !== 'light' && appState.theme !== 'olivia' && appState.theme !== 'ctrl',
+        labName,
+        t: getTranslator(),
+        lang: appState.lang,
+        reportRootEl: printReportRootEl,
+        missionResult: res,
+      });
+    },
+  });
+}
+
+function openMissionHubModal() {
+  openMissionSelectorModal(missionModalEl, sim, getTranslator(), {
+    onStartMission: (mid, mode) => startMissionFlow(mid, mode),
+    onExitMission: () => exitMissionFlow(),
+  });
+}
+
+const missionDock = new MissionDockPanel(missionDockEl, sim, getTranslator, {
+  onStartMission: (mid, mode) => startMissionFlow(mid, mode),
+  onExitMission: () => exitMissionFlow(),
+  onOpenSelector: () => openMissionHubModal(),
+  onShowResult: (res) => showMissionResultFlow(res),
+  onNotify: (msg) => showToast(msg),
+});
+missionDock.startTimerLoop();
+
 function syncActiveLabRefs() {
   const activeLab = labManager.getActiveLab();
   ensureLabSubscribed(activeLab);
@@ -801,6 +865,7 @@ function syncActiveLabRefs() {
   envBar.setSim(sim);
   shelfPanel.setSim(sim);
   inspectorPanel.setSim(sim);
+  missionDock?.setSim(sim);
   dosingModal.setSim(sim);
   comparisonPanel?.setSim(sim);
 }
@@ -1466,13 +1531,14 @@ function refreshChrome(forceInspector = false) {
   appState.cabinetCount = Array.isArray(labManager?.storageCabinet) ? labManager.storageCabinet.length : 0;
   workbench.setLang(appState.lang);
   const env = sim.environment || {};
-  const envSig = `${appState.lang}|${appState.theme}|${appState.deviceMode}|${appState.soundEnabled ? 1 : 0}|${appState.cloudSignedIn ? 1 : 0}|${appState.cabinetCount}|${Math.round((env.tempK || 298.15) * 10)}|${Math.round((env.pressureBar || 1) * 100)}|${env.speed}|${env.paused ? 1 : 0}|${env.uvLight ? 1 : 0}|${env.atmosphereMode}|${env.opticsMode || 'normal'}`;
+  const envSig = `${appState.lang}|${appState.theme}|${appState.deviceMode}|${appState.soundEnabled ? 1 : 0}|${appState.cloudSignedIn ? 1 : 0}|${appState.cabinetCount}|${sim.missionState?.active ? `${sim.missionState.missionId}:${sim.missionState.mode}` : 'free'}|${Math.round((env.tempK || 298.15) * 10)}|${Math.round((env.pressureBar || 1) * 100)}|${env.speed}|${env.paused ? 1 : 0}|${env.uvLight ? 1 : 0}|${env.atmosphereMode}|${env.opticsMode || 'normal'}`;
   if (forceInspector || envSig !== lastEnvBarSig) {
     lastEnvBarSig = envSig;
     envBar.render(t);
   }
   renderLabTabs(t);
   shelfPanel.render(t);
+  missionDock?.render(t, forceInspector);
   inspectorPanel.update(appState.lang, forceInspector);
   comparisonPanel?.render(forceInspector);
   if (cabinetModal?.isOpen) cabinetModal.render();
@@ -1523,7 +1589,11 @@ zoomResetBtnEl?.addEventListener('click', () => {
 resetBtnEl?.addEventListener('click', () => {
   particles.clear();
   comparisonPanel?.setOpen(false);
-  sim.setupPreset('clean');
+  if (sim.missionState?.active) {
+    sim.startMission(sim.missionState.missionId, sim.missionState.mode);
+  } else {
+    sim.setupPreset('clean');
+  }
   refreshChrome(true);
 });
 

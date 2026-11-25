@@ -22,6 +22,7 @@ import {
 } from '../data/apparatus.js';
 import { getInnerPolygonPx, getVesselHoldVolumeMl } from '../data/vesselGeometry.js';
 import { applyPresetScenario } from '../data/presets.js';
+import { updateMissionTelemetryOnStep } from './missionEvaluator.js';
 import {
   calcSolidPourDischargeRate,
   calcSolidTransferRatio,
@@ -2688,5 +2689,6 @@ export function stepSimulationImpl(sim, realDeltaSec, options = {}) {
     }
 
     sim.recomputeScaleReadings();
+    updateMissionTelemetryOnStep(sim);
 }
 

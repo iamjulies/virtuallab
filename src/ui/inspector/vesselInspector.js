@@ -46,12 +46,15 @@ import {
   buildEscapedGasVerticalHtml,
   buildLiquidRowsHtml,
   buildSolidRowsHtml,
+  buildBlindObservationCardHtml,
   getSyringeCondenseInfo,
 } from './inspectorUtils.js';
 
 export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastLangCode || 'vi') {
   let topSection = '';
       const spec = APPARATUS[item.typeId];
+      const isBlind = Boolean(item.hideComposition);
+      const displayLabel = isBlind ? (item.blindLabel || item.label) : item.label;
       const liqL = computeLiquidVolumeL(item.moles, item.tempK);
       const liqMl = liqL * 1000;
       const iceMl = ((item.moles.H2O_s || 0) * SPECIES.H2O_s.molarMass) / CONSTANTS.ICE_DENSITY_G_ML;
@@ -93,7 +96,10 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
         <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2.5">
           <div class="flex items-center justify-between gap-2">
             <div>
-              <div class="text-sm font-bold">${t(spec.i18nKey)} ${item.label}</div>
+              <div class="text-sm font-bold flex items-center gap-1.5 flex-wrap">
+                <span>${t(spec.i18nKey)} ${displayLabel}</span>
+                ${isBlind ? `<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full border border-amber-500/50 bg-amber-500/15 text-amber-300">🕵️ ${t('blindUnknownBadge')}</span>` : ''}
+              </div>
               ${spec.isoStandard ? `<div class="text-[11px] text-muted">${spec.materialSpec} · ${spec.isoStandard}</div>` : ''}
               <div class="text-xs text-muted" id="live-state-label">${stateLabel}</div>
             </div>
@@ -287,7 +293,7 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
               </div>
               <div class="p-2.5 rounded-lg border border-theme bg-surface">
                 <div class="text-xs font-semibold text-muted">${t('metricMixDensity')}</div>
-                <div class="text-sm font-bold font-mono mt-0.5 text-sky-400" id="live-mix-density">ρ = ${liqTabData.mixDensity > 0 ? liqTabData.mixDensity.toFixed(3) : '—'} g/mL</div>
+                <div class="text-sm font-bold font-mono mt-0.5 text-sky-400" id="live-mix-density">${isBlind ? 'ρ = 🔒' : `ρ = ${liqTabData.mixDensity > 0 ? liqTabData.mixDensity.toFixed(3) : '—'} g/mL`}</div>
               </div>
               <div class="p-2.5 rounded-lg border border-theme bg-surface">
                 <div class="text-xs font-semibold text-muted">${t('metricNetMassTitle')}</div>
@@ -371,9 +377,13 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
         <details class="rounded-xl border border-theme bg-surface-alt group" data-ins-sec="phases" ${open2}>
           <summary class="px-3 py-2.5 cursor-pointer select-none flex items-center justify-between gap-2 text-[13px] font-bold uppercase tracking-wide text-muted hover:text-main">
             <span>⚗️ ${t('groupPhaseComposition')}</span>
-            <span class="text-[11px] font-mono text-muted shrink-0 whitespace-nowrap">${liqTabData.rows.length}L · ${Object.keys(item.moles || {}).filter((k) => SPECIES[k]?.phase === 's' && hasDisplayableSpeciesAmount(k, item.moles[k])).length}S</span>
+            <span class="text-[11px] font-mono text-muted shrink-0 whitespace-nowrap">${isBlind ? `🔒 ${t('blindUnknownBadge')}` : `${liqTabData.rows.length}L · ${Object.keys(item.moles || {}).filter((k) => SPECIES[k]?.phase === 's' && hasDisplayableSpeciesAmount(k, item.moles[k])).length}S`}</span>
           </summary>
           <div class="px-3 pb-3 flex flex-col gap-2.5 border-t border-theme/40 pt-2">
+            ${
+              isBlind
+                ? `<div id="blind-obs-box">${buildBlindObservationCardHtml(item, t)}</div>`
+                : `
             <!-- Gas & Vapor -->
             <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex flex-col gap-1.5">
               <div class="flex items-center justify-between gap-2">
@@ -438,7 +448,8 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
                       </div>`
                 }
               </div>
-            </div>
+            </div>`
+            }
           </div>
         </details>
 
@@ -446,9 +457,13 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
         <details class="rounded-xl border border-theme bg-surface-alt group" data-ins-sec="electro" ${open3}>
           <summary class="px-3 py-2.5 cursor-pointer select-none flex items-center justify-between gap-2 text-[13px] font-bold uppercase tracking-wide text-muted hover:text-main">
             <span>⚡ ${t('groupElectroKinetics')}</span>
-            <span class="text-[11px] font-mono text-emerald-400 shrink-0 whitespace-nowrap" id="live-sum-ph">pH ${item.isFrozenSolid ? '—' : ph === null ? '—' : ph.toFixed(2)}</span>
+            <span class="text-[11px] font-mono text-emerald-400 shrink-0 whitespace-nowrap" id="live-sum-ph">${isBlind ? 'pH 🔒' : `pH ${item.isFrozenSolid ? '—' : ph === null ? '—' : ph.toFixed(2)}`}</span>
           </summary>
           <div class="px-3 pb-3 flex flex-col gap-2.5 border-t border-theme/40 pt-2">
+            ${
+              isBlind
+                ? `<div class="p-2.5 rounded-lg border border-amber-500/35 bg-amber-500/10 text-xs text-muted">${t('blindElectroLockedHint')}</div>`
+                : `
             <div class="p-2.5 rounded-lg border border-theme bg-surface flex items-center justify-between gap-2">
               <span class="text-xs font-semibold text-muted">${t('metricPH')}</span>
               <div class="text-sm font-bold font-mono" id="live-ph">${item.isFrozenSolid ? '— ❄️' : ph === null ? '—' : ph.toFixed(2)}</div>
@@ -523,7 +538,8 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
                         .join('')
                 }
               </div>
-            </div>
+            </div>`
+            }
           </div>
         </details>`;
         })()}
@@ -553,8 +569,13 @@ export function updateVesselLiveNumbers(panel, item, t) {
     const volEl = panel.container.querySelector('#live-vol');
     const massEl = panel.container.querySelector('#live-mass');
     const massGrossEl = panel.container.querySelector('#live-mass-gross');
-    if (phEl) phEl.textContent = item.isFrozenSolid ? '— ❄️' : ph === null ? '—' : ph.toFixed(2);
-    if (sumPhEl) sumPhEl.textContent = `pH ${item.isFrozenSolid ? '—' : ph === null ? '—' : ph.toFixed(2)}`;
+    if (!item.hideComposition) {
+      if (phEl) phEl.textContent = item.isFrozenSolid ? '— ❄️' : ph === null ? '—' : ph.toFixed(2);
+      if (sumPhEl) sumPhEl.textContent = `pH ${item.isFrozenSolid ? '—' : ph === null ? '—' : ph.toFixed(2)}`;
+    } else {
+      const blindBox = panel.container.querySelector('#blind-obs-box');
+      if (blindBox) blindBox.innerHTML = buildBlindObservationCardHtml(item, t);
+    }
     if (tempEl) tempEl.textContent = `${formatNumber(item.tempK, 1)} K (${formatNumber(kelvinToCelsius(item.tempK), 1)}°C)`;
     if (volEl) {
       volEl.textContent =
@@ -598,7 +619,7 @@ export function updateVesselLiveNumbers(panel, item, t) {
 
     const liqTabData = computeLiquidSpeciesTableData(item.moles, item.tempK);
     const rhoEl = panel.container.querySelector('#live-mix-density');
-    if (rhoEl) rhoEl.textContent = `ρ = ${liqTabData.mixDensity > 0 ? liqTabData.mixDensity.toFixed(3) : '—'} g/mL`;
+    if (rhoEl && !item.hideComposition) rhoEl.textContent = `ρ = ${liqTabData.mixDensity > 0 ? liqTabData.mixDensity.toFixed(3) : '—'} g/mL`;
 
     const electroMetrics = computeVesselElectrochemicalMetrics(item, ph, liqL);
     const ionEl = panel.container.querySelector('#live-ionic-str');

@@ -1365,13 +1365,17 @@ export class LabWorkbenchCanvas {
       if (this.hoveredTubeInfo && !this.dragState) {
         const ht = this.hoveredTubeInfo;
         const flow = ht.srcVessel?._liveTubeFlow || ht.flow;
-        const compText = flow?.composition?.length
+        const isBlindFlow = Boolean(ht.srcVessel?.hideComposition);
+        const compText = isBlindFlow
+          ? (this.langCode === 'en' ? 'Unknown gas (?)' : 'Khí ẩn danh (?)')
+          : flow?.composition?.length
           ? flow.composition.map((c) => `${c.formula} ${c.pct}%`).join(', ')
           : this.langCode === 'en'
           ? 'No active flow'
           : 'Chưa có dòng khí';
+        const srcTag = ht.srcVessel?.hideComposition ? (ht.srcVessel.blindLabel || ht.srcVessel.label) : ht.srcVessel.label;
         const rateTxt = `${(flow?.rateMlS || 0).toFixed(2)} mL/s · ${(flow?.tempC ?? 25).toFixed(1)}°C`;
-        const line1 = formatCanvasText(`${ht.srcVessel.label} → ${ht.dstVessel.label}: ${compText}`);
+        const line1 = formatCanvasText(`${srcTag} → ${ht.dstVessel.label}: ${compText}`);
         const line2 = formatCanvasText(`${rateTxt}`);
         ctx.save();
         ctx.font = '600 11px system-ui, sans-serif';

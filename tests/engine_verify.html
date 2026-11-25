@@ -61,6 +61,9 @@
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
     import { DosingModal } from '../src/ui/dosingModal.js';
     import { ComparisonPanel } from '../src/ui/comparisonPanel.js';
+    import { MISSION_ORDER, MISSION_REGISTRY } from '../src/data/missions.js';
+    import { evaluateMission, loadMissionProgress, saveMissionAttempt } from '../src/engine/missionEvaluator.js';
+    import { MissionDockPanel } from '../src/ui/missionPanel.js';
     import { LabSoundEngine, soundEngine } from '../src/audio/soundEngine.js';
     import {
       FIREBASE_CONFIG,
@@ -2483,7 +2486,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.22';
+      const expectedBuild = 'virlab_beta_v5+build.23';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -10505,6 +10508,123 @@
         'Prompt 82 invariants: 2-col Inspector grid & .col-span-2, Deluxe wheel, Gas Syringe table, SHE + 11 electrode materials + Galvanic override, KCl vs KNO3 salt bridge, aero geometry & render',
         cssColSpanOk && gridOk && sbLiveOk && syrTableOk && sheOk && matsOk && sbFoulOk && galvOk && aeroOk && render82Ok && burCtrlOk && tlcGuardOk,
         `css=${cssColSpanOk}, grid=${gridOk}, sbLive=${sbLiveOk}, syrTbl=${syrTableOk}, she=${sheOk}(E0=${eSheStd.toFixed(3)},emf=${emfZnShe.toFixed(2)}), mats=${matsOk}, sbFoul=${sbFoulOk}, galv=${galvOk}, aero=${aeroOk}, rnd=${render82Ok}, wheel=${burCtrlOk && tlcGuardOk}`
+      );
+    }
+
+    // TEST 220: Prompt 83 Practical Lab & Assessment Mode (MISSION_REGISTRY, Blind Unknowns, Telemetry & 4-Layer Grading, UI & LocalStorage)
+    {
+      const tVi = (k) => I18N.vi[k] ?? k;
+      const tEn = (k) => I18N.en[k] ?? k;
+
+      // 1) Registry completeness: 6 missions, rubric sum === 10.0, all 4 categories covered, bilingual i18n keys exist
+      const registryOk =
+        MISSION_ORDER.length === 6 &&
+        MISSION_ORDER.every((id) => {
+          const m = MISSION_REGISTRY[id];
+          if (!m) return false;
+          const sum = m.rubric.reduce((s, r) => s + r.maxPoints, 0);
+          const cats = new Set(m.rubric.map((r) => r.category));
+          const keysExist = Boolean(
+            I18N.vi[m.titleKey] &&
+              I18N.en[m.titleKey] &&
+              I18N.vi[m.summaryKey] &&
+              I18N.en[m.goalKey] &&
+              m.hints.every((h) => I18N.vi[h] && I18N.en[h]) &&
+              m.rubric.every((r) => I18N.vi[r.labelKey] && I18N.en[r.labelKey])
+          );
+          return Math.abs(sum - 10.0) < 1e-6 && cats.size === 4 && keysExist;
+        });
+
+      // 2) Mission 1 Blind Unknowns: seeded shuffle, Inspector hides composition, pipette preserves blind flag
+      const simM1A = new LabSimulation();
+      const st1A = simM1A.startMission('mission_qualitative_4', 'practice', 111);
+      const simM1B = new LabSimulation();
+      const st1B = simM1B.startMission('mission_qualitative_4', 'practice', 444);
+      const keyA = JSON.stringify(st1A.setupData.answerKey);
+      const keyB = JSON.stringify(st1B.setupData.answerKey);
+      const seedRandomOk = keyA !== keyB;
+
+      const vBlind = simM1A.getItem(st1A.setupData.blindVesselIds[0]);
+      const pipM1 = simM1A.items.find((i) => i.kind === 'pipette');
+      const subTube = simM1A.items.find((i) => i.typeId === 'test_tube_50');
+      simM1A.pipetteDrawFromVessel(vBlind.id, 3.0, pipM1);
+      simM1A.pipetteDispenseToVessel(subTube.id, 2.0, pipM1);
+      const blindSubOk = Boolean(vBlind.hideComposition) && Boolean(subTube.hideComposition) && (subTube.blindLabel || '').includes('?A');
+
+      const insBox83 = document.createElement('div');
+      document.body.appendChild(insBox83);
+      simM1A.selectedId = vBlind.id;
+      const ins83 = new InspectorPanel(insBox83, simM1A, () => tVi, {});
+      ins83.update('vi', true);
+      const blindHtml = insBox83.innerHTML;
+      const blindHiddenOk =
+        blindHtml.includes('?A') &&
+        blindHtml.includes('blind-obs-box') &&
+        !blindHtml.includes('sp-liq-body') &&
+        !blindHtml.includes('vessel-mole-chart') &&
+        !blindHtml.includes('Ba²⁺') &&
+        !blindHtml.includes('SO₄²⁻');
+
+      // Grade Mission 1 with exact answerKey
+      const m1Ans = {
+        'ans_?A': st1A.setupData.answerKey['?A'],
+        'ans_?B': st1A.setupData.answerKey['?B'],
+        'ans_?C': st1A.setupData.answerKey['?C'],
+        'ans_?D': st1A.setupData.answerKey['?D'],
+      };
+      const evalM1 = simM1A.submitMission(m1Ans, { t: tVi });
+      const m1GradeOk = evalM1 && evalM1.totalScore >= 8.0 && evalM1.passed;
+
+      // 3) Mission 2 Titration in Exam mode + hint penalty (-0.5) + Dock UI checklist visibility
+      const simM2 = new LabSimulation();
+      const st2 = simM2.startMission('mission_titration_hcl', 'exam', 777);
+      const eqVol = st2.setupData.answerKey.equivVolNaohMl;
+      const burM2 = simM2.getItem(st2.setupData.buretteId);
+      // Titrate right up to exact equivalence using burette drops
+      const drops = Math.round(eqVol / 0.5);
+      for (let d = 0; d < drops; d++) {
+        simM2.buretteDispenseDrop(burM2.id, 0.5);
+      }
+      simM2.step(0.05);
+      simM2.useMissionHint(); // 1 hint used in exam -> -0.5 penalty
+
+      const dockEl = document.createElement('div');
+      document.body.appendChild(dockEl);
+      const dock = new MissionDockPanel(dockEl, simM2, () => tEn, {});
+      dock.render(tEn, true);
+      const examHiddenUiOk = dockEl.innerHTML.includes(I18N.en.missionExamHiddenTag) && !dockEl.innerHTML.includes('mcrit-icon');
+      st2.mode = 'practice';
+      dock.render(tEn, true);
+      const practiceVisibleUiOk = dockEl.innerHTML.includes('data-mcrit-icon');
+      st2.mode = 'exam';
+
+      const evalM2 = simM2.submitMission({ ans_molarity: String(st2.setupData.answerKey.targetMolarityM) }, { t: tEn });
+      const m2Ok =
+        st2.setupData.answerKey.targetMolarityM >= 0.08 &&
+        st2.setupData.answerKey.targetMolarityM <= 0.18 &&
+        evalM2.hintPenalty === 0.5 &&
+        evalM2.totalScore >= 9.0;
+
+      // 4) Smoke setup for Missions 3, 4, 5, 6 & localStorage persistence
+      let setupAllOk = true;
+      for (const mid of ['mission_calcination_cao', 'mission_gas_prep', 'mission_electrochem_cell', 'mission_ester_synth']) {
+        const s = new LabSimulation();
+        const st = s.startMission(mid, 'practice', 555);
+        s.step(0.05);
+        const ev = evaluateMission(s, st, {}, { t: tVi });
+        if (!ev || ev.criteriaResults.length !== 4) setupAllOk = false;
+      }
+      const prevProg = saveMissionAttempt(evalM2);
+      const loadedProg = loadMissionProgress();
+      const storageOk = Boolean(prevProg[evalM2.missionId] && loadedProg[evalM2.missionId]?.bestScore >= evalM2.totalScore);
+
+      document.body.removeChild(insBox83);
+      document.body.removeChild(dockEl);
+
+      assert(
+        'Prompt 83 invariants: 6-mission registry (10pt rubrics + VI/EN IUPAC), Blind Unknowns concealment, Titration/Exam hint penalty, Practice vs Exam Dock UI, localStorage persistence',
+        registryOk && seedRandomOk && blindSubOk && blindHiddenOk && m1GradeOk && examHiddenUiOk && practiceVisibleUiOk && m2Ok && setupAllOk && storageOk,
+        `reg=${registryOk}, seed=${seedRandomOk}, sub=${blindSubOk}, hide=${blindHiddenOk}, m1=${evalM1?.totalScore}, examUI=${examHiddenUiOk}, pracUI=${practiceVisibleUiOk}, m2=${evalM2?.totalScore}(pen=${evalM2?.hintPenalty}), all6=${setupAllOk}, ls=${storageOk}`
       );
     }
 

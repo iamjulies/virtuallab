@@ -78,6 +78,8 @@ import {
 } from './gasNetwork.js';
 
 import { SIM_BENCH_FLOOR_Y, exportPositionSnapshotForSim, exportSnapshotForSim, restoreSnapshotForSim, computeVesselMoleSigForVessel, computeChemActivitySigForVessel, recordHistorySnapshotForVessel } from './simSnapshot.js';
+import { getMissionById } from '../data/missions.js';
+import { createEmptyMissionTelemetry, evaluateMission } from './missionEvaluator.js';
 import { getVesselBrimVolumeMl, moveFluidFraction, extractSyringeLiquidFraction, spoonScoopFromVesselImpl, spoonPourIntoVesselImpl, rinseSpoonImpl, stepSpoonAnimationsImpl, deliverSyringeSliceToVesselImpl, pumpSyringeToVesselImpl, stepSyringeDischargeImpl, addReagentToVesselImpl, stepTimedTransfersInnerImpl, pourBetweenVesselsImpl, transferSolidsToVesselImpl, buretteDispenseDropImpl, washBottleSquirtImpl, pipetteDrawFromVesselImpl, pipetteDrawFromSyringeImpl, pipetteDrawFromReagentImpl, pipetteDispenseToVesselImpl, stepVesselTiltPouringImpl } from './simTransfer.js';
 import { getSupportSurfaceForItemImpl, updateSupportAttachmentsImpl, recomputeScaleReadingsImpl, checkOverflowImpl, stepVesselOverflowImpl, stepSyringeOverflowImpl, shatterVesselImpl, shatterSyringeImpl, popSyringePlungerImpl, breakPipetteOnDropImpl, breakToolOnDropImpl, handleLandingImpactImpl, stepGravityPhysicsImpl, getBurnerHeatingSourceImpl, condenseEscapedVaporInCryoImpl, stepInvertedGravitySpillImpl, stepAmmoniaFountainSuctionImpl, getBathCoolingSourceImpl, stepGasFlameInteractionsImpl, stepSimulationImpl } from './simPhysics.js';
 export { SIM_BENCH_FLOOR_Y };
@@ -122,6 +124,8 @@ export class LabSimulation {
     this.maxUndo = 10;
     this._suppressUndo = 0;
     this._dirtySeq = 1;
+    this.missionState = null;
+    this.missionTelemetry = createEmptyMissionTelemetry();
   }
 
   withUndoSuppressed(fn) {
@@ -343,6 +347,8 @@ export class LabSimulation {
         headspaceGasMoles: createEmptyGasMap(),
         escapedGasMoles: createEmptyGasMap(),
         isShattered: false,
+        hideComposition: false,
+        blindLabel: null,
         stirTimer: 0,
         tiltAngle: 0,
         tiltDeg: 0,
@@ -633,6 +639,8 @@ export class LabSimulation {
         dispenseToX: x,
         dispenseToY: y,
         isBroken: false,
+        hideComposition: false,
+        blindLabel: null,
       });
     } else if (spec.kind === 'gas_syringe') {
       Object.assign(base, {
@@ -2820,6 +2828,49 @@ export class LabSimulation {
    * Main simulation tick called by animation loop (realDeltaSec).
    */
   step(realDeltaSec, options = {}) { return stepSimulationImpl(this, realDeltaSec, options); }
+
+  startMission(missionId, mode = 'practice', seed = null) {
+    const mission = getMissionById(missionId);
+    if (!mission) return null;
+    const chosenSeed = seed != null ? Number(seed) : Math.floor(1000 + Math.random() * 9000);
+    this.missionTelemetry = createEmptyMissionTelemetry();
+    const setupData = mission.setup(this, chosenSeed) || {};
+    this.missionState = {
+      active: true,
+      missionId: mission.id,
+      mode: mode === 'exam' ? 'exam' : 'practice',
+      seed: chosenSeed,
+      setupData,
+      startedAtMs: Date.now(),
+      hintsUsed: 0,
+      lastEvaluation: null,
+      draftAnswers: {},
+    };
+    this.undoStack = [];
+    this.emitChange();
+    return this.missionState;
+  }
+
+  exitMission() {
+    this.missionState = null;
+    this.missionTelemetry = createEmptyMissionTelemetry();
+    this.emitChange();
+  }
+
+  useMissionHint() {
+    if (!this.missionState?.active) return 0;
+    this.missionState.hintsUsed = (this.missionState.hintsUsed || 0) + 1;
+    this.emitChange();
+    return this.missionState.hintsUsed;
+  }
+
+  submitMission(userAnswers = {}, options = {}) {
+    if (!this.missionState?.active) return null;
+    const res = evaluateMission(this, this.missionState, userAnswers, options);
+    this.missionState.lastEvaluation = res;
+    this.emitChange();
+    return res;
+  }
 }
 
 export { computeSyringeGasVolumeMl };

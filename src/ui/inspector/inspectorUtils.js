@@ -14,6 +14,7 @@ import {
   computePH,
   computePhaseStratification,
   computeSolidVolumeMl,
+  computeSolutionVisuals,
   computeVesselAroma,
   computeVesselElectrochemicalMetrics,
   estimateVesselEsterificationMetrics,
@@ -392,7 +393,48 @@ export function buildLiquidRowsHtml(liqData) {
     .join('');
 }
 
+export function buildBlindObservationCardHtml(item, t) {
+  const liqL = computeLiquidVolumeL(item.moles || {}, item.tempK || CONSTANTS.T_STD_K);
+  const ph = liqL > 1e-6 ? computePH(item.moles || {}, liqL, item.tempK || CONSTANTS.T_STD_K) : null;
+  const vis = liqL > 1e-6
+    ? computeSolutionVisuals(item.moles || {}, liqL, ph ?? 7, 2.0, item.phenBleachFrac || 0, item.phenIrrevFrac || 0)
+    : null;
+  const hasSolids = Object.entries(item.moles || {}).some(([id, n]) => n > 1e-7 && SPECIES[id]?.phase === 's');
+  const hasBubbles = (item.gasOutBannerTimer || 0) > 0.05 || (item.lastTotalRateMolS || 0) > 1e-5;
+  const hasPinkPhen = (item.moles?.Phenolphthalein_aq || 0) > 1e-9 && ph !== null && ph >= 8.2 && (item.phenBleachFrac || 0) < 0.7;
+  const aroma = !item.isShattered ? computeVesselAroma(item) : null;
+
+  const liqDesc = liqL <= 1e-5
+    ? t('blindObsDry')
+    : hasPinkPhen
+    ? t('blindObsPinkSol')
+    : vis?.opacity > 0.28
+    ? t('blindObsColoredSol')
+    : t('blindObsClearSol');
+  const solDesc = hasSolids ? t('blindObsHasPrecip') : t('blindObsNoPrecip');
+  const gasDesc = hasBubbles ? t('blindObsHasBubbles') : t('blindObsNoBubbles');
+
+  return `
+    <div id="blind-obs-card" class="p-3 rounded-lg border border-amber-500/45 bg-amber-500/10 flex flex-col gap-1.5 text-xs">
+      <div class="flex items-center justify-between gap-2">
+        <span class="font-bold text-amber-300">🕵️ ${t('blindUnknownTitle')}</span>
+        <span class="font-mono text-[11px] px-1.5 py-0.5 rounded bg-surface border border-theme">${item.blindLabel || item.label}</span>
+      </div>
+      <div class="grid grid-cols-1 gap-1 text-[11.5px]">
+        <div>• <strong>${t('blindObsLiquid')}:</strong> ${liqDesc}</div>
+        <div>• <strong>${t('blindObsSolid')}:</strong> ${solDesc}</div>
+        <div>• <strong>${t('blindObsGas')}:</strong> ${gasDesc}</div>
+        ${aroma ? `<div>• <strong>${t('aromaTitle')}:</strong> ${t(aroma.key)}</div>` : ''}
+      </div>
+      <div class="text-[11px] text-muted pt-1 border-t border-amber-500/25">${t('blindAnalyzeHint')}</div>
+    </div>
+  `;
+}
+
 export function buildContainerLiquidTableCardHtml(item, t, tempK) {
+  if (item.hideComposition) {
+    return buildBlindObservationCardHtml(item, t);
+  }
   const liqTabData = computeLiquidSpeciesTableData(item.moles || {}, tempK);
   const rhoTxt = liqTabData.mixDensity > 0 ? `ρ=${liqTabData.mixDensity.toFixed(3)} g/mL` : '';
   return `
@@ -426,6 +468,7 @@ export function buildContainerLiquidTableCardHtml(item, t, tempK) {
 }
 
 export function updateLiveLiquidContainerSection(container, item, envTempK) {
+  if (item?.hideComposition) return;
   const liqTabData = computeLiquidSpeciesTableData(item.moles || {}, item.tempK ?? envTempK);
   const rhoEl = container.querySelector('#live-mix-density');
   if (rhoEl) rhoEl.textContent = liqTabData.mixDensity > 0 ? `ρ=${liqTabData.mixDensity.toFixed(3)} g/mL` : '';
@@ -607,6 +650,7 @@ export function renderTlcSpotsListHtml(spots, emptyText = '') {
 
 export function renderInspectorLogsAndCrossLabHtml(panel, item, langCode, t) {
   const { sim, logMode, callbacks } = panel;
+  const hideRxnLogs = Boolean(sim.missionState?.active && (item?.hideComposition || sim.items.some((x) => x.hideComposition)));
     const logsHtml = `
       <div class="rounded-xl border border-theme bg-surface-alt p-3">
         <div class="flex flex-wrap items-center justify-between gap-1.5 mb-2">
@@ -637,6 +681,15 @@ export function renderInspectorLogsAndCrossLabHtml(panel, item, langCode, t) {
                       const cureHead = themeCur === 'olivia' ? `<div class="font-bold text-[10.5px] mb-0.5">🩹 ${t('themeCureTitle')}</div>` : '';
                       return `<div class="olivia-cure-card p-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-xs leading-relaxed">
                         ${cureHead}<span class="font-mono text-muted mr-1">${ts}</span>${t(log.key)}
+                      </div>`;
+                    }
+                    if (hideRxnLogs) {
+                      return `<div class="p-2 rounded-lg border border-amber-500/30 bg-surface text-xs">
+                        <div class="flex items-center justify-between text-[11px] font-mono text-muted mb-0.5">
+                          <span>${log.vesselLabel || '?'} · ${ts}</span>
+                          <span>🔒</span>
+                        </div>
+                        <p class="text-muted">${t('blindHiddenLogMsg')}</p>
                       </div>`;
                     }
                     if (logMode === 'expert') {

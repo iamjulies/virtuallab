@@ -2068,6 +2068,7 @@ table {
   }
   #device-frame-wrap,
   #dosing-modal-root,
+  #mission-modal-root,
   #toast-banner {
     display: none !important;
   }
@@ -2144,5 +2145,25 @@ table {
     font-size: 10.5px;
     padding-left: 18px;
     margin: 0;
+  }
+  .print-mission-card {
+    border: 1.5px solid #0284c7;
+    background: #f8fafc;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    break-inside: avoid;
+  }
+  .print-mission-card table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10.5px;
+    margin-top: 6px;
+  }
+  .print-mission-card th,
+  .print-mission-card td {
+    border-bottom: 1px solid #cbd5e1;
+    padding: 3px 6px;
+    text-align: left;
   }
 }

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v5-build-22';
+const CACHE_NAME = 'virlab-beta-v5-build-23';
 const ASSETS = [
   './',
   './index.html',
@@ -47,6 +47,7 @@ const ASSETS = [
   './src/data/inorganic/atomicWeights.js',
   './src/data/inorganic/ions.js',
   './src/data/inorganic/solids_gases.js',
+  './src/data/missions.js',
   './src/data/organic/hydrocarbons.js',
   './src/data/organic/nitrogen_bio.js',
   './src/data/organic/oxygen_compounds.js',
@@ -71,6 +72,7 @@ const ASSETS = [
   './src/engine/labManager.js',
   './src/engine/liquidField.js',
   './src/engine/liquidSurfacePhysics.js',
+  './src/engine/missionEvaluator.js',
   './src/engine/organicEngine.js',
   './src/engine/organicLegacySolver.js',
   './src/engine/simPhysics.js',
@@ -99,6 +101,7 @@ const ASSETS = [
   './src/ui/inspector/toolInspectors.js',
   './src/ui/inspector/vesselInspector.js',
   './src/ui/inspectorPanel.js',
+  './src/ui/missionPanel.js',
   './src/ui/shelfPanel.js',
   './src/ui/shortcutsModal.js',
   './src/ui/storageCabinetModal.js',
