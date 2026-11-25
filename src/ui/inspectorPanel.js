@@ -154,7 +154,7 @@ export class InspectorPanel {
       const mountedTube = this.sim.items.find((i) => i.mountedOverElectrodeId === item.id);
       const colCnt = this.sim.items.filter((i) => !i.isBroken && !i.isShattered && (i.kind === 'gas_syringe' || i.kind === 'vessel')).length;
       const hasAg = (item.platedAgMol || 0) > 1e-7 ? 1 : 0;
-      return `el|${item.id}|${item.material}|${item.dockedVesselId || ''}|${item.polarityLabel || ''}|${item.platedMaterial || ''}|${item.platedQuality || ''}|${hasAg}|${item.cathodicProtectedActive ? 1 : 0}|${item.gasTargetId || ''}|${mountedTube?.id || ''}|${colCnt}|${langCode}|${logLen}`;
+      return `el|${item.id}|${item.material}|${item.dockedVesselId || ''}|${item.polarityLabel || ''}|${item.platedMaterial || ''}|${item.platedQuality || ''}|${hasAg}|${item.cathodicProtectedActive ? 1 : 0}|${item.passivatedActive ? 1 : 0}|${item.galvanicDominantActive ? 1 : 0}|${item.gasTargetId || ''}|${mountedTube?.id || ''}|${colCnt}|${langCode}|${logLen}`;
     }
     if (item.kind === 'splint') {
       return `sp|${item.id}|${item.flippedX ? 1 : 0}|${item.mode}|${langCode}|${logLen}`;
@@ -179,7 +179,7 @@ export class InspectorPanel {
       return `bchip|${item.id}|${item.inVesselId || ''}|${vCnt}|${langCode}|${logLen}`;
     }
     if (item.kind === 'salt_bridge') {
-      return `sbr|${item.id}|${item.isBroken ? 1 : 0}|${item.vesselAId || ''}|${item.vesselBId || ''}|${langCode}|${logLen}`;
+      return `sbr|${item.id}|${item.isBroken ? 1 : 0}|${item.electrolyteId || 'KNO3'}|${item.fouledWarningKey || ''}|${item.vesselAId || ''}|${item.vesselBId || ''}|${langCode}|${logLen}`;
     }
     if (item.kind === 'spoon') {
       const spEntries = Object.entries(item.moles || {}).filter(([k, n]) => hasDisplayableSpeciesAmount(k, n));
@@ -460,6 +460,9 @@ export class InspectorPanel {
         this.sim.grindMortar(item.id);
       });
       this.container.querySelector('#ins-solid-xfer')?.addEventListener('click', () => this.callbacks.onOpenSolidTransfer?.(item.id));
+      this.container.querySelector('#ins-v-sb-slider')?.addEventListener('input', (e) => {
+        this.sim.toggleMagneticStir(item.id, Number(e.target.value));
+      });
       this.container.querySelectorAll('.mag-rpm-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
           soundEngine.playUiClick();
@@ -867,6 +870,13 @@ export class InspectorPanel {
       this.container.querySelectorAll('.el-mat-btn').forEach((btn) => {
         btn.addEventListener('click', () => this.sim.setElectrodeMaterial(item.id, btn.dataset.mat));
       });
+      this.container.querySelector('#ins-el-she-ph2')?.addEventListener('input', (e) => {
+        this.sim.setElectrodeShePressure(item.id, Number(e.target.value));
+      });
+      this.container.querySelector('#ins-el-refresh')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        this.sim.refreshElectrodeRod(item.id);
+      });
       this.container.querySelector('#ins-el-strip')?.addEventListener('click', () => this.sim.clearElectrodePlating(item.id));
       this.container.querySelector('#ins-el-mount-tube')?.addEventListener('click', () => {
         this.sim.mountCollectorTubeOverElectrode(item.id);
@@ -894,6 +904,9 @@ export class InspectorPanel {
         this.sim.setTubeSubmersionRatio(item.id, Number(e.target.value) / 100);
       });
     } else if (item.kind === 'stir_bar') {
+      this.container.querySelector('#ins-sb-rpm-slider')?.addEventListener('input', (e) => {
+        if (item.inVesselId) this.sim.toggleMagneticStir(item.inVesselId, Number(e.target.value));
+      });
       this.container.querySelectorAll('.sb-rpm-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
           if (item.inVesselId) this.sim.toggleMagneticStir(item.inVesselId, Number(btn.dataset.rpm));
@@ -923,6 +936,24 @@ export class InspectorPanel {
       });
       this.container.querySelector('#ins-bc-remove')?.addEventListener('click', () => {
         this.sim.removeBoilingChipsFromVessel(item.id);
+      });
+    } else if (item.kind === 'salt_bridge') {
+      this.container.querySelectorAll('.sb-elec-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          soundEngine.playUiClick();
+          this.sim.setSaltBridgeElectrolyte(item.id, btn.dataset.sbElec);
+        });
+      });
+      this.container.querySelector('#ins-sb-fill-vessel')?.addEventListener('click', () => {
+        const vs = this.sim.items.filter(
+          (v) => v.kind === 'vessel' && !v.isShattered && Object.entries(v.moles || {}).some(([id, n]) => n > 1e-6 && SPECIES[id]?.phase === 'aq')
+        );
+        if (vs.length === 0) return;
+        this.callbacks.onStartBenchPick?.({
+          candidateIds: vs.map((v) => v.id),
+          promptText: `${t('saltBridgeFillFromVesselBtn')} — ${t('pickBenchPrompt')}`,
+          onPick: (picked) => this.sim.fillSaltBridgeFromVessel(item.id, picked.id),
+        });
       });
     } else if (item.kind === 'spoon') {
       this.container.querySelector('#ins-spoon-scoop')?.addEventListener('click', () => {

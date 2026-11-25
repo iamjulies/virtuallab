@@ -1081,8 +1081,15 @@ export function renderSaltBridge(ctx, item, items = [], isSelected = false, isDa
   strokeSelectionGlow(ctx, isSelected, false, 10.5);
   ctx.stroke();
 
-  // Saturated agar Na2SO4 / KNO3 gel core
-  ctx.strokeStyle = isDark ? 'rgba(224, 242, 254, 0.58)' : 'rgba(186, 230, 253, 0.86)';
+  // Saturated agar electrolyte gel core
+  const isFouled = Boolean(item.fouledByAgCl || item.fouledBySulfate);
+  ctx.strokeStyle = isFouled
+    ? isDark
+      ? 'rgba(241, 245, 249, 0.85)'
+      : 'rgba(203, 213, 225, 0.94)'
+    : isDark
+      ? 'rgba(224, 242, 254, 0.58)'
+      : 'rgba(186, 230, 253, 0.86)';
   ctx.lineWidth = 6.8;
   traceU();
   ctx.stroke();
@@ -1096,6 +1103,14 @@ export function renderSaltBridge(ctx, item, items = [], isSelected = false, isDa
     ctx.roundRect(px - 4.2, py - 5, 8.4, 7, 2);
     ctx.fill();
     ctx.stroke();
+    if (isFouled) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(248, 250, 252, 0.88)';
+      ctx.beginPath();
+      ctx.arc(px, py + 2.5, 5.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   // Subtle ion-migration shimmer along bridge when Galvanic current flows
@@ -1157,15 +1172,67 @@ export function renderElectrodeRod(ctx, item, isSelected, isDark, timeNow = 0) {
 
   ctx.save();
 
-  // Metal/graphite plate dipped vertically
-  ctx.fillStyle = mat.color;
+  const isSHE = item.material === 'SHE';
+  const wearFrac =
+    mat.defaultMol > 0 && Number.isFinite(item.rodMetalMol)
+      ? Math.max(0.35, Math.min(1, item.rodMetalMol / mat.defaultMol))
+      : 1;
+  const halfRodW = isSHE ? 2.2 : 4.5 * (0.45 + 0.55 * wearFrac);
+
+  // Metal / graphite / SHE Platinum plate dipped vertically
+  ctx.fillStyle = isSHE ? '#cbd5e1' : mat.color;
   ctx.strokeStyle = isSelected ? '#3b82f6' : item.cathodicProtectedActive ? '#10b981' : mat.stroke;
   ctx.lineWidth = isSelected || item.cathodicProtectedActive ? 2.1 : 1.4;
   ctx.beginPath();
-  ctx.roundRect(x - 4.5, topY + 12, 9, rodH - 16, 2);
+  ctx.roundRect(x - halfRodW, topY + 12, halfRodW * 2, rodH - 16, 2);
   strokeSelectionGlow(ctx, isSelected, false, 2.1);
   ctx.fill();
   ctx.stroke();
+
+  // Platinized-black lower Pt foil + outer borosilicate H2 gas hood for Standard Hydrogen Electrode (SHE)
+  if (isSHE) {
+    const foilH = Math.min(20, Math.max(12, maxCoatH * 0.45));
+    const foilTop = botY - 5 - foilH;
+    ctx.fillStyle = '#0f172a';
+    ctx.strokeStyle = '#64748b';
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.roundRect(x - 5.5, foilTop, 11, foilH, 1.5);
+    ctx.fill();
+    ctx.stroke();
+
+    // SHE outer H2 gas bell tube (open at bottom for H+, sidearm for H2(g))
+    const shroudTopY = topY + 13;
+    const shroudBotY = botY - 1;
+    ctx.save();
+    ctx.fillStyle = isDark ? 'rgba(56, 189, 248, 0.12)' : 'rgba(186, 230, 253, 0.34)';
+    ctx.strokeStyle = isSelected ? '#3b82f6' : isDark ? 'rgba(148, 163, 184, 0.85)' : 'rgba(71, 85, 105, 0.78)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(x - 9.5, shroudBotY);
+    ctx.lineTo(x - 9.5, shroudTopY + 5);
+    ctx.quadraticCurveTo(x - 9.5, shroudTopY, x - 4, shroudTopY);
+    ctx.lineTo(x + 4, shroudTopY);
+    ctx.quadraticCurveTo(x + 9.5, shroudTopY, x + 9.5, shroudTopY + 5);
+    ctx.lineTo(x + 9.5, shroudBotY);
+    ctx.stroke();
+    ctx.fill();
+    // H2 inlet sidearm stub
+    ctx.beginPath();
+    ctx.moveTo(x + 9.5, shroudTopY + 8);
+    ctx.lineTo(x + 17, shroudTopY + 5);
+    ctx.stroke();
+
+    // Gentle continuous H2 micro-bubbles inside SHE hood
+    ctx.fillStyle = 'rgba(224, 242, 254, 0.86)';
+    for (let i = 0; i < 5; i++) {
+      const rise = (timeNow * 34 + i * 7.5) % Math.max(14, shroudBotY - shroudTopY - 12);
+      ctx.beginPath();
+      ctx.arc(x + ((i % 2 === 0 ? -1 : 1) * (3 + (i % 3))), shroudBotY - 4 - rise, 1.45, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 
   // Phenomenon #9A: Electroplated Cu(s) layer along immersed lower half (salmon-pink smooth vs dark burned)
   if (item.platedMaterial === 'Cu' && (item.platedCuMol || 0) > 1e-7) {
@@ -1302,12 +1369,68 @@ export function renderElectrodeCollectorTubes(ctx, items, isDark, timeNow = 0) {
     const points = buildRigidTubePoints(p0, p1, p2, p3, target, { archLift: 46 });
 
     ctx.save();
-    // Small bell hood cap over electrode + translucent silicone delivery tubing
-    ctx.fillStyle = isDark ? 'rgba(148, 163, 184, 0.38)' : 'rgba(100, 116, 139, 0.34)';
+    // Submerged borosilicate glass gas-collection hood sealing the electrode bubbles under liquid level
+    const botY = el.y + eH / 2;
+    const hoodTopY = el.y - eH / 2 + 12;
+    const immersedPx = Math.max(18, el.immersedHeightPx ?? (eH - 20) * 0.56);
+    const liqSurfY = botY - immersedPx;
+    const hoodBotY = Math.min(botY - 3, Math.max(liqSurfY + 14, botY - 10));
+    const hoodHeadY = Math.min(liqSurfY - 2, hoodTopY + 16);
+
+    // Gas pocket trapped inside upper hood dome
+    ctx.fillStyle =
+      el.gasBubbleType === 'Cl2_g'
+        ? 'rgba(163, 230, 53, 0.24)'
+        : isDark
+          ? 'rgba(186, 230, 253, 0.16)'
+          : 'rgba(125, 211, 252, 0.28)';
     ctx.beginPath();
-    ctx.roundRect(el.x - 8, el.y - eH / 2 + 6, 16, 12, 3);
+    ctx.roundRect(el.x - 9, hoodTopY + 6, 18, Math.max(8, hoodHeadY - hoodTopY), 3);
     ctx.fill();
 
+    // Translucent glass bell walls (open lower flared skirt submerged beneath liquid surface)
+    ctx.fillStyle = isDark ? 'rgba(148, 163, 184, 0.12)' : 'rgba(226, 232, 240, 0.34)';
+    ctx.strokeStyle = isDark ? 'rgba(148, 163, 184, 0.85)' : 'rgba(71, 85, 105, 0.80)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(el.x - 11.5, hoodBotY);
+    ctx.lineTo(el.x - 9.5, liqSurfY);
+    ctx.lineTo(el.x - 9.5, hoodTopY + 6);
+    ctx.lineTo(el.x + 9.5, hoodTopY + 6);
+    ctx.lineTo(el.x + 9.5, liqSurfY);
+    ctx.lineTo(el.x + 11.5, hoodBotY);
+    ctx.stroke();
+    ctx.fill();
+
+    // Meniscus inside hood & captive rising bubbles channeled into top gas chamber
+    ctx.strokeStyle = isDark ? 'rgba(186, 230, 253, 0.65)' : 'rgba(2, 132, 199, 0.55)';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(el.x - 9, hoodHeadY);
+    ctx.quadraticCurveTo(el.x, hoodHeadY + 2, el.x + 9, hoodHeadY);
+    ctx.stroke();
+
+    if ((el.gasBubbleRate || 0) > 1.5e-7) {
+      ctx.fillStyle = el.gasBubbleType === 'Cl2_g' ? 'rgba(163, 230, 53, 0.85)' : 'rgba(224, 242, 254, 0.9)';
+      const riseSpan = Math.max(8, hoodBotY - hoodHeadY - 4);
+      for (let k = 0; k < 5; k++) {
+        const rise = (timeNow * 40 + k * 7) % riseSpan;
+        ctx.beginPath();
+        ctx.arc(el.x + ((k % 2 === 0 ? -1 : 1) * (3 + (k % 3))), hoodBotY - 3 - rise, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Hermetic top rubber stopper sealing wire lead & delivery tube port
+    ctx.fillStyle = isDark ? '#334155' : '#475569';
+    ctx.strokeStyle = isDark ? '#64748b' : '#334155';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.roundRect(el.x - 10, hoodTopY - 2, 20, 10, 2.5);
+    ctx.fill();
+    ctx.stroke();
+
+    // Silicone gas delivery tubing exiting top of hood stopper
     ctx.strokeStyle = isDark ? 'rgba(71, 85, 105, 0.78)' : 'rgba(51, 65, 85, 0.65)';
     ctx.lineWidth = 6;
     ctx.lineCap = 'round';

@@ -42,7 +42,7 @@ import {
   stepVesselChemistry,
   validateVesselInvariants,
 } from './chemistry.js';
-import { ELECTRODE_MATERIALS, stepElectrochemistry } from './electrochemistry.js';
+import { ELECTRODE_MATERIALS, SALT_BRIDGE_ELECTROLYTES, stepElectrochemistry } from './electrochemistry.js';
 import {
   computeWashBottleStreamArc,
   grindMortarSolids,
@@ -595,6 +595,9 @@ export class LabSimulation {
       const idx = this.items.filter((i) => i.kind === 'electrode').length;
       Object.assign(base, {
         material: 'C',
+        rodMetalMol: null,
+        _rodMaterialInit: 'C',
+        shePressureBar: 1.0,
         dockedVesselId: null,
         dockSide: idx % 2 === 0 ? 'left' : 'right',
         polarityLabel: '',
@@ -607,6 +610,8 @@ export class LabSimulation {
       Object.assign(base, {
         vesselAId: null,
         vesselBId: null,
+        electrolyteId: 'KNO3',
+        moles: { ...SALT_BRIDGE_ELECTROLYTES.KNO3.ions },
         isBroken: false,
       });
     } else if (spec.kind === 'pipette') {
@@ -2105,7 +2110,73 @@ export class LabSimulation {
     const el = this.getItem(electrodeId);
     if (!el || el.kind !== 'electrode' || !ELECTRODE_MATERIALS[mat]) return;
     el.material = mat;
+    el.rodMetalMol = ELECTRODE_MATERIALS[mat].defaultMol || 0;
+    el._rodMaterialInit = mat;
+    el.platedMaterial = null;
+    el.platedQuality = null;
+    el.platedCuMol = 0;
+    el.platedAgMol = 0;
+    el.passivatedActive = false;
     this.emitChange();
+  }
+
+  setElectrodeShePressure(electrodeId, pBar) {
+    const el = this.getItem(electrodeId);
+    if (!el || el.kind !== 'electrode') return;
+    el.shePressureBar = Math.max(0.1, Math.min(5.0, Number(pBar) || 1.0));
+    this.emitChange();
+  }
+
+  refreshElectrodeRod(electrodeId) {
+    const el = this.getItem(electrodeId);
+    if (!el || el.kind !== 'electrode') return;
+    el.rodMetalMol = ELECTRODE_MATERIALS[el.material]?.defaultMol || 0;
+    el._rodMaterialInit = el.material;
+    el.platedMaterial = null;
+    el.platedQuality = null;
+    el.platedCuMol = 0;
+    el.platedAgMol = 0;
+    el.passivatedActive = false;
+    this.emitChange();
+  }
+
+  setSaltBridgeElectrolyte(sbId, elecId) {
+    const sb = this.getItem(sbId);
+    const preset = SALT_BRIDGE_ELECTROLYTES[elecId];
+    if (!sb || sb.kind !== 'salt_bridge' || !preset) return;
+    sb.electrolyteId = elecId;
+    sb.moles = { ...preset.ions };
+    sb.fouledByAgCl = false;
+    sb.fouledBySulfate = false;
+    sb.fouledWarningKey = null;
+    sb.junctionResistanceOhm = 0.6;
+    this.emitChange();
+  }
+
+  fillSaltBridgeFromVessel(sbId, vesselId) {
+    const sb = this.getItem(sbId);
+    const v = this.getItem(vesselId);
+    if (!sb || sb.kind !== 'salt_bridge' || !v || v.kind !== 'vessel' || v.isShattered) return false;
+    const loaded = {};
+    for (const [spId, n] of Object.entries(v.moles || {})) {
+      if (SPECIES[spId]?.phase === 'aq' && n > 1e-6) {
+        const take = Math.min(n * 0.25, 0.04);
+        if (take > 1e-7) {
+          v.moles[spId] = Math.max(0, n - take);
+          if (v.moles[spId] <= 1e-13) delete v.moles[spId];
+          loaded[spId] = take;
+        }
+      }
+    }
+    if (Object.keys(loaded).length === 0) return false;
+    sb.electrolyteId = 'custom';
+    sb.moles = loaded;
+    sb.fouledByAgCl = false;
+    sb.fouledBySulfate = false;
+    sb.fouledWarningKey = null;
+    sb.junctionResistanceOhm = 0.6;
+    this.emitChange();
+    return true;
   }
 
   setDcPowerState(supplyId, patch = {}) {
@@ -2683,7 +2754,7 @@ export class LabSimulation {
     const v = this.getItem(vesselId);
     if (
       !v ||
-      (v.kind !== 'vessel' && v.kind !== 'filter_funnel' && v.kind !== 'separatory_funnel' && v.kind !== 'spoon') ||
+      (v.kind !== 'vessel' && v.kind !== 'filter_funnel' && v.kind !== 'separatory_funnel' && v.kind !== 'burette' && v.kind !== 'spoon') ||
       v.isShattered ||
       v.isBroken
     ) {

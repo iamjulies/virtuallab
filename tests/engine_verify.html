@@ -2483,7 +2483,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.21';
+      const expectedBuild = 'virlab_beta_v5+build.22';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -6487,10 +6487,10 @@
       wbW.handleCanvasWheel({ x: vmW.x, y: vmW.y }, 85);
       const vmStepped = vmW.mode !== 'voltmeter';
 
-      // 2) Continuous scroll controls
+      // 2) Continuous scroll controls (burette: Ctrl=rate, plain=tilt; dc_power: Shift=voltage, plain=power)
       wbW.handleCanvasWheel({ x: condW.x, y: condW.y }, 100);
-      wbW.handleCanvasWheel({ x: burW.x, y: burW.y }, 100);
-      wbW.handleCanvasWheel({ x: dcW.x, y: dcW.y }, -100);
+      wbW.handleCanvasWheel({ x: burW.x, y: burW.y }, -100, false, true);
+      wbW.handleCanvasWheel({ x: dcW.x, y: dcW.y }, -100, true, false);
       const contOk =
         condW.rotationDeg > 0 && burW.valveRateMlS > 0 && dcW.voltageV > dcV0;
 
@@ -10373,6 +10373,138 @@
         'Prompt 81 invariants: CSS utilities (.whitespace-pre-line, .whitespace-nowrap, .text-[13px], .text-[10.5px], .leading-snug, .break-all) & modular barrel exports intact',
         cssOk && exportsOk,
         `cssOk=${cssOk}, exportsOk=${exportsOk}, reactions=${modRxn.REACTIONS.length}, version=${modI18n.I18N.en.appSubtitle}`
+      );
+    }
+
+    // TEST 219: Prompt 82 Verification (Inspector 2-Col Grid, Deluxe Wheel, Syringe Table, SHE & Electrochem Override, Salt Bridge, Hood & Aero Geometry)
+    {
+      const cssText82 = await fetch('../styles/main.css').then((r) => r.text());
+      const cssColSpanOk = cssText82.includes('.col-span-2');
+      const { InspectorPanel } = await import('../src/ui/inspectorPanel.js');
+      const { ELECTRODE_MATERIALS, SALT_BRIDGE_ELECTROLYTES, computeHalfCellPotentialV } = await import('../src/engine/electrochemistry.js');
+      const { getVesselAeroProfile } = await import('../src/canvas/equipmentRenderer.js');
+      const { LabWorkbenchCanvas } = await import('../src/canvas/workbench.js');
+      const { ParticleSystem } = await import('../src/canvas/particles.js');
+
+      // 1) Inspector 2-column grid, delete nowrap, Stir Bar live slider, Gas Syringe table w/ condensed row
+      const sim82 = new LabSimulation();
+      const vGrid = sim82.createApparatus('beaker_250', 220, 400);
+      const box82 = document.createElement('div');
+      document.body.appendChild(box82);
+      const tVi82 = (k) => I18N.vi[k] || k;
+      const insp82 = new InspectorPanel(box82, sim82, () => tVi82, { getLabsMeta: () => null });
+      sim82.selectedId = vGrid.id;
+      insp82.update('vi', true);
+      const gridOk = Boolean(box82.querySelector('.grid.grid-cols-2')) && Boolean(box82.querySelector('#ins-delete')?.className.includes('whitespace-nowrap'));
+
+      const sbItem = sim82.createApparatus('stir_bar', 220, 400);
+      sim82.insertStirBarIntoVessel(sbItem.id, vGrid.id, 300);
+      sim82.selectedId = sbItem.id;
+      insp82.update('vi', true);
+      const sbLiveOk = box82.querySelector('#live-sb-rpm')?.textContent?.includes('300') && Number(box82.querySelector('#ins-sb-rpm-slider')?.value) === 300;
+
+      const syr82 = sim82.createApparatus('gas_syringe', 420, 380);
+      syr82.gasMoles = { CO2_g: 0.004, H2_g: 0.002 };
+      syr82.condensedWaterMol = 0.005;
+      sim82.selectedId = syr82.id;
+      insp82.update('vi', true);
+      const syrTableHtml = box82.querySelector('#live-syr-breakdown')?.innerHTML || '';
+      const syrTableOk = syrTableHtml.includes('<table') && syrTableHtml.includes('%') && syrTableHtml.includes('d/KK') && syrTableHtml.includes('H₂O');
+
+      // 2) SHE Nernst 0.000 V & Zn || SHE vs SHE || Cu cells
+      const simShe = new LabSimulation();
+      const vShe = simShe.createApparatus('beaker_250', 220, 400);
+      vShe.moles = { H2O_l: 5.55, H_aq: 0.1, Cl_aq: 0.1 }; // [H+] = 1.0 M (100 mL = 0.1 L)
+      const liqShe = computeLiquidVolumeL(vShe.moles, vShe.tempK);
+      const elShe = simShe.createApparatus('electrode_rod', 220, 360);
+      simShe.setElectrodeMaterial(elShe.id, 'SHE');
+      elShe.dockedVesselId = vShe.id;
+      const eSheStd = computeHalfCellPotentialV(elShe, vShe, liqShe, simShe.items);
+
+      const vZn82 = simShe.createApparatus('beaker_250', 380, 400);
+      vZn82.moles = { H2O_l: 5.55, Zn2_aq: 0.1, SO4_2_aq: 0.1 }; // [Zn2+] ~ 1 M
+      const elZn = simShe.createApparatus('electrode_rod', 380, 360);
+      simShe.setElectrodeMaterial(elZn.id, 'Zn');
+      elZn.dockedVesselId = vZn82.id;
+      const sbShe = simShe.createApparatus('salt_bridge', 300, 380);
+      const dmmShe = simShe.createApparatus('volt_ammeter', 300, 260);
+      dmmShe.posElectrodeId = elShe.id;
+      dmmShe.negElectrodeId = elZn.id;
+      dmmShe.mode = 'ammeter';
+      for (let i = 0; i < 20; i++) simShe.step(0.05);
+      const emfZnShe = dmmShe.measuredV;
+      const sheH2Out = (vShe.escapedGasMoles?.H2_g || 0) > 1e-6;
+
+      // 3) KCl Salt Bridge fouling with AgNO3 vs KNO3 clean
+      const simSb = new LabSimulation();
+      const vAg = simSb.createApparatus('beaker_250', 200, 400);
+      vAg.moles = { H2O_l: 2.77, Ag_aq: 0.05, NO3_aq: 0.05 };
+      const vRight = simSb.createApparatus('beaker_250', 350, 400);
+      vRight.moles = { H2O_l: 2.77, Cu2_aq: 0.05, SO4_2_aq: 0.05 };
+      const sbFoul = simSb.createApparatus('salt_bridge', 275, 385);
+      simSb.setSaltBridgeElectrolyte(sbFoul.id, 'KCl');
+      for (let i = 0; i < 5; i++) simSb.step(0.1);
+      const sbFoulOk = Boolean(sbFoul.fouledByAgCl) && (vAg.moles.AgCl_s || 0) > 1e-6;
+
+      // 4) Galvanic corrosion acceleration & anode suppression vs Voltmeter open-circuit
+      const simGalv = new LabSimulation();
+      const vG = simGalv.createApparatus('beaker_250', 220, 400);
+      vG.moles = { H2O_l: 2.77, H_aq: 0.1, Cl_aq: 0.1 };
+      const elGZ = simGalv.createApparatus('electrode_rod', 205, 360);
+      simGalv.setElectrodeMaterial(elGZ.id, 'Zn');
+      elGZ.dockedVesselId = vG.id;
+      const elGC = simGalv.createApparatus('electrode_rod', 235, 360);
+      simGalv.setElectrodeMaterial(elGC.id, 'Cu');
+      elGC.dockedVesselId = vG.id;
+      const dmmG = simGalv.createApparatus('volt_ammeter', 220, 250);
+      dmmG.posElectrodeId = elGC.id;
+      dmmG.negElectrodeId = elGZ.id;
+      dmmG.mode = 'ammeter';
+      const znBeforeGalv = elGZ.rodMetalMol;
+      for (let i = 0; i < 10; i++) simGalv.step(0.05);
+      const galvOk = Boolean(elGC.cathodicProtectedActive) && Boolean(elGZ.galvanicDominantActive) && elGZ.rodMetalMol < znBeforeGalv && elGC.gasBubbleType === 'H2_g';
+
+      // 5) Geometry-driven getVesselAeroProfile + Deluxe wheel + Canvas Aerodynamics render
+      const tubeV = sim82.createApparatus('test_tube_50', 550, 390);
+      tubeV.isInverted = true;
+      tubeV.headspaceGasMoles = { H2_g: 0.002 };
+      const erlenV = sim82.createApparatus('erlenmeyer_250', 680, 390);
+      erlenV.tiltDeg = 18;
+      erlenV.tiltDir = 1;
+      erlenV.tiltAngle = (18 * Math.PI) / 180;
+      erlenV.headspaceGasMoles = { CO2_g: 0.004 };
+      const aeroTube = getVesselAeroProfile(tubeV, APPARATUS.test_tube_50);
+      const aeroErl = getVesselAeroProfile(erlenV, APPARATUS.erlenmeyer_250);
+      const aeroOk = aeroTube.isInvertedEffective && aeroTube.exitDir.y > 0.9 && aeroErl.throatRatio > 1.3 && aeroErl.lowRim.y > aeroErl.highRim.y;
+
+      const cvs82 = document.createElement('canvas');
+      cvs82.width = 1000;
+      cvs82.height = 560;
+      box82.style.width = '1000px';
+      box82.style.height = '560px';
+      box82.appendChild(cvs82);
+      const wb82 = new LabWorkbenchCanvas(cvs82, sim82, new ParticleSystem(), {});
+      sim82.setOpticsMode('aerodynamics');
+      let render82Ok = true;
+      try {
+        wb82.renderWorldScene(cvs82.getContext('2d'), 1.2);
+      } catch {
+        render82Ok = false;
+      }
+      const bur82 = sim82.createApparatus('burette_50', 780, 320);
+      const burCtrlOk = wb82.handleCanvasWheel({ x: bur82.x, y: bur82.y }, -120, false, true) && (bur82.valveRateMlS || 0) >= 0.05;
+      const tlc82 = sim82.createApparatus('tlc_plate', 840, 380);
+      tlc82.spots = [{ id: 'Benzene', rf: 0.5 }];
+      const tlcGuardOk = wb82.handleCanvasWheel({ x: tlc82.x, y: tlc82.y }, 120, false, false) === false && tlc82.spots.length === 1;
+      document.body.removeChild(box82);
+
+      const sheOk = Math.abs(eSheStd) < 0.02 && emfZnShe > 0.55 && sheH2Out;
+      const matsOk = Boolean(ELECTRODE_MATERIALS.Pt && ELECTRODE_MATERIALS.SHE && ELECTRODE_MATERIALS.Ni && ELECTRODE_MATERIALS.Pb && ELECTRODE_MATERIALS.Mg && SALT_BRIDGE_ELECTROLYTES.KNO3 && SALT_BRIDGE_ELECTROLYTES.KCl);
+
+      assert(
+        'Prompt 82 invariants: 2-col Inspector grid & .col-span-2, Deluxe wheel, Gas Syringe table, SHE + 11 electrode materials + Galvanic override, KCl vs KNO3 salt bridge, aero geometry & render',
+        cssColSpanOk && gridOk && sbLiveOk && syrTableOk && sheOk && matsOk && sbFoulOk && galvOk && aeroOk && render82Ok && burCtrlOk && tlcGuardOk,
+        `css=${cssColSpanOk}, grid=${gridOk}, sbLive=${sbLiveOk}, syrTbl=${syrTableOk}, she=${sheOk}(E0=${eSheStd.toFixed(3)},emf=${emfZnShe.toFixed(2)}), mats=${matsOk}, sbFoul=${sbFoulOk}, galv=${galvOk}, aero=${aeroOk}, rnd=${render82Ok}, wheel=${burCtrlOk && tlcGuardOk}`
       );
     }
 

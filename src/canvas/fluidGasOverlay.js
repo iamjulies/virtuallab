@@ -1,9 +1,11 @@
 import { APPARATUS } from '../data/apparatus.js';
 import { CONSTANTS } from '../data/constants.js';
 import { getGasRelativeAirDensity } from '../data/species.js';
+import { computeLiquidVolumeL } from '../engine/equilibrium.js';
+import { computeVesselFluidGeometry, getVesselAeroProfile, traceVesselInteriorClip, traceVesselPath } from './equipmentRenderer.js';
 
-const SIM_W = 256;
-const SIM_H = 144;
+const SIM_W = 320;
+const SIM_H = 180;
 const BENCH_LOGICAL_W = 1000;
 const BENCH_LOGICAL_H = 560;
 const BENCH_FLOOR_Y = 482;
@@ -49,6 +51,13 @@ uniform float uDt;
 uniform float uCurlAmp;
 uniform vec2 uTexel;
 out vec4 fragColor;
+float sampleCurl(vec2 uv) {
+  vec2 vL = texture(uVel, uv - vec2(uTexel.x, 0.0)).xy;
+  vec2 vR = texture(uVel, uv + vec2(uTexel.x, 0.0)).xy;
+  vec2 vB = texture(uVel, uv - vec2(0.0, uTexel.y)).xy;
+  vec2 vT = texture(uVel, uv + vec2(0.0, uTexel.y)).xy;
+  return 0.5 * ((vR.y - vL.y) - (vT.x - vB.x));
+}
 void main() {
   if (texture(uObs, vUv).r > 0.5) {
     fragColor = vec4(0.0);
@@ -56,15 +65,28 @@ void main() {
   }
   vec2 vel = texture(uVel, vUv).xy;
   vec4 tb = texture(uTempBuoy, vUv);
-  float tempDelta = tb.r;   // Normalized T - T_env
-  float heavyForce = tb.g;  // Positive -> heavy (d > 1, sinks -Y); Negative -> light (d < 1, rises +Y)
-  float fy = tempDelta * 0.85 - heavyForce * 0.92;
-  // Subtle micro-vorticity / thermal shimmer along gradients
+  float tempDelta = tb.r;
+  float heavyForce = tb.g;
+  float fy = tempDelta * 0.90 - heavyForce * 0.96;
   float tL = texture(uTempBuoy, vUv - vec2(uTexel.x, 0.0)).g + texture(uTempBuoy, vUv - vec2(uTexel.x, 0.0)).r;
   float tR = texture(uTempBuoy, vUv + vec2(uTexel.x, 0.0)).g + texture(uTempBuoy, vUv + vec2(uTexel.x, 0.0)).r;
   float fx = (tL - tR) * uCurlAmp;
+
+  // Lightweight vorticity confinement to restore crisp plume swirl edges
+  float cL = abs(sampleCurl(vUv - vec2(uTexel.x, 0.0)));
+  float cR = abs(sampleCurl(vUv + vec2(uTexel.x, 0.0)));
+  float cB = abs(sampleCurl(vUv - vec2(0.0, uTexel.y)));
+  float cT = abs(sampleCurl(vUv + vec2(0.0, uTexel.y)));
+  vec2 grad = 0.5 * vec2(cR - cL, cT - cB);
+  float gLen = length(grad);
+  if (gLen > 1e-4) {
+    vec2 nGrad = grad / gLen;
+    float wC = sampleCurl(vUv);
+    vec2 vortForce = vec2(nGrad.y, -nGrad.x) * wC * 0.24;
+    vel += vortForce * uDt * 18.0;
+  }
+
   vel += vec2(fx, fy) * uDt;
-  // Clamp max normalized velocity for CFL stability
   float spd = length(vel);
   if (spd > 0.85) vel = (vel / spd) * 0.85;
   fragColor = vec4(vel, 0.0, 1.0);
@@ -309,8 +331,8 @@ export class FluidGasOverlay {
     if (typeof document === 'undefined') return;
     try {
       const c = document.createElement('canvas');
-      c.width = 512;
-      c.height = 288;
+      c.width = 640;
+      c.height = 360;
       const gl = c.getContext('webgl2', { alpha: true, premultipliedAlpha: true, antialias: false });
       if (!gl) return;
       const extFloat = gl.getExtension('EXT_color_buffer_float');
@@ -390,46 +412,58 @@ export class FluidGasOverlay {
     let sig = '';
     for (const it of items) {
       if (it.kind === 'vessel' || it.kind === 'rubber_stopper') {
-        sig += `${it.id}:${Math.round(it.x)},${Math.round(it.y)},${Math.round(it.tiltDeg || 0)},${it.isInverted ? 1 : 0},${it.isStoppered ? 1 : 0},${it.lidState || ''};`;
+        const liqQ = it.kind === 'vessel' ? Math.round(computeLiquidVolumeL(it.moles || {}, it.tempK || 298.15) * 2000) : 0;
+        sig += `${it.id}:${Math.round(it.x)},${Math.round(it.y)},${Math.round(it.tiltDeg || 0)},${it.isInverted ? 1 : 0},${it.isStoppered ? 1 : 0},${it.lidState || ''},${liqQ};`;
       }
     }
     if (sig === this._obsSig) return;
     const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    // Throttle dynamic obstacle canvas rebuild & WebGL texture upload during dragging to ~13 Hz
     if (this._obsSig && nowMs - this._lastObsMs < 75) return;
     this._obsSig = sig;
     this._lastObsMs = nowMs;
 
     octx.clearRect(0, 0, SIM_W, SIM_H);
     octx.fillStyle = '#ff0000';
-    // Bench floor solid boundary (map logical y down -> canvas top, note WebGL flips Y via UNPACK_FLIP_Y_WEBGL)
     const floorY = Math.floor(BENCH_FLOOR_Y * sy);
     octx.fillRect(0, floorY, SIM_W, SIM_H - floorY);
 
     for (const v of items) {
       if (v.kind !== 'vessel' || v.isShattered) continue;
       const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
-      const w = spec.width * sx;
-      const h = spec.height * sy;
-      const cx = v.x * sx;
-      const cy = v.y * sy;
-      const tilt = ((v.tiltDir < 0 ? -1 : 1) * (v.tiltDeg || 0) * Math.PI) / 180;
+      const aero = getVesselAeroProfile(v, spec);
+      const effRad = (v.tiltAngle || 0) + (v.landingTilt || 0);
       octx.save();
-      octx.translate(cx, cy);
-      octx.rotate(tilt);
+      octx.scale(sx, sy);
+      octx.translate(v.x, v.y);
+      octx.rotate(effRad);
       if (v.isInverted) octx.scale(1, -1);
-      octx.lineWidth = 2.0;
+
+      // Rasterize true VesselGeometry curve with crisp ~1.25-texel wall so narrow necks stay open
+      octx.lineWidth = Math.max(3.6, 1.32 / Math.min(sx, sy));
+      octx.lineJoin = 'round';
+      octx.lineCap = 'round';
       octx.strokeStyle = '#ff0000';
-      // Draw U-shaped glassware walls (left wall, bottom floor, right wall), leaving open mouth clear!
-      octx.beginPath();
-      octx.moveTo(-w * 0.45, -h * 0.48);
-      octx.lineTo(-w * 0.48, h * 0.48);
-      octx.lineTo(w * 0.48, h * 0.48);
-      octx.lineTo(w * 0.45, -h * 0.48);
+      traceVesselPath(octx, spec, 0, 0, v.softenSagFrac || 0);
       octx.stroke();
-      // If stoppered or closed lid, seal the mouth in the fluid obstacle mask
+
+      // Rasterize current liquid body inside interior clip so gas circulates strictly in headspace above liquid
+      const liqMl = computeLiquidVolumeL(v.moles || {}, v.tempK || 298.15) * 1000;
+      if (liqMl > 0.25 && spec.geometry && !spec.isHorizontalTube && !spec.isUTube) {
+        const fg = computeVesselFluidGeometry(spec, 0, liqMl);
+        const surfY = fg.surfaceY;
+        const botY = fg.bottom + 4;
+        if (botY > surfY + 1) {
+          octx.save();
+          traceVesselInteriorClip(octx, spec, 0, 0, v.softenSagFrac || 0);
+          octx.clip();
+          octx.fillRect(-spec.width, surfY, spec.width * 2, botY - surfY);
+          octx.restore();
+        }
+      }
+
+      // If stoppered or closed lid, seal the true geometry mouth in obstacle mask
       if (v.isStoppered || (spec.hasLid && v.lidState === 'closed')) {
-        octx.fillRect(-w * 0.44, -h * 0.50, w * 0.88, 2.6);
+        octx.fillRect(-aero.mouthHalfPx - 2, aero.topLocalY - 2, aero.mouthHalfPx * 2 + 4, 4.5);
       }
       octx.restore();
     }
@@ -500,6 +534,17 @@ export class FluidGasOverlay {
     const burners = [];
     const heatVessels = [];
     const plumeVessels = [];
+    const electrodeEmitters = [];
+
+    // Identify uncollected bubbling electrodes so their open-air plumes spawn at el.x rather than host v.x
+    const electrodesByVessel = new Map();
+    for (const it of items) {
+      if (it.kind === 'electrode' && it.dockedVesselId) {
+        if (!electrodesByVessel.has(it.dockedVesselId)) electrodesByVessel.set(it.dockedVesselId, []);
+        electrodesByVessel.get(it.dockedVesselId).push(it);
+      }
+    }
+
     for (const it of items) {
       if (it.kind === 'burner' && (it.powerW || 0) > 0) {
         burners.push(it);
@@ -513,6 +558,33 @@ export class FluidGasOverlay {
       const isSealedStopper = Boolean(it.isStoppered && (it.stopperMode === 'solid' || hasTubing));
       const isOneHoleVent = Boolean(it.isStoppered && it.stopperMode !== 'solid' && !hasTubing);
 
+      // Collect independent open electrode gas plumes inside unstoppered vessels
+      const vesselEls = electrodesByVessel.get(it.id) || [];
+      const activeOpenEls = [];
+      let hasAnyElectrodeRate = 0;
+      if (!isSealedStopper && !it.isStoppered) {
+        for (const el of vesselEls) {
+          if (!el.gasBubbleType || (el.gasBubbleRate || 0) <= 1e-7) continue;
+          const mountedTube = items.find((tIt) => tIt.kind === 'vessel' && tIt.mountedOverElectrodeId === el.id && !tIt.isShattered);
+          if (el.gasTargetId || mountedTube) continue;
+          const elRate = el.gasBubbleRate || 0;
+          hasAnyElectrodeRate += elRate;
+          activeOpenEls.push(el);
+          const rgb = GAS_COLOR_MAP[el.gasBubbleType] || [0.85, 0.92, 0.98];
+          const aero = getVesselAeroProfile(it, spec);
+          const emitY = aero.mouthY - 2;
+          electrodeEmitters.push({
+            el,
+            gasId: el.gasBubbleType,
+            rgb,
+            rate: elRate,
+            x: el.x,
+            y: emitY,
+            relD: getGasRelativeAirDensity(el.gasBubbleType),
+          });
+        }
+      }
+
       let sumColor = [0, 0, 0];
       let totalVisMol = 0;
       let weightedRelD = 0;
@@ -522,7 +594,8 @@ export class FluidGasOverlay {
         const mRate = (rateMap[gId] || 0) * 0.24;
         const weight = mHead + mRate;
         if (weight <= 1e-6) continue;
-        // Tint subtle clear gases lightly while vibrant colored gases (NO2, Br2, I2, Cl2) glow strongly
+        // Avoid double-emitting at vessel center if open electrodes already account for the vessel's gas evolution
+        if (activeOpenEls.some((el) => el.gasBubbleType === gId) && mHead <= 1e-6) continue;
         const isColored = gId === 'NO2_g' || gId === 'Br2_g' || gId === 'I2_g' || gId === 'Cl2_g';
         const visScale = isColored
           ? 220
@@ -545,16 +618,14 @@ export class FluidGasOverlay {
         heatVessels.push({ it, dTNorm });
       }
 
-      // Sealed stoppered vessels NEVER release an external gas plume through the cork
       if (isSealedStopper) continue;
 
-      // In Thermal FLIR mode, even colorless escaping hot gases (e.g. 51°C HCl(g) or H2O(g)) create a hot plume
       const hasThermalGasOut = opticsMode === 'thermal' && dTNorm > 0.05 && totalVisMol > 0.002;
       if (totalVisMol > 0.015 || hasThermalGasOut) {
         plumeVessels.push({ it, spec, sumColor, totalVisMol, weightedRelD, dTNorm, isOneHoleVent, hasThermalGasOut });
       }
     }
-    return { burners, heatVessels, plumeVessels };
+    return { burners, heatVessels, plumeVessels, electrodeEmitters };
   }
 
   stepAndRender(sim, dtRaw, isDark) {
@@ -565,8 +636,8 @@ export class FluidGasOverlay {
     const envT = sim.environment?.tempK || CONSTANTS.T_STD_K;
     const opticsMode = sim.environment?.opticsMode || 'normal';
 
-    const { burners, heatVessels, plumeVessels } = this._collectEmitters(items, envT, opticsMode);
-    const hasActiveEmitter = burners.length > 0 || heatVessels.length > 0 || plumeVessels.length > 0;
+    const { burners, heatVessels, plumeVessels, electrodeEmitters } = this._collectEmitters(items, envT, opticsMode);
+    const hasActiveEmitter = burners.length > 0 || heatVessels.length > 0 || plumeVessels.length > 0 || electrodeEmitters.length > 0;
 
     if (!hasActiveEmitter) {
       if (this.isSleeping) return;
@@ -593,29 +664,48 @@ export class FluidGasOverlay {
 
     this._updateObstacles(items);
 
-    // 1. Splat emitters from open/inverted/sealed vessels and burners
+    // 1. Splat emitters from open/inverted/sealed vessels, electrodes and burners
     for (const it of burners) {
       const bSpec = APPARATUS[it.typeId] || APPARATUS.burner;
       const uvX = it.x / BENCH_LOGICAL_W;
       const nozzleY = it.typeId === 'bunsen_burner' ? it.y + bSpec.height / 2 - 68 : it.y + bSpec.height / 2 - 48;
       const uvY = 1.0 - nozzleY / BENCH_LOGICAL_H;
       const normT = Math.min(1.0, (it.powerW / 1400) * 0.85);
-      this._splat(this.tempBuoy, uvX, uvY, 0.0012, [normT * simDt * 6.0, 0, 0, 0], 1);
-      this._splat(this.vel, uvX, uvY, 0.0012, [0, 0.25 * simDt * 6.0, 0, 0], 1);
+      this._splat(this.tempBuoy, uvX, uvY, 0.0011, [normT * simDt * 6.0, 0, 0, 0], 1);
+      this._splat(this.vel, uvX, uvY, 0.0011, [0, 0.25 * simDt * 6.0, 0, 0], 1);
     }
 
     for (const { it, dTNorm } of heatVessels) {
       const cx = it.x / BENCH_LOGICAL_W;
       const cy = 1.0 - it.y / BENCH_LOGICAL_H;
-      this._splat(this.tempBuoy, cx, cy, 0.0020, [Math.min(0.85, dTNorm) * simDt * 4.2, 0, 0, 0], 1);
+      this._splat(this.tempBuoy, cx, cy, 0.0018, [Math.min(0.85, dTNorm) * simDt * 4.2, 0, 0, 0], 1);
+    }
+
+    for (const em of electrodeEmitters) {
+      const uvX = em.x / BENCH_LOGICAL_W;
+      const uvY = 1.0 - em.y / BENCH_LOGICAL_H;
+      const str = Math.min(0.32, Math.max(0.08, em.rate * 420) * simDt * 2.6);
+      const isHeavy = em.relD >= 1.0;
+      const buoyDrive = isHeavy ? Math.min(1.6, (em.relD - 1.0) * 1.1) : -Math.min(1.8, (1.0 - em.relD) * 1.9);
+      this._splat(this.dye, uvX, uvY, 0.0009, [em.rgb[0] * str, em.rgb[1] * str, em.rgb[2] * str, str], 1);
+      this._splat(this.tempBuoy, uvX, uvY, 0.0011, [0, buoyDrive * simDt * 4.5, 0, 0], 1);
+      this._splat(this.vel, uvX, uvY, 0.0009, [0, (isHeavy ? -0.18 : 0.34) * simDt * 5.0, 0, 0], 1);
     }
 
     for (const { it, spec, sumColor, totalVisMol, weightedRelD, dTNorm, isOneHoleVent, hasThermalGasOut } of plumeVessels) {
       const avgRelD = totalVisMol > 1e-5 ? weightedRelD / totalVisMol : 1.0;
-      const mouthOffY = it.isInverted ? spec.height * 0.44 : -spec.height * 0.36;
-      const tilt = ((it.tiltDir < 0 ? -1 : 1) * (it.tiltDeg || 0) * Math.PI) / 180;
-      const mx = it.x - Math.sin(tilt) * mouthOffY;
-      const my = it.y + Math.cos(tilt) * mouthOffY;
+      const aero = getVesselAeroProfile(it, spec);
+      const isHeavy = avgRelD >= 1.0 && dTNorm < 0.35;
+      const emitPt =
+        aero.tiltDegEff >= 5 && !aero.isInvertedEffective
+          ? isHeavy
+            ? aero.lowRim
+            : aero.highRim
+          : { x: aero.mouthX, y: aero.mouthY };
+      // Push emission slightly past rim/mouth outside obstacle stroke so Venturi jet shoots unobstructed
+      const nOffset = aero.isInvertedEffective ? 3.5 : 2.5;
+      const mx = emitPt.x + aero.exitDir.x * nOffset;
+      const my = emitPt.y + aero.exitDir.y * nOffset;
       const uvX = mx / BENCH_LOGICAL_W;
       const uvY = 1.0 - my / BENCH_LOGICAL_H;
 
@@ -625,7 +715,19 @@ export class FluidGasOverlay {
       const cG = totalVisMol > 1e-5 ? sumColor[1] / totalVisMol : 0.55;
       const cB = totalVisMol > 1e-5 ? sumColor[2] / totalVisMol : 0.25;
       const strength = Math.min(0.36, effVis * simDt * 2.5) * ventScale;
-      this._splat(this.dye, uvX, uvY, 0.0016, [cR * strength, cG * strength, cB * strength, strength], 1);
+      const splatRadius = Math.max(0.0008, Math.min(0.0020, 0.0008 + (aero.mouthHalfPx / 32) * 0.0009));
+      this._splat(this.dye, uvX, uvY, splatRadius, [cR * strength, cG * strength, cB * strength, strength], 1);
+
+      // Venturi exit velocity jet proportional to gas flux & throat constriction ratio (WebGL +Y = canvas -Y)
+      const jetMag = Math.min(0.55, (0.14 + 0.16 * aero.throatRatio) * Math.max(0.3, effVis)) * ventScale;
+      this._splat(
+        this.vel,
+        uvX,
+        uvY,
+        splatRadius * 1.15,
+        [aero.exitDir.x * jetMag * simDt * 6.0, -aero.exitDir.y * jetMag * simDt * 6.0, 0, 0],
+        1
+      );
 
       // Buoyancy weight: heavy gas > 1 sinks (-Y), light or thermally hot gas rises (+Y)
       const buoyDrive = avgRelD >= 1.0 ? Math.min(1.8, (avgRelD - 1.0) * 1.15) : -Math.min(1.6, (1.0 - avgRelD) * 1.8);
@@ -634,7 +736,7 @@ export class FluidGasOverlay {
         this.tempBuoy,
         uvX,
         uvY,
-        hasThermalGasOut ? 0.0024 : 0.0017,
+        hasThermalGasOut ? 0.0022 : splatRadius * 1.2,
         [thermalDrive * simDt * 3.8 * ventScale, (buoyDrive - dTNorm * 0.9) * simDt * 4.5 * ventScale, 0, 0],
         1
       );

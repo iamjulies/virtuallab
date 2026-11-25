@@ -24,6 +24,7 @@ import {
   computeSyringeDischargeArc,
   computeSyringeLiquidVolumeMl,
   computeTubingGeometry,
+  samplePolylineAt,
 } from '../engine/gasNetwork.js';
 import {
   checkFlameLoopInteractions,
@@ -41,6 +42,7 @@ import {
   beginCanvasLabelFrame,
   flushCanvasLabelFrame,
   formatCanvasText,
+  getVesselAeroProfile,
   renderBurner,
   renderGasSyringe,
   renderPipette,
@@ -50,6 +52,7 @@ import {
   renderTubingConnections,
   renderVessel,
   setCurrentLabelItemId,
+  traceVesselInteriorClip,
 } from './vesselRenderer.js';
 import {
   renderBurette,
@@ -634,7 +637,7 @@ export class LabWorkbenchCanvas {
     this._wheelTiltVesselId = null;
   }
 
-  handleCanvasWheel(pt, deltaY, shiftKey = false) { return handleCanvasWheelImpl(this, pt, deltaY, shiftKey); }
+  handleCanvasWheel(pt, deltaY, shiftKey = false, ctrlKey = false) { return handleCanvasWheelImpl(this, pt, deltaY, shiftKey, ctrlKey); }
 
   findVesselAt(lx, ly, excludeId = null, includeTools = false) {
     if (includeTools) {
@@ -1413,31 +1416,66 @@ export class LabWorkbenchCanvas {
       ctx.restore();
     };
 
-    const drawFlowStreamline = (pts, color, width = 1.4, dashOffset = 0, label = '', arrowSize = 4.0) => {
+    const sampleSplinePt = (pts, u) => {
+      if (pts.length === 0) return { x: 0, y: 0, ang: 0 };
+      if (pts.length === 1) return { x: pts[0].x, y: pts[0].y, ang: 0 };
+      const scaled = Math.max(0, Math.min(1, u)) * (pts.length - 1);
+      const i = Math.min(pts.length - 2, Math.floor(scaled));
+      const f = scaled - i;
+      const pA = pts[i];
+      const pB = pts[i + 1];
+      return {
+        x: pA.x + (pB.x - pA.x) * f,
+        y: pA.y + (pB.y - pA.y) * f,
+        ang: Math.atan2(pB.y - pA.y, pB.x - pA.x),
+      };
+    };
+
+    const drawFlowStreamline = (pts, color, width = 1.5, phaseShift = 0, label = '', arrowSize = 4.2, glowCore = null) => {
       if (pts.length < 2) return;
       ctx.save();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = width;
+      const first = pts[0];
+      const last = pts[pts.length - 1];
+      const prev = pts[pts.length - 2];
+
+      // Smooth gradient flow ribbon (fades gently at tail instead of jagged raw dashes)
+      const grad = ctx.createLinearGradient(first.x, first.y, last.x, last.y);
+      grad.addColorStop(0, glowCore || color);
+      grad.addColorStop(0.7, color);
+      grad.addColorStop(1, 'rgba(255,255,255,0.12)');
+      ctx.strokeStyle = grad;
+      ctx.globalAlpha = 0.72;
+      ctx.lineWidth = width * 1.45;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.setLineDash([7, 6]);
-      ctx.lineDashOffset = dashOffset;
       ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
+      ctx.moveTo(first.x, first.y);
       for (let i = 1; i < pts.length - 1; i++) {
         const mx = (pts[i].x + pts[i + 1].x) * 0.5;
         const my = (pts[i].y + pts[i + 1].y) * 0.5;
         ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
       }
-      const last = pts[pts.length - 1];
-      const prev = pts[pts.length - 2];
       ctx.lineTo(last.x, last.y);
       ctx.stroke();
-      ctx.setLineDash([]);
+
+      // Continuous animated micro-flow tracer beads gliding smoothly along streamline
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle = glowCore || color;
+      const beadCount = 3;
+      for (let b = 0; b < beadCount; b++) {
+        const u = ((timeNow * 0.65 + phaseShift * 0.13 + b / beadCount) % 1 + 1) % 1;
+        const bp = sampleSplinePt(pts, u);
+        const r = Math.max(1.2, width * 0.95) * (0.65 + 0.55 * Math.sin(u * Math.PI));
+        ctx.beginPath();
+        ctx.arc(bp.x, bp.y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
       const ang = Math.atan2(last.y - prev.y, last.x - prev.x);
       drawArrowHead(last.x, last.y, ang, color, arrowSize);
       if (label) {
         const mid = pts[Math.floor(pts.length * 0.5)];
+        ctx.globalAlpha = 0.96;
         ctx.font = 'bold 9.5px ui-monospace, monospace';
         ctx.fillStyle = color;
         ctx.textAlign = 'center';
@@ -1473,7 +1511,7 @@ export class LabWorkbenchCanvas {
         PH3_g: { rgba: 'rgba(234, 179, 8, 0.30)', core: 'rgba(254, 240, 138, 0.68)', stroke: '#eab308', formula: 'PH₃ (M=34 ↓)' },
         P4_g: { rgba: 'rgba(245, 158, 11, 0.28)', core: 'rgba(254, 243, 199, 0.68)', stroke: '#f59e0b', formula: 'P₄(g) (M=124 ↓)' },
         CrO2Cl2_g: { rgba: 'rgba(185, 28, 28, 0.42)', core: 'rgba(220, 38, 38, 0.78)', stroke: '#dc2626', formula: 'CrO₂Cl₂ (M=155 ↓)' },
-        C2H4_g: { rgba: 'rgba(56, 189, 248, 0.26)', core: 'rgba(186, 230, 253, 0.62)', stroke: '#38bdf8', formula: 'C₂H₄ (M=28 ↓)' },
+        C2H4_g: { rgba: 'rgba(56, 189, 248, 0.26)', core: 'rgba(186, 230, 253, 0.62)', stroke: '#38bdf8', formula: 'C₂H₄ (M=28 ↑)' },
         CH3COOH_g: { rgba: 'rgba(148, 163, 184, 0.28)', core: 'rgba(241, 245, 249, 0.64)', stroke: '#cbd5e1', formula: 'CH₃COOH (M=60 ↓)' },
       };
       const getGasPal = (spId) => {
@@ -1492,198 +1530,404 @@ export class LabWorkbenchCanvas {
       ctx.fillStyle = this.isDark ? 'rgba(2, 6, 23, 0.26)' : 'rgba(15, 23, 42, 0.14)';
       ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
 
+      const scrollPhase = -(timeNow * 40);
       let hasActiveFlow = false;
-      for (const v of this.sim.items) {
-        if (v.kind !== 'vessel' || v.isShattered) continue;
-        const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
-        const entries = Object.entries({ ...(v.headspaceGasMoles || {}), ...(v.lastGasRateMap || {}) })
-          .map(([g]) => [g, (v.headspaceGasMoles?.[g] || 0) + (v.lastGasRateMap?.[g] || 0) * 0.45])
-          .filter(([g, val]) => g !== 'H2O_g' && val > 1e-6);
-        if (entries.length === 0) continue;
-        hasActiveFlow = true;
-        entries.sort((a, b) => b[1] - a[1]);
-        const [domGas] = entries[0];
-        const pal = getGasPal(domGas);
-        const molarMass = SPECIES[domGas]?.molarMass || 30;
-        const isHeavy = molarMass >= 29;
-        const dirSign = v.tiltDir < 0 ? -1 : 1;
-        const effRad = (v.tiltAngle || 0) + (v.landingTilt || 0);
-        const rimX = v.x - Math.sin(effRad) * (-spec.height * 0.44);
-        const rimY = v.y + Math.cos(effRad) * (-spec.height * 0.44);
-        const scrollPhase = -(timeNow * 40);
-        const hasOutTube = Boolean(v.connectedTargetId || v.connectedSyringeId || v.connectedFromId);
-        const isSealedStopper = Boolean(v.isStoppered && (v.stopperMode === 'solid' || hasOutTube));
-        const isOneHoleVent = Boolean(v.isStoppered && v.stopperMode !== 'solid' && !hasOutTube);
 
-        if (isHeavy && (v.tiltDeg || 0) >= 12 && !v.isStoppered) {
-          const spreadG = ctx.createLinearGradient(rimX, rimY, rimX + dirSign * 44, BENCH_FLOOR_Y);
-          spreadG.addColorStop(0, pal.core);
-          spreadG.addColorStop(0.65, pal.rgba);
-          spreadG.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = spreadG;
-          ctx.beginPath();
-          ctx.moveTo(rimX - 10, rimY);
-          ctx.lineTo(rimX + 12, rimY);
-          ctx.bezierCurveTo(rimX + dirSign * 44, rimY + 38, rimX + dirSign * 78, BENCH_FLOOR_Y - 22, rimX + dirSign * 140, BENCH_FLOOR_Y);
-          ctx.lineTo(rimX - dirSign * 70, BENCH_FLOOR_Y);
-          ctx.bezierCurveTo(rimX - dirSign * 18, BENCH_FLOOR_Y - 16, rimX - 14, rimY + 35, rimX - 10, rimY);
-          ctx.closePath();
-          ctx.fill();
+      // Helper to clip strictly to the rotated/inverted vessel physical interior path
+      const clipToVesselInterior = (v, spec) => {
+        const aero = getVesselAeroProfile(v, spec);
+        ctx.save();
+        ctx.translate(v.x, v.y);
+        ctx.rotate(aero.effRad);
+        if (v.isInverted) ctx.scale(1, -1);
+        traceVesselInteriorClip(ctx, spec, 0, 0, v.softenSagFrac || 0);
+        ctx.clip();
+      };
 
-          for (let s = -3; s <= 3; s++) {
-            const u = s / 3;
-            const sway = Math.sin(timeNow * 2.2 + s * 0.9) * 3.5;
-            const pts = [
-              { x: rimX + s * 2.2, y: rimY + 2 },
-              { x: rimX + dirSign * (14 + u * 8) + sway * 0.4, y: rimY + 30 },
-              { x: rimX + dirSign * (32 + u * 26) + sway, y: Math.min(BENCH_FLOOR_Y - 16, (rimY + BENCH_FLOOR_Y) * 0.56) },
-              { x: rimX + dirSign * (46 + u * 58), y: BENCH_FLOOR_Y - 10 - Math.abs(s) * 2 },
+      // Step A: Electrodes — independent open plumes at el.x OR routed tubing streamlines along buildRigidTubePoints!
+      const electrodesByVessel = new Map();
+      for (const el of this.sim.items) {
+        if (el.kind !== 'electrode' || !el.dockedVesselId) continue;
+        if (!electrodesByVessel.has(el.dockedVesselId)) electrodesByVessel.set(el.dockedVesselId, []);
+        electrodesByVessel.get(el.dockedVesselId).push(el);
+        if (!el.gasBubbleType || (el.gasBubbleRate || 0) <= 1e-7) continue;
+
+        const mountedTube = this.sim.items.find((tIt) => tIt.kind === 'vessel' && tIt.mountedOverElectrodeId === el.id && !tIt.isShattered);
+        const pal = getGasPal(el.gasBubbleType);
+        if (el.gasTargetId && mountedTube?.id !== el.gasTargetId) {
+          const target = this.sim.getItem(el.gasTargetId);
+          if (target && !target.isShattered && !target.isBroken) {
+            hasActiveFlow = true;
+            const eH = el.renderHeight || APPARATUS.electrode_rod.height;
+            const p0 = { x: el.x, y: el.y - eH / 2 + 8 };
+            const p3 =
+              target.kind === 'gas_syringe'
+                ? (() => { const g = getSyringeGeometry(target); return { x: g.nozzleX, y: g.nozzleY }; })()
+                : getTubeDestTipPos(el, target);
+            const midY = Math.min(p0.y, p3.y) - 48;
+            const pts = buildRigidTubePoints(p0, { x: p0.x, y: midY }, { x: p3.x, y: midY }, p3, target, { archLift: 46 });
+            const sampled = [];
+            for (let s = 0; s <= 12; s++) sampled.push(samplePolylineAt(pts, s / 12));
+            drawFlowStreamline(sampled, pal.stroke, 1.8, scrollPhase, pal.formula, 4.2, pal.core);
+          }
+          continue;
+        }
+        if (mountedTube) {
+          hasActiveFlow = true;
+          continue;
+        }
+
+        // Open uncollected electrode: render vertical column centered right at el.x!
+        const hostV = this.sim.getItem(el.dockedVesselId);
+        if (hostV && !hostV.isShattered && !hostV.isStoppered) {
+          hasActiveFlow = true;
+          const hSpec = APPARATUS[hostV.typeId] || APPARATUS.beaker_250;
+          const aero = getVesselAeroProfile(hostV, hSpec);
+          const isHeavy = (SPECIES[el.gasBubbleType]?.molarMass || 30) >= 29;
+          const startY = aero.mouthY + 4;
+          if (isHeavy) {
+            // Heavy gas (e.g. Cl2) pours out near the electrode edge and cascades down onto the bench floor
+            const spillSide = el.x >= hostV.x ? 1 : -1;
+            const spillPts = [
+              { x: el.x, y: startY + 6 },
+              { x: hostV.x + spillSide * (aero.mouthHalfPx + 10), y: aero.mouthY - 6 },
+              { x: hostV.x + spillSide * (aero.bodyMaxRx + 16), y: Math.min(BENCH_FLOOR_Y - 8, hostV.y + hSpec.height * 0.44) },
             ];
-            drawFlowStreamline(pts, pal.stroke, s === 0 ? 1.6 : 1.2, scrollPhase + s * 6, s === 0 ? pal.formula : '', 3.8);
-          }
-        } else if (isHeavy) {
-          // Rigid-wall gas containment + dense internal streamlines inside gradient plume & rim spillover jets
-          const topMouthY = v.y - spec.height * 0.45;
-          const mouthSpan = Math.max(10, spec.neckRadius || spec.width * 0.34);
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(v.x - spec.width * 0.44, topMouthY, spec.width * 0.88, spec.height * 0.88);
-          ctx.clip();
-          const plumeY = v.y + spec.height * 0.12;
-          const pg = ctx.createRadialGradient(v.x, plumeY, 4, v.x, plumeY, spec.width * 0.42);
-          pg.addColorStop(0, pal.core);
-          pg.addColorStop(0.65, pal.rgba);
-          pg.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = pg;
-          ctx.beginPath();
-          ctx.ellipse(v.x, plumeY, spec.width * 0.38, spec.height * 0.36, 0, 0, Math.PI * 2);
-          ctx.fill();
-          for (let k = -2; k <= 2; k++) {
-            const xOff = k * (spec.width * 0.12);
-            const sw = Math.sin(timeNow * 2.4 + k) * 3;
-            drawFlowStreamline(
-              [
-                { x: v.x + xOff * 0.55, y: topMouthY + spec.height * 0.14 },
-                { x: v.x + xOff + sw, y: plumeY },
-                { x: v.x + xOff * 1.15, y: v.y + spec.height * 0.36 },
-              ],
-              pal.stroke,
-              1.15,
-              scrollPhase + k * 5,
-              '',
-              3.4
-            );
-          }
-          ctx.restore();
-
-          if (!v.isStoppered && !v.isInverted) {
-            const spillFloorY = Math.min(BENCH_FLOOR_Y - 8, v.y + spec.height * 0.42);
-            for (const side of [-1, 1]) {
-              const sideG = ctx.createLinearGradient(v.x + side * mouthSpan * 0.4, topMouthY, v.x + side * (spec.width * 0.65), spillFloorY);
-              sideG.addColorStop(0, pal.core);
-              sideG.addColorStop(0.7, pal.rgba);
-              sideG.addColorStop(1, 'rgba(0,0,0,0)');
-              ctx.fillStyle = sideG;
-              ctx.beginPath();
-              ctx.moveTo(v.x + side * (mouthSpan * 0.15), topMouthY + 4);
-              ctx.quadraticCurveTo(v.x + side * (mouthSpan + 18), topMouthY - 10, v.x + side * (spec.width * 0.64 + 14), spillFloorY);
-              ctx.lineTo(v.x + side * (spec.width * 0.46), spillFloorY);
-              ctx.quadraticCurveTo(v.x + side * (mouthSpan + 6), topMouthY + 4, v.x + side * (mouthSpan * 0.05), topMouthY + 10);
-              ctx.closePath();
-              ctx.fill();
-
-              for (let f = 0; f < 3; f++) {
-                const frac = (f - 1) * 4.5;
-                const wv = Math.sin(timeNow * 2.3 + side + f) * 2.8;
-                drawFlowStreamline(
-                  [
-                    { x: v.x + side * (mouthSpan * (0.28 + f * 0.14)), y: topMouthY + 8 },
-                    { x: v.x + side * (mouthSpan + 7 + f * 4.5), y: topMouthY - 6 + wv },
-                    { x: v.x + side * (spec.width * 0.56 + 6 + frac), y: spillFloorY - 4 },
-                  ],
-                  pal.stroke,
-                  1.25,
-                  scrollPhase + f * 6,
-                  side === 1 && f === 1 ? pal.formula : '',
-                  3.7
-                );
-              }
-            }
+            drawFlowStreamline(spillPts, pal.stroke, 1.5, scrollPhase, pal.formula, 4.0, pal.core);
           } else {
-            drawFlowStreamline(
-              [
-                { x: v.x, y: v.y - spec.height * 0.25 },
-                { x: v.x, y: v.y + spec.height * 0.22 },
-              ],
-              pal.stroke,
-              1.6,
-              scrollPhase,
-              pal.formula,
-              4.0
-            );
+            // Light gas (e.g. H2) rises crisply straight upward at el.x
+            for (let s = -1; s <= 1; s++) {
+              const pts = [
+                { x: el.x + s * 3, y: startY + 12 },
+                { x: el.x + s * 6 + Math.sin(timeNow * 2.5 + s) * 3, y: startY - 26 },
+                { x: el.x + s * 9, y: Math.max(18, startY - 82) },
+              ];
+              drawFlowStreamline(pts, pal.stroke, s === 0 ? 1.65 : 1.15, scrollPhase + s * 4, s === 0 ? pal.formula : '', 3.8, pal.core);
+            }
           }
-        } else if (isSealedStopper) {
-          // Sealed or tubed stoppered flask: trap gas circulation strictly INSIDE flask glass bounds
-          const topMouthY = v.y - spec.height * 0.42;
-          const domeY = v.y - spec.height * 0.14;
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(v.x - spec.width * 0.42, topMouthY + 6, spec.width * 0.84, spec.height * 0.82);
-          ctx.clip();
-          const inG = ctx.createRadialGradient(v.x, domeY, 4, v.x, domeY, spec.width * 0.40);
+        }
+      }
+
+      // Helper to render one gas species behavior for a vessel across all 4 physical scenarios
+      const renderSingleVesselGas = (v, spec, aero, gasId, idxInVessel, isSealedStopper, isOneHoleVent, hotBuoyant) => {
+        const pal = getGasPal(gasId);
+        const molarMass = SPECIES[gasId]?.molarMass || 30;
+        const isHeavy = molarMass >= 29 && !hotBuoyant;
+        const layerShift = idxInVessel * 7;
+
+        if (isSealedStopper) {
+          // Scenario 4: Sealed or tubed — internal recirculation clipped strictly inside exact vessel profile
+          clipToVesselInterior(v, spec);
+          const domeY = v.y - spec.height * (isHeavy ? -0.10 : 0.14);
+          const inG = ctx.createRadialGradient(v.x, domeY, 4, v.x, domeY, aero.bodyMaxRx * 0.9);
           inG.addColorStop(0, pal.core);
           inG.addColorStop(0.65, pal.rgba);
           inG.addColorStop(1, 'rgba(0,0,0,0)');
           ctx.fillStyle = inG;
-          ctx.beginPath();
-          ctx.ellipse(v.x, domeY, spec.width * 0.34, spec.height * 0.28, 0, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.fillRect(v.x - aero.bodyMaxRx - 8, v.y - spec.height, aero.bodyMaxRx * 2 + 16, spec.height * 2);
           for (let k = -1; k <= 1; k++) {
-            const xOff = k * (spec.width * 0.11);
+            const xOff = k * (aero.bodyMaxRx * 0.36);
             const sw = Math.sin(timeNow * 2.6 + k) * 3;
             drawFlowStreamline(
               [
-                { x: v.x + xOff, y: v.y + spec.height * 0.14 },
+                { x: v.x + xOff, y: v.y + spec.height * 0.16 },
                 { x: v.x + xOff * 0.7 + sw, y: domeY },
-                { x: v.x + xOff * 0.35, y: topMouthY + 14 },
+                { x: v.x + xOff * 0.35, y: aero.mouthY + (v.isInverted ? -14 : 14) },
               ],
               pal.stroke,
-              k === 0 ? 1.4 : 1.05,
-              scrollPhase + k * 5,
+              k === 0 ? 1.45 : 1.1,
+              scrollPhase + k * 5 + layerShift,
               k === 0 ? pal.formula : '',
-              3.2
+              3.2,
+              pal.core
             );
           }
           ctx.restore();
-        } else {
-          // Open mouth (or minor trickle from unplugged 1-hole stopper)
-          const ventScale = isOneHoleVent ? 0.28 : 1.0;
-          const basePlumeX = rimX;
-          const basePlumeY = rimY;
-          const domeRadius = Math.max(20, spec.width * 0.58 * ventScale);
-          const domeH = 82 * ventScale;
-          const domeG = ctx.createRadialGradient(basePlumeX, basePlumeY - 38 * ventScale, 6, basePlumeX, basePlumeY - 48 * ventScale, 102 * ventScale);
+          return;
+        }
+
+        if (aero.isInvertedEffective && !isHeavy) {
+          // Scenario 3A: Inverted vessel holding LIGHT gas (e.g. H2 / NH3 trapped in upper closed dome!)
+          clipToVesselInterior(v, spec);
+          const domeY = v.y - spec.height * 0.24;
+          const domeG = ctx.createRadialGradient(v.x, domeY, 4, v.x, domeY, aero.bodyMaxRx * 0.95);
           domeG.addColorStop(0, pal.core);
-          domeG.addColorStop(0.58, pal.rgba);
+          domeG.addColorStop(0.68, pal.rgba);
           domeG.addColorStop(1, 'rgba(0,0,0,0)');
           ctx.fillStyle = domeG;
+          ctx.fillRect(v.x - aero.bodyMaxRx - 8, v.y - spec.height, aero.bodyMaxRx * 2 + 16, spec.height * 2);
+
+          // Internal toroidal recirculation trapped near closed upper dome
+          for (const side of [-1, 1]) {
+            drawFlowStreamline(
+              [
+                { x: v.x, y: v.y - spec.height * 0.05 },
+                { x: v.x + side * aero.bodyMaxRx * 0.45, y: domeY - 6 },
+                { x: v.x + side * aero.bodyMaxRx * 0.18, y: v.y - spec.height * 0.36 },
+              ],
+              pal.stroke,
+              1.35,
+              scrollPhase + side * 4,
+              side === 1 ? pal.formula : '',
+              3.4,
+              pal.core
+            );
+          }
+          ctx.restore();
+          // Minor perimeter spillover looping upward around inverted bottom rim if bubbling vigorously
+          if (!v.isStoppered && (v.lastGasRateMap?.[gasId] || 0) > 1e-4) {
+            for (const side of [-1, 1]) {
+              const rim = side < 0 ? aero.leftRim : aero.rightRim;
+              drawFlowStreamline(
+                [
+                  { x: rim.x, y: rim.y - 2 },
+                  { x: rim.x + side * 14, y: rim.y - 16 },
+                  { x: rim.x + side * 18, y: rim.y - 44 },
+                ],
+                pal.stroke,
+                1.05,
+                scrollPhase + side * 6,
+                '',
+                3.0,
+                pal.core
+              );
+            }
+          }
+          return;
+        }
+
+        if (aero.isInvertedEffective && isHeavy) {
+          // Scenario 3B: Inverted vessel with HEAVY gas -> plunges straight downward out of downward mouth onto bench floor!
+          const startX = aero.mouthX;
+          const startY = aero.mouthY;
+          const floorY = Math.min(BENCH_FLOOR_Y - 6, startY + 95);
+          const fallG = ctx.createLinearGradient(startX, startY, startX, floorY);
+          fallG.addColorStop(0, pal.core);
+          fallG.addColorStop(0.75, pal.rgba);
+          fallG.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = fallG;
           ctx.beginPath();
-          ctx.ellipse(basePlumeX, basePlumeY - 42 * ventScale, domeRadius, domeH, 0, 0, Math.PI * 2);
+          ctx.moveTo(aero.leftRim.x, aero.leftRim.y);
+          ctx.lineTo(aero.rightRim.x, aero.rightRim.y);
+          ctx.lineTo(startX + Math.max(46, aero.mouthHalfPx * 3.2), BENCH_FLOOR_Y);
+          ctx.lineTo(startX - Math.max(46, aero.mouthHalfPx * 3.2), BENCH_FLOOR_Y);
+          ctx.closePath();
           ctx.fill();
 
-          const sLim = isOneHoleVent ? 0 : 2;
-          for (let s = -sLim; s <= sLim; s++) {
-            const u = sLim === 0 ? 0 : s / sLim;
-            const sw = Math.sin(timeNow * 2.8 + s * 1.1) * 5 * ventScale;
-            const pts = [
-              { x: basePlumeX + u * Math.min(12, spec.neckRadius || 12), y: basePlumeY + 12 },
-              { x: basePlumeX + u * (domeRadius * 0.42) + sw * 0.5, y: basePlumeY - 18 * ventScale },
-              { x: basePlumeX + u * (domeRadius * 0.65) - sw * 0.4, y: Math.max(24, basePlumeY - 62 * ventScale) },
-              { x: basePlumeX + u * (domeRadius * 0.78), y: Math.max(16, basePlumeY - 102 * ventScale + Math.abs(s) * 4) },
-            ];
-            drawFlowStreamline(pts, pal.stroke, s === 0 ? 1.65 : 1.25, scrollPhase + s * 6, s === 0 ? pal.formula : '', 3.8);
+          for (let s = -2; s <= 2; s++) {
+            const u = s / 2;
+            const sway = Math.sin(timeNow * 2.2 + s) * 3;
+            drawFlowStreamline(
+              [
+                { x: startX + u * aero.mouthHalfPx * 0.65, y: startY - 6 },
+                { x: startX + u * (aero.mouthHalfPx + 10) + sway * 0.4, y: (startY + BENCH_FLOOR_Y) * 0.52 },
+                { x: startX + u * (aero.mouthHalfPx + 42), y: BENCH_FLOOR_Y - 8 - Math.abs(s) * 2 },
+              ],
+              pal.stroke,
+              s === 0 ? 1.65 : 1.2,
+              scrollPhase + s * 5,
+              s === 0 ? pal.formula : '',
+              3.8,
+              pal.core
+            );
+          }
+          return;
+        }
+
+        if (isHeavy) {
+          // Scenario 2: Heavy gas inside upright/tilted vessel -> contoured fill + exclusive lowRim cascade when tilted or full
+          clipToVesselInterior(v, spec);
+          const plumeY = v.y + spec.height * 0.14;
+          const pg = ctx.createRadialGradient(v.x, plumeY, 4, v.x, plumeY, aero.bodyMaxRx * 1.15);
+          pg.addColorStop(0, pal.core);
+          pg.addColorStop(0.68, pal.rgba);
+          pg.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = pg;
+          ctx.fillRect(v.x - aero.bodyMaxRx - 8, v.y - spec.height, aero.bodyMaxRx * 2 + 16, spec.height * 2);
+          for (let k = -1; k <= 1; k++) {
+            const xOff = k * (aero.bodyMaxRx * 0.34);
+            const sw = Math.sin(timeNow * 2.4 + k) * 2.5;
+            drawFlowStreamline(
+              [
+                { x: aero.mouthX + xOff * 0.4, y: aero.mouthY + 14 },
+                { x: v.x + xOff + sw, y: plumeY },
+                { x: v.x + xOff * 1.1, y: v.y + spec.height * 0.34 },
+              ],
+              pal.stroke,
+              1.2,
+              scrollPhase + k * 5 + layerShift,
+              '',
+              3.3,
+              pal.core
+            );
+          }
+          ctx.restore();
+
+          if (!v.isStoppered) {
+            const spillFloorY = Math.min(BENCH_FLOOR_Y - 6, v.y + spec.height * 0.44);
+            if (aero.tiltDegEff >= 4) {
+              // Tilted: cascade cleanly exclusively over lowRim!
+              const lowRim = aero.lowRim;
+              const dirSign = lowRim.x >= v.x ? 1 : -1;
+              const spreadG = ctx.createLinearGradient(lowRim.x, lowRim.y, lowRim.x + dirSign * 44, BENCH_FLOOR_Y);
+              spreadG.addColorStop(0, pal.core);
+              spreadG.addColorStop(0.68, pal.rgba);
+              spreadG.addColorStop(1, 'rgba(0,0,0,0)');
+              ctx.fillStyle = spreadG;
+              ctx.beginPath();
+              ctx.moveTo(lowRim.x - dirSign * 6, lowRim.y);
+              ctx.lineTo(lowRim.x + dirSign * 10, lowRim.y);
+              ctx.bezierCurveTo(lowRim.x + dirSign * 42, lowRim.y + 34, lowRim.x + dirSign * 72, BENCH_FLOOR_Y - 22, lowRim.x + dirSign * 124, BENCH_FLOOR_Y);
+              ctx.lineTo(lowRim.x - dirSign * 40, BENCH_FLOOR_Y);
+              ctx.closePath();
+              ctx.fill();
+
+              for (let s = -2; s <= 2; s++) {
+                const u = s / 2;
+                const sway = Math.sin(timeNow * 2.2 + s * 0.9) * 3;
+                drawFlowStreamline(
+                  [
+                    { x: lowRim.x + u * 4, y: lowRim.y + 2 },
+                    { x: lowRim.x + dirSign * (16 + u * 8) + sway * 0.4, y: lowRim.y + 28 },
+                    { x: lowRim.x + dirSign * (34 + u * 22) + sway, y: Math.min(BENCH_FLOOR_Y - 14, (lowRim.y + BENCH_FLOOR_Y) * 0.56) },
+                    { x: lowRim.x + dirSign * (48 + u * 48), y: BENCH_FLOOR_Y - 8 - Math.abs(s) * 2 },
+                  ],
+                  pal.stroke,
+                  s === 0 ? 1.65 : 1.2,
+                  scrollPhase + s * 6 + layerShift,
+                  s === 0 ? pal.formula : '',
+                  3.8,
+                  pal.core
+                );
+              }
+            } else {
+              // Upright overflow cascade down both edges outside real rim
+              for (const side of [-1, 1]) {
+                const rim = side < 0 ? aero.leftRim : aero.rightRim;
+                const xWall = v.x + side * (aero.bodyMaxRx + 14);
+                const sideG = ctx.createLinearGradient(rim.x, rim.y, xWall, spillFloorY);
+                sideG.addColorStop(0, pal.core);
+                sideG.addColorStop(0.72, pal.rgba);
+                sideG.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = sideG;
+                ctx.beginPath();
+                ctx.moveTo(rim.x - side * 3, rim.y + 2);
+                ctx.quadraticCurveTo(xWall + side * 8, rim.y - 8, xWall + side * 12, spillFloorY);
+                ctx.lineTo(xWall - side * 10, spillFloorY);
+                ctx.quadraticCurveTo(rim.x + side * 4, rim.y + 4, rim.x - side * 3, rim.y + 8);
+                ctx.closePath();
+                ctx.fill();
+
+                for (let f = 0; f < 2; f++) {
+                  const wv = Math.sin(timeNow * 2.3 + side + f) * 2.5;
+                  drawFlowStreamline(
+                    [
+                      { x: rim.x - side * 2, y: rim.y + 6 },
+                      { x: xWall - side * (4 - f * 4), y: rim.y - 4 + wv },
+                      { x: xWall + side * (2 + f * 6), y: spillFloorY - 4 },
+                    ],
+                    pal.stroke,
+                    1.25,
+                    scrollPhase + f * 6 + layerShift,
+                    side === 1 && f === 0 ? pal.formula : '',
+                    3.6,
+                    pal.core
+                  );
+                }
+              }
+            }
+          }
+          return;
+        }
+
+        // Scenario 1: Open upright / tilted LIGHT or HOT buoyant gas -> Venturi jet along exitDir curving vertically up
+        const ventScale = isOneHoleVent ? 0.30 : 1.0;
+        const startRim = aero.tiltDegEff >= 4 ? aero.highRim : { x: aero.mouthX, y: aero.mouthY };
+        const jetLen = (24 + 12 * aero.throatRatio) * ventScale;
+        const plumeCx = startRim.x + aero.exitDir.x * (jetLen * 1.15);
+        const plumeCy = startRim.y + aero.exitDir.y * (jetLen * 1.15) - 24 * ventScale;
+        const domeRadius = Math.max(18, Math.max(aero.mouthHalfPx * 1.8, spec.width * 0.44) * ventScale);
+        const domeH = 78 * ventScale;
+        const domeG = ctx.createRadialGradient(plumeCx, plumeCy, 4, plumeCx, plumeCy - 8 * ventScale, domeH * 1.15);
+        domeG.addColorStop(0, pal.core);
+        domeG.addColorStop(0.58, pal.rgba);
+        domeG.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = domeG;
+        ctx.beginPath();
+        ctx.ellipse(plumeCx, plumeCy, domeRadius, domeH, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        const sLim = isOneHoleVent ? 0 : 2;
+        for (let s = -sLim; s <= sLim; s++) {
+          const u = sLim === 0 ? 0 : s / sLim;
+          const sw = Math.sin(timeNow * 2.8 + s * 1.1) * 4.5 * ventScale;
+          const mSpread = u * Math.min(12, aero.mouthHalfPx * 0.8);
+          const pts = [
+            { x: startRim.x + mSpread, y: startRim.y + 8 },
+            { x: startRim.x + mSpread * 0.7 + aero.exitDir.x * jetLen * 0.65, y: startRim.y + aero.exitDir.y * jetLen * 0.65 },
+            { x: plumeCx + u * (domeRadius * 0.45) + sw * 0.5, y: plumeCy - 18 * ventScale },
+            { x: plumeCx + u * (domeRadius * 0.68), y: Math.max(16, plumeCy - 72 * ventScale + Math.abs(s) * 4) },
+          ];
+          drawFlowStreamline(pts, pal.stroke, s === 0 ? 1.65 : 1.25, scrollPhase + s * 6 + layerShift, s === 0 ? pal.formula : '', 3.8, pal.core);
+        }
+      };
+
+      // Step B: Process every vessel & optional stoppered vessel tubing streamlines
+      for (const v of this.sim.items) {
+        if (v.kind !== 'vessel' || v.isShattered) continue;
+        const spec = APPARATUS[v.typeId] || APPARATUS.beaker_250;
+        const aero = getVesselAeroProfile(v, spec);
+        const vesselEls = electrodesByVessel.get(v.id) || [];
+        const entries = Object.entries({ ...(v.headspaceGasMoles || {}), ...(v.lastGasRateMap || {}) })
+          .map(([g]) => [g, (v.headspaceGasMoles?.[g] || 0) + (v.lastGasRateMap?.[g] || 0) * 0.45])
+          .filter(([g, val]) => g !== 'H2O_g' && val > 1e-6);
+        if (entries.length === 0) continue;
+        entries.sort((a, b) => b[1] - a[1]);
+
+        const hasOutTube = Boolean(v.connectedTargetId || v.connectedSyringeId || v.connectedFromId);
+        const isSealedStopper = Boolean(v.isStoppered && (v.stopperMode === 'solid' || hasOutTube));
+        const isOneHoleVent = Boolean(v.isStoppered && v.stopperMode !== 'solid' && !hasOutTube);
+
+        // Draw colored gas streamline inside vessel delivery tubing if sending gas to another vessel/syringe
+        if (v.connectedTargetId && isSealedStopper) {
+          const dst = this.sim.getItem(v.connectedTargetId);
+          if (dst && !dst.isBroken && !dst.isShattered) {
+            const p0 = getVesselTubingPort(v);
+            const p3 =
+              dst.kind === 'gas_syringe'
+                ? (() => { const g = getSyringeGeometry(dst); return { x: g.nozzleX, y: g.nozzleY }; })()
+                : getTubeDestTipPos(v, dst);
+            const midY = Math.min(p0.y, p3.y) - 44;
+            const pts = buildRigidTubePoints(p0, { x: p0.x, y: midY }, { x: p3.x, y: midY }, p3, dst, { archLift: 44 });
+            const pal = getGasPal(entries[0][0]);
+            const sampled = [];
+            for (let s = 0; s <= 12; s++) sampled.push(samplePolylineAt(pts, s / 12));
+            drawFlowStreamline(sampled, pal.stroke, 1.75, scrollPhase, pal.formula, 4.0, pal.core);
           }
         }
+
+        // Skip gases whose active evolution is already handled independently at open electrode(s) with no bulk headspace
+        const filteredEntries = entries.filter(([g]) => {
+          const matchedEl = vesselEls.find((el) => el.gasBubbleType === g && (el.gasBubbleRate || 0) > 1e-7);
+          if (!matchedEl) return true;
+          return (v.headspaceGasMoles?.[g] || 0) > 1e-5;
+        });
+        if (filteredEntries.length === 0) continue;
+
+        hasActiveFlow = true;
+        const hotBuoyant = (v.tempK || 298.15) > 353.15;
+        // Pick Top-2 stratified gases if secondary gas is substantial & has opposite density tier
+        const topList = [filteredEntries[0]];
+        if (filteredEntries.length > 1 && filteredEntries[1][1] > filteredEntries[0][1] * 0.18) {
+          const m0 = SPECIES[filteredEntries[0][0]]?.molarMass || 30;
+          const m1 = SPECIES[filteredEntries[1][0]]?.molarMass || 30;
+          if ((m0 >= 29) !== (m1 >= 29)) {
+            topList.push(filteredEntries[1]);
+          }
+        }
+        topList.forEach(([gId], idx) => {
+          renderSingleVesselGas(v, spec, aero, gId, idx, isSealedStopper, isOneHoleVent, hotBuoyant);
+        });
       }
 
       ctx.fillStyle = 'rgba(2, 6, 23, 0.78)';

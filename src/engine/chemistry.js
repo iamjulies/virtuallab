@@ -405,8 +405,11 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
         passFactor *= aqConc < 0.02 ? 0.02 : Math.min(1.0, (aqConc - 0.015) / 0.08);
       }
     }
+    const ecOv = vessel.electrochemOverrideMap?.[rxn.solidId];
+    if (ecOv && ecOv.chemRetentionFrac === 0) return 0;
+    const ecChemMult = ecOv && Number.isFinite(ecOv.chemRetentionFrac) ? ecOv.chemRetentionFrac : 1.0;
     // Series diffusion ceiling (via getEffectiveRateConstant) handles still vs stirred boundary layer
-    return k * area * concFactor * microCellBoost * passFactor * (rxn.isHeterogeneous ? 1.0 : (vessel.stirTimer > 0 ? 2.6 : 1.0)) * iceMob * 3.5;
+    return k * area * concFactor * microCellBoost * passFactor * ecChemMult * (rxn.isHeterogeneous ? 1.0 : (vessel.stirTimer > 0 ? 2.6 : 1.0)) * iceMob * 3.5;
   }
 
   if (rxn.type === 'thermal_decomposition') {
@@ -691,6 +694,8 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     if (rxn.solidId === 'Cu_s' && ((moles.Zn_s || 0) > 1e-6 || vessel.cathodicProtectedByZn)) {
       return 0;
     }
+    const ecOvPx = vessel.electrochemOverrideMap?.[rxn.solidId];
+    if (ecOvPx && ecOvPx.chemRetentionFrac === 0) return 0;
     const cH2O2 = (moles.H2O2_aq || 0) / liquidVolL;
     const cH = (moles.H_aq || 0) / liquidVolL;
     const cCl = rxn.reactants.Cl_aq ? (moles.Cl_aq || 0) / liquidVolL : 1.0;
@@ -1952,6 +1957,14 @@ export const DRY_SALT_PAIRINGS = [
   ['Mn2_aq', 1, 'Cl_aq', 2, 'MnCl2_s', 1, false],
   ['Mn2_aq', 1, 'Br_aq', 2, 'MnBr2_s', 1, false],
   ['Mn2_aq', 1, 'I_aq', 2, 'MnI2_s', 1, false],
+  ['Ni2_aq', 1, 'SO4_2_aq', 1, 'NiSO4_s', 1, false],
+  ['Ni2_aq', 1, 'Cl_aq', 2, 'NiCl2_s', 1, false],
+  ['Ni2_aq', 1, 'NO3_aq', 2, 'NiNO3_2_s', 1, false],
+  ['Ni2_aq', 1, 'OH_aq', 2, 'NiOH2_s', 1, false],
+  ['Pb2_aq', 1, 'SO4_2_aq', 1, 'PbSO4_s', 1, false],
+  ['Pb2_aq', 1, 'Cl_aq', 2, 'PbCl2_s', 1, false],
+  ['Pb2_aq', 1, 'NO3_aq', 2, 'PbNO3_2_s', 1, false],
+  ['Pb2_aq', 1, 'OH_aq', 2, 'PbOH2_s', 1, false],
   ['H_aq', 1, 'OH_aq', 1, 'H2O_g', 1, true],
   ['H_aq', 1, 'Cl_aq', 1, 'HCl_g', 1, true],
   ['H_aq', 1, 'Br_aq', 1, 'HBr_g', 1, true],
@@ -2383,6 +2396,9 @@ function stepMetalNitrateSolver(vessel, liquidVolL, dt, activeReactions, gasProd
     const solidId = metalSpec.solidId;
     const nSolid = moles[solidId] || 0;
     if (nSolid <= 1e-10 || metalSpec.noble || !SPECIES[metalSpec.ionId]) continue;
+    const ecOvNit = vessel.electrochemOverrideMap?.[solidId];
+    if (ecOvNit && ecOvNit.chemRetentionFrac === 0) continue;
+    const ecNitMult = ecOvNit && Number.isFinite(ecOvNit.chemRetentionFrac) ? ecOvNit.chemRetentionFrac : 1.0;
     // Let aqua regia reactions handle Cu/Ag when concentrated Cl- >= 4.0 M is present
     if (cCl >= 4.0 && (solidId === 'Cu_s' || solidId === 'Ag_s')) continue;
 
@@ -2408,7 +2424,7 @@ function stepMetalNitrateSolver(vessel, liquidVolL, dt, activeReactions, gasProd
     const eaJ = solidId === 'Ag_s' ? 32000 : 28000;
     const k = baseK298 * arrheniusFactor(eaJ, T);
     const drive = Math.min(5.0, cH / 2.2) * Math.min(4.0, cNO3 / 1.8) * (0.45 + 0.55 * Math.min(1, cAcid / 1.5));
-    const rateMetal = k * area * fineBoost * Math.max(0.025, drive) * stirBoost * iceMob * 4.5;
+    const rateMetal = k * area * fineBoost * Math.max(0.025, drive) * stirBoost * iceMob * 4.5 * ecNitMult;
     const targetMetal = Math.min(nSolid, rateMetal * dt);
     if (targetMetal <= 1e-14) continue;
 

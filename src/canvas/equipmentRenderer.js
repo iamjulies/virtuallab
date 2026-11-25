@@ -400,6 +400,115 @@ export function traceVesselInteriorClip(ctx, spec, x, y, sagFrac = 0) {
   ctx.closePath();
 }
 
+/**
+ * Property/Geometry-driven aerodynamic profile extractor for ANY vessel shape.
+ * Reads directly from spec.geometry + mapProfileToCanvas and rotation/inversion state.
+ */
+export function getVesselAeroProfile(v, spec) {
+  const sp = spec || APPARATUS[v?.typeId] || APPARATUS.beaker_250;
+  const effRad = (v?.tiltAngle || 0) + (v?.landingTilt || 0);
+  const flipSign = v?.isInverted ? -1 : 1;
+  const cosR = Math.cos(effRad);
+  const sinR = Math.sin(effRad);
+  const toWorld = (lx, ly) => ({
+    x: v.x + lx * cosR - ly * flipSign * sinR,
+    y: v.y + lx * sinR + ly * flipSign * cosR,
+  });
+
+  if (sp.isHorizontalTube) {
+    const dir = v?.flippedX ? -1 : 1;
+    const hw = sp.width / 2;
+    const hh = Math.max(5, sp.height / 2 - 3);
+    const leftRim = toWorld(dir * hw, -hh);
+    const rightRim = toWorld(dir * hw, hh);
+    const mouthX = 0.5 * (leftRim.x + rightRim.x);
+    const mouthY = 0.5 * (leftRim.y + rightRim.y);
+    const exitDir = { x: dir * cosR, y: dir * sinR };
+    return {
+      mouthX,
+      mouthY,
+      leftRim,
+      rightRim,
+      lowRim: leftRim.y >= rightRim.y ? leftRim : rightRim,
+      highRim: leftRim.y <= rightRim.y ? leftRim : rightRim,
+      mouthHalfPx: hh,
+      bodyMaxRx: hw,
+      throatRatio: 1.4,
+      exitDir,
+      topLocalY: -hh,
+      bottomLocalY: hh,
+      effRad,
+      flipSign,
+      tiltDegEff: Math.abs(v?.tiltDeg || 0),
+      isInvertedEffective: Boolean(v?.isInverted) || Math.abs(v?.tiltDeg || 0) >= 135,
+    };
+  }
+
+  if (sp.isUTube) {
+    const dx = sp.limbSpacingX || 28;
+    const rIn = Math.max(4, (sp.tubeOuterR || 13) - 3);
+    const topY = -sp.height / 2 + 2;
+    const leftRim = toWorld(-dx - rIn, topY);
+    const rightRim = toWorld(dx + rIn, topY);
+    const exitDir = { x: sinR * flipSign, y: -cosR * flipSign };
+    return {
+      mouthX: 0.5 * (leftRim.x + rightRim.x),
+      mouthY: 0.5 * (leftRim.y + rightRim.y),
+      leftRim,
+      rightRim,
+      lowRim: leftRim.y >= rightRim.y ? leftRim : rightRim,
+      highRim: leftRim.y <= rightRim.y ? leftRim : rightRim,
+      mouthHalfPx: rIn,
+      bodyMaxRx: dx + rIn,
+      throatRatio: 1.8,
+      exitDir,
+      topLocalY: topY,
+      bottomLocalY: sp.height / 2 - 2,
+      effRad,
+      flipSign,
+      tiltDegEff: Math.abs(v?.tiltDeg || 0),
+      isInvertedEffective: Boolean(v?.isInverted) || Math.abs(v?.tiltDeg || 0) >= 135,
+    };
+  }
+
+  const { pts } = mapProfileToCanvas(sp, 0, 0, 0);
+  const topPt = pts[pts.length - 1];
+  const botPt = pts[0];
+  const mouthHalfPx = Math.max(4, topPt.rx || sp.neckRadius || sp.width * 0.25);
+  const bodyMaxRx = pts.reduce((acc, p) => Math.max(acc, p.rx), mouthHalfPx);
+  const throatRatio = Math.max(1.0, Math.min(4.2, bodyMaxRx / Math.max(4, mouthHalfPx)));
+  const topLocalY = topPt.cy;
+  const bottomLocalY = botPt.cy;
+  const leftRim = toWorld(-mouthHalfPx, topLocalY);
+  const rightRim = toWorld(mouthHalfPx, topLocalY);
+  const mouthX = 0.5 * (leftRim.x + rightRim.x);
+  const mouthY = 0.5 * (leftRim.y + rightRim.y);
+  const lowRim = leftRim.y >= rightRim.y ? leftRim : rightRim;
+  const highRim = leftRim.y <= rightRim.y ? leftRim : rightRim;
+  const exitDir = { x: sinR * flipSign, y: -cosR * flipSign };
+  const tiltDegEff = Math.abs(v?.tiltDeg || (effRad * 180) / Math.PI || 0);
+  const isInvertedEffective = Boolean(v?.isInverted) || tiltDegEff >= 135;
+
+  return {
+    mouthX,
+    mouthY,
+    leftRim,
+    rightRim,
+    lowRim,
+    highRim,
+    mouthHalfPx,
+    bodyMaxRx,
+    throatRatio,
+    exitDir,
+    topLocalY,
+    bottomLocalY,
+    effRad,
+    flipSign,
+    tiltDegEff,
+    isInvertedEffective,
+  };
+}
+
 export function renderScale(ctx, item, isSelected, isDark, timeNow) {
   const spec = APPARATUS.scale;
   const pal = getThemePalette(isDark);

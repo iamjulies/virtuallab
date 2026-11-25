@@ -4,7 +4,13 @@
 import { APPARATUS, getStandGeometry } from '../../data/apparatus.js';
 import { CONSTANTS, formatNumber, kelvinToCelsius } from '../../data/constants.js';
 import { GAS_DISPLAY_META, isSolidMoltenAtTemp, SPECIES, STARTER_REAGENTS } from '../../data/species.js';
-import { ELECTRODE_MATERIALS, computeVesselRedoxAndCellMetrics } from '../../engine/electrochemistry.js';
+import {
+  ELECTRODE_MATERIALS,
+  SALT_BRIDGE_ELECTROLYTES,
+  ensureElectrodeMetalMoles,
+  ensureSaltBridgeMoles,
+  computeVesselRedoxAndCellMetrics,
+} from '../../engine/electrochemistry.js';
 import {
   computeAtmospherePartialPressures,
   computeBenchTelemetry,
@@ -37,6 +43,8 @@ import { computeCaOOptimizationScore } from '../../engine/chemistry.js';
 import { renderExportActionsBarHtml } from '../../storage/reportExport.js';
 import {
   renderFlipButtonHtml,
+  renderActionGridHtml,
+  buildSyringeGasCompositionHtml,
   sumAllGasMoles,
   formatGasSummaryHtml,
   hasDisplayableSpeciesAmount,
@@ -155,7 +163,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${bathC > 25 ? '🔥' : '🧊'} ${t('eq_ice_bath')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
               <div class="text-[11px] text-muted">${APPARATUS.ice_bath?.materialSpec || ''}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           ${
             item.isBroken
@@ -202,7 +210,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between">
             <span class="text-sm font-bold">${t('eq_scale')} ${item.label}</span>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="p-3 rounded-lg bg-slate-950 text-emerald-400 font-mono text-2xl font-bold text-right" id="live-scale-readout">
             ${(item.measuredG || 0).toFixed(2)} g
@@ -237,7 +245,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">🔥 ${t(bSpec.i18nKey || 'eq_burner')} ${item.label}</div>
               ${bSpec.isoStandard ? `<div class="text-[11px] text-muted">${bSpec.isoStandard}</div>` : ''}
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           ${
             isBunsen
@@ -262,11 +270,11 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <span>${levels[0].w} W</span><span>${levels[1].w} W</span><span>${levels[2].w} W</span><span>${levels[3].w} W</span>
             </div>
           </div>
-          <div class="grid grid-cols-4 gap-1.5">
+          <div class="grid grid-cols-2 gap-1.5 pt-0.5">
             ${levels
               .map(
                 (l) => `
-              <button type="button" data-flame="${l.lvl}" data-w="${l.w}" class="flame-btn py-1.5 rounded-lg text-[11px] font-semibold border ${
+              <button type="button" data-flame="${l.lvl}" data-w="${l.w}" class="flame-btn w-full py-1.5 px-2 rounded-lg text-[11px] font-semibold border flex items-center justify-center text-center ${
                 Math.round(powerW) === l.w
                   ? 'border-orange-500 bg-orange-500/20 text-orange-400'
                   : 'border-theme bg-surface text-muted'
@@ -288,7 +296,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">🧪 ${t('eq_pipette_10')} ${item.label}</div>
               <div class="text-[11px] text-muted">${pipSpec.materialSpec} · ${pipSpec.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 shrink-0">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
@@ -331,7 +339,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             </div>
             <div class="flex items-center gap-1.5 shrink-0">
               ${renderFlipButtonHtml(item, t)}
-              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-1.5">
@@ -384,7 +392,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             </div>
             <div class="flex items-center gap-1.5 shrink-0">
               ${renderFlipButtonHtml(item, t)}
-              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
           </div>
           <div class="grid grid-cols-2 gap-2">
@@ -412,14 +420,16 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
           <div class="px-2.5 py-1.5 rounded-lg border border-sky-500/35 bg-sky-500/10 text-xs font-medium" id="live-syr-cond-state">
             ${condInfo.condenseState}
           </div>
-          <div class="text-xs text-muted flex flex-wrap gap-x-2 gap-y-0.5" id="live-syr-breakdown">
-            ${formatGasSummaryHtml(item.gasMoles)}
+          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs" id="live-syr-breakdown">
+            ${buildSyringeGasCompositionHtml(item, syrSpec, panel.sim.environment, t, condInfo)}
           </div>
           ${
             item.isBroken
               ? `<p class="text-xs text-red-400 font-medium">${t('shatteredEmptyMsg')}</p>${
                   item.clampedToId
-                    ? `<button type="button" id="ins-toggle-clamp" class="mt-1 py-1.5 px-2.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-xs font-medium text-amber-300 hover:bg-amber-500/20">${t('actionUnclampStand')}</button>`
+                    ? renderActionGridHtml([
+                        `<button type="button" id="ins-toggle-clamp" title="${t('actionUnclampStand')}" class="w-full py-1.5 px-2 rounded-lg border border-amber-500/50 bg-amber-500/10 text-xs font-medium text-amber-300 hover:bg-amber-500/20 flex items-center justify-center gap-1.5 text-center">${t('btnUnclampShort')}</button>`,
+                      ])
                     : ''
                 }`
               : `
@@ -427,20 +437,14 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <span class="text-muted">${t('syringeCatchHint')}</span>
               <span class="font-semibold truncate" id="live-syr-catch">${catchLabel}</span>
             </div>
-            <div class="grid grid-cols-2 gap-1.5">
-              <button type="button" id="ins-syringe-hold-push" class="py-1.5 px-2 rounded-lg bg-sky-600 text-white text-xs font-semibold hover:bg-sky-500 select-none">💨 ${t('syringeHoldPush')}</button>
-              <button type="button" id="ins-syringe-pump" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">💉 ${t('syringePumpTo')}</button>
-            </div>
-            <div class="flex flex-wrap gap-1.5">
-              <button type="button" id="ins-vent-syringe" class="flex-1 py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('syringeReleaseGas')}</button>
-              ${
-                stands.length > 0
-                  ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${
-                      item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')
-                    }</button>`
-                  : ''
-              }
-            </div>`
+            ${renderActionGridHtml([
+              `<button type="button" id="ins-syringe-hold-push" class="w-full py-1.5 px-2 rounded-lg bg-sky-600 text-white text-xs font-semibold hover:bg-sky-500 select-none flex items-center justify-center gap-1.5 text-center">💨 ${t('syringeHoldPush')}</button>`,
+              `<button type="button" id="ins-syringe-pump" class="w-full py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">💉 ${t('syringePumpTo')}</button>`,
+              `<button type="button" id="ins-vent-syringe" class="w-full py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t('syringeReleaseGas')}</button>`,
+              stands.length > 0
+                ? `<button type="button" id="ins-toggle-clamp" title="${t(item.clampedToId ? 'actionUnclampStand' : 'actionClampStand')}" class="w-full py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t(item.clampedToId ? 'btnUnclampShort' : 'btnClampShort')}</button>`
+                : '',
+            ])}`
           }
         </div>
       `;
@@ -455,7 +459,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t('eq_filter_funnel')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
               <div class="text-[11px] text-muted">${fSpec.materialSpec} · ${fSpec.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           ${
             item.isBroken
@@ -470,11 +474,17 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
                           .join('')
                   }
                 </div>
-                <div class="flex flex-wrap gap-1.5">
-                  ${solids.length > 0 ? `<button type="button" id="ins-solid-xfer" class="px-2.5 py-1.5 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">${t('actionTransferSolid')}</button>` : ''}
-                  ${((item.moles?.AgCl_s || 0) > 1e-7 || (item.moles?.Ag_s || 0) > 1e-7) ? `<button type="button" id="ins-funnel-mask" class="px-2.5 py-1.5 rounded-lg border ${item.uvMaskHalf ? 'border-amber-500/60 bg-amber-500/15 text-amber-300' : 'border-theme bg-surface'} text-xs font-medium hover:border-accent">${item.uvMaskHalf ? t('actionUvUnmask') : t('actionUvMaskHalf')}</button>` : ''}
-                  ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
-                </div>`
+                ${renderActionGridHtml([
+                  solids.length > 0
+                    ? `<button type="button" id="ins-solid-xfer" title="${t('actionTransferSolid')}" class="w-full px-2 py-1.5 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-1.5 text-center">${t('btnSolidXferShort')}</button>`
+                    : '',
+                  ((item.moles?.AgCl_s || 0) > 1e-7 || (item.moles?.Ag_s || 0) > 1e-7)
+                    ? `<button type="button" id="ins-funnel-mask" class="w-full px-2 py-1.5 rounded-lg border ${item.uvMaskHalf ? 'border-amber-500/60 bg-amber-500/15 text-amber-300' : 'border-theme bg-surface'} text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${item.uvMaskHalf ? t('actionUvUnmask') : t('actionUvMaskHalf')}</button>`
+                    : '',
+                  stands.length > 0
+                    ? `<button type="button" id="ins-toggle-clamp" title="${t(item.clampedToId ? 'actionUnclampStand' : 'actionClampStand')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t(item.clampedToId ? 'btnUnclampShort' : 'btnClampShort')}</button>`
+                    : '',
+                ])}`
           }
         </div>
       `;
@@ -489,7 +499,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             <div class="text-sm font-bold">${t('eq_wash_bottle')} ${item.label}</div>
             <div class="flex items-center gap-1.5 shrink-0">
               ${renderFlipButtonHtml(item, t)}
-              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface flex justify-between items-center">
@@ -520,7 +530,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             <div class="text-sm font-bold">${t('eq_liebig_condenser')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
             <div class="flex items-center gap-1.5 shrink-0">
               ${renderFlipButtonHtml(item, t)}
-              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
           </div>
           ${
@@ -591,7 +601,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t('eq_burette_50')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 shrink-0">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           ${
             item.isBroken
@@ -656,7 +666,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t('eq_separatory_funnel')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
               <div class="text-[11px] text-muted">${sfSpec?.isoStandard || ''}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 shrink-0">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           ${
             item.isBroken
@@ -745,7 +755,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             <div class="text-sm font-bold">${t('eq_splint')} ${item.label}</div>
             <div class="flex items-center gap-1.5 shrink-0">
               ${renderFlipButtonHtml(item, t)}
-              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
           </div>
           <div class="text-xs text-muted">${t('splintModeLabel')}</div>
@@ -771,7 +781,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             <div class="text-sm font-bold">${t('eq_flame_loop')} ${item.label}</div>
             <div class="flex items-center gap-1.5 shrink-0">
               ${renderFlipButtonHtml(item, t)}
-              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs font-mono flex justify-between">
@@ -796,7 +806,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             <div class="text-sm font-bold">${t(isLitmus ? 'eq_litmus_paper' : 'eq_ph_strip')} ${item.label}</div>
             <div class="flex items-center gap-1.5 shrink-0">
               ${renderFlipButtonHtml(item, t)}
-              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface flex items-center justify-between text-xs">
@@ -820,7 +830,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t('eq_ph_conductometer')} ${item.label}</div>
               <div class="text-[11px] text-muted">${APPARATUS.ph_conductometer.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="grid grid-cols-2 gap-2 p-2.5 rounded-lg border border-theme bg-slate-950 font-mono text-center">
             <div><div class="text-[10px] text-slate-400">pH</div><div class="text-lg font-bold text-emerald-400" id="live-phc-ph">${phTxt}</div></div>
@@ -834,16 +844,12 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             <canvas id="analytical-chart" width="270" height="104" class="w-full h-24 rounded border border-theme/50"></canvas>
             ${renderExportActionsBarHtml({ idPrefix: 'probe', label: t('exportImageCsvLabel') })}
           </div>
-          <div class="flex flex-wrap gap-1.5">
-            ${
-              stands.length > 0 || item.clampedToId
-                ? `<button type="button" id="ins-toggle-clamp" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t(
-                    item.clampedToId ? 'actionUnclampStand' : 'actionClampStand'
-                  )}</button>`
-                : ''
-            }
-            <button type="button" id="ins-phc-reset" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetCurve')}</button>
-          </div>
+          ${renderActionGridHtml([
+            stands.length > 0 || item.clampedToId
+              ? `<button type="button" id="ins-toggle-clamp" title="${t(item.clampedToId ? 'actionUnclampStand' : 'actionClampStand')}" class="w-full py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t(item.clampedToId ? 'btnUnclampShort' : 'btnClampShort')}</button>`
+              : '',
+            `<button type="button" id="ins-phc-reset" title="${t('actionResetCurve')}" class="w-full py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t('actionResetCurve')}</button>`,
+          ])}
         </div>
       `;
     } else if (item.kind === 'colorimeter') {
@@ -902,7 +908,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t('eq_colorimeter')} ${item.label}</div>
               <div class="text-[11px] text-muted">${APPARATUS.colorimeter.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="grid grid-cols-3 gap-1 p-1 rounded-lg border border-theme bg-surface text-[11px]">
             ${[
@@ -936,20 +942,14 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             }
             ${renderExportActionsBarHtml({ idPrefix: 'spectro', label: t('exportImageCsvLabel') })}
           </div>
-          <div class="flex flex-wrap gap-1.5">
-            ${
-              stands.length > 0 || item.clampedToId
-                ? `<button type="button" id="ins-toggle-clamp" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t(
-                    item.clampedToId ? 'actionUnclampStand' : 'actionClampStand'
-                  )}</button>`
-                : ''
-            }
-            ${
-              mode === 'uvvis_kinetics'
-                ? `<button type="button" id="ins-col-reset" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionResetCurve')}</button>`
-                : ''
-            }
-          </div>
+          ${renderActionGridHtml([
+            stands.length > 0 || item.clampedToId
+              ? `<button type="button" id="ins-toggle-clamp" title="${t(item.clampedToId ? 'actionUnclampStand' : 'actionClampStand')}" class="w-full py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t(item.clampedToId ? 'btnUnclampShort' : 'btnClampShort')}</button>`
+              : '',
+            mode === 'uvvis_kinetics'
+              ? `<button type="button" id="ins-col-reset" title="${t('actionResetCurve')}" class="w-full py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t('actionResetCurve')}</button>`
+              : '',
+          ])}
         </div>
       `;
     } else if (item.kind === 'tlc_plate') {
@@ -963,7 +963,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t('eq_tlc_plate')} ${item.label}</div>
               <div class="text-[11px] text-muted">${APPARATUS.tlc_plate.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface flex items-center justify-between">
             <span class="text-xs font-semibold text-muted">${langCode === 'en' ? 'Solvent front' : 'Mặt dung môi'}</span>
@@ -973,16 +973,12 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             ${renderTlcSpotsListHtml(spots, langCode === 'en' ? 'Dip TLC plate into an organic mixture to separate spots' : 'Nhúng bản mỏng vào cốc chứa chất hữu cơ để chạy sắc ký')}
           </div>
           ${renderExportActionsBarHtml({ idPrefix: 'tlc', label: t('exportImageCsvLabel') })}
-          <div class="flex flex-wrap gap-1.5">
-            ${
-              stands.length > 0 || item.clampedToId
-                ? `<button type="button" id="ins-toggle-clamp" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t(
-                    item.clampedToId ? 'actionUnclampStand' : 'actionClampStand'
-                  )}</button>`
-                : ''
-            }
-            <button type="button" id="ins-tlc-reset" class="flex-1 py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionWashTlcPlate')}</button>
-          </div>
+          ${renderActionGridHtml([
+            stands.length > 0 || item.clampedToId
+              ? `<button type="button" id="ins-toggle-clamp" title="${t(item.clampedToId ? 'actionUnclampStand' : 'actionClampStand')}" class="w-full py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t(item.clampedToId ? 'btnUnclampShort' : 'btnClampShort')}</button>`
+              : '',
+            `<button type="button" id="ins-tlc-reset" title="${t('actionWashTlcPlate')}" class="w-full py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t('actionWashTlcPlate')}</button>`,
+          ])}
         </div>
       `;
     } else if (item.kind === 'dc_power') {
@@ -990,7 +986,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t('eq_dc_power')} ${item.label}</div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="p-3 rounded-lg border border-theme bg-slate-950 font-mono text-center">
             <div class="text-lg font-bold text-emerald-400" id="live-dc-readout">${(item.measuredV || 0).toFixed(2)} V · ${(item.measuredCurrentA || 0).toFixed(2)} A</div>
@@ -1030,7 +1026,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t('eq_volt_ammeter')} ${item.label}</div>
               <div class="text-[11px] text-muted">${APPARATUS.volt_ammeter.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="p-3 rounded-lg border border-theme bg-slate-950 font-mono text-center">
             <div class="text-xl font-bold text-emerald-400" id="live-vm-readout">${(item.measuredV || 0).toFixed(3)} V · ${(item.measuredCurrentA || 0).toFixed(3)} A</div>
@@ -1060,7 +1056,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t('eq_diffusion_tube')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
               <div class="text-[11px] text-muted">${APPARATUS.diffusion_tube.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex flex-col gap-1 font-mono" id="live-diff-stats">
             <div class="flex justify-between"><span>Left (0 cm):</span><strong>${item.leftGasId || 'Empty'} (${((item.leftFront || 0) * 100).toFixed(0)}%)</strong></div>
@@ -1087,24 +1083,54 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
       const collectorCandidates = panel.sim.items.filter(
         (i) => !i.isBroken && !i.isShattered && (i.kind === 'gas_syringe' || (i.kind === 'vessel' && i.id !== item.dockedVesselId))
       );
+      const matMeta = ELECTRODE_MATERIALS[item.material] || ELECTRODE_MATERIALS.C;
+      const rodMol = ensureElectrodeMetalMoles(item);
+      const rodSpec = matMeta.solidId ? SPECIES[matMeta.solidId] : null;
+      const rodMassG = rodSpec ? rodMol * (rodSpec.molarMass || 0) : 0;
+      const isShe = item.material === 'SHE';
+      const pH2Bar = Math.max(0.1, Math.min(5.0, item.shePressureBar ?? 1.0));
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t('eq_electrode_rod')} ${item.label}</div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="text-xs text-muted">${t('electrodeMatLabel')}</div>
-          <div class="grid grid-cols-3 gap-1.5">
+          <div class="grid grid-cols-4 gap-1.5">
             ${Object.values(ELECTRODE_MATERIALS)
               .map(
-                (m) => `<button type="button" class="el-mat-btn py-1.5 px-2 rounded-lg border text-xs font-semibold ${
+                (m) => `<button type="button" title="${m[langCode === 'en' ? 'nameEn' : 'nameVi']}${m.e0 != null ? ` (E°=${m.e0 >= 0 ? '+' : ''}${m.e0.toFixed(2)} V)` : ''}" class="el-mat-btn py-1.5 px-1 rounded-lg border text-xs font-semibold flex flex-col items-center justify-center leading-tight ${
                   item.material === m.id ? 'border-accent bg-accent/15 text-accent' : 'border-theme bg-surface text-muted hover:border-accent'
-                }" data-mat="${m.id}">${m.id}</button>`
+                }" data-mat="${m.id}"><span>${m.id}</span>${m.e0 != null ? `<span class="text-[9.5px] font-mono opacity-80">${m.e0 >= 0 ? '+' : ''}${m.e0.toFixed(2)}V</span>` : ''}</button>`
               )
               .join('')}
           </div>
-          <div class="text-[11px] text-muted">${(ELECTRODE_MATERIALS[item.material]?.[langCode === 'en' ? 'nameEn' : 'nameVi']) || item.material}</div>
+          <div class="text-[11px] text-muted">${(matMeta[langCode === 'en' ? 'nameEn' : 'nameVi']) || item.material}${matMeta.e0 != null ? ` · E° = ${matMeta.e0 >= 0 ? '+' : ''}${matMeta.e0.toFixed(3)} V` : ''}</div>
+          ${
+            isShe
+              ? `<div class="p-2.5 rounded-lg border border-sky-500/35 bg-sky-500/10 flex flex-col gap-1.5 text-xs">
+                   <div class="flex items-center justify-between">
+                     <span class="text-muted">${t('shePressureLabel')}</span>
+                     <strong class="font-mono text-sky-400" id="live-el-she-ph2">${pH2Bar.toFixed(2)} bar</strong>
+                   </div>
+                   <input type="range" id="ins-el-she-ph2" min="0.10" max="5.00" step="0.05" value="${pH2Bar.toFixed(2)}" class="w-full accent-sky-500 cursor-pointer" />
+                 </div>`
+              : ''
+          }
+          ${
+            matMeta.solidId
+              ? `<div class="p-2 rounded-lg border border-theme bg-surface flex items-center justify-between gap-2 text-xs">
+                   <div class="flex flex-col">
+                     <span class="text-[10.5px] text-muted">${t('elMetalMassLabel')}</span>
+                     <strong class="font-mono" id="live-el-metal">${(rodMol * 1000).toFixed(2)} mmol (${rodMassG.toFixed(2)} g)</strong>
+                   </div>
+                   <button type="button" id="ins-el-refresh" class="px-2 py-1 rounded-lg border border-theme bg-surface-alt text-[11px] font-medium hover:border-accent whitespace-nowrap shrink-0">${t('elRefreshRodBtn')}</button>
+                 </div>`
+              : ''
+          }
           ${item.polarityLabel ? `<div class="p-2 rounded border border-theme bg-surface text-xs font-mono text-center">${item.polarityLabel}</div>` : ''}
+          ${item.passivatedActive ? `<div class="p-2 rounded border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold text-center">${t('elPassivatedBadge')}</div>` : ''}
+          ${item.galvanicDominantActive ? `<div class="p-2 rounded border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs font-semibold text-center">${t('elGalvanicDominantBadge')}</div>` : ''}
           ${item.platedMaterial === 'Cu' && (item.platedCuMol || 0) > 1e-7 ? `<div class="p-2 rounded border border-amber-500/40 bg-amber-500/10 text-xs flex items-center justify-between gap-2"><span>${t(item.platedQuality === 'burned' ? 'platedCuBurned' : 'platedCuSmooth')} (${((item.platedCuMol || 0) * 63.546 * 1000).toFixed(1)} mg)</span><button type="button" id="ins-el-strip" class="px-2 py-0.5 rounded border border-theme bg-surface text-[11px]">${t('actionClearElectrodes')}</button></div>` : ''}
           ${item.platedMaterial === 'Ag' && (item.platedAgMol || 0) > 1e-7 ? `<div class="p-2 rounded border border-slate-400/50 bg-slate-500/10 text-xs flex items-center justify-between gap-2"><span>${t('platedAgDendrite')} (${((item.platedAgMol || 0) * 107.87 * 1000).toFixed(1)} mg)</span><button type="button" id="ins-el-strip" class="px-2 py-0.5 rounded border border-theme bg-surface text-[11px]">${t('actionClearElectrodes')}</button></div>` : ''}
           ${item.cathodicProtectedActive ? `<div class="p-2 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 text-xs font-semibold text-center">${t('dmmCathProtBadge')}</div>` : ''}
@@ -1117,11 +1143,12 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
                   ? `<span class="text-sky-400 font-semibold">${t(APPARATUS[mountedTube.typeId]?.i18nKey || 'eq_test_tube_50')} ${mountedTube.label}</span>`
                   : '—'
               }</div>
-              <div class="grid grid-cols-2 gap-1.5">
-                <button type="button" id="ins-el-mount-tube" class="py-1.5 px-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 font-semibold text-xs hover:bg-sky-500/20">${t('elCollectMountTube')}</button>
-                <button type="button" id="ins-el-pick-collector" ${collectorCandidates.length === 0 ? 'disabled' : ''} class="py-1.5 px-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 font-semibold text-xs hover:bg-emerald-500/20 disabled:opacity-40">${t('elCollectPickTarget')}</button>
-              </div>
-              ${item.gasTargetId || mountedTube ? `<button type="button" id="ins-el-clear-collector" class="py-1 px-2 rounded border border-red-500/40 bg-red-500/10 text-red-400 text-xs">${t('elCollectDetach')}</button>` : ''}
+              ${collectorTarget && collectorTarget.mountedOverElectrodeId !== item.id ? `<div class="text-[11px] text-sky-400 font-medium">${t('elCollectorHoodActive')}</div>` : ''}
+              ${renderActionGridHtml([
+                `<button type="button" id="ins-el-mount-tube" title="${t('elCollectMountTube')}" class="w-full py-1.5 px-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 font-semibold text-xs hover:bg-sky-500/20 flex items-center justify-center gap-1.5 text-center">${t('btnCollectMountShort')}</button>`,
+                `<button type="button" id="ins-el-pick-collector" title="${t('elCollectPickTarget')}" ${collectorCandidates.length === 0 ? 'disabled' : ''} class="w-full py-1.5 px-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 font-semibold text-xs hover:bg-emerald-500/20 disabled:opacity-40 flex items-center justify-center gap-1.5 text-center">${t('btnCollectTubeShort')}</button>`,
+                item.gasTargetId || mountedTube ? `<button type="button" id="ins-el-clear-collector" class="w-full py-1.5 px-2 rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 text-xs flex items-center justify-center gap-1.5 text-center">${t('elCollectDetach')}</button>` : '',
+              ])}
               ${
                 collectorTarget && collectorTarget.kind === 'vessel' && !collectorTarget.isInverted
                   ? `<label class="flex flex-col gap-1 pt-1">
@@ -1148,7 +1175,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t(spc.i18nKey)} ${item.label}</div>
               <div class="text-[11px] text-muted">${spc.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           ${
             hostV
@@ -1157,12 +1184,16 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
                     <span class="text-muted">${t('targetVessel')}</span>
                     <strong class="font-mono">${t(APPARATUS[hostV.typeId].i18nKey)} ${hostV.label}</strong>
                   </div>
-                  <span class="text-muted">${t('magStirLabel')}</span>
+                  <div class="flex items-center justify-between">
+                    <span class="text-muted">${t('magStirLabel')}</span>
+                    <strong class="font-mono text-accent" id="live-sb-rpm">${Math.round(hostV.magStirRpm || 0)} ${t('sbRpmReadoutSuffix')}</strong>
+                  </div>
+                  <input type="range" id="ins-sb-rpm-slider" min="0" max="1200" step="100" value="${Math.round(hostV.magStirRpm || 0)}" class="w-full accent-sky-500 cursor-pointer" />
                   <div class="grid grid-cols-4 gap-1.5">
                     ${[0, 400, 800, 1200]
                       .map(
                         (rpm) => `<button type="button" class="sb-rpm-btn py-1 rounded border text-[11px] font-mono ${
-                          (hostV.magStirRpm || 0) === rpm ? 'border-accent bg-accent/15 font-bold text-accent' : 'border-theme bg-surface-alt text-muted'
+                          Math.round(hostV.magStirRpm || 0) === rpm ? 'border-accent bg-accent/15 font-bold text-accent' : 'border-theme bg-surface-alt text-muted'
                         }" data-rpm="${rpm}">${rpm === 0 ? 'OFF' : `${rpm}`}</button>`
                       )
                       .join('')}
@@ -1191,7 +1222,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">🪨 ${t(spc.i18nKey)} ${item.label}</div>
               <div class="text-[11px] text-muted">${spc.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           ${
             hostV
@@ -1218,6 +1249,13 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
       const spc = APPARATUS.salt_bridge;
       const vA = item.vesselAId ? panel.sim.getItem(item.vesselAId) : null;
       const vB = item.vesselBId ? panel.sim.getItem(item.vesselBId) : null;
+      const sbMoles = ensureSaltBridgeMoles(item);
+      const elecId = item.electrolyteId || 'KNO3';
+      const aqVessels = panel.sim.items.filter((v) => v.kind === 'vessel' && !v.isShattered && Object.entries(v.moles || {}).some(([id, n]) => n > 1e-6 && SPECIES[id]?.phase === 'aq'));
+      const ionRows = Object.entries(sbMoles)
+        .filter(([, n]) => n > 1e-7)
+        .map(([id, n]) => `<div class="flex justify-between font-mono text-[11px]"><span>${SPECIES[id]?.formula || id}</span><span>${(n * 1000).toFixed(2)} mmol</span></div>`)
+        .join('');
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
           <div class="flex items-center justify-between gap-2">
@@ -1225,18 +1263,41 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t(spc.i18nKey)} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
               <div class="text-[11px] text-muted">${spc.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           ${
             item.isBroken
               ? `<p class="text-xs text-red-400 font-medium">${t('alertToolBreak')}</p>`
-              : `<div class="p-2.5 rounded-lg border border-theme bg-surface text-xs">
-                  ${
-                    vA && vB
-                      ? `<div class="font-mono font-bold text-emerald-400">⚡ ${vA.label} ↔ ${vB.label}${(item.activeCurrentA || 0) > 1e-4 ? ` (${item.activeCurrentA.toFixed(2)} A)` : ''}</div>`
-                      : `<p class="text-muted">${t('saltBridgeHint')}</p>`
-                  }
-                </div>`
+              : `<div class="p-2.5 rounded-lg border border-theme bg-surface text-xs" id="live-sb-link">
+                   ${
+                     vA && vB
+                       ? `<div class="font-mono font-bold text-emerald-400">⚡ ${vA.label} ↔ ${vB.label}${(item.activeCurrentA || 0) > 1e-4 ? ` (${item.activeCurrentA.toFixed(2)} A)` : ''}</div>`
+                       : `<p class="text-muted">${t('saltBridgeHint')}</p>`
+                   }
+                 </div>
+                 <div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-1.5 text-xs">
+                   <span class="text-muted font-medium">${t('saltBridgeElectrolyteLabel')}</span>
+                   <div class="grid grid-cols-3 gap-1">
+                     ${Object.values(SALT_BRIDGE_ELECTROLYTES)
+                       .map(
+                         (eOpt) => `<button type="button" class="sb-elec-btn py-1 px-1.5 rounded border text-[11px] font-mono font-semibold ${
+                           elecId === eOpt.id ? 'border-accent bg-accent/15 text-accent' : 'border-theme bg-surface-alt text-muted hover:border-accent'
+                         }" data-sb-elec="${eOpt.id}">${eOpt.formula}</button>`
+                       )
+                       .join('')}
+                   </div>
+                   ${
+                     aqVessels.length > 0
+                       ? `<button type="button" id="ins-sb-fill-vessel" class="mt-0.5 py-1 px-2 rounded-lg border border-theme bg-surface-alt text-[11px] font-medium hover:border-accent">${t('saltBridgeFillFromVesselBtn')}</button>`
+                       : ''
+                   }
+                   <div class="pt-1 border-t border-theme/50 flex flex-col gap-0.5" id="live-sb-ions">${ionRows || '<span class="text-muted">—</span>'}</div>
+                 </div>
+                 ${
+                   item.fouledWarningKey
+                     ? `<div class="p-2.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 text-[11px] leading-snug" id="live-sb-warn">${t(item.fouledWarningKey)}</div>`
+                     : `<div id="live-sb-warn"></div>`
+                 }`
           }
         </div>
       `;
@@ -1260,7 +1321,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             </div>
             <div class="flex items-center gap-1.5 shrink-0">
               ${renderFlipButtonHtml(item, t)}
-              <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
           </div>
           <div class="grid grid-cols-2 gap-2">
@@ -1330,7 +1391,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">🔌 ${t('eq_rubber_stopper')} ${item.label}</div>
               <div class="text-[11px] text-muted">${APPARATUS.rubber_stopper.materialSpec}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex flex-col gap-1.5">
             <span class="text-muted">${t('stopperModeLabel')}</span>
@@ -1372,7 +1433,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">🌸 ${t('eq_phen_cotton')} ${item.label}</div>
               <div class="text-[11px] text-muted">${APPARATUS.phen_cotton.materialSpec}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs flex flex-col gap-2">
             <div class="flex justify-between items-center">
@@ -1408,7 +1469,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">🌡️ ${t('eq_thermometer')} ${item.label}</div>
               <div class="text-[11px] text-muted">${APPARATUS.thermometer.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           <div class="p-3 rounded-lg border border-theme bg-surface flex flex-col gap-2 text-xs">
             <div class="flex items-center justify-between">
@@ -1695,6 +1756,63 @@ export function updateToolLiveNumbers(panel, item, t) {
       return;
     }
 
+    if (item.kind === 'electrode') {
+      const mEl = panel.container.querySelector('#live-el-metal');
+      const sEl = panel.container.querySelector('#live-el-she-ph2');
+      const matMeta = ELECTRODE_MATERIALS[item.material] || ELECTRODE_MATERIALS.C;
+      if (mEl && matMeta.solidId) {
+        const rodMol = ensureElectrodeMetalMoles(item);
+        const massG = rodMol * (SPECIES[matMeta.solidId]?.molarMass || 0);
+        mEl.textContent = `${(rodMol * 1000).toFixed(2)} mmol (${massG.toFixed(2)} g)`;
+      }
+      if (sEl) sEl.textContent = `${Math.max(0.1, Math.min(5.0, item.shePressureBar ?? 1.0)).toFixed(2)} bar`;
+      return;
+    }
+
+    if (item.kind === 'salt_bridge') {
+      const ionsEl = panel.container.querySelector('#live-sb-ions');
+      const warnEl = panel.container.querySelector('#live-sb-warn');
+      if (ionsEl) {
+        const sbMoles = ensureSaltBridgeMoles(item);
+        const ionRows = Object.entries(sbMoles)
+          .filter(([, n]) => n > 1e-7)
+          .map(([id, n]) => `<div class="flex justify-between font-mono text-[11px]"><span>${SPECIES[id]?.formula || id}</span><span>${(n * 1000).toFixed(2)} mmol</span></div>`)
+          .join('');
+        ionsEl.innerHTML = ionRows || '<span class="text-muted">—</span>';
+      }
+      if (warnEl) {
+        if (item.fouledWarningKey) {
+          warnEl.className = 'p-2.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-amber-300 text-[11px] leading-snug';
+          warnEl.textContent = t(item.fouledWarningKey);
+        } else {
+          warnEl.className = '';
+          warnEl.textContent = '';
+        }
+      }
+      return;
+    }
+
+    if (item.kind === 'stir_bar') {
+      const hostV = item.inVesselId ? panel.sim.getItem(item.inVesselId) : null;
+      const rpmVal = Math.round(hostV?.magStirRpm || 0);
+      const rEl = panel.container.querySelector('#live-sb-rpm');
+      const sEl = panel.container.querySelector('#ins-sb-rpm-slider');
+      if (rEl) rEl.textContent = `${rpmVal} ${t('sbRpmReadoutSuffix')}`;
+      if (sEl && document.activeElement !== sEl) sEl.value = String(rpmVal);
+      panel.container.querySelectorAll('.sb-rpm-btn').forEach((btn) => {
+        const bRpm = Number(btn.dataset.rpm);
+        const active = bRpm === rpmVal;
+        btn.classList.toggle('border-accent', active);
+        btn.classList.toggle('bg-accent/15', active);
+        btn.classList.toggle('font-bold', active);
+        btn.classList.toggle('text-accent', active);
+        btn.classList.toggle('border-theme', !active);
+        btn.classList.toggle('bg-surface-alt', !active);
+        btn.classList.toggle('text-muted', !active);
+      });
+      return;
+    }
+
     if (item.kind === 'gas_syringe') {
       const volMl = computeSyringeTotalVolumeMl(item, panel.sim.environment);
       const totalGasMol = sumAllGasMoles(item.gasMoles);
@@ -1718,7 +1836,12 @@ export function updateToolLiveNumbers(panel, item, t) {
       if (tEl) tEl.textContent = `${condInfo.syrTempK.toFixed(1)} K (${condInfo.syrTempC.toFixed(1)}°C)`;
       if (cEl) cEl.textContent = `${condInfo.totalFluidMl.toFixed(2)} mL`;
       if (sEl) sEl.textContent = condInfo.condenseState;
-      if (bEl) bEl.innerHTML = formatGasSummaryHtml(item.gasMoles);
+      if (bEl) {
+        const prevScroll = bEl.querySelector('#syr-gas-scroll')?.scrollTop || 0;
+        bEl.innerHTML = buildSyringeGasCompositionHtml(item, syrSpec, panel.sim.environment, t, condInfo);
+        const sc = bEl.querySelector('#syr-gas-scroll');
+        if (sc && prevScroll > 0) sc.scrollTop = prevScroll;
+      }
       if (pEl) {
         pEl.textContent = `${pBar.toFixed(2)} bar (ΔP ${overPBar >= 0 ? '+' : ''}${overPBar.toFixed(2)} / +${(syrSpec.shatterOverpressureBar || 1.05).toFixed(2)} bar)`;
       }

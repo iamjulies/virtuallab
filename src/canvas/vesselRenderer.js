@@ -38,11 +38,11 @@ import {
 
 import { renderVesselSolids } from './chemicalVisuals.js';
 import {
-  strokeHaloGlow, strokeSelectionGlow, getThemePalette, computeVesselFluidGeometry, getCurrentCanvasTheme, formatCanvasText, beginCanvasLabelFrame, setCurrentLabelItemId, flushCanvasLabelFrame, drawLabelPill, renderScale, renderBurner, renderRetortStand, renderRetortClampJaw, renderGasSyringe, renderPipette, renderTubingConnections, cylinderFillHeightFraction, mapProfileToCanvas, traceVesselPath, traceVesselInteriorClip,
+  strokeHaloGlow, strokeSelectionGlow, getThemePalette, computeVesselFluidGeometry, getCurrentCanvasTheme, formatCanvasText, beginCanvasLabelFrame, setCurrentLabelItemId, flushCanvasLabelFrame, drawLabelPill, renderScale, renderBurner, renderRetortStand, renderRetortClampJaw, renderGasSyringe, renderPipette, renderTubingConnections, cylinderFillHeightFraction, mapProfileToCanvas, traceVesselPath, traceVesselInteriorClip, getVesselAeroProfile,
 } from './equipmentRenderer.js';
 
 export {
-  strokeHaloGlow, strokeSelectionGlow, getThemePalette, computeVesselFluidGeometry, getCurrentCanvasTheme, formatCanvasText, beginCanvasLabelFrame, setCurrentLabelItemId, flushCanvasLabelFrame, drawLabelPill, renderScale, renderBurner, renderRetortStand, renderRetortClampJaw, renderGasSyringe, renderPipette, renderTubingConnections,
+  strokeHaloGlow, strokeSelectionGlow, getThemePalette, computeVesselFluidGeometry, getCurrentCanvasTheme, formatCanvasText, beginCanvasLabelFrame, setCurrentLabelItemId, flushCanvasLabelFrame, drawLabelPill, renderScale, renderBurner, renderRetortStand, renderRetortClampJaw, renderGasSyringe, renderPipette, renderTubingConnections, traceVesselInteriorClip, getVesselAeroProfile,
 };
 
 function renderShatteredWreckage(ctx, vessel, spec, pal, isSelected) {

@@ -178,6 +178,130 @@ export function buildVesselGasCompositionHtml(item, spec, env, liqL, t) {
     </div>`;
 }
 
+export function renderActionGridHtml(buttons = []) {
+  const clean = buttons.filter((b) => typeof b === 'string' && b.trim().length > 0);
+  if (clean.length === 0) return '';
+  return `<div class="grid grid-cols-2 gap-1.5 pt-0.5 pb-0.5">${clean
+    .map(
+      (btn, idx) =>
+        `<div class="${clean.length % 2 === 1 && idx === clean.length - 1 ? 'col-span-2 flex' : 'flex'}">${btn}</div>`
+    )
+    .join('')}</div>`;
+}
+
+export function buildSyringeGasCompositionHtml(syr, syrSpec, env, t, condInfo = null) {
+  const gasMap = syr?.gasMoles || {};
+  const activeGases = Object.entries(gasMap)
+    .filter(([gId, n]) => hasDisplayableSpeciesAmount(gId, n) && SPECIES[gId]?.phase === 'g')
+    .sort((a, b) => (b[1] || 0) - (a[1] || 0));
+
+  const cond = condInfo || getSyringeCondenseInfo(syr, env, t);
+  const T_K = Math.max(120, cond?.syrTempK || syr?.tempK || env?.tempK || CONSTANTS.T_STD_K);
+  const pLocal = Math.max(0.05, syr?.internalPressureBar ?? env?.pressureBar ?? CONSTANTS.P_STD_BAR);
+  const vMolarMl = ((CONSTANTS.R_L_BAR_MOL_K * T_K) / pLocal) * 1000;
+  const totalGasMol = activeGases.reduce((acc, [, n]) => acc + (n || 0), 0);
+
+  // Collect condensed (l) & frozen (s) species preserving full mole conservation
+  const condensedRows = [];
+  const pushCond = (spId, nMol, phaseTag, customVolMl = null) => {
+    if (!(nMol > 1e-9)) return;
+    const sp = SPECIES[spId];
+    const formula = sp?.formula || spId;
+    const volMl =
+      customVolMl != null
+        ? customVolMl
+        : sp?.density && sp?.molarMass
+        ? (nMol * sp.molarMass) / sp.density
+        : 0;
+    condensedRows.push({ spId, formula, nMol, phaseTag, volMl });
+  };
+  const usedCondIds = new Set();
+  if ((syr?.condensedWaterMol || 0) > 1e-9) {
+    usedCondIds.add('H2O_l');
+    pushCond('H2O_l', syr.condensedWaterMol, 'l', (syr.condensedWaterMol * SPECIES.H2O_l.molarMass) / 0.997);
+  }
+  if ((syr?.condensedEtOHMol || 0) > 1e-9) {
+    usedCondIds.add('C2H5OH_l');
+    pushCond('C2H5OH_l', syr.condensedEtOHMol, 'l');
+  }
+  for (const [spId, n] of Object.entries(syr?.condensedFluidMoles || {})) {
+    if (!usedCondIds.has(spId)) pushCond(spId, n, 'l');
+  }
+  if ((syr?.frozenWaterMol || 0) > 1e-9) {
+    pushCond('H2O_s', syr.frozenWaterMol, 's', (syr.frozenWaterMol * SPECIES.H2O_s.molarMass) / CONSTANTS.ICE_DENSITY_G_ML);
+  }
+  for (const [spId, n] of Object.entries(syr?.frozenMoles || {})) {
+    if (spId !== 'H2O_s') pushCond(spId, n, 's');
+  }
+  for (const [spId, n] of Object.entries(syr?.overflowMoles || {})) {
+    if (n > 1e-9) {
+      const sp = SPECIES[spId];
+      pushCond(spId, n, sp?.phase || 'l');
+    }
+  }
+
+  if (activeGases.length === 0 && condensedRows.length === 0) {
+    return `<p class="text-xs text-muted">${t('syrEmptyGasMsg')}</p>`;
+  }
+
+  const gasRowsHtml = activeGases
+    .map(([gId, n]) => {
+      const sp = SPECIES[gId];
+      const mmol = n * 1000;
+      const volMl = n * vMolarMl;
+      const sharePct = totalGasMol > 1e-12 ? (n / totalGasMol) * 100 : 0;
+      const dAir = getGasRelAirDensity(gId);
+      return `
+        <tr class="border-b border-theme/50 last:border-0">
+          <td class="py-1 pr-1 font-semibold">${sp?.formula || gId}</td>
+          <td class="py-1 px-1 text-right font-mono">${formatNumber(mmol, 2)}</td>
+          <td class="py-1 px-1 text-right font-mono text-sky-400">${formatNumber(volMl, 2)}</td>
+          <td class="py-1 px-1 text-right font-mono text-emerald-400">${sharePct.toFixed(1)}%</td>
+          <td class="py-1 pl-1 text-right font-mono text-muted">${dAir.toFixed(2)}</td>
+        </tr>`;
+    })
+    .join('');
+
+  const condensedHtml =
+    condensedRows.length > 0
+      ? `<div class="mt-2 pt-1.5 border-t border-theme/60">
+           <div class="text-[10.5px] font-semibold text-muted mb-1">${t('syrCondensedGroupTitle')}</div>
+           <div class="flex flex-col gap-0.5 text-[11px] font-mono">
+             ${condensedRows
+               .map(
+                 (c) => `<div class="flex items-center justify-between gap-2">
+                   <span class="font-semibold">${c.formula} <span class="text-muted">(${c.phaseTag})</span></span>
+                   <span>${formatNumber(c.nMol * 1000, 2)} mmol · <strong class="text-sky-400">${c.volMl.toFixed(2)} mL</strong></span>
+                 </div>`
+               )
+               .join('')}
+           </div>
+         </div>`
+      : '';
+
+  return `
+    <div class="text-[11px] font-semibold text-muted mb-1">${t('syrGasTableTitle')}</div>
+    ${
+      activeGases.length > 0
+        ? `<div class="overflow-x-auto max-h-40 overflow-y-auto" id="syr-gas-scroll">
+             <table class="w-full text-[11px]">
+               <thead>
+                 <tr class="text-muted border-b border-theme text-left">
+                   <th class="pb-1 pr-1 font-medium">${t('colSpecies')}</th>
+                   <th class="pb-1 px-1 font-medium text-right">mmol</th>
+                   <th class="pb-1 px-1 font-medium text-right">mL</th>
+                   <th class="pb-1 px-1 font-medium text-right">${t('colGasSharePct')}</th>
+                   <th class="pb-1 pl-1 font-medium text-right">d/KK</th>
+                 </tr>
+               </thead>
+               <tbody>${gasRowsHtml}</tbody>
+             </table>
+           </div>`
+        : ''
+    }
+    ${condensedHtml}`;
+}
+
 export function buildEscapedGasVerticalHtml(item, env, t) {
   const tempK = Math.max(150, item.lastGasOutTempK ?? item.tempK ?? env?.tempK ?? 298.15);
   const pBar = Math.max(0.05, env?.pressureBar || CONSTANTS.P_STD_BAR);

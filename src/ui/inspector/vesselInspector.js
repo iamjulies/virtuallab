@@ -37,6 +37,7 @@ import { computeCaOOptimizationScore } from '../../engine/chemistry.js';
 import { renderExportActionsBarHtml } from '../../storage/reportExport.js';
 import {
   renderFlipButtonHtml,
+  renderActionGridHtml,
   formatGasSummaryHtml,
   computeVesselPressureMetrics,
   hasDisplayableSpeciesAmount,
@@ -96,7 +97,7 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
               ${spec.isoStandard ? `<div class="text-[11px] text-muted">${spec.materialSpec} · ${spec.isoStandard}</div>` : ''}
               <div class="text-xs text-muted" id="live-state-label">${stateLabel}</div>
             </div>
-            <button type="button" id="ins-delete" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10">${t('actionDelete')}</button>
+            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
           </div>
           ${item.isSupersaturated && !item.isShattered ? `<div class="p-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs"><div class="font-semibold">${t('badgeSupersaturated')} (S=${(item.supersatRatio || 1).toFixed(2)}×)</div><div class="text-[11px] opacity-85">${t('supersatHint')}</div></div>` : ''}
           ${(item.znPassivationFrac || 0) > 0.35 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-medium">${t('badgeZnPassivated')} (${Math.round((item.znPassivationFrac || 0) * 100)}%)</div>` : ''}
@@ -156,79 +157,75 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
           ${
             item.isShattered
               ? item.clampedToId
-                ? `<div class="flex flex-wrap gap-1.5"><button type="button" id="ins-toggle-clamp" class="px-2.5 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-xs font-medium text-amber-300 hover:bg-amber-500/20">${t('actionUnclampStand')}</button></div>`
+                ? renderActionGridHtml([
+                    `<button type="button" id="ins-toggle-clamp" title="${t('actionUnclampStand')}" class="w-full px-2 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-xs font-medium text-amber-300 hover:bg-amber-500/20 flex items-center justify-center gap-1.5 text-center">${t('btnUnclampShort')}</button>`,
+                  ])
                 : ''
-              : `<div class="flex flex-wrap gap-1.5">
-            <button type="button" id="ins-pour" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionPourTo')}</button>
-            <button type="button" id="ins-stir" ${item.isFrozenSolid ? 'disabled' : ''} title="${t('actionStirTip')}" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent disabled:opacity-40">${t('actionStir')}</button>
-            ${
-              spec.hasLid
-                ? `<button type="button" id="ins-crucible-lid" class="px-2.5 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-xs font-semibold hover:border-accent">${
-                    t('crucibleLidLabel')
-                  } ${
-                    item.lidState === 'closed'
-                      ? t('crucibleLidClosed')
-                      : item.lidState === 'ajar'
-                      ? t('crucibleLidAjar')
-                      : t('crucibleLidOpen')
-                  }</button>`
-                : ''
-            }
-            <button type="button" id="ins-toggle-compare" class="px-2.5 py-1.5 rounded-lg border ${
-              Array.isArray(panel.sim.compareVesselIds) && panel.sim.compareVesselIds.includes(item.id)
-                ? 'border-sky-500 bg-sky-500/20 text-sky-400 font-semibold'
-                : 'border-theme bg-surface'
-            } text-xs font-medium hover:border-accent">${
-              Array.isArray(panel.sim.compareVesselIds) && panel.sim.compareVesselIds.includes(item.id)
-                ? t('actionCompareVesselRemove')
-                : t('actionCompareVesselAdd')
-            }</button>
-            ${
-              spec.stopperable
-                ? `<button type="button" id="ins-tube" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${
-                    connTarget ? t('actionDisconnectTube') : t('actionConnectSyringe')
-                  }</button>`
-                : ''
-            }
-            ${
-              spec.invertible
-                ? `<button type="button" id="ins-invert" class="px-2.5 py-1.5 rounded-lg border ${
-                    item.isInverted ? 'border-sky-500/60 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface'
-                  } text-xs font-medium hover:border-accent">${
-                    item.isInverted ? t('actionUprightTube') : t('actionInvertTube')
-                  }</button>`
-                : ''
-            }
-            ${
-              ((item.headspaceGasMoles?.NH3_g || 0) > 1e-6 || (item.headspaceGasMoles?.HCl_g || 0) > 1e-6) && connTarget && connTarget.kind === 'vessel'
-                ? `<button type="button" id="ins-fountain-primer" class="px-2.5 py-1.5 rounded-lg bg-pink-600 text-white text-xs font-semibold hover:bg-pink-500">${t('actionTriggerFountain')}</button>`
-                : ''
-            }
-            ${
-              spec.isMortar
-                ? `<button type="button" id="ins-grind" class="px-2.5 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90">${t('actionGrindMortar')}</button>
-                   <button type="button" id="ins-solid-xfer" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('actionTransferSolid')}</button>`
-                : ''
-            }
-            ${
-              stands.length > 0
-                ? `<button type="button" id="ins-toggle-clamp" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${
-                    item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')
-                  }</button>`
-                : ''
-            }
-            <button type="button" id="ins-sticky-label" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('stickyLabelBtn')}</button>
-            <button type="button" id="ins-store-cabinet" class="px-2.5 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90">${t('ctxStoreCabinet')}</button>
-            <button type="button" id="ins-rinse" class="px-2.5 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium text-muted hover:text-main">${t('actionRinse')}</button>
-          </div>
+              : (() => {
+                  const isCompared = Array.isArray(panel.sim.compareVesselIds) && panel.sim.compareVesselIds.includes(item.id);
+                  const btns = [
+                    `<button type="button" id="ins-pour" title="${t('actionPourTo')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t('btnPourShort')}</button>`,
+                    `<button type="button" id="ins-stir" ${item.isFrozenSolid ? 'disabled' : ''} title="${t('actionStirTip')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent disabled:opacity-40 flex items-center justify-center gap-1.5 text-center">${t('btnStirShort')}</button>`,
+                  ];
+                  if (spec.hasLid) {
+                    const lidStateTxt = item.lidState === 'closed' ? t('crucibleLidClosed') : item.lidState === 'ajar' ? t('crucibleLidAjar') : t('crucibleLidOpen');
+                    btns.push(
+                      `<button type="button" id="ins-crucible-lid" title="${t('crucibleLidLabel')} ${lidStateTxt}" class="w-full px-2 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-xs font-semibold hover:border-accent flex items-center justify-center gap-1 text-center truncate">${t('crucibleLidLabel')} ${lidStateTxt}</button>`
+                    );
+                  }
+                  btns.push(
+                    `<button type="button" id="ins-toggle-compare" title="${t(isCompared ? 'actionCompareVesselRemove' : 'actionCompareVesselAdd')}" class="w-full px-2 py-1.5 rounded-lg border ${
+                      isCompared ? 'border-sky-500 bg-sky-500/20 text-sky-400 font-semibold' : 'border-theme bg-surface'
+                    } text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t(isCompared ? 'btnCompareRemoveShort' : 'btnCompareAddShort')}</button>`
+                  );
+                  if (spec.stopperable) {
+                    btns.push(
+                      `<button type="button" id="ins-tube" title="${t(connTarget ? 'actionDisconnectTube' : 'actionConnectSyringe')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t(connTarget ? 'btnTubeDetachShort' : 'btnTubeConnectShort')}</button>`
+                    );
+                  }
+                  if (spec.invertible) {
+                    btns.push(
+                      `<button type="button" id="ins-invert" title="${t(item.isInverted ? 'actionUprightTube' : 'actionInvertTube')}" class="w-full px-2 py-1.5 rounded-lg border ${
+                        item.isInverted ? 'border-sky-500/60 bg-sky-500/15 text-sky-400' : 'border-theme bg-surface'
+                      } text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t(item.isInverted ? 'btnUprightShort' : 'btnInvertShort')}</button>`
+                    );
+                  }
+                  if (((item.headspaceGasMoles?.NH3_g || 0) > 1e-6 || (item.headspaceGasMoles?.HCl_g || 0) > 1e-6) && connTarget && connTarget.kind === 'vessel') {
+                    btns.push(
+                      `<button type="button" id="ins-fountain-primer" title="${t('actionTriggerFountain')}" class="w-full px-2 py-1.5 rounded-lg bg-pink-600 text-white text-xs font-semibold hover:bg-pink-500 flex items-center justify-center gap-1.5 text-center">${t('btnFountainShort')}</button>`
+                    );
+                  }
+                  if (spec.isMortar) {
+                    btns.push(
+                      `<button type="button" id="ins-grind" title="${t('actionGrindMortar')}" class="w-full px-2 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-1.5 text-center">${t('btnGrindShort')}</button>`,
+                      `<button type="button" id="ins-solid-xfer" title="${t('actionTransferSolid')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t('btnSolidXferShort')}</button>`
+                    );
+                  }
+                  if (stands.length > 0) {
+                    btns.push(
+                      `<button type="button" id="ins-toggle-clamp" title="${t(item.clampedToId ? 'actionUnclampStand' : 'actionClampStand')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t(item.clampedToId ? 'btnUnclampShort' : 'btnClampShort')}</button>`
+                    );
+                  }
+                  btns.push(
+                    `<button type="button" id="ins-sticky-label" title="${t('stickyLabelBtn')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t('btnLabelShort')}</button>`,
+                    `<button type="button" id="ins-store-cabinet" title="${t('ctxStoreCabinet')}" class="w-full px-2 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-1.5 text-center">${t('btnStoreShort')}</button>`,
+                    `<button type="button" id="ins-rinse" title="${t('actionRinse')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium text-muted hover:text-main flex items-center justify-center gap-1.5 text-center">${t('btnRinseShort')}</button>`
+                  );
+                  return renderActionGridHtml(btns);
+                })()
+          }
           ${
-            item.hasStirBar
-              ? `<div class="pt-2 border-t border-theme/50 flex flex-wrap items-center justify-between gap-1.5">
-                  <span class="text-[11px] text-muted">${t('magStirLabel')}</span>
-                  <div class="flex gap-1">
+            !item.isShattered && item.hasStirBar
+              ? `<div class="pt-2 border-t border-theme/50 flex flex-col gap-1.5">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-muted">${t('magStirLabel')}</span>
+                    <strong class="font-mono text-accent" id="live-v-sb-rpm">${Math.round(item.magStirRpm || 0)} RPM</strong>
+                  </div>
+                  <input type="range" id="ins-v-sb-slider" min="0" max="1200" step="100" value="${Math.round(item.magStirRpm || 0)}" class="w-full accent-sky-500 cursor-pointer" />
+                  <div class="grid grid-cols-4 gap-1">
                     ${[0, 400, 800, 1200]
                       .map(
-                        (rpm) => `<button type="button" class="mag-rpm-btn px-2 py-0.5 rounded border text-[11px] font-mono ${
+                        (rpm) => `<button type="button" class="mag-rpm-btn py-1 rounded border text-[11px] font-mono ${
                           (item.magStirRpm || 0) === rpm ? 'border-accent bg-accent/15 font-semibold text-accent' : 'border-theme bg-surface text-muted'
                         }" data-rpm="${rpm}">${rpm === 0 ? 'OFF' : `${rpm}`}</button>`
                       )
@@ -237,8 +234,7 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
                 </div>`
               : ''
           }
-          <div class="text-[10px] font-mono text-muted">${t('pressureLimitNote')} ${popStr}${shatterStr}</div>`
-          }
+          ${!item.isShattered ? `<div class="text-[10px] font-mono text-muted">${t('pressureLimitNote')} ${popStr}${shatterStr}</div>` : ''}
         </div>
 
         <!-- Group 1: Thermodynamics & Instantaneous Physics -->
@@ -660,6 +656,25 @@ export function updateVesselLiveNumbers(panel, item, t) {
     if (depthSlider && document.activeElement !== depthSlider) depthSlider.value = String(Math.round((item.tubeSubmersionRatio ?? 0.72) * 100));
     const sootPctEl = panel.container.querySelector('#live-soot-pct');
     if (sootPctEl) sootPctEl.textContent = `${Math.round((item.sootLevel || 0) * 100)}%`;
+
+    const vSbRpmEl = panel.container.querySelector('#live-v-sb-rpm');
+    const vSbSlider = panel.container.querySelector('#ins-v-sb-slider');
+    if (vSbRpmEl || vSbSlider) {
+      const rpmVal = Math.round(item.magStirRpm || 0);
+      if (vSbRpmEl) vSbRpmEl.textContent = `${rpmVal} RPM`;
+      if (vSbSlider && document.activeElement !== vSbSlider) vSbSlider.value = String(rpmVal);
+      panel.container.querySelectorAll('.mag-rpm-btn').forEach((btn) => {
+        const bRpm = Number(btn.dataset.rpm);
+        const active = bRpm === rpmVal;
+        btn.classList.toggle('border-accent', active);
+        btn.classList.toggle('bg-accent/15', active);
+        btn.classList.toggle('font-semibold', active);
+        btn.classList.toggle('text-accent', active);
+        btn.classList.toggle('border-theme', !active);
+        btn.classList.toggle('bg-surface', !active);
+        btn.classList.toggle('text-muted', !active);
+      });
+    }
 
     const colEl = panel.container.querySelector('#live-collected-gas');
     const colCondEl = panel.container.querySelector('#live-collected-cond');

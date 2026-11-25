@@ -32,7 +32,8 @@ import {
   computeWashBottleStreamArc,
   syncDockedToolPositions,
 } from '../engine/apparatusTools.js';
-import { stepAnalyticalInstruments } from '../engine/analyticalTools.js';
+import { COLORIMETER_WAVELENGTHS, stepAnalyticalInstruments } from '../engine/analyticalTools.js';
+import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
 import { renderActiveReagentTransfer } from './reagentRenderer.js';
 import { soundEngine } from '../audio/soundEngine.js';
 import { FluidGasOverlay } from './fluidGasOverlay.js';
@@ -82,7 +83,7 @@ export const BENCH_LOGICAL_W = 1000;
 export const BENCH_LOGICAL_H = 560;
 export const BENCH_FLOOR_Y = 482;
 
-export function handleCanvasWheelImpl(wb, pt, deltaY, shiftKey = false) {
+export function handleCanvasWheelImpl(wb, pt, deltaY, shiftKey = false, ctrlKey = false) {
     const heldItem = wb.dragState ? wb.sim.getItem(wb.dragState.itemId) : null;
     const hit = heldItem || wb.hitTestItem(pt.x, pt.y);
     if (!hit) {
@@ -113,7 +114,6 @@ export function handleCanvasWheelImpl(wb, pt, deltaY, shiftKey = false) {
         if (idx < 0) {
           idx = steps.reduce((best, v, i) => (Math.abs(v - curC) < Math.abs(steps[best] - curC) ? i : best), 0);
         }
-        // Scroll up (deltaY < 0, dir < 0) increases temperature; scroll down decreases
         const nextIdx = Math.max(0, Math.min(steps.length - 1, idx + (dir < 0 ? 1 : -1)));
         wb.sim.setBathTargetTempC(hit.id, steps[nextIdx]);
       });
@@ -121,7 +121,7 @@ export function handleCanvasWheelImpl(wb, pt, deltaY, shiftKey = false) {
 
     if (hit.kind === 'electrode') {
       return stepDiscrete(`el:${hit.id}`, deltaY, (dir) => {
-        const order = ['C', 'Cu', 'Zn'];
+        const order = Object.keys(ELECTRODE_MATERIALS);
         const curIdx = Math.max(0, order.indexOf(hit.material));
         const nextMat = order[(curIdx + (dir > 0 ? 1 : order.length - 1)) % order.length];
         soundEngine.playUiClick();
@@ -141,6 +141,12 @@ export function handleCanvasWheelImpl(wb, pt, deltaY, shiftKey = false) {
 
     if (hit.kind === 'stir_bar') {
       if (!hit.inVesselId) return false;
+      if (shiftKey) {
+        return stepDiscrete(`sb-off:${hit.id}`, deltaY, () => {
+          soundEngine.playUiClick();
+          wb.sim.toggleMagneticStir(hit.inVesselId, 0);
+        });
+      }
       const host = wb.sim.getItem(hit.inVesselId);
       const curRpm = host?.magStirRpm || 0;
       const nextRpm = clamp(0, 1200, curRpm + (deltaY < 0 ? 100 : -100));
@@ -149,16 +155,61 @@ export function handleCanvasWheelImpl(wb, pt, deltaY, shiftKey = false) {
     }
 
     if (hit.kind === 'dc_power') {
-      if (shiftKey) {
+      if (ctrlKey) {
         const curR = hit.rheostatOhm ?? 2.0;
         const nextR = Math.round(clamp(0.5, 25, curR + (deltaY < 0 ? 0.5 : -0.5)) * 2) / 2;
         wb.sim.setDcPowerState(hit.id, { rheostatOhm: nextR });
-      } else {
+        return true;
+      }
+      if (shiftKey) {
         const curV = hit.voltageV ?? 6;
         const nextV = Math.round(clamp(0, 12, curV + (deltaY < 0 ? 0.5 : -0.5)) * 2) / 2;
         wb.sim.setDcPowerState(hit.id, { voltageV: nextV });
+        return true;
       }
-      return true;
+      return stepDiscrete(`dc-pow:${hit.id}`, deltaY, () => {
+        soundEngine.playUiClick();
+        wb.sim.setDcPowerState(hit.id, { powerOn: !hit.powerOn });
+      });
+    }
+
+    if (hit.kind === 'colorimeter') {
+      if (shiftKey) {
+        return stepDiscrete(`col-mode:${hit.id}`, deltaY, (dir) => {
+          const modes = ['uvvis_kinetics', 'uvvis_spectrum', 'ir_spectrum'];
+          const curIdx = Math.max(0, modes.indexOf(hit.spectroMode || 'uvvis_kinetics'));
+          const nextMode = modes[(curIdx + (dir > 0 ? 1 : modes.length - 1)) % modes.length];
+          hit.spectroMode = nextMode;
+          soundEngine.playUiClick();
+          stepAnalyticalInstruments(wb.sim, hit, 0.05);
+          wb.sim.emitChange();
+        });
+      }
+      if ((hit.spectroMode || 'uvvis_kinetics') === 'uvvis_kinetics') {
+        return stepDiscrete(`col-wl:${hit.id}`, deltaY, (dir) => {
+          const wls = COLORIMETER_WAVELENGTHS || [420, 470, 525, 590, 635];
+          const curIdx = Math.max(0, wls.indexOf(hit.wavelengthNm || 525));
+          const nextWl = wls[clamp(0, wls.length - 1, curIdx + (dir < 0 ? 1 : -1))];
+          if (nextWl !== hit.wavelengthNm) {
+            hit.wavelengthNm = nextWl;
+            hit.history = [];
+            soundEngine.playUiClick();
+            stepAnalyticalInstruments(wb.sim, hit, 0.05);
+            wb.sim.emitChange();
+          }
+        });
+      }
+      return false;
+    }
+
+    if (hit.kind === 'tlc_plate') {
+      if (!shiftKey) return false;
+      return stepDiscrete(`tlc-wash:${hit.id}`, deltaY, () => {
+        soundEngine.playUiClick();
+        hit.solventFront = 0;
+        hit.spots = [];
+        wb.sim.emitChange();
+      });
     }
 
     if (hit.kind === 'stand') {
@@ -207,13 +258,39 @@ export function handleCanvasWheelImpl(wb, pt, deltaY, shiftKey = false) {
     }
 
     if (hit.kind === 'burette') {
-      const curRate = hit.valveRateMlS || 0;
-      const nextRate = Math.round(clamp(0, 5.0, curRate + (deltaY > 0 ? 0.25 : -0.25)) * 100) / 100;
-      wb.sim.setBuretteValveRate(hit.id, nextRate);
+      if (ctrlKey) {
+        const curRate = hit.valveRateMlS || 0;
+        const nextRate = Math.round(clamp(0.05, 5.0, curRate + (deltaY < 0 ? 0.25 : -0.25)) * 100) / 100;
+        hit._lastOpenRateMlS = nextRate;
+        wb.sim.setBuretteValveRate(hit.id, nextRate);
+        return true;
+      }
+      if (shiftKey) {
+        return stepDiscrete(`bur-valve:${hit.id}`, deltaY, () => {
+          soundEngine.playUiClick();
+          if ((hit.valveRateMlS || 0) > 0.005) {
+            hit._lastOpenRateMlS = hit.valveRateMlS;
+            wb.sim.setBuretteValveRate(hit.id, 0);
+          } else {
+            wb.sim.setBuretteValveRate(hit.id, hit._lastOpenRateMlS || 0.5);
+          }
+        });
+      }
+      const deltaDeg = (deltaY > 0 ? 1 : -1) * Math.min(14, Math.max(5, Math.abs(deltaY) * 0.09));
+      const curSigned = (hit.tiltDir < 0 ? -1 : 1) * (hit.tiltDeg || 0);
+      const nextSigned = clamp(-180, 180, curSigned + deltaDeg);
+      wb.sim.setVesselTiltDeg(hit.id, Math.abs(nextSigned), nextSigned < 0 ? -1 : 1);
+      wb._wheelTiltVesselId = Math.abs(nextSigned) > 0 ? hit.id : null;
       return true;
     }
 
     if (hit.kind === 'splint') {
+      if (shiftKey) {
+        return stepDiscrete(`splint-flip:${hit.id}`, deltaY, () => {
+          soundEngine.playUiClick();
+          wb.sim.flipItemLR(hit.id);
+        });
+      }
       return stepDiscrete(`splint-mode:${hit.id}`, deltaY, (dir) => {
         const order = ['unlit', 'glowing', 'burning'];
         const curIdx = Math.max(0, order.indexOf(hit.mode || 'unlit'));
@@ -223,11 +300,24 @@ export function handleCanvasWheelImpl(wb, pt, deltaY, shiftKey = false) {
       });
     }
 
+    if (hit.kind === 'flame_loop') {
+      return stepDiscrete(`floop:${hit.id}:${shiftKey ? 'w' : 'f'}`, deltaY, () => {
+        soundEngine.playUiClick();
+        if (shiftKey) {
+          hit.sampledIon = null;
+          hit.sampledColor = null;
+          hit.sampleLabel = '';
+          wb.sim.emitChange();
+        } else {
+          wb.sim.flipItemLR(hit.id);
+        }
+      });
+    }
+
     if (hit.kind === 'indicator_strip') {
       return stepDiscrete(`strip:${hit.id}:${shiftKey ? 's' : 'n'}`, deltaY, () => {
         soundEngine.playUiClick();
         if (shiftKey) {
-          // Swap for fresh indicator strip
           hit.sampledPH = null;
           hit.tipColor = hit.stripKind === 'universal' ? '#eab308' : '#8b5cf6';
           hit.isBleached = false;
@@ -351,6 +441,12 @@ export function handleCanvasWheelImpl(wb, pt, deltaY, shiftKey = false) {
     }
 
     if (hit.kind === 'vessel' || hit.kind === 'filter_funnel' || hit.kind === 'separatory_funnel' || hit.kind === 'spoon') {
+      if (hit.kind === 'separatory_funnel' && ctrlKey) {
+        const curRate = Number.isFinite(hit.valveRateMlS) ? hit.valveRateMlS : (hit.valveFlowFrac ?? 0.35) * 10.0;
+        const nextRate = Math.round(clamp(0.05, 10.0, curRate + (deltaY < 0 ? 0.25 : -0.25)) * 100) / 100;
+        wb.sim.setSeparatoryValveRateMlS(hit.id, nextRate);
+        return true;
+      }
       if (hit.kind === 'separatory_funnel' && shiftKey) {
         return stepDiscrete(`sep-valve:${hit.id}`, deltaY, () => {
           soundEngine.playUiClick();
@@ -1558,6 +1654,12 @@ export function bindWorkbenchEventsImpl(wb) {
           const heldItem = wb.dragState ? wb.sim.getItem(wb.dragState.itemId) : null;
           const hit = heldItem || wb.hitTestItem(pt.x, pt.y);
           const hSpec = hit ? APPARATUS[hit.typeId] : null;
+          if (hit && (hit.kind === 'separatory_funnel' || hit.kind === 'burette' || hit.kind === 'dc_power')) {
+            if (wb.handleCanvasWheel(pt, e.deltaY, Boolean(e.shiftKey), true)) {
+              e.preventDefault();
+            }
+            return;
+          }
           if (hit && (hSpec?.invertible || hSpec?.flippable)) {
             e.preventDefault();
             if (wb._wheelAccum.key !== `ctrl-flip:${hit.id}`) wb._wheelAccum = { key: `ctrl-flip:${hit.id}`, sum: 0 };
@@ -1575,7 +1677,7 @@ export function bindWorkbenchEventsImpl(wb) {
           }
         }
         if (!wb.zoomMode && wb.zoomScale <= 1.01 && !e.ctrlKey && !e.metaKey) {
-          if (wb.handleCanvasWheel(pt, e.deltaY, Boolean(e.shiftKey))) {
+          if (wb.handleCanvasWheel(pt, e.deltaY, Boolean(e.shiftKey), false)) {
             e.preventDefault();
           }
           return;
