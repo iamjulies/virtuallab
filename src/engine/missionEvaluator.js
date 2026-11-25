@@ -7,6 +7,7 @@ import { computeLiquidVolumeL, computePH } from './equilibrium.js';
 import { computeSyringeGasVolumeMl, buildCombinedSyringeTotalMoles } from './gasNetwork.js';
 import { MISSION_REGISTRY } from '../data/missions.js';
 import { CONSTANTS } from '../data/constants.js';
+import { verifyHashedAnswer } from './examProctor.js';
 
 const STORAGE_MISSION_PROGRESS_KEY = 'virlab_missions_progress_v1';
 const TOXIC_GASES = ['Cl2_g', 'H2S_g', 'Br2_g', 'NO2_g', 'SO2_g', 'HCl_g', 'NH3_g', 'CO_g'];
@@ -156,7 +157,8 @@ function gradeFromScore(score) {
 }
 
 export function evaluateMission(sim, missionState, userAnswers = {}, options = {}) {
-  const mission = MISSION_REGISTRY[missionState?.missionId];
+  const isCustom = Boolean(missionState?.customAssignment);
+  const mission = isCustom ? missionState : MISSION_REGISTRY[missionState?.missionId];
   if (!mission || !sim) return null;
 
   const tel = ensureMissionTelemetry(sim);
@@ -165,7 +167,70 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
   const t = options.t || ((k) => k);
   const results = [];
 
-  if (mission.id === 'mission_qualitative_4') {
+  if (isCustom) {
+    const rubric = Array.isArray(mission.rubric) && mission.rubric.length > 0
+      ? mission.rubric
+      : [
+          { id: 'c_proc', category: 'process', maxPoints: 3.0, labelKey: 'teacherRubProc' },
+          { id: 'c_quant', category: 'quantitative', maxPoints: 2.0, labelKey: 'teacherRubQuant' },
+          { id: 'c_ident', category: 'identification', maxPoints: 4.0, labelKey: 'teacherRubIdent' },
+          { id: 'c_safe', category: 'safety', maxPoints: 1.0, labelKey: 'teacherRubSafe' },
+        ];
+    const hasEvidence =
+      tel.usedPipetteTransfer ||
+      tel.usedLitmusOrPh ||
+      tel.usedBuretteDrops > 0 ||
+      tel.bunsenBlueUsed ||
+      tel.gasConnectedToSyringe ||
+      tel.esterFormed ||
+      tel.sepFunnelTaps > 0 ||
+      (sim.logs?.length || 0) > 0;
+
+    const procCrit = rubric.find((r) => r.category === 'process') || rubric[0];
+    const quantCrit = rubric.find((r) => r.category === 'quantitative') || rubric[1];
+    const identCrit = rubric.find((r) => r.category === 'identification') || rubric[2];
+    const safeCrit = rubric.find((r) => r.category === 'safety') || rubric[3];
+
+    if (procCrit) {
+      results.push(makeCriterionResult(procCrit, hasEvidence ? procCrit.maxPoints : 0, hasEvidence ? 'Experimental trace verified' : 'No experimental actions recorded'));
+    }
+    if (quantCrit) {
+      let qPts = hasEvidence ? quantCrit.maxPoints * 0.5 : 0;
+      if (setupData.titrationMeta?.itemId && tel.usedBuretteDrops > 0) {
+        const tv = sim.getItem(setupData.titrationMeta.itemId);
+        const liqL = tv ? computeLiquidVolumeL(tv.moles, tv.tempK) : 0;
+        const ph = tv && liqL > 1e-6 ? computePH(tv.moles, liqL, tv.tempK) : null;
+        if (ph !== null && ph >= 6.8 && ph <= 10.3) qPts = quantCrit.maxPoints;
+      } else if (hasEvidence && (tel.contaminatedBlindIds || []).length === 0) {
+        qPts = quantCrit.maxPoints;
+      }
+      results.push(makeCriterionResult(quantCrit, qPts, hasEvidence ? 'Measurements/samples valid' : 'Missing lab work'));
+    }
+    if (identCrit) {
+      const fields = mission.submitFields || [];
+      let hits = 0;
+      for (const f of fields) {
+        const uVal = userAnswers[f.id];
+        if (f.type === 'number' && ak.targetMolarityM != null) {
+          const num = Number(uVal);
+          if (Number.isFinite(num) && num > 0) {
+            const err = Math.abs(num - ak.targetMolarityM) / ak.targetMolarityM;
+            if (err <= 0.02) hits += 1;
+            else if (err <= 0.05) hits += 0.7;
+            else if (err <= 0.1) hits += 0.4;
+          }
+        } else if (ak[f.id] && String(uVal || '').trim() === String(ak[f.id]).trim()) {
+          hits += 1;
+        }
+      }
+      const idPts = fields.length > 0 ? (hits / fields.length) * identCrit.maxPoints : 0;
+      results.push(makeCriterionResult(identCrit, idPts, `${hits.toFixed(1)}/${fields.length} answered`));
+    }
+    if (safeCrit) {
+      const safe = computeCommonSafetyPoints(safeCrit.maxPoints, sim, tel);
+      results.push(makeCriterionResult(safeCrit, safe.pts, `${safe.incidents} incident(s)`));
+    }
+  } else if (mission.id === 'mission_qualitative_4') {
     const blindIds = setupData.blindVesselIds || [];
     const subVessels = (sim.items || []).filter((i) => i.kind === 'vessel' && !blindIds.includes(i.id) && !i.isShattered);
     const usedSubTest = subVessels.some((v) => Object.values(v.moles || {}).some((n) => n > 1e-6)) || tel.usedPipetteTransfer;
@@ -355,27 +420,85 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
   const rawScore = results.reduce((sum, r) => sum + r.earned, 0);
   const hintsUsed = missionState?.hintsUsed || 0;
   const hintPenalty = missionState?.mode === 'exam' ? Math.min(2.0, hintsUsed * 0.5) : 0;
-  const totalScore = Math.max(0, Math.min(10.0, +(rawScore - hintPenalty).toFixed(1)));
+  const integrityPenalty = Math.min(2.5, Number(options.integrityLog?.penaltyPoints || missionState?.integrityPenalty || 0));
+  const totalScore = Math.max(0, Math.min(10.0, +(rawScore - hintPenalty - integrityPenalty).toFixed(1)));
   const rank = gradeFromScore(totalScore);
+  const procItem = results.find((r) => r.category === 'process');
+  const processAnomaly = Boolean(missionState?.examMode && procItem && procItem.earned <= 0.01 && Object.values(userAnswers || {}).some((v) => String(v || '').trim() !== ''));
 
   return {
     missionId: mission.id,
-    titleKey: mission.titleKey,
+    titleKey: mission.titleKey || '',
+    titleText: mission.titleText || '',
     mode: missionState?.mode || 'practice',
+    examMode: Boolean(missionState?.examMode),
+    examCode: missionState?.examCode || null,
     seed: missionState?.seed || 1,
     elapsedSec: Math.max(0, Math.round((Date.now() - (missionState?.startedAtMs || Date.now())) / 1000)),
     rawScore: +rawScore.toFixed(1),
     hintPenalty: +hintPenalty.toFixed(1),
+    integrityPenalty: +integrityPenalty.toFixed(1),
+    processAnomaly,
     hintsUsed,
     totalScore,
     maxScore: 10,
     passed: totalScore >= 5.0,
     ...rank,
     criteriaResults: results,
-    equationText: mission.equationText,
+    equationText: mission.equationText || '',
     answerKey: ak,
     t,
   };
+}
+
+export async function evaluateMissionWithVerification(sim, missionState, userAnswers = {}, options = {}) {
+  const baseRes = evaluateMission(sim, missionState, userAnswers, options);
+  if (!baseRes || !missionState?.customAssignment) return baseRes;
+
+  const hashes = missionState.answerHashes || {};
+  const hashKeys = Object.keys(hashes);
+  if (hashKeys.length === 0) return baseRes;
+
+  // Verify static/hashed questions via SHA-256 without ever exposing plaintext answerKey in client bundle
+  const identCrit = baseRes.criteriaResults.find((r) => r.category === 'identification');
+  const fields = missionState.submitFields || [];
+  const ak = missionState.setupData?.answerKey || {};
+  if (identCrit && fields.length > 0) {
+    let hits = 0;
+    for (const f of fields) {
+      const uVal = userAnswers[f.id];
+      if (ak[f.id] && String(uVal || '').trim() === String(ak[f.id]).trim()) {
+        hits += 1;
+      } else if (hashes[f.id]) {
+        const ok = await verifyHashedAnswer(missionState.seed, f.id, uVal, hashes[f.id]);
+        if (ok) hits += 1;
+      } else if (f.type === 'number' && ak.targetMolarityM != null) {
+        const num = Number(uVal);
+        if (Number.isFinite(num) && num > 0) {
+          const err = Math.abs(num - ak.targetMolarityM) / ak.targetMolarityM;
+          if (err <= 0.02) hits += 1;
+          else if (err <= 0.05) hits += 0.7;
+          else if (err <= 0.1) hits += 0.4;
+        }
+      }
+    }
+    const newPts = +Math.min(identCrit.maxPoints, (hits / fields.length) * identCrit.maxPoints).toFixed(2);
+    identCrit.earned = newPts;
+    const ratio = identCrit.maxPoints > 0 ? newPts / identCrit.maxPoints : 0;
+    identCrit.status = ratio >= 0.9 ? 'pass' : ratio >= 0.35 ? 'partial' : 'fail';
+    identCrit.detail = `${hits.toFixed(1)}/${fields.length} verified`;
+
+    const rawScore = baseRes.criteriaResults.reduce((s, r) => s + r.earned, 0);
+    const totalScore = Math.max(0, Math.min(10.0, +(rawScore - (baseRes.hintPenalty || 0) - (baseRes.integrityPenalty || 0)).toFixed(1)));
+    const rank = gradeFromScore(totalScore);
+    Object.assign(baseRes, {
+      rawScore: +rawScore.toFixed(1),
+      totalScore,
+      passed: totalScore >= 5.0,
+      ...rank,
+    });
+  }
+  return baseRes;
 }
 
 export function loadMissionProgress() {

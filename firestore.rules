@@ -8,15 +8,18 @@ rules_version = '2';
 // Assumed Data Model
 // ===============================================================
 //
-// Collection: users/{userId}
+// Collection: users/{uid}
 // Document ID: Firebase Auth UID
 // Fields:
-//   - uid: string (optional, must match userId, immutable)
+//   - role: string (required on create == 'student', immutable on update; 'student' | 'teacher')
+//   - email: string | null (optional, 3..254 chars)
 //   - displayName: string (optional, 0..100 chars)
-//   - email: string (optional, 3..254 chars)
+//   - createdAt: timestamp | number (optional, >= 0 if number, immutable once set)
+//   - updatedAt: timestamp | number (optional, >= 0 if number)
+//   - uid: string (optional, must equal {uid}, immutable)
 //   - schemaVersion: string (optional, 1..32 chars)
 //
-// Subcollection: users/{userId}/workspace/{docId} (e.g., "current")
+// Subcollection: users/{uid}/workspace/{docId}
 // Document ID: string (e.g., "current")
 // Fields:
 //   - schemaVersion: string (required, 1..32 chars)
@@ -28,32 +31,88 @@ rules_version = '2';
 //   - benches: list (required, 1..10 items)
 //   - updatedByEmail: string | null (optional, <= 254 chars)
 //   - cloudSavedAt: number | timestamp (optional, >= 0 if number)
-//   - storageCabinet: list (optional, infinite capacity)
+//   - storageCabinet: list (optional, <= 1000 items)
 //   - scope: string (optional, 1..32 chars)
 //
-// Subcollection: users/{userId}/storage_cabinet/{docId}
-// Document ID: string
-// Fields (individual saved item OR cabinet array snapshot):
+// Subcollection: users/{uid}/storage_cabinet/{docId}
+// Document ID: string (e.g., "current" or item ID)
+// Fields:
 //   - id: string (optional, 1..128 chars)
 //   - schemaVersion: string (optional, 1..32 chars)
-//   - name / title: string (optional, <= 200 chars)
-//   - notes: string (optional, <= 2000 chars)
-//   - stickyLabel: string | map | null (optional, <= 500 chars if string)
+//   - name / title: string (optional, 1..200 chars)
+//   - notes: string (optional, 0..2000 chars)
 //   - apparatusId: string (optional, 1..64 chars)
-//   - vessel / item: map | null (optional)
+//   - stickyLabel: string | map | null (optional, <= 500 chars or <= 10 keys)
+//   - vessel / item: map | null (optional, <= 50 keys)
 //   - tags: list (optional, <= 50 items)
-//   - items / vessels: list (optional, infinite capacity)
-//   - savedAt / savedAtMs / createdAt / updatedAt: number | timestamp | string (optional)
+//   - items / vessels: list (optional, <= 1000 items)
+//   - savedAt / savedAtMs / createdAt / updatedAt: timestamp | number | string (optional)
 //
-// Collection: shared_benches/{shareCode}
-// Document ID: 6-char classroom code matching ^LAB-[0-9]{3}$
+// Collection: shared_benches/{code}
+// Document ID: classroom share code matching ^LAB-[A-Z0-9]{3,8}$ (e.g., LAB-842)
 // Fields:
-//   - shareCode: string (required, must equal document ID & match ^LAB-[0-9]{3}$, immutable)
+//   - shareCode: string (required, must equal {code}, immutable)
 //   - schemaVersion: string (required, 1..32 chars)
 //   - createdByUid: string (required, must equal request.auth.uid on create, immutable)
-//   - createdBy: string (optional, <= 254 chars)
-//   - createdAt: number | timestamp (optional, immutable if set)
-//   - bench: map (required, 1..20 keys; optional vessels/connections/items lists <= 200)
+//   - createdBy: string (optional, 1..254 chars)
+//   - createdAt: timestamp | number (optional, >= 0 if number, immutable)
+//   - bench: map (required, 1..20 keys; vessels/connections/items <= 200)
+//
+// Collection: assignments/{examCode}
+// Document ID: exam code matching ^CHEM-[A-Z0-9]{4,12}$ (e.g., CHEM-A4F9)
+// Fields (public metadata + template ONLY, NEVER raw answer keys):
+//   - examCode: string (required, must equal {examCode}, immutable)
+//   - title: string (required, 1..200 chars)
+//   - createdBy: string (required, teacher UID == request.auth.uid on create, immutable)
+//   - createdAt: timestamp | number (required, >= 0 if number, immutable)
+//   - updatedAt: timestamp | number (optional, >= 0 if number)
+//   - description / instructions: string (optional, 0..5000 chars)
+//   - createdByName: string (optional, 0..100 chars)
+//   - createdByEmail: string (optional, 0..254 chars)
+//   - schemaVersion: string (optional, 1..32 chars)
+//   - status: string (optional, 'draft' | 'active' | 'published' | 'closed' | 'archived')
+//   - isActive / published / proctoringEnabled / randomizeSeed / allowNotes: bool (optional)
+//   - startsAt / endsAt / dueAt: timestamp | number | null (optional)
+//   - durationMinutes / timeLimitSec / timeLimitMinutes: number (optional, 0..86400)
+//   - maxScore / totalPoints: number (optional, 0..10000)
+//   - proctorConfig / settings / rubricSummary: map (optional, <= 30 keys)
+//   - templateBench / bench / initialBench / workspace: map (optional, <= 25 keys)
+//   - tasks / questions / prompts: list (optional, <= 100 items)
+//   - allowedTools / allowedReagents / tags: list (optional, <= 200 items)
+//
+// Subcollection: assignments/{examCode}/private/{docId}
+// Document ID: string (e.g., "answerKey")
+// Fields (teacher-owner ONLY, strictly hidden from students):
+//   - examCode: string (optional, must equal {examCode}, immutable)
+//   - createdBy: string (optional, teacher UID, immutable)
+//   - createdAt / updatedAt: timestamp | number (optional)
+//   - schemaVersion: string (optional, 1..32 chars)
+//   - answerKey / answerKeys / gradingCriteria / rubric / tolerance: map | list (optional)
+//   - expectedObservations: list | map | string (optional)
+//   - notes: string (optional, 0..5000 chars)
+//
+// Subcollection: assignments/{examCode}/submissions/{studentUid}
+// Document ID: student Firebase Auth UID
+// Fields:
+//   - studentUid: string (required, must equal {studentUid} and auth.uid on create, immutable)
+//   - startedAt: timestamp (required, must equal request.time on create, immutable)
+//   - seed: int | string (required, 0..4294967295 if int or 1..64 chars if string, immutable)
+//   - examCode: string (optional, must equal {examCode}, immutable)
+//   - createdAt: timestamp | number (optional, immutable)
+//   - updatedAt: timestamp | number (optional)
+//   - submittedAt: timestamp | number | null (optional)
+//   - status: string (optional, 'in_progress' | 'started' | 'submitted' | 'auto_submitted' | 'graded')
+//   - studentName: string (optional, 0..100 chars)
+//   - studentEmail: string (optional, 0..254 chars)
+//   - answers: map | list (optional, <= 100 entries)
+//   - integrityLog: list | map (optional, <= 500 entries)
+//   - score: number | map | null (optional, 0..10000 if number, <= 30 keys if map)
+//   - finalSnapshot: map | null (optional, <= 25 keys)
+//   - elapsedSec: number (optional, 0..86400)
+//   - tabSwitchCount / blurCount: int (optional, 0..10000)
+//   - teacherNotes / gradingNotes: string (optional, teacher-only, 0..5000 chars)
+//   - gradedBy: string (optional, teacher-only, 1..128 chars)
+//   - gradedAt: timestamp | number (optional, teacher-only)
 //
 // ===============================================================
 
@@ -68,13 +127,27 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
     }
 
-    function uidUnchanged(userId) {
+    // Derive teacher authority strictly from server-protected users/{uid}.role
+    function isTeacher() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+    }
+
+    // Verify parent assignment exists and belongs to the requesting teacher
+    function isAssignmentOwner(examCode) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/assignments/$(examCode)) &&
+        get(/databases/$(database)/documents/assignments/$(examCode)).data.createdBy == request.auth.uid;
+    }
+
+    function uidUnchanged(uid) {
       return !('uid' in request.resource.data) ||
-        (request.resource.data.uid is string && request.resource.data.uid == userId);
+        (request.resource.data.uid is string && request.resource.data.uid == uid);
     }
 
     function uidNotModified() {
@@ -91,12 +164,6 @@ service cloud.firestore {
       return request.resource.data.keys().hasOnly(fields);
     }
 
-    function hasNoPrivilegedFields() {
-      return !request.resource.data.keys().hasAny([
-        'role', 'roles', 'isAdmin', 'admin', 'permissions'
-      ]);
-    }
-
     function areImmutableFieldsUnchanged(fields) {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
     }
@@ -105,31 +172,68 @@ service cloud.firestore {
       return val is string && val.size() >= minLen && val.size() <= maxLen;
     }
 
-    function isValidOptionalString(field, minLen, maxLen) {
-      return !(field in request.resource.data) ||
-        isValidString(request.resource.data[field], minLen, maxLen);
+    function isValidOptionalString(data, field, minLen, maxLen) {
+      return !(field in data) || isValidString(data[field], minLen, maxLen);
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+        email.size() >= 3 &&
+        email.size() <= 254 &&
+        email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
     }
 
     function isValidTimestampOrEpoch(val) {
       return val is timestamp || (val is number && val >= 0);
     }
 
-    function isValidShareCode(shareCode) {
-      return shareCode.matches('^LAB-[0-9]{3}$');
+    function isValidShareCode(code) {
+      return code is string && code.matches('^LAB-[A-Z0-9]{3,8}$');
+    }
+
+    function isValidExamCode(examCode) {
+      return examCode is string && examCode.matches('^CHEM-[A-Z0-9]{4,12}$');
+    }
+
+    function isValidSeed(seed) {
+      return (seed is int && seed >= 0 && seed <= 4294967295) ||
+        (seed is string && seed.size() >= 1 && seed.size() <= 64);
+    }
+
+    function isValidBenchSnapshotMap(bench) {
+      return bench is map &&
+        bench.keys().size() > 0 &&
+        bench.keys().size() <= 25 &&
+        (!('id' in bench) || isValidString(bench.id, 1, 64)) &&
+        (!('customName' in bench) || isValidString(bench.customName, 0, 200)) &&
+        (!('vessels' in bench) || (bench.vessels is list && bench.vessels.size() <= 200)) &&
+        (!('connections' in bench) || (bench.connections is list && bench.connections.size() <= 200)) &&
+        (!('items' in bench) || (bench.items is list && bench.items.size() <= 200)) &&
+        (!('benches' in bench) || (bench.benches is list && bench.benches.size() <= 10));
     }
 
     // ===============================================================
-    // Domain Validators (Used in BOTH create and update)
+    // Domain Validators (Called in BOTH create and update)
     // ===============================================================
 
-    function isValidUserProfile(data, userId) {
+    function isValidUserProfile(data, uid) {
       return data is map &&
-        hasOnlyAllowedFields(['uid', 'displayName', 'email', 'schemaVersion']) &&
-        hasNoPrivilegedFields() &&
-        uidUnchanged(userId) &&
-        isValidOptionalString('displayName', 0, 100) &&
-        isValidOptionalString('email', 3, 254) &&
-        isValidOptionalString('schemaVersion', 1, 32);
+        hasOnlyAllowedFields([
+          'uid',
+          'email',
+          'displayName',
+          'role',
+          'createdAt',
+          'updatedAt',
+          'schemaVersion'
+        ]) &&
+        uidUnchanged(uid) &&
+        (!('email' in data) || data.email == null || isValidEmail(data.email)) &&
+        isValidOptionalString(data, 'displayName', 0, 100) &&
+        (!('role' in data) || data.role in ['student', 'teacher']) &&
+        (!('createdAt' in data) || isValidTimestampOrEpoch(data.createdAt)) &&
+        (!('updatedAt' in data) || isValidTimestampOrEpoch(data.updatedAt)) &&
+        isValidOptionalString(data, 'schemaVersion', 1, 32);
     }
 
     function isValidWorkspaceDoc(data) {
@@ -165,44 +269,35 @@ service cloud.firestore {
         data.benches is list && data.benches.size() >= 1 && data.benches.size() <= 10 &&
         (!('updatedByEmail' in data) || data.updatedByEmail == null || isValidString(data.updatedByEmail, 1, 254)) &&
         (!('cloudSavedAt' in data) || isValidTimestampOrEpoch(data.cloudSavedAt)) &&
-        (!('storageCabinet' in data) || data.storageCabinet is list) &&
-        (!('scope' in data) || isValidString(data.scope, 1, 32));
+        (!('storageCabinet' in data) || (data.storageCabinet is list && data.storageCabinet.size() <= 1000)) &&
+        isValidOptionalString(data, 'scope', 1, 32);
     }
 
-    function isValidStorageCabinetDoc(data, userId) {
+    function isValidStorageCabinetDoc(data, uid) {
       return data is map &&
         data.keys().size() > 0 &&
         data.keys().size() <= 40 &&
-        hasNoPrivilegedFields() &&
-        uidUnchanged(userId) &&
-        isValidOptionalString('id', 1, 128) &&
-        isValidOptionalString('schemaVersion', 1, 32) &&
-        isValidOptionalString('name', 1, 200) &&
-        isValidOptionalString('title', 1, 200) &&
-        isValidOptionalString('notes', 0, 2000) &&
-        isValidOptionalString('apparatusId', 1, 64) &&
+        !data.keys().hasAny(['role', 'roles', 'isAdmin', 'admin', 'permissions']) &&
+        uidUnchanged(uid) &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        isValidOptionalString(data, 'schemaVersion', 1, 32) &&
+        isValidOptionalString(data, 'name', 1, 200) &&
+        isValidOptionalString(data, 'title', 1, 200) &&
+        isValidOptionalString(data, 'notes', 0, 2000) &&
+        isValidOptionalString(data, 'apparatusId', 1, 64) &&
         (!('stickyLabel' in data) || data.stickyLabel == null || isValidString(data.stickyLabel, 0, 500) || (data.stickyLabel is map && data.stickyLabel.keys().size() <= 10)) &&
-        (!('vessel' in data) || data.vessel == null || data.vessel is map) &&
-        (!('item' in data) || data.item == null || data.item is map) &&
+        (!('vessel' in data) || data.vessel == null || (data.vessel is map && data.vessel.keys().size() <= 50)) &&
+        (!('item' in data) || data.item == null || (data.item is map && data.item.keys().size() <= 50)) &&
         (!('tags' in data) || (data.tags is list && data.tags.size() <= 50)) &&
-        (!('items' in data) || data.items is list) &&
-        (!('vessels' in data) || data.vessels is list) &&
+        (!('items' in data) || (data.items is list && data.items.size() <= 1000)) &&
+        (!('vessels' in data) || (data.vessels is list && data.vessels.size() <= 1000)) &&
         (!('savedAt' in data) || isValidTimestampOrEpoch(data.savedAt) || isValidString(data.savedAt, 1, 64)) &&
         (!('savedAtMs' in data) || isValidTimestampOrEpoch(data.savedAtMs)) &&
         (!('createdAt' in data) || isValidTimestampOrEpoch(data.createdAt)) &&
         (!('updatedAt' in data) || isValidTimestampOrEpoch(data.updatedAt));
     }
 
-    function isValidGenericUserSubdoc(data, userId) {
-      return data is map &&
-        data.keys().size() > 0 &&
-        data.keys().size() <= 40 &&
-        hasNoPrivilegedFields() &&
-        uidUnchanged(userId) &&
-        isValidOptionalString('schemaVersion', 1, 32);
-    }
-
-    function isValidSharedBench(data, shareCode) {
+    function isValidSharedBench(data, code) {
       return data is map &&
         hasRequiredFields(['shareCode', 'schemaVersion', 'createdByUid', 'bench']) &&
         hasOnlyAllowedFields([
@@ -214,82 +309,345 @@ service cloud.firestore {
           'bench'
         ]) &&
         data.shareCode is string &&
-        data.shareCode == shareCode &&
+        data.shareCode == code &&
         isValidShareCode(data.shareCode) &&
         isValidString(data.schemaVersion, 1, 32) &&
         isValidString(data.createdByUid, 1, 128) &&
-        (!('createdBy' in data) || isValidString(data.createdBy, 1, 254)) &&
+        isValidOptionalString(data, 'createdBy', 1, 254) &&
         (!('createdAt' in data) || isValidTimestampOrEpoch(data.createdAt)) &&
-        data.bench is map &&
-        data.bench.keys().size() > 0 &&
-        data.bench.keys().size() <= 20 &&
-        (!('id' in data.bench) || isValidString(data.bench.id, 1, 64)) &&
-        (!('vessels' in data.bench) || (data.bench.vessels is list && data.bench.vessels.size() <= 200)) &&
-        (!('connections' in data.bench) || (data.bench.connections is list && data.bench.connections.size() <= 200)) &&
-        (!('items' in data.bench) || (data.bench.items is list && data.bench.items.size() <= 200));
+        isValidBenchSnapshotMap(data.bench);
+    }
+
+    function isValidAssignment(data, examCode) {
+      return data is map &&
+        hasRequiredFields(['examCode', 'title', 'createdBy', 'createdAt']) &&
+        hasOnlyAllowedFields([
+          'examCode',
+          'title',
+          'description',
+          'instructions',
+          'createdBy',
+          'createdByName',
+          'createdByEmail',
+          'createdAt',
+          'updatedAt',
+          'schemaVersion',
+          'status',
+          'isActive',
+          'published',
+          'proctoringEnabled',
+          'randomizeSeed',
+          'allowNotes',
+          'startsAt',
+          'endsAt',
+          'dueAt',
+          'durationMinutes',
+          'timeLimitSec',
+          'timeLimitMinutes',
+          'maxScore',
+          'totalPoints',
+          'proctorConfig',
+          'settings',
+          'rubricSummary',
+          'templateBench',
+          'bench',
+          'initialBench',
+          'workspace',
+          'tasks',
+          'questions',
+          'prompts',
+          'allowedTools',
+          'allowedReagents',
+          'tags'
+        ]) &&
+        data.examCode is string &&
+        data.examCode == examCode &&
+        isValidExamCode(data.examCode) &&
+        isValidString(data.title, 1, 200) &&
+        isValidOptionalString(data, 'description', 0, 5000) &&
+        isValidOptionalString(data, 'instructions', 0, 5000) &&
+        isValidString(data.createdBy, 1, 128) &&
+        isValidOptionalString(data, 'createdByName', 0, 100) &&
+        isValidOptionalString(data, 'createdByEmail', 0, 254) &&
+        isValidTimestampOrEpoch(data.createdAt) &&
+        (!('updatedAt' in data) || isValidTimestampOrEpoch(data.updatedAt)) &&
+        isValidOptionalString(data, 'schemaVersion', 1, 32) &&
+        (!('status' in data) || data.status in ['draft', 'active', 'published', 'closed', 'archived']) &&
+        (!('isActive' in data) || data.isActive is bool) &&
+        (!('published' in data) || data.published is bool) &&
+        (!('proctoringEnabled' in data) || data.proctoringEnabled is bool) &&
+        (!('randomizeSeed' in data) || data.randomizeSeed is bool) &&
+        (!('allowNotes' in data) || data.allowNotes is bool) &&
+        (!('startsAt' in data) || data.startsAt == null || isValidTimestampOrEpoch(data.startsAt)) &&
+        (!('endsAt' in data) || data.endsAt == null || isValidTimestampOrEpoch(data.endsAt)) &&
+        (!('dueAt' in data) || data.dueAt == null || isValidTimestampOrEpoch(data.dueAt)) &&
+        (!('durationMinutes' in data) || (data.durationMinutes is number && data.durationMinutes >= 0 && data.durationMinutes <= 1440)) &&
+        (!('timeLimitMinutes' in data) || (data.timeLimitMinutes is number && data.timeLimitMinutes >= 0 && data.timeLimitMinutes <= 1440)) &&
+        (!('timeLimitSec' in data) || (data.timeLimitSec is number && data.timeLimitSec >= 0 && data.timeLimitSec <= 86400)) &&
+        (!('maxScore' in data) || (data.maxScore is number && data.maxScore >= 0 && data.maxScore <= 10000)) &&
+        (!('totalPoints' in data) || (data.totalPoints is number && data.totalPoints >= 0 && data.totalPoints <= 10000)) &&
+        (!('proctorConfig' in data) || (data.proctorConfig is map && data.proctorConfig.keys().size() <= 30)) &&
+        (!('settings' in data) || (data.settings is map && data.settings.keys().size() <= 30)) &&
+        (!('rubricSummary' in data) || (data.rubricSummary is map && data.rubricSummary.keys().size() <= 30)) &&
+        (!('templateBench' in data) || data.templateBench == null || isValidBenchSnapshotMap(data.templateBench)) &&
+        (!('bench' in data) || data.bench == null || isValidBenchSnapshotMap(data.bench)) &&
+        (!('initialBench' in data) || data.initialBench == null || isValidBenchSnapshotMap(data.initialBench)) &&
+        (!('workspace' in data) || data.workspace == null || isValidBenchSnapshotMap(data.workspace)) &&
+        (!('tasks' in data) || (data.tasks is list && data.tasks.size() <= 100)) &&
+        (!('questions' in data) || (data.questions is list && data.questions.size() <= 100)) &&
+        (!('prompts' in data) || (data.prompts is list && data.prompts.size() <= 100)) &&
+        (!('allowedTools' in data) || (data.allowedTools is list && data.allowedTools.size() <= 200)) &&
+        (!('allowedReagents' in data) || (data.allowedReagents is list && data.allowedReagents.size() <= 200)) &&
+        (!('tags' in data) || (data.tags is list && data.tags.size() <= 50));
+    }
+
+    function isValidAssignmentPrivate(data, examCode) {
+      return data is map &&
+        data.keys().size() > 0 &&
+        hasOnlyAllowedFields([
+          'examCode',
+          'schemaVersion',
+          'answerKey',
+          'answerKeys',
+          'expectedObservations',
+          'gradingCriteria',
+          'rubric',
+          'tolerance',
+          'notes',
+          'createdBy',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        (!('examCode' in data) || (data.examCode is string && data.examCode == examCode)) &&
+        isValidOptionalString(data, 'schemaVersion', 1, 32) &&
+        (!('answerKey' in data) || (data.answerKey is map && data.answerKey.keys().size() <= 100) || (data.answerKey is list && data.answerKey.size() <= 200)) &&
+        (!('answerKeys' in data) || (data.answerKeys is map && data.answerKeys.keys().size() <= 100) || (data.answerKeys is list && data.answerKeys.size() <= 200)) &&
+        (!('expectedObservations' in data) || (data.expectedObservations is list && data.expectedObservations.size() <= 200) || (data.expectedObservations is map && data.expectedObservations.keys().size() <= 100) || isValidString(data.expectedObservations, 0, 5000)) &&
+        (!('gradingCriteria' in data) || (data.gradingCriteria is list && data.gradingCriteria.size() <= 200) || (data.gradingCriteria is map && data.gradingCriteria.keys().size() <= 100)) &&
+        (!('rubric' in data) || (data.rubric is list && data.rubric.size() <= 200) || (data.rubric is map && data.rubric.keys().size() <= 100)) &&
+        (!('tolerance' in data) || (data.tolerance is number && data.tolerance >= 0) || (data.tolerance is map && data.tolerance.keys().size() <= 50)) &&
+        isValidOptionalString(data, 'notes', 0, 5000) &&
+        (!('createdBy' in data) || (data.createdBy is string && data.createdBy == request.auth.uid)) &&
+        (!('createdAt' in data) || isValidTimestampOrEpoch(data.createdAt)) &&
+        (!('updatedAt' in data) || isValidTimestampOrEpoch(data.updatedAt));
+    }
+
+    function isValidSubmissionDoc(data, studentUid, examCode) {
+      return data is map &&
+        hasRequiredFields(['studentUid', 'startedAt', 'seed']) &&
+        hasOnlyAllowedFields([
+          'studentUid',
+          'studentName',
+          'studentEmail',
+          'examCode',
+          'seed',
+          'startedAt',
+          'createdAt',
+          'updatedAt',
+          'submittedAt',
+          'status',
+          'answers',
+          'integrityLog',
+          'score',
+          'finalSnapshot',
+          'elapsedSec',
+          'tabSwitchCount',
+          'blurCount',
+          'teacherNotes',
+          'gradingNotes',
+          'gradedBy',
+          'gradedAt'
+        ]) &&
+        data.studentUid is string &&
+        data.studentUid == studentUid &&
+        data.startedAt is timestamp &&
+        isValidSeed(data.seed) &&
+        (!('examCode' in data) || (data.examCode is string && data.examCode == examCode)) &&
+        isValidOptionalString(data, 'studentName', 0, 100) &&
+        isValidOptionalString(data, 'studentEmail', 0, 254) &&
+        (!('createdAt' in data) || isValidTimestampOrEpoch(data.createdAt)) &&
+        (!('updatedAt' in data) || isValidTimestampOrEpoch(data.updatedAt)) &&
+        (!('submittedAt' in data) || data.submittedAt == null || isValidTimestampOrEpoch(data.submittedAt)) &&
+        (!('status' in data) || data.status in ['in_progress', 'started', 'submitted', 'auto_submitted', 'graded']) &&
+        (!('answers' in data) || (data.answers is map && data.answers.keys().size() <= 100) || (data.answers is list && data.answers.size() <= 100)) &&
+        (!('integrityLog' in data) || (data.integrityLog is list && data.integrityLog.size() <= 500) || (data.integrityLog is map && data.integrityLog.keys().size() <= 50)) &&
+        (!('score' in data) || data.score == null || (data.score is number && data.score >= 0 && data.score <= 10000) || (data.score is map && data.score.keys().size() <= 30)) &&
+        (!('finalSnapshot' in data) || data.finalSnapshot == null || isValidBenchSnapshotMap(data.finalSnapshot)) &&
+        (!('elapsedSec' in data) || (data.elapsedSec is number && data.elapsedSec >= 0 && data.elapsedSec <= 86400)) &&
+        (!('tabSwitchCount' in data) || (data.tabSwitchCount is int && data.tabSwitchCount >= 0 && data.tabSwitchCount <= 10000)) &&
+        (!('blurCount' in data) || (data.blurCount is int && data.blurCount >= 0 && data.blurCount <= 10000)) &&
+        isValidOptionalString(data, 'teacherNotes', 0, 5000) &&
+        isValidOptionalString(data, 'gradingNotes', 0, 5000) &&
+        isValidOptionalString(data, 'gradedBy', 1, 128) &&
+        (!('gradedAt' in data) || isValidTimestampOrEpoch(data.gradedAt));
     }
 
     // ===============================================================
     // Collection Rules
     // ===============================================================
 
-    // User root document & owner-only subcollections
-    match /users/{userId} {
-      allow read: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidUserProfile(request.resource.data, userId);
-      allow update: if isOwner(userId) && isValidUserProfile(request.resource.data, userId) && uidNotModified();
-      allow delete: if isOwner(userId);
+    // 1. User profiles (PII-protected, role self-escalation blocked)
+    match /users/{uid} {
+      allow read: if isOwner(uid);
 
-      // Personal cloud workspace snapshots (e.g. users/{userId}/workspace/current)
+      // Self-signup MUST set role == 'student' (never 'teacher' or 'admin')
+      allow create: if isOwner(uid) &&
+        isValidUserProfile(request.resource.data, uid) &&
+        'role' in request.resource.data &&
+        request.resource.data.role == 'student';
+
+      // Users cannot escalate their own role or tamper with uid/createdAt
+      allow update: if isOwner(uid) &&
+        isValidUserProfile(request.resource.data, uid) &&
+        uidNotModified() &&
+        areImmutableFieldsUnchanged(['createdAt']) &&
+        (
+          ('role' in resource.data &&
+            'role' in request.resource.data &&
+            request.resource.data.role == resource.data.role) ||
+          (!('role' in resource.data) &&
+            (!('role' in request.resource.data) || request.resource.data.role == 'student'))
+        );
+
+      allow delete: if false;
+
+      // 2a. Personal cloud workspace snapshots
       match /workspace/{docId} {
-        allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidWorkspaceDoc(request.resource.data);
-        allow delete: if isOwner(userId);
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && isValidWorkspaceDoc(request.resource.data);
+        allow delete: if isOwner(uid);
       }
 
-      // Personal infinite storage cabinet
+      // 2b. Personal storage cabinet snapshots/items
       match /storage_cabinet/{docId} {
-        allow read: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidStorageCabinetDoc(request.resource.data, userId);
-        allow update: if isOwner(userId) && isValidStorageCabinetDoc(request.resource.data, userId) && uidNotModified();
-        allow delete: if isOwner(userId);
-      }
-
-      // Other owner-scoped nested subcollections (excluding workspace & storage_cabinet to prevent rule bypass)
-      match /{subcollection}/{docPath=**} {
-        allow read: if isOwner(userId) && !(subcollection in ['workspace', 'storage_cabinet']);
-        allow create: if isOwner(userId) &&
-          !(subcollection in ['workspace', 'storage_cabinet']) &&
-          isValidGenericUserSubdoc(request.resource.data, userId);
-        allow update: if isOwner(userId) &&
-          !(subcollection in ['workspace', 'storage_cabinet']) &&
-          isValidGenericUserSubdoc(request.resource.data, userId) &&
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && isValidStorageCabinetDoc(request.resource.data, uid);
+        allow update: if isOwner(uid) &&
+          isValidStorageCabinetDoc(request.resource.data, uid) &&
           uidNotModified();
-        allow delete: if isOwner(userId) && !(subcollection in ['workspace', 'storage_cabinet']);
+        allow delete: if isOwner(uid);
       }
     }
 
-    // Classroom bench share codes (exact-code get only; listing disabled to prevent enumeration)
-    match /shared_benches/{shareCode} {
-      allow get: if isAuthenticated() && isValidShareCode(shareCode);
+    // 3. Classroom shared benches (exact-code get; listing disabled to prevent enumeration)
+    match /shared_benches/{code} {
+      allow get: if isAuthenticated() && isValidShareCode(code);
       allow list: if false;
 
       allow create: if isAuthenticated() &&
-        isValidShareCode(shareCode) &&
+        isValidShareCode(code) &&
         request.resource.data.createdByUid == request.auth.uid &&
-        isValidSharedBench(request.resource.data, shareCode);
+        isValidSharedBench(request.resource.data, code);
 
       allow update: if isAuthenticated() &&
-        isValidShareCode(shareCode) &&
+        isValidShareCode(code) &&
         resource.data.createdByUid == request.auth.uid &&
-        isValidSharedBench(request.resource.data, shareCode) &&
+        isValidSharedBench(request.resource.data, code) &&
         areImmutableFieldsUnchanged(['shareCode', 'createdByUid', 'createdAt']);
 
       allow delete: if isAuthenticated() &&
         resource.data.createdByUid == request.auth.uid;
     }
 
-    // Default deny all other paths
+    // 4. Assignments (public metadata + template without raw answer keys)
+    match /assignments/{examCode} {
+      allow get: if isAuthenticated() && isValidExamCode(examCode);
+      allow list: if isTeacher() && resource.data.createdBy == request.auth.uid;
+
+      allow create: if isTeacher() &&
+        isValidExamCode(examCode) &&
+        request.resource.data.createdBy == request.auth.uid &&
+        isValidAssignment(request.resource.data, examCode);
+
+      allow update: if isTeacher() &&
+        isValidExamCode(examCode) &&
+        resource.data.createdBy == request.auth.uid &&
+        isValidAssignment(request.resource.data, examCode) &&
+        areImmutableFieldsUnchanged(['examCode', 'createdBy', 'createdAt']);
+
+      allow delete: if isTeacher() &&
+        resource.data.createdBy == request.auth.uid;
+
+      // 5. Private exam data (raw answerKey, strictly teacher-owner ONLY)
+      match /private/{docId} {
+        allow read: if isTeacher() && isAssignmentOwner(examCode);
+
+        allow create: if isTeacher() &&
+          isAssignmentOwner(examCode) &&
+          isValidAssignmentPrivate(request.resource.data, examCode);
+
+        allow update: if isTeacher() &&
+          isAssignmentOwner(examCode) &&
+          isValidAssignmentPrivate(request.resource.data, examCode) &&
+          areImmutableFieldsUnchanged(['examCode', 'createdBy', 'createdAt']);
+
+        allow delete: if isTeacher() && isAssignmentOwner(examCode);
+      }
+
+      // 6. Student exam submissions (anti-F5 clock/seed reset protection)
+      match /submissions/{studentUid} {
+        allow get: if isValidExamCode(examCode) &&
+          (isOwner(studentUid) || (isTeacher() && isAssignmentOwner(examCode)));
+
+        allow list: if isValidExamCode(examCode) &&
+          isTeacher() &&
+          isAssignmentOwner(examCode);
+
+        // Student creates their own submission with server-enforced startedAt == request.time
+        allow create: if isOwner(studentUid) &&
+          isValidExamCode(examCode) &&
+          exists(/databases/$(database)/documents/assignments/$(examCode)) &&
+          request.resource.data.studentUid == request.auth.uid &&
+          request.resource.data.startedAt == request.time &&
+          !request.resource.data.keys().hasAny(['teacherNotes', 'gradingNotes', 'gradedBy', 'gradedAt']) &&
+          (!('status' in request.resource.data) || request.resource.data.status != 'graded') &&
+          isValidSubmissionDoc(request.resource.data, studentUid, examCode);
+
+        // Student updates answers/proctor/score/submittedAt/finalSnapshot while studentUid, seed, startedAt remain immutable
+        // OR teacher owner of parent assignment updates grading notes/score/status
+        allow update: if isValidExamCode(examCode) &&
+          isValidSubmissionDoc(request.resource.data, studentUid, examCode) &&
+          (
+            (
+              isOwner(studentUid) &&
+              request.resource.data.startedAt == resource.data.startedAt &&
+              request.resource.data.seed == resource.data.seed &&
+              request.resource.data.studentUid == resource.data.studentUid &&
+              areImmutableFieldsUnchanged([
+                'studentUid',
+                'seed',
+                'startedAt',
+                'examCode',
+                'createdAt',
+                'teacherNotes',
+                'gradingNotes',
+                'gradedBy',
+                'gradedAt'
+              ]) &&
+              (!('status' in request.resource.data) || request.resource.data.status != 'graded')
+            ) ||
+            (
+              isTeacher() &&
+              isAssignmentOwner(examCode) &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'teacherNotes',
+                'gradingNotes',
+                'score',
+                'status',
+                'gradedBy',
+                'gradedAt',
+                'updatedAt'
+              ])
+            )
+          );
+
+        allow delete: if isValidExamCode(examCode) &&
+          isTeacher() &&
+          isAssignmentOwner(examCode);
+      }
+    }
+
+    // 7. Default deny all other collections and paths
     match /{document=**} {
       allow read, write: if false;
     }

@@ -1,9 +1,12 @@
 import { APPARATUS } from '../data/apparatus.js';
 import { SPECIES } from '../data/species.js';
+import { fnv1aHash32 } from '../engine/examProctor.js';
 
 export const WORKSPACE_SCHEMA_VERSION = '1.0.0';
 export const LOCAL_STORAGE_KEY = 'chemlab_workspace_autosave_v1';
 export const LOCAL_SHARED_PREFIX = 'chemlab_shared_bench_';
+export const LOCAL_EXAM_PREFIX = 'chemlab_exam_assignment_';
+export const LOCAL_EXAM_SUB_PREFIX = 'chemlab_exam_sub_';
 
 export const VLAB_SCOPES = {
   SINGLE_BENCH: 'SINGLE_BENCH',
@@ -840,6 +843,7 @@ class CloudSyncController {
     this.db = null;
     this.modules = null;
     this.user = null;
+    this.userProfile = null;
     this.status = 'idle'; // 'idle' | 'loading' | 'ready' | 'offline' | 'error'
     this.lastCloudSaveMs = 0;
     this.dirtySinceCloudSave = false;
@@ -885,14 +889,22 @@ class CloudSyncController {
         this.db = firestoreMod.getFirestore(this.app);
         this.modules = { ...appMod, ...authMod, ...firestoreMod };
 
-        authMod.onAuthStateChanged(this.auth, (u) => {
+        authMod.onAuthStateChanged(this.auth, async (u) => {
           this.user = u || null;
+          if (u) {
+            await this.syncUserRoleProfile(u);
+          } else {
+            this.userProfile = null;
+          }
           this.status = 'ready';
           this._notify();
         });
         if (typeof this.auth.authStateReady === 'function') {
           await this.auth.authStateReady();
           this.user = this.auth.currentUser || null;
+          if (this.user) {
+            await this.syncUserRoleProfile(this.user);
+          }
         }
 
         this.status = 'ready';
@@ -933,7 +945,61 @@ class CloudSyncController {
     if (!this.auth || !this.modules) return;
     await this.modules.signOut(this.auth);
     this.user = null;
+    this.userProfile = null;
     this._notify();
+  }
+
+  isTeacher() {
+    return this.userProfile?.role === 'teacher';
+  }
+
+  /**
+   * Authoritative server-backed role check against `users/{uid}` in Firestore.
+   * Client cannot elevate its own role beyond 'student' on create/update.
+   */
+  async syncUserRoleProfile(user = this.user) {
+    if (!user?.uid) {
+      this.userProfile = null;
+      return null;
+    }
+    try {
+      const mods = this.modules || (await this.ensureFirebaseLoaded());
+      const userRef = mods.doc(this.db, 'users', user.uid);
+      const snap = await mods.getDoc(userRef);
+      if (snap.exists()) {
+        const data = snap.data() || {};
+        this.userProfile = {
+          uid: user.uid,
+          email: data.email || user.email || '',
+          displayName: data.displayName || user.displayName || '',
+          role: data.role === 'teacher' ? 'teacher' : 'student',
+        };
+      } else {
+        const initialProfile = {
+          email: user.email || '',
+          displayName: user.displayName || '',
+          role: 'student',
+          createdAt: mods.serverTimestamp(),
+          updatedAt: mods.serverTimestamp(),
+        };
+        await mods.setDoc(userRef, initialProfile);
+        this.userProfile = {
+          uid: user.uid,
+          email: initialProfile.email,
+          displayName: initialProfile.displayName,
+          role: 'student',
+        };
+      }
+    } catch {
+      this.userProfile = {
+        uid: user.uid,
+        email: user.email || '',
+        displayName: user.displayName || '',
+        role: 'student',
+      };
+    }
+    this._notify();
+    return this.userProfile;
   }
 
   async saveWorkspaceToCloud(labManager) {
@@ -1092,6 +1158,286 @@ class CloudSyncController {
     const res = importBenchIntoNewTab(labManager, record.bench);
     return { shareCode, record, importResult: res };
   }
+
+  async publishAssignment(publicAssignment, privateAnswerKey = {}) {
+    if (!this.user?.uid) throw new Error('AUTH_REQUIRED');
+    if (this.userProfile?.role !== 'teacher') throw new Error('TEACHER_ROLE_REQUIRED');
+
+    const suffix = String(Math.floor(1000 + Math.random() * 9000));
+    const examCode = (publicAssignment?.examCode || `CHEM-${suffix}`).toUpperCase();
+    const firestorePublic = stripUndefinedDeep({
+      examCode,
+      title: String(publicAssignment.title || examCode).slice(0, 200),
+      description: String(publicAssignment.goalText || '').slice(0, 5000),
+      instructions: String(publicAssignment.equationText || '').slice(0, 5000),
+      createdBy: this.user.uid,
+      createdByEmail: this.user.email || '',
+      createdAt: Date.now(),
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+      status: 'active',
+      published: true,
+      proctoringEnabled: true,
+      randomizeSeed: true,
+      timeLimitMinutes: Number(publicAssignment.timeLimitMin) || 0,
+      timeLimitSec: (Number(publicAssignment.timeLimitMin) || 0) * 60,
+      maxScore: 10,
+      proctorConfig: publicAssignment.proctorConfig || {},
+      settings: {
+        mode: publicAssignment.mode || 'exam',
+        lockEnvironment: publicAssignment.lockEnvironment !== false,
+        blindVesselSpecs: publicAssignment.blindVesselSpecs || [],
+        titrationConfig: publicAssignment.titrationConfig || null,
+        answerHashes: publicAssignment.answerHashes || {},
+        rubric: publicAssignment.rubric || [],
+        goalText: publicAssignment.goalText || '',
+        equationText: publicAssignment.equationText || '',
+      },
+      templateBench: publicAssignment.benchTemplate || null,
+      questions: publicAssignment.submitFields || [],
+      allowedTools: publicAssignment.allowedApparatus ?? undefined,
+      allowedReagents: publicAssignment.allowedReagents ?? undefined,
+    });
+    const cleanPrivate = stripUndefinedDeep({
+      examCode,
+      createdBy: this.user.uid,
+      answerKey: privateAnswerKey || {},
+      rubric: publicAssignment.rubric || [],
+      updatedAt: Date.now(),
+    });
+
+    try {
+      const mods = this.modules || (await this.ensureFirebaseLoaded());
+      const pubRef = mods.doc(this.db, 'assignments', examCode);
+      await mods.setDoc(pubRef, { ...firestorePublic, createdAt: mods.serverTimestamp(), updatedAt: mods.serverTimestamp() });
+      const privRef = mods.doc(this.db, 'assignments', examCode, 'private', 'answer_key');
+      await mods.setDoc(privRef, { ...cleanPrivate, updatedAt: mods.serverTimestamp() });
+    } catch (err) {
+      console.warn('[CloudSync] Assignment Firestore write failed:', err?.message || err);
+      throw err;
+    }
+
+    const hydrated = normalizeAssignmentDoc({ ...publicAssignment, ...firestorePublic });
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(`${LOCAL_EXAM_PREFIX}${examCode}`, JSON.stringify(hydrated));
+      }
+    } catch {}
+    return hydrated;
+  }
+
+  async loadAssignmentByCode(rawCode) {
+    const clean = String(rawCode || '').trim().toUpperCase();
+    const examCode = clean.startsWith('CHEM-') ? clean : `CHEM-${clean}`;
+    try {
+      const mods = await this.ensureFirebaseLoaded();
+      const docRef = mods.doc(this.db, 'assignments', examCode);
+      const snap = await mods.getDoc(docRef);
+      if (snap.exists()) {
+        return normalizeAssignmentDoc({ examCode, ...snap.data() });
+      }
+    } catch {}
+
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(`${LOCAL_EXAM_PREFIX}${examCode}`);
+      if (raw) {
+        try {
+          return normalizeAssignmentDoc(JSON.parse(raw));
+        } catch {}
+      }
+    }
+    throw new Error('EXAM_CODE_NOT_FOUND');
+  }
+
+  async startExamAttempt(examCode, fallbackUid = null) {
+    const uid = this.user?.uid || fallbackUid || 'local_student';
+    const perStudentSeed = fnv1aHash32(`${examCode}::${uid}`) || 1337;
+    let startedAtMs = Date.now();
+    let seed = perStudentSeed;
+    let existing = null;
+
+    if (this.user?.uid) {
+      try {
+        const mods = this.modules || (await this.ensureFirebaseLoaded());
+        const subRef = mods.doc(this.db, 'assignments', examCode, 'submissions', uid);
+        const snap = await mods.getDoc(subRef);
+        if (snap.exists()) {
+          existing = snap.data();
+          seed = existing.seed || perStudentSeed;
+          if (existing.startedAt && typeof existing.startedAt.toMillis === 'function') {
+            startedAtMs = existing.startedAt.toMillis();
+          }
+        } else {
+          await mods.setDoc(subRef, {
+            examCode,
+            studentUid: uid,
+            studentEmail: this.user.email || '',
+            seed,
+            startedAt: mods.serverTimestamp(),
+            updatedAt: mods.serverTimestamp(),
+            status: 'in_progress',
+          });
+        }
+      } catch (err) {
+        console.warn('[CloudSync] startExamAttempt Firestore skipped:', err?.message || err);
+      }
+    }
+
+    return { uid, seed, startedAtMs, resumed: Boolean(existing), existing };
+  }
+
+  async submitExamAttempt(examCode, payload = {}) {
+    const uid = this.user?.uid || payload.studentUid || 'local_student';
+    const cleanScoreMap = stripUndefinedDeep({
+      totalScore: payload.score ?? 0,
+      grade: payload.grade || 'C',
+      criteriaResults: payload.criteriaResults || [],
+    });
+    const firestoreUpdate = stripUndefinedDeep({
+      studentEmail: this.user?.email || payload.studentEmail || '',
+      score: cleanScoreMap,
+      answers: payload.answers || {},
+      integrityLog: payload.integrityLog || {},
+      finalSnapshot: payload.finalSnapshot || null,
+      elapsedSec: Number(payload.elapsedSec) || 0,
+      tabSwitchCount: Number(payload.integrityLog?.tabSwitchCount || 0),
+      status: payload.integrityLog?.forceSubmitted ? 'auto_submitted' : 'submitted',
+    });
+
+    if (this.user?.uid) {
+      try {
+        const mods = this.modules || (await this.ensureFirebaseLoaded());
+        const subRef = mods.doc(this.db, 'assignments', examCode, 'submissions', uid);
+        await mods.updateDoc(subRef, {
+          ...firestoreUpdate,
+          submittedAt: mods.serverTimestamp(),
+          updatedAt: mods.serverTimestamp(),
+        });
+      } catch (err) {
+        console.warn('[CloudSync] submitExamAttempt updateDoc failed:', err?.message || err);
+      }
+    }
+
+    const localRecord = {
+      ...firestoreUpdate,
+      examCode,
+      studentUid: uid,
+      submittedAtMs: Date.now(),
+    };
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const key = `${LOCAL_EXAM_SUB_PREFIX}${examCode}`;
+        const cur = JSON.parse(localStorage.getItem(key) || '[]').filter((x) => x.studentUid !== uid);
+        cur.unshift(localRecord);
+        localStorage.setItem(key, JSON.stringify(cur.slice(0, 60)));
+      }
+    } catch {}
+    return localRecord;
+  }
+
+  async listTeacherAssignments() {
+    const out = [];
+    if (this.user?.uid && this.userProfile?.role === 'teacher') {
+      try {
+        const mods = this.modules || (await this.ensureFirebaseLoaded());
+        const q = mods.query(
+          mods.collection(this.db, 'assignments'),
+          mods.where('createdBy', '==', this.user.uid)
+        );
+        const snap = await mods.getDocs(q);
+        snap.forEach((d) => out.push({ examCode: d.id, ...d.data() }));
+      } catch {}
+    }
+    if (typeof localStorage !== 'undefined') {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(LOCAL_EXAM_PREFIX)) continue;
+        try {
+          const item = JSON.parse(localStorage.getItem(k));
+          if (item?.examCode && !out.some((x) => x.examCode === item.examCode)) {
+            out.push(item);
+          }
+        } catch {}
+      }
+    }
+    return out.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+  }
+
+  async listExamSubmissions(examCode) {
+    const clean = String(examCode || '').trim().toUpperCase();
+    const list = [];
+    if (this.user?.uid && this.userProfile?.role === 'teacher') {
+      try {
+        const mods = this.modules || (await this.ensureFirebaseLoaded());
+        const subCol = mods.collection(this.db, 'assignments', clean, 'submissions');
+        const snap = await mods.getDocs(subCol);
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+      } catch {}
+    }
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const localSubs = JSON.parse(localStorage.getItem(`${LOCAL_EXAM_SUB_PREFIX}${clean}`) || '[]');
+        for (const s of localSubs) {
+          if (!list.some((x) => x.studentUid === s.studentUid)) list.push(s);
+        }
+      } catch {}
+    }
+    return list.sort((a, b) => (b.submittedAtMs || 0) - (a.submittedAtMs || 0));
+  }
+}
+
+export function normalizeAssignmentDoc(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const st = raw.settings || {};
+  return {
+    ...raw,
+    benchTemplate: raw.benchTemplate || raw.templateBench || raw.bench || null,
+    allowedApparatus: raw.allowedApparatus ?? raw.allowedTools ?? null,
+    allowedReagents: raw.allowedReagents ?? null,
+    submitFields: raw.submitFields || raw.questions || [],
+    timeLimitMin: raw.timeLimitMin ?? raw.timeLimitMinutes ?? Math.round((raw.timeLimitSec || 0) / 60),
+    mode: raw.mode || st.mode || 'exam',
+    lockEnvironment: raw.lockEnvironment ?? st.lockEnvironment ?? true,
+    blindVesselSpecs: raw.blindVesselSpecs || st.blindVesselSpecs || [],
+    titrationConfig: raw.titrationConfig || st.titrationConfig || null,
+    answerHashes: raw.answerHashes || st.answerHashes || {},
+    rubric: raw.rubric || st.rubric || [],
+    goalText: raw.goalText || raw.description || st.goalText || '',
+    equationText: raw.equationText || raw.instructions || st.equationText || '',
+  };
+}
+
+export function exportVlabExamFile(publicAssignment) {
+  if (!publicAssignment?.examCode) return null;
+  // Strip any accidental raw answerKey before downloading student exam file
+  const safeCopy = stripUndefinedDeep({
+    fileType: 'chemlab-exam-v1',
+    ...publicAssignment,
+    answerKey: undefined,
+  });
+  const blob = new Blob([JSON.stringify(safeCopy, null, 2)], { type: 'application/json' });
+  const fname = `${sanitizeVlabSlug(publicAssignment.examCode, 'chem-exam')}.vlab-exam`;
+  if (typeof document !== 'undefined') {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 1000);
+  }
+  return fname;
+}
+
+export async function readVlabExamFile(file) {
+  const txt = await file.text();
+  const data = JSON.parse(txt);
+  if (!data || !data.examCode || !data.benchTemplate) {
+    throw new Error('INVALID_VLAB_EXAM_FILE');
+  }
+  return data;
 }
 
 export const cloudSync = new CloudSyncController();

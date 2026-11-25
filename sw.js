@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v5-build-23';
+const CACHE_NAME = 'virlab-beta-v5-build-24';
 const ASSETS = [
   './',
   './index.html',
@@ -67,6 +67,7 @@ const ASSETS = [
   './src/engine/chemistryHelpers.js',
   './src/engine/electrochemistry.js',
   './src/engine/equilibrium.js',
+  './src/engine/examProctor.js',
   './src/engine/gasNetwork.js',
   './src/engine/inorganicSolvers.js',
   './src/engine/labManager.js',
@@ -105,6 +106,7 @@ const ASSETS = [
   './src/ui/shelfPanel.js',
   './src/ui/shortcutsModal.js',
   './src/ui/storageCabinetModal.js',
+  './src/ui/teacherBuilderModal.js',
   './src/ui/workspaceStorageModal.js',
 ];
 

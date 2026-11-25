@@ -19,6 +19,10 @@ export class EnvironmentBar {
     const tempC = kelvinToCelsius(env.tempK);
     const boilC = kelvinToCelsius(waterBoilingPointK(env.pressureBar));
     const { lang, theme, deviceMode } = this.appState;
+    const ms = this.sim?.missionState;
+    const envLocked = Boolean(ms?.active && ms?.examMode && ms?.lockEnvironment);
+    const lockAttr = envLocked ? 'disabled title="' + t('examEnvLockedTip') + '"' : '';
+    const lockCls = envLocked ? ' opacity-50 cursor-not-allowed' : '';
 
     this.container.innerHTML = `
       <div class="env-header-inner border-b border-theme bg-surface">
@@ -32,23 +36,34 @@ export class EnvironmentBar {
               <h1 class="text-sm font-bold leading-none whitespace-nowrap">${t('appTitle')}</h1>
               <span id="app-version-badge" class="text-[11px] font-mono px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-muted whitespace-nowrap">${APP_VERSION_TAG}</span>
               ${(() => {
-                const ms = this.sim?.missionState;
-                const activeMission = ms?.active ? getMissionById(ms.missionId) : null;
-                const badgeText = activeMission
-                  ? `🎯 ${t(activeMission.shortTitleKey)}`
-                  : theme === 'olivia'
-                  ? 'u + me = <3 · 🐝'
-                  : theme === 'ctrl'
-                  ? 'draft · 4:20 pm'
-                  : theme === 'sos'
-                  ? 'deep sea · sos'
-                  : `⚗️ ${t('modeFreeSandbox')}`;
-                return `<button type="button" id="btn-mode-switch" title="${t('modeSwitchTip')}"
-                  class="text-xs px-2 py-0.5 rounded-full border ${
-                    activeMission
-                      ? 'border-accent bg-accent/20 text-accent font-bold'
-                      : 'border-theme bg-surface-alt text-muted hover:border-accent hover:text-main'
-                  } whitespace-nowrap transition cursor-pointer">${badgeText}</button>`;
+                const activeMission = ms?.active ? (ms.customAssignment ? ms : getMissionById(ms.missionId)) : null;
+                const missionLbl = activeMission
+                  ? `🎯 ${activeMission.titleText || t(activeMission.shortTitleKey || activeMission.titleKey)}`
+                  : `🎯 ${t('modeMissionsShort')}`;
+                const freeLbl =
+                  theme === 'olivia'
+                    ? 'u + me = <3 · 🐝'
+                    : theme === 'ctrl'
+                    ? 'draft · 4:20 pm'
+                    : theme === 'sos'
+                    ? 'deep sea · sos'
+                    : `⚗️ ${t('modeFreeSandbox')}`;
+                return `<div class="inline-flex items-center gap-1 rounded-full p-0.5 border border-theme bg-surface-alt">
+                  <button type="button" id="btn-mode-free" title="${t('modeFreeSandbox')}"
+                    class="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap transition cursor-pointer ${
+                      !activeMission ? 'bg-accent text-white font-bold' : 'text-muted hover:text-main'
+                    }">${freeLbl}</button>
+                  <button type="button" id="btn-mode-switch" title="${t('modeSwitchTip')}"
+                    class="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap transition cursor-pointer ${
+                      activeMission ? 'bg-accent text-white font-bold' : 'text-muted hover:text-main'
+                    }">${missionLbl}</button>
+                  ${
+                    this.appState.isTeacher
+                      ? `<button type="button" id="btn-mode-teacher" title="${t('teacherStudioTip')}"
+                          class="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap transition cursor-pointer text-amber-300 hover:bg-amber-500/15 font-semibold">🎓 ${t('modeTeacherStudio')}</button>`
+                      : ''
+                  }
+                </div>`;
               })()}
             </div>
             <p class="env-compact-hide text-[11px] text-muted mt-0.5 hidden xl:block whitespace-nowrap">${t('appSubtitle')}</p>
@@ -69,39 +84,39 @@ export class EnvironmentBar {
               ? 'px-2 py-0.5 rounded border border-sky-500/35 bg-sky-500/10 text-xs font-semibold text-sky-400 hover:opacity-90'
               : 'px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-xs font-semibold text-amber-400 hover:opacity-90';
             return `<!-- Ambient Temperature -->
-          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt">
+          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt${lockCls}">
             <span class="text-xs text-muted hidden sm:inline">🌡️ ${t('envTemp')}:</span>
-            <input id="env-temp-input" type="number" min="200" max="450" step="1" value="${env.tempK.toFixed(2)}"
+            <input id="env-temp-input" type="number" min="200" max="450" step="1" value="${env.tempK.toFixed(2)}" ${lockAttr}
               class="w-[70px] px-1.5 py-0.5 rounded border border-theme bg-surface text-xs font-mono font-bold text-right" />
             <span class="text-xs font-mono">K <span class="text-muted">(${tempC.toFixed(1)}°C)</span></span>
-            <button type="button" id="btn-std-satp" title="${t('envBadgeResetTip')}"
+            <button type="button" id="btn-std-satp" ${lockAttr} title="${envLocked ? t('examEnvLockedTip') : t('envBadgeResetTip')}"
               class="${badgeCls}">${badgeLabel}</button>
           </div>`;
           })()}
 
           <!-- Ambient Pressure -->
-          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt">
+          <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt${lockCls}">
             <span class="text-xs text-muted hidden sm:inline">⏱️ ${t('envPress')}:</span>
-            <input id="env-press-input" type="number" min="0.05" max="4.0" step="0.05" value="${env.pressureBar.toFixed(2)}"
+            <input id="env-press-input" type="number" min="0.05" max="4.0" step="0.05" value="${env.pressureBar.toFixed(2)}" ${lockAttr}
               class="w-[58px] px-1.5 py-0.5 rounded border border-theme bg-surface text-xs font-mono font-bold text-right" />
             <span class="text-xs font-mono">bar <span class="text-muted hidden xl:inline">(bp ${boilC.toFixed(1)}°C)</span></span>
           </div>
 
           <!-- Strong UV / Sunlight Toggle for AgCl(s) Photolysis -->
-          <button type="button" id="btn-uv-light" title="${t('envUvTip')}"
+          <button type="button" id="btn-uv-light" ${lockAttr} title="${envLocked ? t('examEnvLockedTip') : t('envUvTip')}"
             class="px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition ${
               env.uvLight
                 ? 'border-violet-500/70 bg-violet-500/20 text-violet-300'
                 : 'border-theme bg-surface-alt text-muted hover:text-main'
-            }">${env.uvLight ? t('envUvBright') : `💡 ${t('envUvRoom')}`}</button>
+            }${lockCls}">${env.uvLight ? t('envUvBright') : `💡 ${t('envUvRoom')}`}</button>
 
           <!-- Atmosphere Mode Toggle: Standard Air (78% N2, 21% O2) vs Inert Glovebox (N2/Ar) -->
-          <button type="button" id="btn-atm-mode" title="${t('envAtmTip')}"
+          <button type="button" id="btn-atm-mode" ${lockAttr} title="${envLocked ? t('examEnvLockedTip') : t('envAtmTip')}"
             class="px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition ${
               env.atmosphereMode === 'inert'
                 ? 'border-cyan-500/70 bg-cyan-500/20 text-cyan-300'
                 : 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400 hover:opacity-90'
-            }">${env.atmosphereMode === 'inert' ? `🛡️ ${t('envAtmInert')}` : `🌬️ ${t('envAtmAir')}`}</button>
+            }${lockCls}">${env.atmosphereMode === 'inert' ? `🛡️ ${t('envAtmInert')}` : `🌬️ ${t('envAtmAir')}`}</button>
 
           <!-- Multi-Spectral Optics Selector: Normal / Aerodynamics / Thermal FLIR -->
           <select id="optics-select" title="${t('opticsLabel')}" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-main text-xs font-semibold">
@@ -213,8 +228,18 @@ export class EnvironmentBar {
       this.sim.setAmbientTempK(CONSTANTS.T_STD_K);
     });
 
+    this.container.querySelector('#btn-mode-free')?.addEventListener('click', () => {
+      if (this.sim?.missionState?.active) {
+        this.callbacks.onExitMission?.();
+      }
+    });
+
     this.container.querySelector('#btn-mode-switch')?.addEventListener('click', () => {
       this.callbacks.onOpenMissions?.();
+    });
+
+    this.container.querySelector('#btn-mode-teacher')?.addEventListener('click', () => {
+      this.callbacks.onOpenTeacherStudio?.();
     });
 
     this.container.querySelector('#btn-uv-light')?.addEventListener('click', () => {

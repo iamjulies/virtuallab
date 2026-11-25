@@ -106,6 +106,8 @@ export class WorkspaceStorageModal {
     if (!this.rootEl) return;
     const t = this.getTranslator();
     const user = cloudSync.user;
+    const roleTag = user ? (cloudSync.isTeacher() ? ' · teacher' : ' · student') : '';
+    const examLocked = Boolean(this.labManager?.hasActiveExamLab?.());
     const timeStr = this.lastAutoSaveTime
       ? new Date(this.lastAutoSaveTime).toLocaleTimeString()
       : t('storageAutoSaveReady');
@@ -136,7 +138,7 @@ export class WorkspaceStorageModal {
                   ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400 font-bold'
                   : 'border-theme bg-surface text-muted'
               }">
-                ${user ? `🟢 ${user.email || 'Signed In'}` : `⚪ ${t('storageCloudSignedOut')}`}
+                ${user ? `🟢 ${user.email || 'Signed In'}${roleTag}` : `⚪ ${t('storageCloudSignedOut')}`}
               </span>
             </div>
 
@@ -238,7 +240,10 @@ export class WorkspaceStorageModal {
               <span class="font-bold text-sky-400">📁 ${t('storageLayer2Title')}</span>
               <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-surface border border-theme text-muted">.vlab / .json (v1.0.0)</span>
             </div>
-            <p class="text-[11px] text-muted leading-relaxed">${t('storageLayer2Desc')}</p>
+            ${
+              examLocked
+                ? `<div class="p-2 rounded-lg border border-red-500/40 bg-red-500/10 text-xs text-red-300 font-semibold">🔒 ${t('examLockExportMsg')}</div>`
+                : `<p class="text-[11px] text-muted leading-relaxed">${t('storageLayer2Desc')}</p>
             <div class="flex flex-wrap items-center gap-2">
               <button type="button" id="btn-storage-export-vlab" class="storage-btn storage-btn-primary">
                 📤 ${t('storageBtnExportVlab')}
@@ -250,7 +255,8 @@ export class WorkspaceStorageModal {
                 📥 ${t('storageBtnImportVlab')}
               </button>
               <input type="file" id="input-storage-import-vlab" accept=".vlab,.json,application/json" class="hidden" />
-            </div>
+            </div>`
+            }
           </div>
 
           <!-- LAYER 1: Browser LocalStorage Auto-Save -->
@@ -464,6 +470,10 @@ export class WorkspaceStorageModal {
 
     // Share code create & load
     this.rootEl.querySelector('#btn-share-generate')?.addEventListener('click', async () => {
+      if (this.labManager?.hasActiveExamLab?.()) {
+        this._setFeedback(`🔒 ${t('examLockExportMsg')}`, 'error');
+        return;
+      }
       try {
         const code = await cloudSync.createBenchShareCode(this.labManager);
         this.lastGeneratedCode = code;

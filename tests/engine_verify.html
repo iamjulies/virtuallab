@@ -64,6 +64,10 @@
     import { MISSION_ORDER, MISSION_REGISTRY } from '../src/data/missions.js';
     import { evaluateMission, loadMissionProgress, saveMissionAttempt } from '../src/engine/missionEvaluator.js';
     import { MissionDockPanel } from '../src/ui/missionPanel.js';
+    import { ExamProctorController, buildHashedAnswerMap, fnv1aHash32, verifyHashedAnswer } from '../src/engine/examProctor.js';
+    import { evaluateMissionWithVerification } from '../src/engine/missionEvaluator.js';
+    import { TeacherBuilderModal } from '../src/ui/teacherBuilderModal.js';
+    import { normalizeAssignmentDoc } from '../src/storage/workspaceStorage.js';
     import { LabSoundEngine, soundEngine } from '../src/audio/soundEngine.js';
     import {
       FIREBASE_CONFIG,
@@ -2486,7 +2490,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.23';
+      const expectedBuild = 'virlab_beta_v5+build.24';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -10625,6 +10629,121 @@
         'Prompt 83 invariants: 6-mission registry (10pt rubrics + VI/EN IUPAC), Blind Unknowns concealment, Titration/Exam hint penalty, Practice vs Exam Dock UI, localStorage persistence',
         registryOk && seedRandomOk && blindSubOk && blindHiddenOk && m1GradeOk && examHiddenUiOk && practiceVisibleUiOk && m2Ok && setupAllOk && storageOk,
         `reg=${registryOk}, seed=${seedRandomOk}, sub=${blindSubOk}, hide=${blindHiddenOk}, m1=${evalM1?.totalScore}, examUI=${examHiddenUiOk}, pracUI=${practiceVisibleUiOk}, m2=${evalM2?.totalScore}(pen=${evalM2?.hintPenalty}), all6=${setupAllOk}, ls=${storageOk}`
+      );
+    }
+
+    // TEST 221: Prompt 84 Teacher Studio, Exam Isolation, Per-Student Seed + SHA-256 Answer Hashing, Proctoring Strikes & Anti-Cheat Guards
+    {
+      const tVi = (k) => I18N.vi[k] ?? k;
+      const tEn = (k) => I18N.en[k] ?? k;
+
+      // 1) Exam Tab Isolation in LabManager: block cross-tab item transfer into/out of examMode lab
+      const lm84 = new LabManager();
+      const sbBeaker = lm84.getActiveSim().createApparatus('beaker_250', 220, 420);
+      const examTabRes = lm84.openIsolatedExamTab({ examCode: 'CHEM-8401', customName: '📝 CHEM-8401' });
+      const examSim = examTabRes.lab.sim;
+      examSim.startMission('mission_qualitative_4', 'exam', 999);
+      const isolatedTabOk = examTabRes.ok && lm84.hasActiveExamLab() && lm84.labs.length === 2;
+      const crossBlockedOk = lm84.moveItemBetweenLabs(sbBeaker.id, 0, examTabRes.index) === null;
+
+      // 2) Per-student deterministic seed + Teacher custom assignment shuffle + SHA-256 verification
+      const seedStuA = fnv1aHash32('CHEM-8401::student_A');
+      const seedStuB = fnv1aHash32('CHEM-8401::student_B');
+      const seedRepeatA = fnv1aHash32('CHEM-8401::student_A');
+      const perStudentSeedOk = seedStuA !== seedStuB && seedStuA === seedRepeatA;
+
+      const tSim = new LabSimulation();
+      const b1 = tSim.createApparatus('beaker_250', 200, 420);
+      b1.moles = { H2O_l: 2.77, H_aq: 0.01, Cl_aq: 0.01 };
+      const b2 = tSim.createApparatus('beaker_250', 360, 420);
+      b2.moles = { H2O_l: 2.77, Na_aq: 0.01, OH_aq: 0.01 };
+      const hashes = await buildHashedAnswerMap(seedStuA, { staticQ: 'CO2' });
+      const hashVerifyOk =
+        (await verifyHashedAnswer(seedStuA, 'staticQ', 'CO2', hashes.staticQ)) &&
+        !(await verifyHashedAnswer(seedStuA, 'staticQ', 'O2', hashes.staticQ));
+
+      const rawAssign = normalizeAssignmentDoc({
+        examCode: 'CHEM-8401',
+        title: 'Custom Teacher Exam',
+        settings: {
+          mode: 'exam',
+          lockEnvironment: true,
+          blindVesselSpecs: [
+            { origItemId: b1.id, blindLabel: '?A', trueName: 'HCl' },
+            { origItemId: b2.id, blindLabel: '?B', trueName: 'NaOH' },
+          ],
+          answerHashes: {},
+        },
+        templateBench: tSim.exportSnapshot(),
+        questions: [
+          { id: 'ans_?A', labelKey: '?A', labelText: '?A', type: 'select', options: ['HCl', 'NaOH'] },
+          { id: 'ans_?B', labelKey: '?B', labelText: '?B', type: 'select', options: ['HCl', 'NaOH'] },
+        ],
+      });
+
+      const stuSim = new LabSimulation();
+      stuSim.startCustomAssignment(rawAssign, { seed: seedStuA });
+      const vA = stuSim.getItem(stuSim.missionState.setupData.blindVesselIds[0]);
+      const customBlindOk = Boolean(vA?.hideComposition) && stuSim.missionState.examMode && stuSim.missionState.lockEnvironment;
+
+      // 3) Process Anomaly Guard: blank bench submission gets 0 process pts + processAnomaly=true
+      const blankRes = await evaluateMissionWithVerification(
+        stuSim,
+        stuSim.missionState,
+        stuSim.missionState.setupData.answerKey,
+        { t: tVi }
+      );
+      const anomalyGuardOk = blankRes.processAnomaly === true && blankRes.criteriaResults[0].earned === 0;
+
+      // 4) Proctoring Strikes: away/blur accumulation -> yellow -> red penalty + auto-submit callback
+      let autoSubTriggered = false;
+      const proc84 = new ExamProctorController({
+        onAutoSubmit: () => {
+          autoSubTriggered = true;
+        },
+      });
+      proc84.startSession({
+        examCode: 'CHEM-8401',
+        studentUid: 'student_A',
+        seed: seedStuA,
+        startedAtMs: 100000,
+        timeLimitSec: 600,
+        maxSwitches: 2,
+        maxAwaySec: 15,
+        autoSubmitOnViolation: true,
+      });
+      proc84.recordAwayStart('visibility_hidden', 101000);
+      proc84.recordReturn(105000); // 1st switch, 4s -> yellow
+      const yellowOk = proc84.log.flagLevel === 'yellow' && proc84.log.tabSwitchCount === 1;
+      proc84.recordAwayStart('window_blur', 110000);
+      proc84.recordReturn(114000); // 2nd switch
+      proc84.recordAwayStart('visibility_hidden', 120000);
+      proc84.recordReturn(140000); // 3rd switch + 20s > maxAwaySec -> red + auto-submit!
+      const redProctorOk =
+        proc84.log.flagLevel === 'red' &&
+        proc84.log.tabSwitchCount === 3 &&
+        proc84.log.totalAwaySec >= 27.9 &&
+        proc84.log.maxSingleAwaySec >= 19.9 &&
+        proc84.log.penaltyPoints > 0 &&
+        autoSubTriggered;
+      proc84.stopSession();
+
+      // 5) Teacher Builder & VI/EN i18n completeness + Export block in Storage Modal
+      const i18n84Keys = [
+        'modeMissionsShort',
+        'modeTeacherStudio',
+        'examLockExportMsg',
+        'examIsolatedTransferBlocked',
+        'teacherStudioTitle',
+        'proctorAutoSubmitWarn',
+      ];
+      const i18n84Ok = i18n84Keys.every((k) => Boolean(I18N.vi[k] && I18N.en[k]));
+      const builderExistsOk = typeof TeacherBuilderModal === 'function';
+
+      assert(
+        'Prompt 84 invariants: Isolated Exam Tabs, Per-Student Seed & SHA-256 Verify, Custom Assignment Blind Shuffle, Process Anomaly Guard, Proctoring Strikes & Auto-Submit, VI/EN i18n',
+        isolatedTabOk && crossBlockedOk && perStudentSeedOk && hashVerifyOk && customBlindOk && anomalyGuardOk && yellowOk && redProctorOk && i18n84Ok && builderExistsOk,
+        `iso=${isolatedTabOk}, xBlk=${crossBlockedOk}, seed=${perStudentSeedOk}, sha=${hashVerifyOk}, cust=${customBlindOk}, anom=${anomalyGuardOk}, yel=${yellowOk}, red=${redProctorOk}, i18n=${i18n84Ok}`
       );
     }
 

@@ -9,11 +9,16 @@ import {
   saveMissionAttempt,
 } from '../engine/missionEvaluator.js';
 
-function formatElapsedMmSs(startedAtMs) {
-  const sec = Math.max(0, Math.floor((Date.now() - (startedAtMs || Date.now())) / 1000));
+function formatSecMmSs(totalSec) {
+  const sec = Math.max(0, Math.floor(totalSec || 0));
   const mm = String(Math.floor(sec / 60)).padStart(2, '0');
   const ss = String(sec % 60).padStart(2, '0');
   return `${mm}:${ss}`;
+}
+
+function formatElapsedMmSs(startedAtMs) {
+  const sec = Math.max(0, Math.floor((Date.now() - (startedAtMs || Date.now())) / 1000));
+  return formatSecMmSs(sec);
 }
 
 export class MissionDockPanel {
@@ -35,10 +40,31 @@ export class MissionDockPanel {
   startTimerLoop() {
     if (this.timerHandle) return;
     this.timerHandle = setInterval(() => {
-      if (!this.sim?.missionState?.active) return;
+      const ms = this.sim?.missionState;
+      if (!ms?.active) return;
       const el = this.container?.querySelector('#mission-timer-badge');
-      if (el) el.textContent = formatElapsedMmSs(this.sim.missionState.startedAtMs);
-      if (this.sim.missionState.mode === 'practice') {
+      if (el) {
+        if (ms.timeLimitSec > 0) {
+          const elapsed = (Date.now() - (ms.startedAtMs || Date.now())) / 1000;
+          const rem = Math.max(0, Math.ceil(ms.timeLimitSec - elapsed));
+          el.textContent = `⏳ ${formatSecMmSs(rem)}`;
+          if (rem <= 0 && ms.examMode && !ms._autoSubmittedTimeout) {
+            ms._autoSubmittedTimeout = true;
+            this.callbacks.onTimeExpired?.();
+          }
+        } else {
+          el.textContent = formatElapsedMmSs(ms.startedAtMs);
+        }
+      }
+      const pEl = this.container?.querySelector('#mission-proctor-badge');
+      if (pEl && this.callbacks.getIntegrityLog) {
+        const il = this.callbacks.getIntegrityLog();
+        if (il?.active) {
+          const icon = il.flagLevel === 'red' ? '🔴' : il.flagLevel === 'yellow' ? '🟡' : '🟢';
+          pEl.textContent = `${icon} ${il.tabSwitchCount || 0}sw`;
+        }
+      }
+      if (ms.mode === 'practice') {
         this.updatePracticeChecklistLive();
       }
     }, 1000);
@@ -86,12 +112,27 @@ export class MissionDockPanel {
     this.lastRenderSig = sig;
     this.container.classList.remove('hidden');
 
-    const mission = getMissionById(ms.missionId);
+    const mission = ms.customAssignment ? ms : getMissionById(ms.missionId);
     if (!mission) return;
     const isPractice = ms.mode === 'practice';
+    const isExam = Boolean(ms.examMode);
+    const titleStr = mission.titleText || t(mission.titleKey);
+    const goalStr = mission.goalText || t(mission.goalKey);
+    const hintsList = mission.hints || [];
+    const rubricList = mission.rubric || [];
+    const submitFields = mission.submitFields || [];
     const evalNow = isPractice ? evaluateMission(this.sim, ms, ms.draftAnswers || {}, { t }) : null;
     const hintsUsed = ms.hintsUsed || 0;
     const draft = ms.draftAnswers || {};
+    const il = this.callbacks.getIntegrityLog?.();
+    const proctorBadgeHtml = isExam
+      ? `<span id="mission-proctor-badge" class="text-[10.5px] font-mono px-1.5 py-0.5 rounded border border-theme bg-surface" title="${t('proctorActiveTip')}">${
+          il?.flagLevel === 'red' ? '🔴' : il?.flagLevel === 'yellow' ? '🟡' : '🟢'
+        } ${il?.tabSwitchCount || 0}sw</span>`
+      : '';
+    const timerInit = ms.timeLimitSec > 0
+      ? `⏳ ${formatSecMmSs(Math.max(0, ms.timeLimitSec - (Date.now() - (ms.startedAtMs || Date.now())) / 1000))}`
+      : formatElapsedMmSs(ms.startedAtMs);
 
     this.container.innerHTML = `
       <div class="mission-dock-card rounded-xl border border-accent/45 bg-surface-alt p-2.5 flex flex-col gap-2 mb-2.5">
@@ -100,11 +141,12 @@ export class MissionDockPanel {
             <div class="flex items-center gap-1.5 flex-wrap">
               <span class="text-[10.5px] font-bold px-1.5 py-0.5 rounded-full ${
                 isPractice ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40' : 'bg-amber-500/15 text-amber-300 border border-amber-500/40'
-              }">${isPractice ? `🎯 ${t('missionModePractice')}` : `📝 ${t('missionModeExam')}`}</span>
-              <span id="mission-timer-badge" class="text-[11px] font-mono text-muted">${formatElapsedMmSs(ms.startedAtMs)}</span>
+              }">${isPractice ? `🎯 ${t('missionModePractice')}` : `📝 ${ms.examCode || t('missionModeExam')}`}</span>
+              <span id="mission-timer-badge" class="text-[11px] font-mono text-muted">${timerInit}</span>
+              ${proctorBadgeHtml}
               ${isPractice && evalNow ? `<span id="mission-live-score" class="text-[11px] font-mono font-bold text-accent">${evalNow.totalScore.toFixed(1)}/10</span>` : ''}
             </div>
-            <div class="text-xs font-bold truncate mt-0.5" title="${t(mission.titleKey)}">${t(mission.titleKey)}</div>
+            <div class="text-xs font-bold truncate mt-0.5" title="${titleStr}">${titleStr}</div>
           </div>
           <div class="flex items-center gap-1 shrink-0">
             <button type="button" id="btn-mission-toggle-collapse" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-xs hover:border-accent" title="Toggle">${this.collapsed ? '▾' : '▴'}</button>
@@ -116,16 +158,16 @@ export class MissionDockPanel {
           this.collapsed
             ? ''
             : `
-          <p class="text-[11px] text-muted leading-snug">${t(mission.goalKey)}</p>
-          <div class="grid grid-cols-2 gap-1.5">
-            <button type="button" id="btn-mission-reseed" class="px-2 py-1 rounded-lg border border-theme bg-surface text-[11px] font-semibold hover:border-accent transition">🔄 ${t('missionNewSeed')}</button>
-            <button type="button" id="btn-mission-hint" class="px-2 py-1 rounded-lg border border-theme bg-surface text-[11px] font-semibold hover:border-accent transition" ${hintsUsed >= mission.hints.length ? 'disabled' : ''}>💡 ${t('missionHintBtn')} (${hintsUsed}/${mission.hints.length})</button>
+          <p class="text-[11px] text-muted leading-snug">${goalStr}</p>
+          <div class="grid ${ms.customAssignment ? 'grid-cols-1' : 'grid-cols-2'} gap-1.5">
+            ${ms.customAssignment ? '' : `<button type="button" id="btn-mission-reseed" class="px-2 py-1 rounded-lg border border-theme bg-surface text-[11px] font-semibold hover:border-accent transition">🔄 ${t('missionNewSeed')}</button>`}
+            ${hintsList.length > 0 ? `<button type="button" id="btn-mission-hint" class="px-2 py-1 rounded-lg border border-theme bg-surface text-[11px] font-semibold hover:border-accent transition" ${hintsUsed >= hintsList.length ? 'disabled' : ''}>💡 ${t('missionHintBtn')} (${hintsUsed}/${hintsList.length})</button>` : ''}
           </div>
 
           ${
-            hintsUsed > 0
+            hintsUsed > 0 && hintsList.length > 0
               ? `<div class="p-2 rounded-lg border border-sky-500/35 bg-sky-500/10 flex flex-col gap-1 text-[11px]">
-                  ${mission.hints.slice(0, hintsUsed).map((hk, hi) => `<div><strong>#${hi + 1}:</strong> ${t(hk)}</div>`).join('')}
+                  ${hintsList.slice(0, hintsUsed).map((hk, hi) => `<div><strong>#${hi + 1}:</strong> ${t(hk)}</div>`).join('')}
                 </div>`
               : ''
           }
@@ -148,7 +190,7 @@ export class MissionDockPanel {
                       </div>`
                     )
                     .join('')
-                : mission.rubric
+                : rubricList
                     .map(
                       (cr) => `<div class="flex items-center justify-between gap-1.5 text-[11px] text-muted">
                         <span class="truncate">• ${t(cr.labelKey)}</span>
@@ -162,20 +204,21 @@ export class MissionDockPanel {
           <div class="p-2 rounded-lg border border-theme bg-surface flex flex-col gap-1.5">
             <div class="text-[11px] font-semibold text-muted">${t('missionAnswerFormTitle')}</div>
             <div class="grid grid-cols-2 gap-1.5">
-              ${mission.submitFields
+              ${submitFields
                 .map((f) => {
                   const val = draft[f.id] ?? '';
+                  const fldLbl = f.labelText || t(f.labelKey);
                   if (f.type === 'select') {
                     return `<label class="flex flex-col gap-0.5 text-[11px]">
-                      <span class="text-muted font-medium truncate">${t(f.labelKey)}</span>
+                      <span class="text-muted font-medium truncate">${fldLbl}</span>
                       <select id="mission-ans-${f.id}" data-mfield="${f.id}" class="mission-answer-input px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono">
                         <option value="">—</option>
-                        ${f.options.map((op) => `<option value="${op}" ${val === op ? 'selected' : ''}>${op}</option>`).join('')}
+                        ${(f.options || []).map((op) => `<option value="${op}" ${val === op ? 'selected' : ''}>${op}</option>`).join('')}
                       </select>
                     </label>`;
                   }
                   return `<label class="flex flex-col gap-0.5 text-[11px]">
-                    <span class="text-muted font-medium truncate">${t(f.labelKey)}</span>
+                    <span class="text-muted font-medium truncate">${fldLbl}</span>
                     <input type="number" id="mission-ans-${f.id}" data-mfield="${f.id}" min="${f.min ?? 0}" max="${f.max ?? 999}" step="${f.step ?? 0.001}" placeholder="${f.placeholder || ''}" value="${val}" class="mission-answer-input px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" />
                   </label>`;
                 })
@@ -215,12 +258,16 @@ export class MissionDockPanel {
         if (ms.mode === 'practice') this.updatePracticeChecklistLive();
       });
     });
-    this.container.querySelector('#btn-mission-submit')?.addEventListener('click', () => {
+    this.container.querySelector('#btn-mission-submit')?.addEventListener('click', async () => {
       const answers = { ...(ms.draftAnswers || {}) };
-      const res = this.sim.submitMission(answers, { t });
-      if (res) {
-        saveMissionAttempt(res);
-        this.callbacks.onShowResult?.(res);
+      if (this.callbacks.onSubmitMission) {
+        await this.callbacks.onSubmitMission(answers);
+      } else {
+        const res = await this.sim.submitMissionAsync(answers, { t: this.getLang() });
+        if (res) {
+          saveMissionAttempt(res);
+          this.callbacks.onShowResult?.(res);
+        }
       }
     });
   }
@@ -257,6 +304,18 @@ export function openMissionSelectorModal(modalRootEl, sim, t, callbacks = {}) {
           <button type="button" id="btn-mhub-free" class="px-3 py-1 rounded-lg border ${
             !curId ? 'border-accent bg-accent/15 text-accent font-bold' : 'border-theme bg-surface text-muted hover:text-main'
           } text-xs">⚗️ ${t('modeFreeSandbox')}</button>
+        </div>
+
+        <div class="p-2.5 rounded-xl border border-accent/40 bg-accent/10 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div class="flex items-center gap-1.5 flex-wrap flex-1 min-w-[210px]">
+            <span class="font-bold">🎓 ${t('examEnterCodeLabel')}:</span>
+            <input id="mhub-exam-code" type="text" placeholder="CHEM-1234" class="px-2 py-1 rounded-lg border border-theme bg-surface font-mono uppercase text-xs w-32" />
+            <button type="button" id="btn-mhub-join-code" class="px-3 py-1 rounded-lg bg-accent text-white font-bold text-xs hover:opacity-90">🚀 ${t('examJoinBtn')}</button>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button type="button" id="btn-mhub-load-examfile" class="px-2.5 py-1 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent">📁 .vlab-exam</button>
+            <input type="file" id="input-mhub-examfile" accept=".vlab-exam,.json,application/json" class="hidden" />
+          </div>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -315,6 +374,22 @@ export function openMissionSelectorModal(modalRootEl, sim, t, callbacks = {}) {
         callbacks.onStartMission?.(mid, selectedMode);
       });
     });
+    modalRootEl.querySelector('#btn-mhub-join-code')?.addEventListener('click', async () => {
+      const code = modalRootEl.querySelector('#mhub-exam-code')?.value?.trim()?.toUpperCase();
+      if (!code) return;
+      modalRootEl.className = 'hidden';
+      modalRootEl.innerHTML = '';
+      await callbacks.onJoinExamCode?.(code);
+    });
+    const examFileInp = modalRootEl.querySelector('#input-mhub-examfile');
+    modalRootEl.querySelector('#btn-mhub-load-examfile')?.addEventListener('click', () => examFileInp?.click());
+    examFileInp?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      modalRootEl.className = 'hidden';
+      modalRootEl.innerHTML = '';
+      await callbacks.onImportExamFile?.(file);
+    });
   };
   renderModal();
 }
@@ -335,15 +410,18 @@ export function openMissionResultModal(modalRootEl, sim, evalResult, t, callback
         <div class="flex items-center gap-2.5">
           <span class="text-3xl">${evalResult.medal}</span>
           <div>
-            <h2 class="text-base font-bold">${t('missionResultTitle')} — ${t(evalResult.titleKey)}</h2>
+            <h2 class="text-base font-bold">${t('missionResultTitle')} — ${evalResult.titleText || t(evalResult.titleKey)}</h2>
             <div class="text-xs text-muted font-mono">${'⭐'.repeat(evalResult.stars || 0)}${'☆'.repeat(Math.max(0, 3 - (evalResult.stars || 0)))} · ${t('gradeLabel')} ${evalResult.grade} · ${evalResult.elapsedSec}s</div>
           </div>
         </div>
         <div class="text-right">
           <div class="text-xl font-black font-mono text-accent">${evalResult.totalScore.toFixed(1)}<span class="text-xs text-muted font-normal"> / 10</span></div>
           ${evalResult.hintPenalty > 0 ? `<div class="text-[10.5px] text-amber-400 font-mono">-${evalResult.hintPenalty.toFixed(1)} hints</div>` : ''}
+          ${evalResult.integrityPenalty > 0 ? `<div class="text-[10.5px] text-red-400 font-mono">-${evalResult.integrityPenalty.toFixed(1)} ${t('proctorPenaltyTag')}</div>` : ''}
         </div>
       </div>
+
+      ${evalResult.processAnomaly ? `<div class="p-2 rounded-lg border border-red-500/40 bg-red-500/10 text-xs text-red-300 font-semibold">⚠️ ${t('examProcessAnomalyWarn')}</div>` : ''}
 
       <div class="space-y-1.5">
         ${evalResult.criteriaResults

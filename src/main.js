@@ -25,10 +25,21 @@ import {
   VLAB_SCOPES,
   cloudSync,
   initWorkspacePersistence,
+  readVlabExamFile,
 } from './storage/workspaceStorage.js';
+import { exportSnapshotForSim, restoreSnapshotForSim } from './engine/simSnapshot.js';
+import {
+  ExamProctorController,
+  clearExamAttemptRecovery,
+  fnv1aHash32,
+  loadExamAttemptRecovery,
+  saveExamAttemptRecovery,
+} from './engine/examProctor.js';
+import { saveMissionAttempt } from './engine/missionEvaluator.js';
 import { WorkspaceStorageModal } from './ui/workspaceStorageModal.js';
 import { StorageCabinetModal } from './ui/storageCabinetModal.js';
 import { MissionDockPanel, openMissionSelectorModal, openMissionResultModal } from './ui/missionPanel.js';
+import { TeacherBuilderModal } from './ui/teacherBuilderModal.js';
 import { exportWorkbenchSnapshotAsset, openPrintableLabReport } from './storage/reportExport.js';
 import {
   ShortcutsModal,
@@ -47,6 +58,7 @@ const appState = {
   deviceMode: localStorage.getItem(STORAGE_DEVICE_KEY) || 'auto',
   soundEnabled: soundEngine.isEnabled(),
   cabinetCount: 0,
+  isTeacher: cloudSync.isTeacher(),
   viewingStorage: false,
   mobileTab: 'bench', // 'shelf' | 'bench' | 'inspector'
 };
@@ -124,6 +136,9 @@ const labManager = new LabManager({
   },
   onBackgroundAlert: () => {
     renderLabTabs(getTranslator());
+  },
+  onExamTransferBlocked: () => {
+    showToast(`🔒 ${getTranslator()('examIsolatedTransferBlocked')}`);
   },
   onChange: () => {
     syncActiveLabRefs();
@@ -627,6 +642,14 @@ const envBar = new EnvironmentBar(headerEl, sim, appState, {
     soundEngine.playUiClick();
     openMissionHubModal();
   },
+  onExitMission: () => {
+    soundEngine.playUiClick();
+    exitMissionFlow();
+  },
+  onOpenTeacherStudio: () => {
+    soundEngine.playUiClick();
+    teacherModal.open('design');
+  },
   onDeviceChange: (mode) => {
     appState.deviceMode = mode;
     localStorage.setItem(STORAGE_DEVICE_KEY, mode);
@@ -799,16 +822,164 @@ const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
   },
 });
 
+const teacherModal = new TeacherBuilderModal(missionModalEl, labManager, getTranslator, {
+  onNotify: (msg) => showToast(msg),
+  onInspectSubmissionSnapshot: (snap, sub) => {
+    const res = labManager.addLab('clean', { customName: `🔍 ${sub.studentEmail || sub.studentUid}` });
+    if (res?.ok && res.lab) {
+      restoreSnapshotForSim(res.lab.sim, snap);
+      syncActiveLabRefs();
+      refreshChrome(true);
+      showToast(`🔍 ${getTranslator()('teacherInspectLoadedToast')}`);
+    }
+  },
+});
+
+const proctor = new ExamProctorController({
+  onStrikeWarn: (level, log) => {
+    const t = getTranslator();
+    const msg =
+      level === 'red'
+        ? `🚨 ${t('proctorRedWarn')} (${log.tabSwitchCount}x, ${log.totalAwaySec.toFixed(0)}s)`
+        : `⚠️ ${t('proctorYellowWarn')} (${log.tabSwitchCount}/${log.maxSwitches})`;
+    showToast(msg);
+    missionDock?.render(t, true);
+  },
+  onBlockedShortcut: (combo) => {
+    showToast(`🔒 ${getTranslator()('proctorBlockedKey')}: ${combo}`);
+  },
+  onAutoSubmit: (reason) => {
+    showToast(`🚨 ${getTranslator()('proctorAutoSubmitWarn')}`);
+    submitMissionFlow(sim.missionState?.draftAnswers || {}, reason);
+  },
+});
+
+cloudSync.subscribe(() => {
+  appState.cloudSignedIn = Boolean(cloudSync.user);
+  appState.isTeacher = cloudSync.isTeacher();
+  refreshChrome(true);
+});
+
 function startMissionFlow(missionId, mode = 'practice') {
+  if (mode === 'exam') {
+    labManager.openIsolatedExamTab({ examCode: missionId, customName: `📝 ${missionId.slice(0, 12)}` });
+    syncActiveLabRefs();
+  }
   particles.clear();
   comparisonPanel?.setOpen(false);
   soundEngine.playGlassClink('beaker_250', 0.7);
-  sim.startMission(missionId, mode);
+  const ms = sim.startMission(missionId, mode);
+  if (ms && mode === 'exam') {
+    proctor.startSession({
+      examCode: missionId,
+      studentUid: cloudSync.user?.uid || 'local_student',
+      seed: ms.seed,
+      startedAtMs: ms.startedAtMs,
+      maxSwitches: 3,
+      maxAwaySec: 20,
+    });
+  } else {
+    proctor.stopSession();
+  }
   refreshChrome(true);
   setTimeout(() => workbench?.resize?.(), 25);
 }
 
+async function joinAssignmentFlow(assignmentDoc) {
+  if (!assignmentDoc?.examCode) return;
+  const t = getTranslator();
+  const resTab = labManager.openIsolatedExamTab({
+    examCode: assignmentDoc.examCode,
+    customName: `📝 ${assignmentDoc.examCode}`,
+  });
+  if (!resTab?.ok) {
+    showToast(`⚠️ ${t('examMaxTabsBlocked')}`);
+    return;
+  }
+  syncActiveLabRefs();
+  particles.clear();
+  comparisonPanel?.setOpen(false);
+
+  const uid = cloudSync.user?.uid || 'local_student';
+  const recov = loadExamAttemptRecovery(assignmentDoc.examCode, uid);
+  let attempt = null;
+  try {
+    attempt = await cloudSync.startExamAttempt(assignmentDoc.examCode, uid);
+  } catch {
+    attempt = null;
+  }
+  const seed = recov?.seed || attempt?.seed || fnv1aHash32(`${assignmentDoc.examCode}::${uid}`) || 1337;
+  const startedAtMs = recov?.startedAtMs || attempt?.startedAtMs || Date.now();
+  const ms = sim.startCustomAssignment(assignmentDoc, {
+    seed,
+    startedAtMs,
+    draftAnswers: recov?.draftAnswers || {},
+  });
+  saveExamAttemptRecovery({
+    examCode: assignmentDoc.examCode,
+    studentUid: uid,
+    seed,
+    startedAtMs,
+    draftAnswers: ms.draftAnswers,
+  });
+
+  if (ms?.examMode) {
+    const pCfg = assignmentDoc.proctorConfig || {};
+    proctor.startSession({
+      examCode: assignmentDoc.examCode,
+      studentUid: uid,
+      seed,
+      startedAtMs,
+      timeLimitSec: ms.timeLimitSec || 0,
+      maxSwitches: pCfg.maxSwitches || 3,
+      maxAwaySec: pCfg.maxAwaySec || 20,
+      requireFullscreen: Boolean(pCfg.requireFullscreen),
+      autoSubmitOnViolation: Boolean(pCfg.autoSubmitOnViolation),
+    });
+    if (pCfg.requireFullscreen && document.documentElement?.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  }
+  refreshChrome(true);
+  setTimeout(() => workbench?.resize?.(), 25);
+  showToast(`📝 ${t('examJoinedToast')}: ${assignmentDoc.examCode}`);
+}
+
+async function submitMissionFlow(answers = {}, reason = 'manual') {
+  const ms = sim.missionState;
+  if (!ms?.active) return;
+  const t = getTranslator();
+  const integritySnap = proctor.log.active ? JSON.parse(JSON.stringify(proctor.log)) : null;
+  proctor.stopSession();
+  if (document.fullscreenElement && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {});
+  }
+  const evalResult = await sim.submitMissionAsync(answers, { t, integrityLog: integritySnap });
+  if (!evalResult) return;
+  saveMissionAttempt(evalResult);
+  if (ms.examCode) {
+    clearExamAttemptRecovery(ms.examCode, cloudSync.user?.uid || 'local_student');
+    try {
+      await cloudSync.submitExamAttempt(ms.examCode, {
+        studentUid: cloudSync.user?.uid || 'local_student',
+        score: evalResult.totalScore,
+        grade: evalResult.grade,
+        criteriaResults: evalResult.criteriaResults,
+        answers,
+        integrityLog: integritySnap || {},
+        finalSnapshot: exportSnapshotForSim(sim),
+        elapsedSec: evalResult.elapsedSec,
+      });
+    } catch {}
+  }
+  showMissionResultFlow(evalResult);
+}
+
 function exitMissionFlow() {
+  proctor.stopSession();
+  if (document.fullscreenElement && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {});
+  }
   particles.clear();
   sim.exitMission();
   sim.setupPreset('clean');
@@ -841,6 +1012,22 @@ function openMissionHubModal() {
   openMissionSelectorModal(missionModalEl, sim, getTranslator(), {
     onStartMission: (mid, mode) => startMissionFlow(mid, mode),
     onExitMission: () => exitMissionFlow(),
+    onJoinExamCode: async (code) => {
+      try {
+        const doc = await cloudSync.loadAssignmentByCode(code);
+        await joinAssignmentFlow(doc);
+      } catch {
+        showToast(`⚠️ ${getTranslator()('examCodeNotFound')}: ${code}`);
+      }
+    },
+    onImportExamFile: async (file) => {
+      try {
+        const doc = await readVlabExamFile(file);
+        await joinAssignmentFlow(doc);
+      } catch {
+        showToast(`⚠️ ${getTranslator()('examInvalidFileMsg')}`);
+      }
+    },
   });
 }
 
@@ -849,6 +1036,9 @@ const missionDock = new MissionDockPanel(missionDockEl, sim, getTranslator, {
   onExitMission: () => exitMissionFlow(),
   onOpenSelector: () => openMissionHubModal(),
   onShowResult: (res) => showMissionResultFlow(res),
+  onSubmitMission: (ans) => submitMissionFlow(ans, 'manual'),
+  onTimeExpired: () => submitMissionFlow(sim.missionState?.draftAnswers || {}, 'time_expired'),
+  getIntegrityLog: () => proctor.log,
   onNotify: (msg) => showToast(msg),
 });
 missionDock.startTimerLoop();
@@ -889,6 +1079,10 @@ function startRenameLabTab(idx) {
 }
 
 function promptExportSingleBench(targetIndex = labManager.activeIndex) {
+  if (sim.missionState?.examMode || labManager.hasActiveExamLab()) {
+    showToast(`🔒 ${getTranslator()('examLockExportMsg')}`);
+    return;
+  }
   const prevIdx = labManager.activeIndex;
   if (targetIndex !== prevIdx && targetIndex >= 0 && targetIndex < labManager.labs.length) {
     labManager.switchLab(targetIndex);
@@ -1531,7 +1725,7 @@ function refreshChrome(forceInspector = false) {
   appState.cabinetCount = Array.isArray(labManager?.storageCabinet) ? labManager.storageCabinet.length : 0;
   workbench.setLang(appState.lang);
   const env = sim.environment || {};
-  const envSig = `${appState.lang}|${appState.theme}|${appState.deviceMode}|${appState.soundEnabled ? 1 : 0}|${appState.cloudSignedIn ? 1 : 0}|${appState.cabinetCount}|${sim.missionState?.active ? `${sim.missionState.missionId}:${sim.missionState.mode}` : 'free'}|${Math.round((env.tempK || 298.15) * 10)}|${Math.round((env.pressureBar || 1) * 100)}|${env.speed}|${env.paused ? 1 : 0}|${env.uvLight ? 1 : 0}|${env.atmosphereMode}|${env.opticsMode || 'normal'}`;
+  const envSig = `${appState.lang}|${appState.theme}|${appState.deviceMode}|${appState.soundEnabled ? 1 : 0}|${appState.cloudSignedIn ? 1 : 0}|${appState.isTeacher ? 1 : 0}|${appState.cabinetCount}|${sim.missionState?.active ? `${sim.missionState.missionId}:${sim.missionState.mode}:${sim.missionState.lockEnvironment ? 1 : 0}` : 'free'}|${Math.round((env.tempK || 298.15) * 10)}|${Math.round((env.pressureBar || 1) * 100)}|${env.speed}|${env.paused ? 1 : 0}|${env.uvLight ? 1 : 0}|${env.atmosphereMode}|${env.opticsMode || 'normal'}`;
   if (forceInspector || envSig !== lastEnvBarSig) {
     lastEnvBarSig = envSig;
     envBar.render(t);
@@ -2125,6 +2319,21 @@ if (typeof window !== 'undefined') {
 applyThemeAndDevice();
 setMobileTab('bench');
 refreshChrome(true);
+
+// Auto-launch assignment if URL has ?exam=CHEM-XXXX
+try {
+  const urlExam = new URLSearchParams(window.location.search).get('exam');
+  if (urlExam && /^CHEM-[A-Z0-9]{4,12}$/i.test(urlExam.trim())) {
+    setTimeout(async () => {
+      try {
+        const doc = await cloudSync.loadAssignmentByCode(urlExam.trim().toUpperCase());
+        await joinAssignmentFlow(doc);
+      } catch {
+        showToast(`⚠️ ${getTranslator()('examCodeNotFound')}: ${urlExam.trim().toUpperCase()}`);
+      }
+    }, 350);
+  }
+} catch {}
 
 // 60 FPS Animation & Physics Loop (active lab 60 FPS, background labs ~15 Hz batched)
 let prevMs = performance.now();

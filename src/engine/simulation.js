@@ -78,8 +78,8 @@ import {
 } from './gasNetwork.js';
 
 import { SIM_BENCH_FLOOR_Y, exportPositionSnapshotForSim, exportSnapshotForSim, restoreSnapshotForSim, computeVesselMoleSigForVessel, computeChemActivitySigForVessel, recordHistorySnapshotForVessel } from './simSnapshot.js';
-import { getMissionById } from '../data/missions.js';
-import { createEmptyMissionTelemetry, evaluateMission } from './missionEvaluator.js';
+import { createSeededRng, getMissionById } from '../data/missions.js';
+import { createEmptyMissionTelemetry, evaluateMission, evaluateMissionWithVerification } from './missionEvaluator.js';
 import { getVesselBrimVolumeMl, moveFluidFraction, extractSyringeLiquidFraction, spoonScoopFromVesselImpl, spoonPourIntoVesselImpl, rinseSpoonImpl, stepSpoonAnimationsImpl, deliverSyringeSliceToVesselImpl, pumpSyringeToVesselImpl, stepSyringeDischargeImpl, addReagentToVesselImpl, stepTimedTransfersInnerImpl, pourBetweenVesselsImpl, transferSolidsToVesselImpl, buretteDispenseDropImpl, washBottleSquirtImpl, pipetteDrawFromVesselImpl, pipetteDrawFromSyringeImpl, pipetteDrawFromReagentImpl, pipetteDispenseToVesselImpl, stepVesselTiltPouringImpl } from './simTransfer.js';
 import { getSupportSurfaceForItemImpl, updateSupportAttachmentsImpl, recomputeScaleReadingsImpl, checkOverflowImpl, stepVesselOverflowImpl, stepSyringeOverflowImpl, shatterVesselImpl, shatterSyringeImpl, popSyringePlungerImpl, breakPipetteOnDropImpl, breakToolOnDropImpl, handleLandingImpactImpl, stepGravityPhysicsImpl, getBurnerHeatingSourceImpl, condenseEscapedVaporInCryoImpl, stepInvertedGravitySpillImpl, stepAmmoniaFountainSuctionImpl, getBathCoolingSourceImpl, stepGasFlameInteractionsImpl, stepSimulationImpl } from './simPhysics.js';
 export { SIM_BENCH_FLOOR_Y };
@@ -2829,22 +2829,131 @@ export class LabSimulation {
    */
   step(realDeltaSec, options = {}) { return stepSimulationImpl(this, realDeltaSec, options); }
 
-  startMission(missionId, mode = 'practice', seed = null) {
+  startMission(missionId, mode = 'practice', seed = null, extraOpts = {}) {
     const mission = getMissionById(missionId);
     if (!mission) return null;
     const chosenSeed = seed != null ? Number(seed) : Math.floor(1000 + Math.random() * 9000);
     this.missionTelemetry = createEmptyMissionTelemetry();
     const setupData = mission.setup(this, chosenSeed) || {};
+    const resolvedMode = mode === 'exam' ? 'exam' : 'practice';
     this.missionState = {
       active: true,
       missionId: mission.id,
-      mode: mode === 'exam' ? 'exam' : 'practice',
+      mode: resolvedMode,
+      examMode: Boolean(extraOpts.examMode ?? resolvedMode === 'exam'),
+      examCode: extraOpts.examCode || null,
+      lockEnvironment: Boolean(extraOpts.lockEnvironment ?? (resolvedMode === 'exam')),
       seed: chosenSeed,
       setupData,
-      startedAtMs: Date.now(),
+      startedAtMs: extraOpts.startedAtMs || Date.now(),
+      timeLimitSec: Number(extraOpts.timeLimitSec) || 0,
+      proctorConfig: extraOpts.proctorConfig || {},
       hintsUsed: 0,
       lastEvaluation: null,
       draftAnswers: {},
+    };
+    this.undoStack = [];
+    this.emitChange();
+    return this.missionState;
+  }
+
+  startCustomAssignment(assignmentDoc, options = {}) {
+    if (!assignmentDoc || !assignmentDoc.benchTemplate) return null;
+    const seed = Number(options.seed) || 1337;
+    const rng = createSeededRng(seed);
+    this.missionTelemetry = createEmptyMissionTelemetry();
+
+    const tpl = JSON.parse(JSON.stringify(assignmentDoc.benchTemplate));
+    this.withUndoSuppressed(() => {
+      restoreSnapshotForSim(this, tpl);
+    });
+
+    // Shuffle blind unknown contents across slots per student seed so peers cannot copy ?A/?B
+    const blindSpecs = Array.isArray(assignmentDoc.blindVesselSpecs) ? assignmentDoc.blindVesselSpecs : [];
+    const blindVesselIds = [];
+    const setupAnswerKey = {};
+    if (blindSpecs.length >= 2) {
+      const targetVessels = blindSpecs.map((sp) => this.getItem(sp.origItemId)).filter(Boolean);
+      if (targetVessels.length === blindSpecs.length) {
+        const molePool = targetVessels.map((v) => JSON.parse(JSON.stringify(v.moles || {})));
+        const namePool = blindSpecs.map((sp) => sp.trueName || '');
+        const idxPool = targetVessels.map((_, i) => i);
+        for (let i = idxPool.length - 1; i > 0; i--) {
+          const j = Math.floor(rng() * (i + 1));
+          [idxPool[i], idxPool[j]] = [idxPool[j], idxPool[i]];
+        }
+        targetVessels.forEach((v, slotIdx) => {
+          const picked = idxPool[slotIdx];
+          v.moles = molePool[picked];
+          v.hideComposition = true;
+          const lbl = blindSpecs[slotIdx].blindLabel || `?${String.fromCharCode(65 + slotIdx)}`;
+          v.blindLabel = lbl;
+          v.label = lbl;
+          blindVesselIds.push(v.id);
+          if (namePool[picked]) setupAnswerKey[`ans_${lbl}`] = namePool[picked];
+        });
+      }
+    } else if (blindSpecs.length === 1) {
+      const v = this.getItem(blindSpecs[0].origItemId);
+      if (v) {
+        v.hideComposition = true;
+        v.blindLabel = blindSpecs[0].blindLabel || '?X';
+        v.label = v.blindLabel;
+        blindVesselIds.push(v.id);
+        if (blindSpecs[0].trueName) setupAnswerKey[`ans_${v.blindLabel}`] = blindSpecs[0].trueName;
+      }
+    }
+
+    // Optional seeded titration randomization (if teacher configured titrationRange)
+    let titrationMeta = null;
+    if (assignmentDoc.titrationConfig?.itemId) {
+      const tv = this.getItem(assignmentDoc.titrationConfig.itemId);
+      if (tv) {
+        const minM = Number(assignmentDoc.titrationConfig.minM) || 0.08;
+        const maxM = Number(assignmentDoc.titrationConfig.maxM) || 0.18;
+        const targetM = +(minM + rng() * Math.max(0.01, maxM - minM)).toFixed(3);
+        const liqL = Math.max(0.01, ((tv.moles?.H2O_l || 1.38) * 18.015) / 1000);
+        const molH = +(targetM * liqL).toFixed(6);
+        tv.moles.H_aq = molH;
+        tv.moles.Cl_aq = molH;
+        tv.hideComposition = true;
+        tv.blindLabel = tv.blindLabel || '?X';
+        tv.label = tv.blindLabel;
+        if (!blindVesselIds.includes(tv.id)) blindVesselIds.push(tv.id);
+        titrationMeta = { targetMolarityM: targetM, itemId: tv.id };
+        setupAnswerKey.targetMolarityM = targetM;
+      }
+    }
+
+    this.missionState = {
+      active: true,
+      customAssignment: true,
+      missionId: assignmentDoc.examCode,
+      examCode: assignmentDoc.examCode,
+      titleText: assignmentDoc.title || assignmentDoc.examCode,
+      goalText: assignmentDoc.goalText || '',
+      equationText: assignmentDoc.equationText || '',
+      mode: assignmentDoc.mode === 'practice' ? 'practice' : 'exam',
+      examMode: true,
+      lockEnvironment: assignmentDoc.lockEnvironment !== false,
+      allowedApparatus: assignmentDoc.allowedApparatus ?? null,
+      allowedReagents: assignmentDoc.allowedReagents ?? null,
+      proctorConfig: assignmentDoc.proctorConfig || { maxSwitches: 3, maxAwaySec: 20, requireFullscreen: false },
+      rubric: assignmentDoc.rubric || [],
+      submitFields: assignmentDoc.submitFields || [],
+      answerHashes: assignmentDoc.answerHashes || {},
+      blindVesselSpecs: blindSpecs,
+      seed,
+      startedAtMs: options.startedAtMs || Date.now(),
+      timeLimitSec: (Number(assignmentDoc.timeLimitMin) || 0) * 60,
+      setupData: {
+        blindVesselIds,
+        titrationMeta,
+        answerKey: setupAnswerKey,
+      },
+      hintsUsed: 0,
+      lastEvaluation: null,
+      draftAnswers: options.draftAnswers || {},
     };
     this.undoStack = [];
     this.emitChange();
@@ -2867,6 +2976,14 @@ export class LabSimulation {
   submitMission(userAnswers = {}, options = {}) {
     if (!this.missionState?.active) return null;
     const res = evaluateMission(this, this.missionState, userAnswers, options);
+    this.missionState.lastEvaluation = res;
+    this.emitChange();
+    return res;
+  }
+
+  async submitMissionAsync(userAnswers = {}, options = {}) {
+    if (!this.missionState?.active) return null;
+    const res = await evaluateMissionWithVerification(this, this.missionState, userAnswers, options);
     this.missionState.lastEvaluation = res;
     this.emitChange();
     return res;

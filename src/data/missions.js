@@ -482,13 +482,13 @@ export function getMissionById(id) {
   return MISSION_REGISTRY[id] || null;
 }
 
-export function isApparatusAllowedInMission(mission, typeId) {
-  if (!mission || !Array.isArray(mission.allowedApparatus) || mission.allowedApparatus.length === 0) return true;
+export function isApparatusAllowedInMission(missionOrState, typeId) {
+  if (!missionOrState || !Array.isArray(missionOrState.allowedApparatus) || missionOrState.allowedApparatus.length === 0) return true;
   if (!APPARATUS[typeId]) return false;
-  return mission.allowedApparatus.includes(typeId);
+  return missionOrState.allowedApparatus.includes(typeId);
 }
 
-export function isReagentAllowedInMission(mission, reagentId) {
-  if (!mission || mission.allowedReagents === null || mission.allowedReagents === undefined) return true;
-  return mission.allowedReagents.includes(reagentId);
+export function isReagentAllowedInMission(missionOrState, reagentId) {
+  if (!missionOrState || missionOrState.allowedReagents === null || missionOrState.allowedReagents === undefined) return true;
+  return missionOrState.allowedReagents.includes(reagentId);
 }

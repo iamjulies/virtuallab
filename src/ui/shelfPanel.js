@@ -402,7 +402,9 @@ export class ShelfPanel {
     this.lastShelfSig = sig;
 
     const pipettes = this.sim.items.filter((i) => i.kind === 'pipette');
-    const activeMission = this.sim?.missionState?.active ? getMissionById(this.sim.missionState.missionId) : null;
+    const activeMission = this.sim?.missionState?.active
+      ? (getMissionById(this.sim.missionState.missionId) || this.sim.missionState)
+      : null;
     const filteredApparatus =
       this.activeCategory === 'all'
         ? APPARATUS_ORDER

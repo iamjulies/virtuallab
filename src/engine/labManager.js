@@ -99,6 +99,37 @@ export class LabManager {
     return true;
   }
 
+  hasActiveExamLab() {
+    return this.labs.some((l) => Boolean(l.sim?.missionState?.examMode));
+  }
+
+  openIsolatedExamTab(options = {}) {
+    const label = options.customName || `📝 ${options.examCode || 'Exam'}`;
+    // Reuse existing isolated exam tab for the same examCode if already open
+    if (options.examCode) {
+      const existingIdx = this.labs.findIndex((l) => l.sim?.missionState?.examCode === options.examCode);
+      if (existingIdx >= 0) {
+        this.switchLab(existingIdx);
+        return { ok: true, index: existingIdx, lab: this.labs[existingIdx], reused: true };
+      }
+    }
+    if (this.labs.length < this.maxLabs) {
+      const res = this.addLab('clean', { customName: label, defaultEnv: true });
+      if (res.ok && res.lab) res.lab.isExamTab = true;
+      return res;
+    }
+    // If all 10 tabs are full, replace a non-exam active lab
+    const cur = this.getActiveLab();
+    if (!cur?.sim?.missionState?.examMode) {
+      cur.customName = label;
+      cur.isExamTab = true;
+      cur.sim.setupPreset('clean');
+      this.hooks.onChange?.();
+      return { ok: true, index: this.activeIndex, lab: cur };
+    }
+    return { ok: false, reason: 'max_labs' };
+  }
+
   removeLab(index) {
     if (this.labs.length <= 1 || index < 0 || index >= this.labs.length) return false;
     this.labs.splice(index, 1);
@@ -128,6 +159,10 @@ export class LabManager {
     }
     const srcLab = this.labs[srcIndex];
     const dstLab = this.labs[dstIndex];
+    if (srcLab.sim?.missionState?.examMode || dstLab.sim?.missionState?.examMode) {
+      this.hooks.onExamTransferBlocked?.(srcLab, dstLab);
+      return null;
+    }
     const srcSim = srcLab.sim;
     const dstSim = dstLab.sim;
     const item = srcSim.getItem(itemId);
