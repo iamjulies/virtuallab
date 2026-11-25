@@ -1070,7 +1070,11 @@ export function openPrintableLabReport({ sim, workbenchCanvas, isDark, labName, 
               ? `<p class="print-muted">🔒 ${escPrintHtml(t('blindUnknownBadge'))}</p>`
               : liqData.rows.length > 0
               ? `<table><thead><tr><th>${escPrintHtml(t('colSpecies'))}</th><th>mol</th><th>g</th><th>M</th></tr></thead><tbody>
-                  ${liqData.rows.map((r) => `<tr><td>${r.formula}</td><td>${r.mol.toFixed(4)}</td><td>${r.massG.toFixed(3)}</td><td>${r.molarityM != null ? r.molarityM.toFixed(3) : '—'}</td></tr>`).join('')}
+                  ${liqData.rows.map((r) => {
+                    const fStr = r.sp?.formula || r.formula || r.spId || '—';
+                    const cVal = Number.isFinite(r.cM) && r.cM > 0 ? r.cM.toFixed(3) : r.molarityM != null ? r.molarityM.toFixed(3) : '—';
+                    return `<tr><td>${escPrintHtml(fStr)}</td><td>${r.mol.toFixed(4)}</td><td>${r.massG.toFixed(3)}</td><td>${cVal}</td></tr>`;
+                  }).join('')}
                 </tbody></table>`
               : `<p class="print-muted">${escPrintHtml(t('emptyLiquidMsg'))}</p>`
           }
@@ -1081,10 +1085,57 @@ export function openPrintableLabReport({ sim, workbenchCanvas, isDark, labName, 
     })
     .join('');
 
-  const logsHtml = (sim.logs || [])
+  const logItems = (sim.logs || [])
     .slice(0, 40)
-    .map((l) => `<li><code>[${escPrintHtml(l.timeStr || '')}]</code> ${escPrintHtml(t(l.key, l.params))}</li>`)
-    .join('');
+    .map((l) => `<li><code>[${escPrintHtml(l.timeStr || '')}]</code> ${escPrintHtml(t(l.key, l.params))}</li>`);
+
+  if (mEval && logItems.length < 4 && sim.missionTelemetry) {
+    const tel = sim.missionTelemetry;
+    const summarySteps = [];
+    if (tel.usedPipetteTransfer) {
+      const lbls = (tel.sampledBlindLabels || []).length ? ` (${tel.sampledBlindLabels.join(', ')})` : '';
+      summarySteps.push(isEn ? `Pipette / sampling transfers recorded${lbls}` : `Đã thực hiện lấy mẫu bằng Pipette / ống nghiệm${lbls}`);
+    }
+    if (tel.usedLitmusOrPh) {
+      summarySteps.push(isEn ? 'Used Litmus paper / pH indicator or pH-EC meter on solution' : 'Đã sử dụng Giấy quỳ tím / Chỉ thị pH hoặc Máy đo pH·EC');
+    }
+    if ((tel.usedBuretteDrops || 0) > 0) {
+      summarySteps.push(isEn ? `Burette titration executed (${tel.usedBuretteDrops} drop steps)` : `Đã nhỏ giọt chuẩn độ bằng Burette (${tel.usedBuretteDrops} lượt nhỏ giọt)`);
+    }
+    if (tel.mortarGroundCaCO3) {
+      summarySteps.push(isEn ? 'Ground solid CaCO₃ finely with Mortar & Pestle' : 'Đã nghiền mịn CaCO₃ bằng Cối chày');
+    }
+    if (tel.bunsenBlueUsed) {
+      summarySteps.push(isEn ? 'Heated with roaring blue Bunsen burner flame' : 'Đã đun bằng ngọn lửa xanh Bunsen');
+    }
+    if (tel.gasDriedViaH2SO4 || tel.gasConnectedToSyringe) {
+      summarySteps.push(
+        isEn
+          ? `Gas assembly verified (Drying H₂SO₄=${tel.gasDriedViaH2SO4 ? 'Yes' : 'No'}, Syringe=${tel.gasConnectedToSyringe ? 'Linked' : 'No'})`
+          : `Hệ thống thu khí (Bình làm khô H₂SO₄=${tel.gasDriedViaH2SO4 ? 'Có' : 'Không'}, Gas Syringe=${tel.gasConnectedToSyringe ? 'Đã nối' : 'Chưa'})`
+      );
+    }
+    if (tel.esterFormed || (tel.sepFunnelTaps || 0) > 0) {
+      summarySteps.push(
+        isEn
+          ? `Organic synthesis/extraction trace (Ester=${tel.esterFormed ? 'Formed' : 'No'}, SepFunnel=${tel.sepFunnelTaps > 0 ? 'Opened' : 'No'})`
+          : `Thao tác tổng hợp/chiết ester (Tạo ester=${tel.esterFormed ? 'Có' : 'Chưa'}, Phễu chiết=${tel.sepFunnelTaps > 0 ? 'Đã tách lớp' : 'Chưa'})`
+      );
+    }
+    if ((tel.contaminatedBlindIds || []).length === 0 && (tel.shatteredCount || 0) === 0 && (tel.toxicLeakCount || 0) === 0 && (tel.overflowCount || 0) === 0) {
+      summarySteps.push(isEn ? 'Lab safety & stock bottle integrity maintained (0 incidents)' : 'Tuân thủ an toàn phòng thí nghiệm & bảo toàn bình gốc (0 sự cố)');
+    } else {
+      summarySteps.push(
+        isEn
+          ? `Safety / contamination events: shatter=${tel.shatteredCount || 0}, spill=${tel.overflowCount || 0}, toxicLeak=${tel.toxicLeakCount || 0}, contaminated=${(tel.contaminatedBlindIds || []).length}`
+          : `Ghi nhận sự cố / nhiễm bẩn mẫu: vỡ bình=${tel.shatteredCount || 0}, tràn=${tel.overflowCount || 0}, rò khí độc=${tel.toxicLeakCount || 0}, lẫn mẫu gốc=${(tel.contaminatedBlindIds || []).length}`
+      );
+    }
+    for (const s of summarySteps) {
+      logItems.push(`<li><code>[Telemetry]</code> ${escPrintHtml(s)}</li>`);
+    }
+  }
+  const logsHtml = logItems.join('');
 
   reportRootEl.innerHTML = `
     <div class="print-report-page">

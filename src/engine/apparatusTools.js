@@ -12,6 +12,7 @@ import { computeHeatCapacityJK } from './thermodynamics.js';
 import { stepVesselChemistry } from './chemistry.js';
 import { NON_STEAM_GASES, routeGasPacketToTarget } from './gasNetwork.js';
 import { stepAnalyticalInstruments } from './analyticalTools.js';
+import { ensureMissionTelemetry } from './missionEvaluator.js';
 
 const UNIVERSAL_PH_COLORS = [
   '#dc2626', // 0-1
@@ -1129,6 +1130,7 @@ export function checkIndicatorStripInteractions(sim, strip) {
       strip.isBleached = true;
       strip.sampledFrom = `Cl₂ (${el.label})`;
       strip.tipColor = '#f8fafc';
+      if (sim.missionState?.active) ensureMissionTelemetry(sim).usedLitmusOrPh = true;
       return;
     }
   }
@@ -1175,6 +1177,7 @@ export function checkIndicatorStripInteractions(sim, strip) {
       strip.sampledPH = detectedPH;
       strip.isBleached = bleached;
       strip.sampledFrom = sourceTag;
+      if (sim.missionState?.active) ensureMissionTelemetry(sim).usedLitmusOrPh = true;
       if (bleached) {
         strip.tipColor = '#f8fafc';
       } else if (strip.stripKind === 'litmus') {

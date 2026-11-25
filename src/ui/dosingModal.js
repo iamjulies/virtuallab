@@ -1,4 +1,5 @@
 import { APPARATUS } from '../data/apparatus.js';
+import { getActiveMissionPolicy, isReagentAllowedInMission } from '../data/missions.js';
 import { SPECIES, STARTER_REAGENTS } from '../data/species.js';
 import { computeLiquidVolumeL } from '../engine/equilibrium.js';
 import { computeSyringeTotalVolumeMl, computeTubingGeometry } from '../engine/gasNetwork.js';
@@ -141,6 +142,8 @@ export class DosingModal {
   }
 
   openReagent(reagentId, targetVesselId) {
+    const policy = getActiveMissionPolicy(this.sim);
+    if (policy && !isReagentAllowedInMission(policy, reagentId)) return;
     const reg = STARTER_REAGENTS.find((r) => r.id === reagentId);
     if (!reg) return;
     const containers = this.sim.items.filter(

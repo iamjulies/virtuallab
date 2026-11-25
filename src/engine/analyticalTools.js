@@ -14,6 +14,7 @@ import {
   computePhaseStratification,
   computePhenolphthaleinAlpha,
 } from './equilibrium.js';
+import { ensureMissionTelemetry } from './missionEvaluator.js';
 
 export const COLORIMETER_WAVELENGTHS = [420, 470, 525, 590, 635];
 export const SPECTROMETER_MODES = ['uvvis_kinetics', 'uvvis_spectrum', 'ir_spectrum'];
@@ -816,6 +817,7 @@ export function stepAnalyticalInstruments(sim, item, dt = 0.05) {
     item.contactLabel = v.label || v.typeId;
     item.measuredPH = pH != null && Number.isFinite(pH) ? pH : null;
     item.measuredConductivity = kappa;
+    if (sim.missionState?.active && pH !== null) ensureMissionTelemetry(sim).usedLitmusOrPh = true;
     item._sampleTimer = (item._sampleTimer || 0) + dt;
 
     const buretteMl = v.buretteDeliveredMl || 0;

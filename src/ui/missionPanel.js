@@ -79,8 +79,10 @@ export class MissionDockPanel {
     for (const cr of res.criteriaResults) {
       const iconEl = this.container?.querySelector(`[data-mcrit-icon="${cr.id}"]`);
       const ptsEl = this.container?.querySelector(`[data-mcrit-pts="${cr.id}"]`);
+      const detEl = this.container?.querySelector(`[data-mcrit-detail="${cr.id}"]`);
       if (iconEl) iconEl.textContent = cr.status === 'pass' ? '✅' : cr.status === 'partial' ? '🟨' : '⬜';
       if (ptsEl) ptsEl.textContent = `${cr.earned.toFixed(1)}/${cr.maxPoints.toFixed(1)}`;
+      if (detEl) detEl.textContent = cr.detail || '';
     }
     const scoreEl = this.container?.querySelector('#mission-live-score');
     if (scoreEl) scoreEl.textContent = `${res.totalScore.toFixed(1)}/10`;
@@ -181,22 +183,37 @@ export class MissionDockPanel {
               isPractice && evalNow
                 ? evalNow.criteriaResults
                     .map(
-                      (cr) => `<div class="flex items-center justify-between gap-1.5 text-[11px]">
-                        <div class="flex items-center gap-1 min-w-0">
-                          <span data-mcrit-icon="${cr.id}">${cr.status === 'pass' ? '✅' : cr.status === 'partial' ? '🟨' : '⬜'}</span>
-                          <span class="truncate">${t(cr.labelKey)}</span>
+                      (cr) => `<div class="flex flex-col gap-0.5 text-[11px] py-0.5">
+                        <div class="flex items-center justify-between gap-1.5">
+                          <div class="flex items-center gap-1 min-w-0">
+                            <span data-mcrit-icon="${cr.id}">${cr.status === 'pass' ? '✅' : cr.status === 'partial' ? '🟨' : '⬜'}</span>
+                            <span class="truncate font-medium">${t(cr.labelKey)}</span>
+                          </div>
+                          <span class="font-mono text-muted shrink-0" data-mcrit-pts="${cr.id}">${cr.earned.toFixed(1)}/${cr.maxPoints.toFixed(1)}</span>
                         </div>
-                        <span class="font-mono text-muted shrink-0" data-mcrit-pts="${cr.id}">${cr.earned.toFixed(1)}/${cr.maxPoints.toFixed(1)}</span>
+                        ${cr.detail ? `<div class="text-[10px] text-muted pl-4 leading-tight" data-mcrit-detail="${cr.id}">${cr.detail}</div>` : `<div class="text-[10px] text-muted pl-4 leading-tight" data-mcrit-detail="${cr.id}"></div>`}
                       </div>`
                     )
                     .join('')
                 : rubricList
-                    .map(
-                      (cr) => `<div class="flex items-center justify-between gap-1.5 text-[11px] text-muted">
-                        <span class="truncate">• ${t(cr.labelKey)}</span>
-                        <span class="font-mono shrink-0">${cr.maxPoints.toFixed(1)} pt</span>
-                      </div>`
-                    )
+                    .map((cr) => {
+                      const ruleKey =
+                        cr.category === 'process'
+                          ? 'rubricRuleProcess'
+                          : cr.category === 'quantitative'
+                          ? 'rubricRuleQuant'
+                          : cr.category === 'identification'
+                          ? 'rubricRuleIdent'
+                          : 'rubricRuleSafe';
+                      const ruleTxt = t(ruleKey);
+                      return `<div class="flex flex-col gap-0.5 text-[11px] text-muted py-0.5" title="${ruleTxt}">
+                        <div class="flex items-center justify-between gap-1.5">
+                          <span class="truncate font-medium">• ${t(cr.labelKey)}</span>
+                          <span class="font-mono shrink-0">${cr.maxPoints.toFixed(1)} pt</span>
+                        </div>
+                        <div class="text-[10px] opacity-80 pl-2.5 leading-tight">${ruleTxt}</div>
+                      </div>`;
+                    })
                     .join('')
             }
           </div>

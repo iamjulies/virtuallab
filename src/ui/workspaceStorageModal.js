@@ -160,6 +160,18 @@ export class WorkspaceStorageModal {
                   🚪 ${t('storageBtnSignOut')}
                 </button>
               </div>
+              ${
+                !cloudSync.isTeacher()
+                  ? `<div class="mt-2 pt-2 border-t border-theme/60 flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span class="font-semibold text-amber-300 shrink-0">🎓 ${t('teacherInviteSectionLabel')}:</span>
+                      <input id="input-teacher-invite" type="text" maxlength="16" placeholder="GV-XXXXXX"
+                        class="storage-input font-mono uppercase" style="max-width:138px;padding:0.25rem 0.5rem;font-size:11.5px" />
+                      <button type="button" id="btn-redeem-teacher-invite" class="storage-btn storage-btn-primary shrink-0" style="padding:0.25rem 0.65rem;font-size:11.5px">
+                        ✨ ${t('teacherInviteRedeemBtn')}
+                      </button>
+                    </div>`
+                  : ''
+              }
             `
                 : `
               <!-- Login / Register Switch Tabs -->
@@ -431,6 +443,36 @@ export class WorkspaceStorageModal {
     this.rootEl.querySelector('#btn-cloud-signout')?.addEventListener('click', async () => {
       await cloudSync.signOutUser();
       this.render();
+    });
+
+    this.rootEl.querySelector('#btn-redeem-teacher-invite')?.addEventListener('click', async () => {
+      const code = this.rootEl.querySelector('#input-teacher-invite')?.value?.trim() || '';
+      if (!code) {
+        this._setFeedback(`⚠️ ${t('teacherInviteInvalidMsg')}`, 'error');
+        return;
+      }
+      try {
+        await cloudSync.redeemTeacherInvite(code);
+        soundEngine.playUiClick();
+        this._setFeedback(`🎉 ${t('teacherInviteSuccessMsg')}`, 'success');
+        this.callbacks.onNotify?.(`🎓 ${t('teacherInviteSuccessMsg')}`);
+        this.callbacks.onRefresh?.();
+        this.render();
+      } catch (err) {
+        const msgKey =
+          err?.message === 'INVITE_CODE_INVALID'
+            ? 'teacherInviteInvalidMsg'
+            : err?.message === 'INVITE_CODE_NOT_FOUND'
+            ? 'teacherInviteNotFoundMsg'
+            : err?.message === 'INVITE_CODE_USED'
+            ? 'teacherInviteUsedMsg'
+            : err?.message === 'INVITE_CODE_EXPIRED'
+            ? 'teacherInviteExpiredMsg'
+            : 'toastCloudError';
+        const txt = t(msgKey);
+        this._setFeedback(`⚠️ ${txt}`, 'error');
+        this.callbacks.onNotify?.(`⚠️ ${txt}`);
+      }
     });
 
     this.rootEl.querySelector('#btn-cloud-save')?.addEventListener('click', async () => {

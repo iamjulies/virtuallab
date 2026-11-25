@@ -16,6 +16,7 @@ import {
 } from '../data/apparatus.js';
 import { CONSTANTS } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
+import { isApparatusAllowedInMission, isReagentAllowedInMission } from '../data/missions.js';
 import { computeLiquidVolumeL, computePH, computeSolutionVisuals } from '../engine/equilibrium.js';
 import {
   buildRigidTubePoints,
@@ -525,7 +526,9 @@ export function dropFromShelfImpl(wb, clientX, clientY, payloadType, payloadId) 
     wb._canvasRect = null;
     if (payloadType === 'apparatus' && payloadId) {
       const spec = APPARATUS[payloadId];
-      if (!spec) {
+      const policy = wb.sim.getActiveMissionPolicy?.();
+      if (!spec || (policy && !isApparatusAllowedInMission(policy, payloadId))) {
+        if (policy) wb.sim.addLog?.({ type: 'alert', key: 'missionLockedShelfTip' });
         wb.dropTargetVesselId = null;
         return null;
       }
@@ -613,6 +616,12 @@ export function dropFromShelfImpl(wb, clientX, clientY, payloadType, payloadId) 
     }
 
     if (payloadType === 'reagent' && payloadId) {
+      const regPolicy = wb.sim.getActiveMissionPolicy?.();
+      if (regPolicy && !isReagentAllowedInMission(regPolicy, payloadId)) {
+        wb.sim.addLog?.({ type: 'alert', key: 'missionLockedShelfTip' });
+        wb.dropTargetVesselId = null;
+        return null;
+      }
       if (payloadId === 'nh3_25' || payloadId === 'hcl_37') {
         const diffTube = wb.sim.items.find(
           (t) => t.kind === 'diffusion_tube' && !t.isBroken && Math.abs(pt.x - t.x) <= 145 && Math.abs(pt.y - t.y) <= 48

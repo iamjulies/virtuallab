@@ -651,13 +651,6 @@ export class InspectorPanel {
       this.container.querySelector('#ins-sep-unmount')?.addEventListener('click', () => {
         this.sim.mountSeparatoryFunnel(item.id, null);
       });
-      this.container.querySelector('#ins-sep-fill')?.addEventListener('click', () => {
-        const regId = this.container.querySelector('#sep-fill-sel')?.value;
-        if (regId) {
-          this.sim.addReagentToVessel(item.id, regId, 25, { silentAnim: true });
-          this.sim.emitChange();
-        }
-      });
       this.container.querySelector('#ins-cond-in-pick')?.addEventListener('click', () => {
         const srcs = this.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && APPARATUS[i.typeId]?.stopperable);
         if (srcs.length === 0) return;
@@ -709,13 +702,6 @@ export class InspectorPanel {
         });
       });
       this.container.querySelector('#ins-bur-drop')?.addEventListener('click', () => this.sim.buretteDispenseDrop(item.id, 0.05));
-      this.container.querySelector('#ins-bur-fill')?.addEventListener('click', () => {
-        const regId = this.container.querySelector('#bur-fill-sel')?.value;
-        if (regId) {
-          this.sim.addReagentToVessel(item.id, regId, 25, { silentAnim: true });
-          this.sim.emitChange();
-        }
-      });
     } else if (item.kind === 'wash_bottle') {
       this.container.querySelector('#ins-wb-squirt')?.addEventListener('click', () => this.sim.washBottleSquirt(item.id, null, 5.0));
       this.container.querySelector('#ins-wb-spray-toggle')?.addEventListener('click', () => this.sim.toggleWashBottleSpray(item.id));

@@ -678,7 +678,11 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
     const count = sim.items.length;
     const x = 140 + ((count * 125) % 740);
     const y = BENCH_FLOOR_Y - spec.height / 2 + 2;
-    sim.createApparatus(typeId, x, y);
+    const created = sim.createApparatus(typeId, x, y);
+    if (!created) {
+      showToast(`🔒 ${getTranslator()('missionLockedShelfTip')}`);
+      return;
+    }
     soundEngine.playGlassClink(typeId, 0.85);
     if (isMobileViewActive()) {
       setMobileTab('bench');
@@ -702,6 +706,10 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
     if (candidates.length === 0) {
       // Auto-create a beaker so user isn't stuck
       const created = sim.createApparatus('beaker_250', 480, BENCH_FLOOR_Y - 70);
+      if (!created) {
+        showToast(`🔒 ${getTranslator()('missionLockedShelfTip')}`);
+        return;
+      }
       dosingModal.openReagent(reagentId, created.id);
       return;
     }

@@ -97,7 +97,17 @@ export function updateMissionTelemetryOnStep(sim) {
     } else if (it.kind === 'burner' && it.typeId === 'bunsen_burner' && it.isLit && it.airHoleOpen !== false) {
       tel.bunsenBlueUsed = true;
     } else if (it.kind === 'litmus_paper' || it.kind === 'indicator_strip' || it.kind === 'ph_conductometer') {
-      if (it.dockedVesselId || it.lastTestedVesselId || it.probeResult || it.testHistory?.length) {
+      if (
+        it.dockedVesselId ||
+        it.lastTestedVesselId ||
+        it.probeResult ||
+        it.testHistory?.length ||
+        it.sampledPH != null ||
+        Boolean(it.sampledFrom) ||
+        Boolean(it.contactVesselId) ||
+        it.measuredPH != null ||
+        (it.history?.length || 0) > 0
+      ) {
         tel.usedLitmusOrPh = true;
       }
     } else if (it.kind === 'gas_syringe') {
@@ -165,6 +175,7 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
   const setupData = missionState.setupData || {};
   const ak = setupData.answerKey || {};
   const t = options.t || ((k) => k);
+  const isEn = options.langCode ? options.langCode === 'en' : String(t('missionSubmitBtn') || '').toLowerCase().includes('submit');
   const results = [];
 
   if (isCustom) {
@@ -235,7 +246,15 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
     const subVessels = (sim.items || []).filter((i) => i.kind === 'vessel' && !blindIds.includes(i.id) && !i.isShattered);
     const usedSubTest = subVessels.some((v) => Object.values(v.moles || {}).some((n) => n > 1e-6)) || tel.usedPipetteTransfer;
     const procScore = (tel.usedLitmusOrPh ? 1.25 : 0) + (usedSubTest ? 1.25 : 0);
-    results.push(makeCriterionResult(mission.rubric[0], procScore, `Pipette/Sub-tubes=${usedSubTest ? 'OK' : 'No'}, Litmus/pH=${tel.usedLitmusOrPh ? 'OK' : 'No'}`));
+    results.push(
+      makeCriterionResult(
+        mission.rubric[0],
+        procScore,
+        isEn
+          ? `Pipette/Sub-tubes: ${usedSubTest ? 'OK (+1.25)' : 'Missing (+0)'} · Litmus/pH: ${tel.usedLitmusOrPh ? 'OK (+1.25)' : 'Not tested (+0)'}`
+          : `Pipette/Ống thử: ${usedSubTest ? 'Đạt (+1.25)' : 'Chưa (+0)'} · Quỳ tím/pH: ${tel.usedLitmusOrPh ? 'Đạt (+1.25)' : 'Chưa thử (+0)'}`
+      )
+    );
 
     // Sample preservation: none contaminated, remaining volume >= 55% of 80 mL = 44 mL
     let preservedCount = 0;
@@ -247,22 +266,43 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
       if (!contaminated && ml >= 44) preservedCount += 1;
     }
     const quantScore = blindIds.length > 0 ? (preservedCount / blindIds.length) * mission.rubric[1].maxPoints : 0;
-    results.push(makeCriterionResult(mission.rubric[1], quantScore, `${preservedCount}/${blindIds.length} clean samples kept`));
+    results.push(
+      makeCriterionResult(
+        mission.rubric[1],
+        quantScore,
+        isEn ? `${preservedCount}/${blindIds.length} clean samples preserved (≥44 mL)` : `Giữ nguyên vẹn ${preservedCount}/${blindIds.length} bình gốc (≥44 mL)`
+      )
+    );
 
     let correctLbl = 0;
     for (const lbl of ['?A', '?B', '?C', '?D']) {
       if (userAnswers[`ans_${lbl}`] && userAnswers[`ans_${lbl}`] === ak[lbl]) correctLbl += 1;
     }
     const identScore = (correctLbl / 4) * mission.rubric[2].maxPoints;
-    results.push(makeCriterionResult(mission.rubric[2], identScore, `${correctLbl}/4 matched`));
+    results.push(
+      makeCriterionResult(
+        mission.rubric[2],
+        identScore,
+        isEn ? `Assigned ${correctLbl}/4 correctly` : `Gán đúng ${correctLbl}/4 bình`
+      )
+    );
 
     const safe = computeCommonSafetyPoints(mission.rubric[3].maxPoints, sim, tel);
-    results.push(makeCriterionResult(mission.rubric[3], safe.pts, `${safe.incidents} incident(s)`));
+    results.push(makeCriterionResult(mission.rubric[3], safe.pts, isEn ? `${safe.incidents} safety incident(s)` : `${safe.incidents} sự cố an toàn`));
   } else if (mission.id === 'mission_titration_hcl') {
     const flask = sim.getItem(setupData.targetVesselId);
     const hasPhen = Boolean(flask && (flask.moles?.Phenolphthalein_aq || 0) > 1e-9);
-    const procPts = (tel.usedBuretteDrops > 0 ? 1.5 : 0) + ((hasPhen || tel.usedLitmusOrPh) ? 1.0 : 0);
-    results.push(makeCriterionResult(mission.rubric[0], procPts, `Burette drops=${tel.usedBuretteDrops}, Indicator/pH=${hasPhen || tel.usedLitmusOrPh ? 'OK' : 'No'}`));
+    const hasIndicator = hasPhen || tel.usedLitmusOrPh;
+    const procPts = (tel.usedBuretteDrops > 0 ? 1.5 : 0) + (hasIndicator ? 1.0 : 0);
+    results.push(
+      makeCriterionResult(
+        mission.rubric[0],
+        procPts,
+        isEn
+          ? `Burette drops: ${tel.usedBuretteDrops} (${tel.usedBuretteDrops > 0 ? '+1.5' : '+0'}) · Phen/pH: ${hasIndicator ? 'OK (+1.0)' : 'Add Phen or pH probe (+0)'}`
+          : `Nhỏ Burette: ${tel.usedBuretteDrops} lần (${tel.usedBuretteDrops > 0 ? '+1.5' : '+0'}) · Chỉ thị/pH: ${hasIndicator ? 'Đạt (+1.0)' : 'Chưa thêm Phen/đo pH (+0)'}`
+      )
+    );
 
     const liqL = flask ? computeLiquidVolumeL(flask.moles, flask.tempK) : 0;
     const ph = flask && liqL > 1e-6 ? computePH(flask.moles, liqL, flask.tempK) : null;
@@ -273,15 +313,29 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
       else if (ph > 5.0 && ph < 6.8) quantPts = mission.rubric[1].maxPoints * 0.5;
       else quantPts = 0.4;
     }
-    results.push(makeCriterionResult(mission.rubric[1], quantPts, ph !== null ? `Endpoint pH = ${ph.toFixed(2)}` : 'No endpoint reached'));
+    results.push(
+      makeCriterionResult(
+        mission.rubric[1],
+        quantPts,
+        ph !== null
+          ? isEn
+            ? `Flask pH = ${ph.toFixed(2)} (target 6.8–10.3)`
+            : `pH bình = ${ph.toFixed(2)} (mục tiêu 6.8–10.3)`
+          : isEn
+          ? 'Dispense NaOH from Burette toward equivalence'
+          : 'Mở Burette nhỏ NaOH tới điểm tương đương'
+      )
+    );
 
     const userVal = Number(userAnswers.ans_molarity);
     const trueVal = Number(ak.targetMolarityM) || 0.1;
     let identPts = 0;
-    let errPctStr = '—';
+    let errPctStr = isEn ? 'Enter C_M(HCl) from C₁V₁ = C₂V₂' : 'Nhập C_M(HCl) tính từ C₁V₁ = C₂V₂';
     if (Number.isFinite(userVal) && userVal > 0) {
       const errPct = Math.abs(userVal - trueVal) / trueVal * 100;
-      errPctStr = `±${errPct.toFixed(1)}% (true ${trueVal.toFixed(3)} M)`;
+      errPctStr = isEn
+        ? `Error ±${errPct.toFixed(1)}% (≤2% full pts)`
+        : `Sai số ±${errPct.toFixed(1)}% (≤2% đạt trọn điểm)`;
       if (errPct <= 2.0) identPts = mission.rubric[2].maxPoints;
       else if (errPct <= 5.0) identPts = mission.rubric[2].maxPoints * 0.7;
       else if (errPct <= 10.0) identPts = mission.rubric[2].maxPoints * 0.4;
@@ -290,18 +344,18 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
 
     const overTitratedPen = ph !== null && ph > 12.2 ? 0.5 : 0;
     const safe = computeCommonSafetyPoints(mission.rubric[3].maxPoints, sim, tel, overTitratedPen);
-    results.push(makeCriterionResult(mission.rubric[3], safe.pts, `${safe.incidents} incident(s)`));
+    results.push(makeCriterionResult(mission.rubric[3], safe.pts, isEn ? `${safe.incidents} safety incident(s)` : `${safe.incidents} sự cố an toàn`));
   } else if (mission.id === 'mission_calcination_cao') {
     const cruc = sim.getItem(setupData.crucibleId) || (sim.items || []).find((i) => i.kind === 'vessel' && ((i.moles?.CaO_s || 0) > 1e-4 || (i.moles?.CaCO3_s || 0) > 1e-4));
     const caoScore = cruc ? computeCaOOptimizationScore(cruc) : null;
     const procPts = caoScore ? caoScore.points : 0;
-    results.push(makeCriterionResult(mission.rubric[0], procPts, caoScore ? `${caoScore.points}/4 criteria` : '0/4'));
+    results.push(makeCriterionResult(mission.rubric[0], procPts, caoScore ? (isEn ? `${caoScore.points}/4 steps achieved` : `Đạt ${caoScore.points}/4 kỹ thuật nung`) : '0/4'));
 
     const yieldPct = caoScore ? caoScore.yieldPct : 0;
     let quantPts = 0;
     if (yieldPct >= 90) quantPts = mission.rubric[1].maxPoints;
     else quantPts = (yieldPct / 90) * mission.rubric[1].maxPoints * 0.85;
-    results.push(makeCriterionResult(mission.rubric[1], quantPts, `CaO yield = ${yieldPct.toFixed(1)}%`));
+    results.push(makeCriterionResult(mission.rubric[1], quantPts, isEn ? `CaO yield = ${yieldPct.toFixed(1)}%` : `Hiệu suất CaO = ${yieldPct.toFixed(1)}%`));
 
     let identPts = 0;
     if (userAnswers.ans_gas === ak.gas) identPts += 0.5;
@@ -309,12 +363,20 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
     results.push(makeCriterionResult(mission.rubric[2], identPts, `${userAnswers.ans_gas || '—'} / ${userAnswers.ans_product || '—'}`));
 
     const safe = computeCommonSafetyPoints(mission.rubric[3].maxPoints, sim, tel);
-    results.push(makeCriterionResult(mission.rubric[3], safe.pts, `${safe.incidents} incident(s)`));
+    results.push(makeCriterionResult(mission.rubric[3], safe.pts, isEn ? `${safe.incidents} safety incident(s)` : `${safe.incidents} sự cố an toàn`));
   } else if (mission.id === 'mission_gas_prep') {
     const syr = sim.getItem(setupData.targetSyringeId) || (sim.items || []).find((i) => i.kind === 'gas_syringe' && !i.isBroken);
     const hasDryAgent = (sim.items || []).some((v) => v.kind === 'vessel' && ((v.moles?.H2SO4_l || 0) > 0.015 || ((v.moles?.H_aq || 0) > 0.02 && (v.moles?.HSO4_aq || 0) > 0.01)));
     const procPts = (tel.gasConnectedToSyringe ? 1.5 : 0) + ((tel.gasDriedViaH2SO4 || hasDryAgent) ? 1.5 : 0);
-    results.push(makeCriterionResult(mission.rubric[0], procPts, `Drying=${tel.gasDriedViaH2SO4 || hasDryAgent ? 'H₂SO₄' : 'No'}, SyringeLink=${tel.gasConnectedToSyringe ? 'OK' : 'No'}`));
+    results.push(
+      makeCriterionResult(
+        mission.rubric[0],
+        procPts,
+        isEn
+          ? `Drying: ${tel.gasDriedViaH2SO4 || hasDryAgent ? 'H₂SO₄ OK (+1.5)' : 'Missing (+0)'} · Syringe link: ${tel.gasConnectedToSyringe ? 'OK (+1.5)' : 'Missing (+0)'}`
+          : `Làm khô: ${tel.gasDriedViaH2SO4 || hasDryAgent ? 'H₂SO₄ Đạt (+1.5)' : 'Chưa có (+0)'} · Nối Syringe: ${tel.gasConnectedToSyringe ? 'Đạt (+1.5)' : 'Chưa nối (+0)'}`
+      )
+    );
 
     const targetGasId = ak.targetGasId || 'H2_g';
     const allMoles = syr ? buildCombinedSyringeTotalMoles(syr) : {};
@@ -329,7 +391,7 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
       const purFactor = purityPct >= 95 ? 1.0 : purityPct >= 80 ? 0.65 : 0.3;
       quantPts = mission.rubric[1].maxPoints * (0.5 * volFactor + 0.5 * purFactor);
     }
-    results.push(makeCriterionResult(mission.rubric[1], quantPts, `${gasMl.toFixed(1)} mL, ${purityPct.toFixed(1)}% ${ak.gas}`));
+    results.push(makeCriterionResult(mission.rubric[1], quantPts, isEn ? `Collected ${gasMl.toFixed(1)} mL · Purity ${purityPct.toFixed(1)}% ${ak.gas}` : `Thu được ${gasMl.toFixed(1)} mL · Tinh khiết ${purityPct.toFixed(1)}% ${ak.gas}`));
 
     let identPts = 0;
     if (userAnswers.ans_gas === ak.gas) identPts += 0.5;
@@ -337,7 +399,7 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
     results.push(makeCriterionResult(mission.rubric[2], identPts, `${userAnswers.ans_gas || '—'} · ${userAnswers.ans_drying || '—'}`));
 
     const safe = computeCommonSafetyPoints(mission.rubric[3].maxPoints, sim, tel);
-    results.push(makeCriterionResult(mission.rubric[3], safe.pts, `${safe.incidents} incident(s)`));
+    results.push(makeCriterionResult(mission.rubric[3], safe.pts, isEn ? `${safe.incidents} safety incident(s)` : `${safe.incidents} sự cố an toàn`));
   } else if (mission.id === 'mission_electrochem_cell') {
     const dmm = sim.getItem(setupData.dmmId) || (sim.items || []).find((i) => i.kind === 'volt_ammeter');
     const sb = setupData.saltBridgeId ? sim.getItem(setupData.saltBridgeId) : (sim.items || []).find((i) => i.kind === 'salt_bridge');
@@ -345,7 +407,15 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
     const sbClean = isSacrificial ? true : Boolean(sb && !sb.isBroken && !sb.fouledByAgCl && !sb.fouledBySulfate && sb.vesselAId && sb.vesselBId);
     const hasClosedMeter = Boolean(dmm && dmm.posElectrodeId && dmm.negElectrodeId);
     const procPts = (hasClosedMeter ? 1.5 : 0) + (sbClean ? 1.5 : 0);
-    results.push(makeCriterionResult(mission.rubric[0], procPts, `Meter=${hasClosedMeter ? 'OK' : 'No'}, SaltBridge=${sbClean ? 'Clean' : 'Fouled/Open'}`));
+    results.push(
+      makeCriterionResult(
+        mission.rubric[0],
+        procPts,
+        isEn
+          ? `Meter loop: ${hasClosedMeter ? 'OK (+1.5)' : 'Open (+0)'} · Salt bridge: ${sbClean ? 'Clean (+1.5)' : 'Fouled/Open (+0)'}`
+          : `Mạch đồng hồ: ${hasClosedMeter ? 'Đạt (+1.5)' : 'Hở (+0)'} · Cầu muối: ${sbClean ? 'Sạch (+1.5)' : 'Kết tủa/Hở (+0)'}`
+      )
+    );
 
     let quantPts = 0;
     let quantDetail = '';
@@ -355,7 +425,9 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
       const feRatio = feEl && ak.feInitialMol > 0 ? (feEl.rodMetalMol || 0) / ak.feInitialMol : 0;
       if (protectedOk && feRatio >= 0.96) quantPts = mission.rubric[1].maxPoints;
       else if (protectedOk) quantPts = mission.rubric[1].maxPoints * 0.7;
-      quantDetail = `Protected=${protectedOk}, Fe kept ${(feRatio * 100).toFixed(1)}%`;
+      quantDetail = isEn
+        ? `Cathodic protection: ${protectedOk ? 'ON' : 'OFF'} · Fe kept ${(feRatio * 100).toFixed(1)}%`
+        : `Bảo vệ catốt: ${protectedOk ? 'Bật' : 'Chưa'} · Giữ được ${(feRatio * 100).toFixed(1)}% Fe`;
     } else {
       const measuredV = Math.abs(dmm?.measuredV || 0);
       const trueEmf = ak.targetEmfV || 0.762;
@@ -363,7 +435,7 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
       if (errPct <= 4) quantPts = mission.rubric[1].maxPoints;
       else if (errPct <= 10) quantPts = mission.rubric[1].maxPoints * 0.65;
       else if (measuredV > 0.2) quantPts = mission.rubric[1].maxPoints * 0.35;
-      quantDetail = `EMF=${measuredV.toFixed(2)}V (target ${trueEmf.toFixed(2)}V)`;
+      quantDetail = isEn ? `Measured E = ${measuredV.toFixed(2)}V (target ${trueEmf.toFixed(2)}V)` : `Đo được E = ${measuredV.toFixed(2)}V (mục tiêu ${trueEmf.toFixed(2)}V)`;
     }
     results.push(makeCriterionResult(mission.rubric[1], quantPts, quantDetail));
 
@@ -374,17 +446,25 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
     if (Number.isFinite(ansEmf) && refEmf > 0 && Math.abs(ansEmf - refEmf) <= Math.max(0.08, refEmf * 0.1)) {
       identPts += 1.0;
     }
-    results.push(makeCriterionResult(mission.rubric[2], identPts, `Anode=${userAnswers.ans_anode || '—'}, E=${userAnswers.ans_emf || '—'}V`));
+    results.push(makeCriterionResult(mission.rubric[2], identPts, `Anode: ${userAnswers.ans_anode || '—'} · E = ${userAnswers.ans_emf || '—'}V`));
 
     const foulPen = sb && (sb.fouledByAgCl || sb.fouledBySulfate) ? 0.5 : 0;
     const safe = computeCommonSafetyPoints(mission.rubric[3].maxPoints, sim, tel, foulPen);
-    results.push(makeCriterionResult(mission.rubric[3], safe.pts, `${safe.incidents} incident(s)`));
+    results.push(makeCriterionResult(mission.rubric[3], safe.pts, isEn ? `${safe.incidents} safety incident(s)` : `${safe.incidents} sự cố an toàn`));
   } else if (mission.id === 'mission_ester_synth') {
     const sep = sim.getItem(setupData.sepFunnelId) || (sim.items || []).find((i) => i.kind === 'separatory_funnel');
     const anyEsterMade = tel.esterFormed || (sim.items || []).some((i) => (i.moles?.CH3COOC2H5_l || 0) > 0.002);
     const sepActive = tel.sepFunnelTaps > 0 || (sep && (sep.moles?.CH3COOC2H5_l || 0) > 0.002);
     const procPts = (anyEsterMade ? 2.0 : 0) + (sepActive ? 1.5 : 0);
-    results.push(makeCriterionResult(mission.rubric[0], procPts, `EsterSynth=${anyEsterMade ? 'OK' : 'No'}, SepFunnel=${sepActive ? 'OK' : 'No'}`));
+    results.push(
+      makeCriterionResult(
+        mission.rubric[0],
+        procPts,
+        isEn
+          ? `Ester synthesis: ${anyEsterMade ? 'OK (+2.0)' : 'Not formed (+0)'} · Sep. funnel: ${sepActive ? 'OK (+1.5)' : 'Unused (+0)'}`
+          : `Tạo este: ${anyEsterMade ? 'Đạt (+2.0)' : 'Chưa tạo (+0)'} · Phễu chiết: ${sepActive ? 'Đạt (+1.5)' : 'Chưa dùng (+0)'}`
+      )
+    );
 
     // Look for purified ester inside receiver vessel or separatory funnel (after draining aqueous bottom)
     let bestEsterMol = 0;
@@ -406,7 +486,7 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
       const purFactor = bestPurity >= 0.7 ? 1.0 : bestPurity >= 0.45 ? 0.65 : 0.35;
       quantPts = mission.rubric[1].maxPoints * (0.5 * yieldFactor + 0.5 * purFactor);
     }
-    results.push(makeCriterionResult(mission.rubric[1], quantPts, `${(bestEsterMol * 1000).toFixed(1)} mmol (${(bestPurity * 100).toFixed(0)}% org)`));
+    results.push(makeCriterionResult(mission.rubric[1], quantPts, isEn ? `${(bestEsterMol * 1000).toFixed(1)} mmol (${(bestPurity * 100).toFixed(0)}% pure)` : `Thu được ${(bestEsterMol * 1000).toFixed(1)} mmol (tinh khiết ${(bestPurity * 100).toFixed(0)}%)`));
 
     let identPts = 0;
     if (userAnswers.ans_layer === ak.layer) identPts += 1.0;
@@ -414,7 +494,7 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
     results.push(makeCriterionResult(mission.rubric[2], identPts, `${userAnswers.ans_layer || '—'} · ${userAnswers.ans_ester || '—'}`));
 
     const safe = computeCommonSafetyPoints(mission.rubric[3].maxPoints, sim, tel);
-    results.push(makeCriterionResult(mission.rubric[3], safe.pts, `${safe.incidents} incident(s)`));
+    results.push(makeCriterionResult(mission.rubric[3], safe.pts, isEn ? `${safe.incidents} safety incident(s)` : `${safe.incidents} sự cố an toàn`));
   }
 
   const rawScore = results.reduce((sum, r) => sum + r.earned, 0);

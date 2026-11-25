@@ -11,7 +11,8 @@ rules_version = '2';
 // Collection: users/{uid}
 // Document ID: Firebase Auth UID
 // Fields:
-//   - role: string (required on create == 'student', immutable on update; 'student' | 'teacher')
+//   - role: string (required on create == 'student', immutable on update except student -> teacher via atomic invite redemption; 'student' | 'teacher')
+//   - teacherInviteCode: string (optional, 1..32 chars; must match ^GV-[A-Z0-9]{4,12}$ when upgrading to 'teacher', immutable once set)
 //   - email: string | null (optional, 3..254 chars)
 //   - displayName: string (optional, 0..100 chars)
 //   - createdAt: timestamp | number (optional, >= 0 if number, immutable once set)
@@ -114,6 +115,16 @@ rules_version = '2';
 //   - gradedBy: string (optional, teacher-only, 1..128 chars)
 //   - gradedAt: timestamp | number (optional, teacher-only)
 //
+// Collection: teacher_invites/{inviteCode}
+// Document ID: one-time teacher invite code matching ^GV-[A-Z0-9]{4,12}$
+// Fields (admin-provisioned via Console/Admin SDK; one-time atomic redemption by non-teacher user):
+//   - code: string (required, must equal {inviteCode}, ^GV-[A-Z0-9]{4,12}$, immutable)
+//   - used: bool (required, false -> true on one-time redemption)
+//   - usedBy: string | null (required on redemption == request.auth.uid, 1..128 chars)
+//   - usedAt: timestamp | null (required on redemption == request.time)
+//   - label: string | null (optional, 0..200 chars, immutable)
+//   - expiresAt: timestamp | number | null (optional, >= 0 if number, immutable)
+//
 // ===============================================================
 
 service cloud.firestore {
@@ -195,6 +206,10 @@ service cloud.firestore {
       return examCode is string && examCode.matches('^CHEM-[A-Z0-9]{4,12}$');
     }
 
+    function isValidInviteCode(inviteCode) {
+      return inviteCode is string && inviteCode.matches('^GV-[A-Z0-9]{4,12}$');
+    }
+
     function isValidSeed(seed) {
       return (seed is int && seed >= 0 && seed <= 4294967295) ||
         (seed is string && seed.size() >= 1 && seed.size() <= 64);
@@ -223,6 +238,7 @@ service cloud.firestore {
           'email',
           'displayName',
           'role',
+          'teacherInviteCode',
           'createdAt',
           'updatedAt',
           'schemaVersion'
@@ -231,9 +247,31 @@ service cloud.firestore {
         (!('email' in data) || data.email == null || isValidEmail(data.email)) &&
         isValidOptionalString(data, 'displayName', 0, 100) &&
         (!('role' in data) || data.role in ['student', 'teacher']) &&
+        isValidOptionalString(data, 'teacherInviteCode', 1, 32) &&
         (!('createdAt' in data) || isValidTimestampOrEpoch(data.createdAt)) &&
         (!('updatedAt' in data) || isValidTimestampOrEpoch(data.updatedAt)) &&
         isValidOptionalString(data, 'schemaVersion', 1, 32);
+    }
+
+    function isValidTeacherInvite(data, inviteCode) {
+      return data is map &&
+        hasRequiredFields(['code', 'used', 'usedBy', 'usedAt']) &&
+        hasOnlyAllowedFields([
+          'code',
+          'used',
+          'usedBy',
+          'usedAt',
+          'label',
+          'expiresAt'
+        ]) &&
+        data.code is string &&
+        data.code == inviteCode &&
+        isValidInviteCode(data.code) &&
+        data.used is bool &&
+        (data.usedBy == null || isValidString(data.usedBy, 1, 128)) &&
+        (data.usedAt == null || data.usedAt is timestamp) &&
+        (!('label' in data) || data.label == null || isValidString(data.label, 0, 200)) &&
+        (!('expiresAt' in data) || data.expiresAt == null || isValidTimestampOrEpoch(data.expiresAt));
     }
 
     function isValidWorkspaceDoc(data) {
@@ -494,19 +532,38 @@ service cloud.firestore {
       allow create: if isOwner(uid) &&
         isValidUserProfile(request.resource.data, uid) &&
         'role' in request.resource.data &&
-        request.resource.data.role == 'student';
+        request.resource.data.role == 'student' &&
+        !('teacherInviteCode' in request.resource.data);
 
-      // Users cannot escalate their own role or tamper with uid/createdAt
+      // Users cannot tamper with uid/createdAt; role is immutable except when
+      // upgrading student -> teacher via atomic one-time teacher_invites redemption
       allow update: if isOwner(uid) &&
         isValidUserProfile(request.resource.data, uid) &&
         uidNotModified() &&
         areImmutableFieldsUnchanged(['createdAt']) &&
         (
-          ('role' in resource.data &&
+          (
+            areImmutableFieldsUnchanged(['teacherInviteCode']) &&
+            (
+              ('role' in resource.data &&
+                'role' in request.resource.data &&
+                request.resource.data.role == resource.data.role) ||
+              (!('role' in resource.data) &&
+                (!('role' in request.resource.data) || request.resource.data.role == 'student'))
+            )
+          ) ||
+          (
+            'role' in resource.data &&
+            resource.data.role == 'student' &&
             'role' in request.resource.data &&
-            request.resource.data.role == resource.data.role) ||
-          (!('role' in resource.data) &&
-            (!('role' in request.resource.data) || request.resource.data.role == 'student'))
+            request.resource.data.role == 'teacher' &&
+            'teacherInviteCode' in request.resource.data &&
+            isValidInviteCode(request.resource.data.teacherInviteCode) &&
+            exists(/databases/$(database)/documents/teacher_invites/$(request.resource.data.teacherInviteCode)) &&
+            get(/databases/$(database)/documents/teacher_invites/$(request.resource.data.teacherInviteCode)).data.used == false &&
+            getAfter(/databases/$(database)/documents/teacher_invites/$(request.resource.data.teacherInviteCode)).data.used == true &&
+            getAfter(/databases/$(database)/documents/teacher_invites/$(request.resource.data.teacherInviteCode)).data.usedBy == uid
+          )
         );
 
       allow delete: if false;
@@ -647,7 +704,33 @@ service cloud.firestore {
       }
     }
 
-    // 7. Default deny all other collections and paths
+    // 7. One-time Teacher Invite codes (admin-provisioned; atomic redemption)
+    match /teacher_invites/{inviteCode} {
+      allow get: if isAuthenticated() && isValidInviteCode(inviteCode);
+      allow list: if false;
+      allow create, delete: if false;
+
+      // Only an authenticated non-teacher user can redeem an unused, non-expired
+      // invite ONCE via atomic WriteBatch together with users/{request.auth.uid}
+      allow update: if isAuthenticated() &&
+        !isTeacher() &&
+        isValidInviteCode(inviteCode) &&
+        isValidTeacherInvite(request.resource.data, inviteCode) &&
+        resource.data.used == false &&
+        (!('expiresAt' in resource.data) ||
+          resource.data.expiresAt == null ||
+          (resource.data.expiresAt is timestamp && resource.data.expiresAt > request.time) ||
+          (resource.data.expiresAt is number && resource.data.expiresAt > request.time.toMillis())) &&
+        request.resource.data.used == true &&
+        request.resource.data.usedBy == request.auth.uid &&
+        request.resource.data.usedAt == request.time &&
+        areImmutableFieldsUnchanged(['code', 'label', 'expiresAt']) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
+        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' &&
+        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.teacherInviteCode == inviteCode;
+    }
+
+    // 8. Default deny all other collections and paths
     match /{document=**} {
       allow read, write: if false;
     }

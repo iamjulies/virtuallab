@@ -59,16 +59,16 @@ export const MISSION_REGISTRY = {
     shortTitleKey: 'm1Short',
     summaryKey: 'm1Summary',
     goalKey: 'm1Goal',
-    equationText: 'BaCl₂ + Na₂SO₄ → BaSO₄↓(white) + 2NaCl | HCl + NaOH → NaCl + H₂O',
-    allowedApparatus: ['test_tube_50', 'pipette_10', 'litmus_paper', 'ph_strip', 'ph_conductometer', 'wash_bottle', 'stir_bar'],
+    equationText: 'Na₂CO₃ + 2HCl → 2NaCl + CO₂↑ + H₂O  |  BaCl₂ + Na₂CO₃ → BaCO₃↓(white) + 2NaCl  |  HCl + NaOH → NaCl + H₂O',
+    allowedApparatus: ['test_tube_50', 'beaker_250', 'pipette_10', 'litmus_paper', 'ph_strip', 'ph_conductometer', 'wash_bottle', 'stir_bar'],
     allowedReagents: ['h2o'],
     maxExtraTools: 10,
     hints: ['m1Hint1', 'm1Hint2', 'm1Hint3'],
     submitFields: [
-      { id: 'ans_?A', labelKey: 'm1FieldA', type: 'select', options: ['HCl', 'NaOH', 'BaCl₂', 'Na₂SO₄'] },
-      { id: 'ans_?B', labelKey: 'm1FieldB', type: 'select', options: ['HCl', 'NaOH', 'BaCl₂', 'Na₂SO₄'] },
-      { id: 'ans_?C', labelKey: 'm1FieldC', type: 'select', options: ['HCl', 'NaOH', 'BaCl₂', 'Na₂SO₄'] },
-      { id: 'ans_?D', labelKey: 'm1FieldD', type: 'select', options: ['HCl', 'NaOH', 'BaCl₂', 'Na₂SO₄'] },
+      { id: 'ans_?A', labelKey: 'm1FieldA', type: 'select', options: ['HCl', 'NaOH', 'Na₂CO₃', 'BaCl₂'] },
+      { id: 'ans_?B', labelKey: 'm1FieldB', type: 'select', options: ['HCl', 'NaOH', 'Na₂CO₃', 'BaCl₂'] },
+      { id: 'ans_?C', labelKey: 'm1FieldC', type: 'select', options: ['HCl', 'NaOH', 'Na₂CO₃', 'BaCl₂'] },
+      { id: 'ans_?D', labelKey: 'm1FieldD', type: 'select', options: ['HCl', 'NaOH', 'Na₂CO₃', 'BaCl₂'] },
     ],
     rubric: [
       { id: 'm1_proc', category: 'process', maxPoints: 2.5, labelKey: 'm1RubProc' },
@@ -83,8 +83,8 @@ export const MISSION_REGISTRY = {
       const solutions = shuffleWithRng([
         { key: 'HCl', moles: { H2O_l: 4.44, H_aq: 0.016, Cl_aq: 0.016 } },
         { key: 'NaOH', moles: { H2O_l: 4.44, Na_aq: 0.016, OH_aq: 0.016 } },
+        { key: 'Na₂CO₃', moles: { H2O_l: 4.44, Na_aq: 0.032, CO3_2_aq: 0.016 } },
         { key: 'BaCl₂', moles: { H2O_l: 4.44, Ba2_aq: 0.012, Cl_aq: 0.024 } },
-        { key: 'Na₂SO₄', moles: { H2O_l: 4.44, Na_aq: 0.024, SO4_2_aq: 0.012 } },
       ], rng);
 
       const answerKey = {};
@@ -131,7 +131,7 @@ export const MISSION_REGISTRY = {
     goalKey: 'm2Goal',
     equationText: 'HCl(aq) + NaOH(aq) → NaCl(aq) + H₂O(l)   |   C₁·V₁ = C₂·V₂',
     allowedApparatus: ['erlenmeyer_250', 'burette_50', 'retort_stand', 'pipette_10', 'ph_conductometer', 'ph_strip', 'litmus_paper', 'stir_bar', 'wash_bottle'],
-    allowedReagents: ['phenolphthalein', 'h2o', 'naoh'],
+    allowedReagents: ['phen', 'h2o', 'naoh'],
     maxExtraTools: 6,
     hints: ['m2Hint1', 'm2Hint2', 'm2Hint3'],
     submitFields: [
@@ -162,7 +162,6 @@ export const MISSION_REGISTRY = {
           H2O_l: molH2O,
           H_aq: molHCl,
           Cl_aq: molHCl,
-          Phenolphthalein_aq: 4e-6,
         };
         flask.hideComposition = true;
         flask.blindLabel = '?X';
@@ -176,7 +175,7 @@ export const MISSION_REGISTRY = {
           Na_aq: 0.005,
           OH_aq: 0.005,
         };
-        bur.valveRateMlS = 0.5;
+        bur.valveRateMlS = 0; // Start completely closed so student controls titration
         sim.createApparatus('ph_conductometer', 595, 405, { silentUndo: true });
       });
       sim.selectedId = bur.id;
@@ -204,7 +203,7 @@ export const MISSION_REGISTRY = {
     summaryKey: 'm3Summary',
     goalKey: 'm3Goal',
     equationText: 'CaCO₃(s) —(Δ ≥ 850 °C)→ CaO(s) + CO₂(g)↑',
-    allowedApparatus: ['crucible_porcelain', 'mortar_pestle', 'bunsen_burner', 'retort_stand', 'thermometer', 'scale', 'beaker_250', 'litmus_paper', 'pipette_10'],
+    allowedApparatus: ['crucible_porcelain', 'mortar_pestle', 'bunsen_burner', 'retort_stand', 'thermometer', 'scale', 'beaker_250', 'iron_spoon', 'litmus_paper', 'pipette_10'],
     allowedReagents: ['caco3', 'h2o'],
     maxExtraTools: 5,
     hints: ['m3Hint1', 'm3Hint2', 'm3Hint3'],
@@ -259,9 +258,9 @@ export const MISSION_REGISTRY = {
     shortTitleKey: 'm4Short',
     summaryKey: 'm4Summary',
     goalKey: 'm4Goal',
-    equationText: 'Zn + 2HCl → ZnCl₂ + H₂↑   |   MnO₂ + 4HCl(conc) —(Δ)→ MnCl₂ + Cl₂↑ + 2H₂O',
-    allowedApparatus: ['round_flask_250', 'erlenmeyer_250', 'gas_syringe', 'bunsen_burner', 'retort_stand', 'rubber_stopper', 'splint', 'litmus_paper', 'pipette_10'],
-    allowedReagents: ['zn', 'mno2', 'hcl', 'h2so4_conc', 'nacl', 'h2o'],
+    equationText: 'Zn + 2HCl → ZnCl₂ + H₂↑   |   MnO₂ / KMnO₄ + HCl(conc) → Cl₂↑ (dry over H₂SO₄)',
+    allowedApparatus: ['round_flask_250', 'erlenmeyer_250', 'beaker_250', 'test_tube_50', 'gas_syringe', 'separatory_funnel', 'bunsen_burner', 'retort_stand', 'rubber_stopper', 'splint', 'litmus_paper', 'ph_strip', 'pipette_10'],
+    allowedReagents: ['zn', 'kmno4', 'hcl_37', 'h2so4_98', 'nacl', 'h2o'],
     maxExtraTools: 6,
     hints: ['m4Hint1', 'm4Hint2', 'm4Hint3'],
     submitFields: [
@@ -318,8 +317,8 @@ export const MISSION_REGISTRY = {
     summaryKey: 'm5Summary',
     goalKey: 'm5Goal',
     equationText: 'Zn + 2H⁺ → Zn²⁺ + H₂↑ (E°_cell = +0.76 V)  |  Fe protected by Mg/Zn sacrificial anode',
-    allowedApparatus: ['beaker_250', 'electrode_rod', 'salt_bridge', 'volt_ammeter', 'dc_power', 'ph_conductometer'],
-    allowedReagents: ['znso4', 'cuso4', 'agno3', 'hcl', 'h2o', 'nacl'],
+    allowedApparatus: ['beaker_250', 'beaker_tall_250', 'electrode_rod', 'salt_bridge', 'volt_ammeter', 'dc_power', 'ph_conductometer', 'pipette_10', 'gas_syringe'],
+    allowedReagents: ['zn', 'mg', 'fe', 'cuso4_5h2o', 'agno3', 'hcl_37', 'h2so4_98', 'nacl', 'h2o'],
     maxExtraTools: 6,
     hints: ['m5Hint1', 'm5Hint2', 'm5Hint3'],
     submitFields: [
@@ -371,6 +370,8 @@ export const MISSION_REGISTRY = {
           sim.setElectrodeMaterial(elR.id, 'C'); // Student switches to SHE
           elR.dockedVesselId = bRight.id;
           sb = sim.createApparatus('salt_bridge', 380, 378, { silentUndo: true });
+          sb.vesselAId = bLeft.id;
+          sb.vesselBId = bRight.id;
           sim.setSaltBridgeElectrolyte(sb.id, 'KNO3');
           dmm = sim.createApparatus('volt_ammeter', 380, 235, { silentUndo: true });
           dmm.mode = 'voltmeter';
@@ -415,8 +416,8 @@ export const MISSION_REGISTRY = {
     summaryKey: 'm6Summary',
     goalKey: 'm6Goal',
     equationText: 'CH₃COOH + C₂H₅OH ⇌(H₂SO₄ conc, Δ) CH₃COOC₂H₅ + H₂O',
-    allowedApparatus: ['round_flask_250', 'erlenmeyer_250', 'beaker_250', 'liebig_condenser', 'separatory_funnel', 'bunsen_burner', 'retort_stand', 'boiling_chips', 'rubber_stopper', 'pipette_10'],
-    allowedReagents: ['ch3cooh', 'c2h5oh', 'h2so4_conc', 'na2co3', 'nacl', 'h2o'],
+    allowedApparatus: ['round_flask_250', 'erlenmeyer_250', 'beaker_250', 'liebig_condenser', 'separatory_funnel', 'bunsen_burner', 'retort_stand', 'thermometer', 'boiling_chips', 'rubber_stopper', 'pipette_10', 'wash_bottle'],
+    allowedReagents: ['ch3cooh', 'etoh', 'h2so4_98', 'naoh', 'nacl', 'h2o'],
     maxExtraTools: 7,
     hints: ['m6Hint1', 'm6Hint2', 'm6Hint3'],
     submitFields: [
@@ -480,6 +481,12 @@ export const MISSION_ORDER = [
 
 export function getMissionById(id) {
   return MISSION_REGISTRY[id] || null;
+}
+
+export function getActiveMissionPolicy(sim) {
+  const ms = sim?.missionState;
+  if (!ms?.active) return null;
+  return getMissionById(ms.missionId) || ms;
 }
 
 export function isApparatusAllowedInMission(missionOrState, typeId) {

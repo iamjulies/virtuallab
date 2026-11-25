@@ -57,7 +57,7 @@
     import { ParticleSystem } from '../src/canvas/particles.js';
     import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod, renderTlcPlate } from '../src/canvas/toolRenderer.js';
     import { resolveTlcUvActive, computeBeerLambertReading, computeUvVisSpectrum, computeIrSpectrum } from '../src/engine/analyticalTools.js';
-    import { buildPdfBytesFromCanvas, composeWorkbenchSnapshotCanvas } from '../src/storage/reportExport.js';
+    import { buildPdfBytesFromCanvas, composeWorkbenchSnapshotCanvas, openPrintableLabReport } from '../src/storage/reportExport.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
     import { DosingModal } from '../src/ui/dosingModal.js';
     import { ComparisonPanel } from '../src/ui/comparisonPanel.js';
@@ -2490,7 +2490,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.24';
+      const expectedBuild = 'virlab_beta_v5+build.25';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -10584,12 +10584,15 @@
       const st2 = simM2.startMission('mission_titration_hcl', 'exam', 777);
       const eqVol = st2.setupData.answerKey.equivVolNaohMl;
       const burM2 = simM2.getItem(st2.setupData.buretteId);
-      // Titrate right up to exact equivalence using burette drops
+      const m2StartsClosedOk = (burM2.valveRateMlS || 0) === 0;
+      simM2.addReagentToVessel(st2.setupData.targetVesselId, 'phen', 0.25);
+      // Titrate right up to Phenolphthalein light-pink endpoint (+1 micro-drop 0.05 mL) & let neutralization settle
       const drops = Math.round(eqVol / 0.5);
       for (let d = 0; d < drops; d++) {
         simM2.buretteDispenseDrop(burM2.id, 0.5);
       }
-      simM2.step(0.05);
+      simM2.buretteDispenseDrop(burM2.id, 0.05);
+      for (let s = 0; s < 10; s++) simM2.step(0.05);
       simM2.useMissionHint(); // 1 hint used in exam -> -0.5 penalty
 
       const dockEl = document.createElement('div');
@@ -10599,11 +10602,12 @@
       const examHiddenUiOk = dockEl.innerHTML.includes(I18N.en.missionExamHiddenTag) && !dockEl.innerHTML.includes('mcrit-icon');
       st2.mode = 'practice';
       dock.render(tEn, true);
-      const practiceVisibleUiOk = dockEl.innerHTML.includes('data-mcrit-icon');
+      const practiceVisibleUiOk = dockEl.innerHTML.includes('data-mcrit-icon') && dockEl.innerHTML.includes('data-mcrit-detail');
       st2.mode = 'exam';
 
       const evalM2 = simM2.submitMission({ ans_molarity: String(st2.setupData.answerKey.targetMolarityM) }, { t: tEn });
       const m2Ok =
+        m2StartsClosedOk &&
         st2.setupData.answerKey.targetMolarityM >= 0.08 &&
         st2.setupData.answerKey.targetMolarityM <= 0.18 &&
         evalM2.hintPenalty === 0.5 &&
@@ -10744,6 +10748,213 @@
         'Prompt 84 invariants: Isolated Exam Tabs, Per-Student Seed & SHA-256 Verify, Custom Assignment Blind Shuffle, Process Anomaly Guard, Proctoring Strikes & Auto-Submit, VI/EN i18n',
         isolatedTabOk && crossBlockedOk && perStudentSeedOk && hashVerifyOk && customBlindOk && anomalyGuardOk && yellowOk && redProctorOk && i18n84Ok && builderExistsOk,
         `iso=${isolatedTabOk}, xBlk=${crossBlockedOk}, seed=${perStudentSeedOk}, sha=${hashVerifyOk}, cust=${customBlindOk}, anom=${anomalyGuardOk}, yel=${yellowOk}, red=${redProctorOk}, i18n=${i18n84Ok}`
+      );
+    }
+
+    // TEST 222: Prompt 85 Mission Solvability, Valid Shelf Locks, Litmus Telemetry, Burette/SepFunnel +25mL Removal & ReportExport Formula Fix
+    {
+      const tVi = (k, p) => {
+        let s = I18N.vi[k] ?? k;
+        if (p) for (const [pk, pv] of Object.entries(p)) s = s.replace(`{${pk}}`, pv);
+        return s;
+      };
+      const reagentIds = new Set(STARTER_REAGENTS.map((r) => r.id));
+      const badAllowedReagents = [];
+      const badAllowedApparatus = [];
+      for (const mid of MISSION_ORDER) {
+        const m = MISSION_REGISTRY[mid];
+        for (const rId of m.allowedReagents || []) {
+          if (!reagentIds.has(rId)) badAllowedReagents.push(`${mid}:${rId}`);
+        }
+        for (const aId of m.allowedApparatus || []) {
+          if (!APPARATUS[aId]) badAllowedApparatus.push(`${mid}:${aId}`);
+        }
+      }
+      const registryLocksValidOk = badAllowedReagents.length === 0 && badAllowedApparatus.length === 0;
+
+      // Mission 1: [HCl, NaOH, Na2CO3, BaCl2] + indicator_strip telemetry
+      const sim1 = new LabSimulation();
+      const st1 = sim1.startMission('mission_qualitative_4', 'practice', 101);
+      const sols1 = new Set(Object.values(st1.setupData.answerKey || {}));
+      const m1SolvableSetOk = ['HCl', 'NaOH', 'Na₂CO₃', 'BaCl₂'].every((x) => sols1.has(x));
+      const strip1 = sim1.items.find((i) => i.kind === 'indicator_strip');
+      const v1 = sim1.getItem(st1.setupData.blindVesselIds[0]);
+      strip1.x = v1.x;
+      strip1.y = v1.y;
+      sim1.step(0.05);
+      // Lift strip out after sampling (regression check for Litmus/pH=No)
+      strip1.x = 875;
+      strip1.y = 420;
+      const ev1 = evaluateMission(sim1, st1, {}, { t: tVi, langCode: 'vi' });
+      const litmusTrackedOk = Boolean(sim1.missionTelemetry?.usedLitmusOrPh) && ev1.criteriaResults[0].earned >= 1.25;
+
+      // Locked reagent guard in addReagentToVessel & DosingModal
+      const blockedReagentOk = !sim1.addReagentToVessel(v1.id, 'kmno4', 5.0);
+
+      // Removed +25mL quick-fill dropdowns on Burette & Separatory Funnel inspectors
+      const simTool = new LabSimulation();
+      const burT = simTool.createApparatus('burette_50', 300, 250);
+      const sepT = simTool.createApparatus('separatory_funnel', 450, 250);
+      const insBox85 = document.createElement('div');
+      document.body.appendChild(insBox85);
+      const ins85 = new InspectorPanel(insBox85, simTool, () => tVi, {});
+      simTool.selectedId = burT.id;
+      ins85.update('vi', true);
+      const noBurQuickFillOk = !insBox85.innerHTML.includes('ins-bur-fill') && !insBox85.innerHTML.includes('bur-fill-sel');
+      simTool.selectedId = sepT.id;
+      ins85.update('vi', true);
+      const noSepQuickFillOk = !insBox85.innerHTML.includes('ins-sep-fill') && !insBox85.innerHTML.includes('sep-fill-sel');
+      document.body.removeChild(insBox85);
+
+      // ReportExport prints real species formulas & molarity (no 'undefined')
+      const printRoot = document.createElement('div');
+      const fakeCanvas = document.createElement('canvas');
+      fakeCanvas.width = 400;
+      fakeCanvas.height = 240;
+      const prevPrint = window.print;
+      window.print = () => {};
+      try {
+        openPrintableLabReport({
+          sim: sim1,
+          workbenchCanvas: fakeCanvas,
+          isDark: false,
+          labName: 'Test Lab',
+          t: tVi,
+          lang: 'vi',
+          reportRootEl: printRoot,
+          missionResult: ev1,
+        });
+      } finally {
+        window.print = prevPrint;
+      }
+      const reportNoUndefinedOk =
+        printRoot.innerHTML.includes('H₂O') && !printRoot.innerHTML.includes('<td>undefined</td>');
+
+      assert(
+        'Prompt 85 fixes: Valid allowedReagents/Apparatus across all 6 missions, solvable Lab 1 [HCl,NaOH,Na₂CO₃,BaCl₂], Litmus telemetry, +25mL quick-fill removed, PDF formulas valid',
+        registryLocksValidOk && m1SolvableSetOk && litmusTrackedOk && blockedReagentOk && noBurQuickFillOk && noSepQuickFillOk && reportNoUndefinedOk,
+        `locks=${registryLocksValidOk}(${badAllowedReagents.join(',')}|${badAllowedApparatus.join(',')}), m1Set=${m1SolvableSetOk}, lit=${litmusTrackedOk}, blk=${blockedReagentOk}, noBurFill=${noBurQuickFillOk}, noSepFill=${noSepQuickFillOk}, pdf=${reportNoUndefinedOk}`
+      );
+    }
+
+    // TEST 223: Prompt 86 Teacher Invite Redemption (Atomic Batch & Replay/Expired Guards), Engine-Level Apparatus/Reagent Lock, Exam Rubric Guide & Telemetry PDF Logs
+    {
+      const tVi = (k) => I18N.vi[k] ?? k;
+      const tEn = (k) => I18N.en[k] ?? k;
+
+      // 1) Engine-level createApparatus & addReagentToVessel lock enforcement during mission
+      const simLock = new LabSimulation();
+      simLock.startMission('mission_qualitative_4', 'exam', 313);
+      const blockedBunsen = simLock.createApparatus('bunsen_burner', 200, 420); // Not in Lab 1 allowedApparatus!
+      const blockedSilentDrop = simLock.createApparatus('dc_power', 200, 420, { silentUndo: true }); // Still blocked without bypassMissionLock!
+      const allowedTube = simLock.createApparatus('test_tube_50', 220, 420); // In allowedApparatus!
+      const blockedAcid = simLock.addReagentToVessel(allowedTube.id, 'h2so4_conc', 5); // Outside Lab 1 allowedReagents
+      const allowedWater = simLock.addReagentToVessel(allowedTube.id, 'h2o', 5); // Water is allowed
+      const engineLockOk =
+        blockedBunsen === null &&
+        blockedSilentDrop === null &&
+        Boolean(allowedTube) &&
+        blockedAcid === false &&
+        allowedWater === true;
+
+      // 2) Exam Mode Rubric Rule Summary visible in MissionDockPanel
+      const dockEl86 = document.createElement('div');
+      document.body.appendChild(dockEl86);
+      const dock86 = new MissionDockPanel(dockEl86, simLock, () => tEn, {});
+      dock86.render(tEn, true);
+      const rubricHintUiOk =
+        dockEl86.textContent.includes(I18N.en.rubricRuleProcess) &&
+        dockEl86.textContent.includes(I18N.en.rubricRuleIdent);
+      document.body.removeChild(dockEl86);
+
+      // 3) Printable Assessment PDF fills Telemetry summary when sim.logs is empty/sparse
+      simLock.logs = [];
+      simLock.missionTelemetry.usedPipetteTransfer = true;
+      simLock.missionTelemetry.sampledBlindLabels = ['?A', '?B'];
+      simLock.missionTelemetry.usedLitmusOrPh = true;
+      const ev86 = simLock.submitMission({}, { t: tVi });
+      const pdfRoot86 = document.createElement('div');
+      const fakeCvs86 = document.createElement('canvas');
+      fakeCvs86.width = 400;
+      fakeCvs86.height = 240;
+      const prevPr86 = window.print;
+      window.print = () => {};
+      try {
+        openPrintableLabReport({
+          sim: simLock,
+          workbenchCanvas: fakeCvs86,
+          isDark: false,
+          labName: 'Exam Lab 86',
+          t: tVi,
+          lang: 'vi',
+          reportRootEl: pdfRoot86,
+          missionResult: ev86,
+        });
+      } finally {
+        window.print = prevPr86;
+      }
+      const telemetryPdfOk =
+        pdfRoot86.innerHTML.includes('[Telemetry]') &&
+        pdfRoot86.innerHTML.includes('Pipette') &&
+        pdfRoot86.innerHTML.includes('quỳ tím');
+
+      // 4) cloudSync.redeemTeacherInvite validation, atomic batch commit, replay & expiration rejection
+      const fakeStore = {
+        'teacher_invites/GV-CHEM86': { code: 'GV-CHEM86', used: false, usedBy: null, usedAt: null, expiresAt: Date.now() + 86400000 },
+        'teacher_invites/GV-USED99': { code: 'GV-USED99', used: true, usedBy: 'other_uid', usedAt: 1000 },
+        'teacher_invites/GV-EXP001': { code: 'GV-EXP001', used: false, usedBy: null, usedAt: null, expiresAt: 1000 },
+        'users/stu_86': { uid: 'stu_86', email: 'teacher@school.edu.vn', role: 'student' },
+      };
+      const fakeMods = {
+        doc: (_db, ...segs) => segs.join('/'),
+        getDoc: async (path) => ({ exists: () => Boolean(fakeStore[path]), data: () => fakeStore[path] }),
+        serverTimestamp: () => 9999999,
+        writeBatch: () => {
+          const ops = [];
+          return {
+            update: (path, data) => ops.push([path, data]),
+            commit: async () => {
+              for (const [p, d] of ops) fakeStore[p] = { ...(fakeStore[p] || {}), ...d };
+            },
+          };
+        },
+      };
+      const prevProf = cloudSync.userProfile;
+      cloudSync.userProfile = { uid: 'stu_86', email: 'teacher@school.edu.vn', role: 'student' };
+      let inviteOk = false;
+      try {
+        let invalidBlocked = false;
+        try { await cloudSync.redeemTeacherInvite('BADCODE', { mods: fakeMods, db: {}, user: { uid: 'stu_86' }, skipProfileSync: true }); } catch (e) { invalidBlocked = e.message === 'INVITE_CODE_INVALID'; }
+        let usedBlocked = false;
+        try { await cloudSync.redeemTeacherInvite('GV-USED99', { mods: fakeMods, db: {}, user: { uid: 'stu_86' }, skipProfileSync: true }); } catch (e) { usedBlocked = e.message === 'INVITE_CODE_USED'; }
+        let expBlocked = false;
+        try { await cloudSync.redeemTeacherInvite('GV-EXP001', { mods: fakeMods, db: {}, user: { uid: 'stu_86' }, skipProfileSync: true }); } catch (e) { expBlocked = e.message === 'INVITE_CODE_EXPIRED'; }
+
+        const prof = await cloudSync.redeemTeacherInvite('gv-chem86', { mods: fakeMods, db: {}, user: { uid: 'stu_86' }, skipProfileSync: true });
+        inviteOk =
+          invalidBlocked &&
+          usedBlocked &&
+          expBlocked &&
+          prof.role === 'teacher' &&
+          fakeStore['users/stu_86'].role === 'teacher' &&
+          fakeStore['users/stu_86'].teacherInviteCode === 'GV-CHEM86' &&
+          fakeStore['teacher_invites/GV-CHEM86'].used === true &&
+          fakeStore['teacher_invites/GV-CHEM86'].usedBy === 'stu_86';
+      } finally {
+        cloudSync.userProfile = prevProf;
+      }
+
+      const i18n86Ok = Boolean(
+        I18N.vi.teacherInviteSuccessMsg &&
+          I18N.en.teacherInviteSuccessMsg &&
+          I18N.vi.rubricRuleIdent &&
+          I18N.en.rubricRuleIdent
+      );
+
+      assert(
+        'Prompt 86 invariants: Atomic Teacher Invite redemption & guards, Engine-level apparatus/reagent lock, Exam rubric guide, Telemetry summary in PDF report, VI/EN i18n',
+        engineLockOk && rubricHintUiOk && telemetryPdfOk && inviteOk && i18n86Ok,
+        `engLock=${engineLockOk}, rubricUI=${rubricHintUiOk}, telPDF=${telemetryPdfOk}, invite=${inviteOk}, i18n=${i18n86Ok}`
       );
     }
 

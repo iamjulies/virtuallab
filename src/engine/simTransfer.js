@@ -21,6 +21,7 @@ import {
   getVesselEndPorts,
 } from '../data/apparatus.js';
 import { getInnerPolygonPx, getVesselHoldVolumeMl } from '../data/vesselGeometry.js';
+import { getActiveMissionPolicy, isReagentAllowedInMission } from '../data/missions.js';
 import { applyPresetScenario } from '../data/presets.js';
 import { ensureMissionTelemetry } from './missionEvaluator.js';
 import {
@@ -640,6 +641,16 @@ export function addReagentToVesselImpl(sim, vesselId, reagentId, amount, options
     const v = sim.getItem(vesselId);
     const reg = STARTER_REAGENTS.find((r) => r.id === reagentId);
     if (!v || !reg || v.isShattered || v.isBroken) return false;
+    if (!options?.bypassMissionLock && sim.missionState?.active) {
+      const policy = getActiveMissionPolicy(sim);
+      if (policy && !isReagentAllowedInMission(policy, reg.id)) {
+        if (!options?.silentEmit) {
+          sim.addLog({ type: 'alert', key: 'missionLockedShelfTip' });
+          sim.emitChange();
+        }
+        return false;
+      }
+    }
     const isContainer =
       v.kind === 'vessel' ||
       v.kind === 'filter_funnel' ||
@@ -680,7 +691,7 @@ export function addReagentToVesselImpl(sim, vesselId, reagentId, amount, options
       }
     }
     if (amt <= 0) return false;
-    if (sim.missionState?.active && v.hideComposition && reg.id !== 'phenolphthalein') {
+    if (sim.missionState?.active && v.hideComposition && reg.id !== 'phen' && reg.id !== 'h2o') {
       const tel = ensureMissionTelemetry(sim);
       if (!tel.contaminatedBlindIds.includes(v.id)) tel.contaminatedBlindIds.push(v.id);
     }

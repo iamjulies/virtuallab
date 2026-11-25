@@ -1002,6 +1002,63 @@ class CloudSyncController {
     return this.userProfile;
   }
 
+  /**
+   * Redeem a one-time Teacher Invite code (`GV-XXXXXX`) via atomic Firestore WriteBatch
+   * backed by `teacher_invites/{code}` + `getAfter()` verification in `firestore.rules`.
+   */
+  async redeemTeacherInvite(rawCode, deps = {}) {
+    const mods = deps.mods || (await this.ensureFirebaseLoaded());
+    const db = deps.db || this.db;
+    const curUser = deps.user || this.user;
+    if (!curUser?.uid) throw new Error('AUTH_REQUIRED');
+    if (this.userProfile?.role === 'teacher') return this.userProfile;
+
+    const code = String(rawCode || '').trim().toUpperCase();
+    if (!/^GV-[A-Z0-9]{4,12}$/.test(code)) {
+      throw new Error('INVITE_CODE_INVALID');
+    }
+
+    if (!deps.skipProfileSync) {
+      await this.syncUserRoleProfile(curUser);
+    }
+
+    const invRef = mods.doc(db, 'teacher_invites', code);
+    const invSnap = await mods.getDoc(invRef);
+    if (!invSnap.exists()) throw new Error('INVITE_CODE_NOT_FOUND');
+
+    const invData = invSnap.data() || {};
+    if (invData.used) throw new Error('INVITE_CODE_USED');
+    const nowMs = Date.now();
+    const expMs = invData.expiresAt?.toMillis ? invData.expiresAt.toMillis() : Number(invData.expiresAt || 0);
+    if (expMs > 0 && expMs <= nowMs) {
+      throw new Error('INVITE_CODE_EXPIRED');
+    }
+
+    const batch = mods.writeBatch(db);
+    const userRef = mods.doc(db, 'users', curUser.uid);
+    batch.update(userRef, {
+      role: 'teacher',
+      teacherInviteCode: code,
+      updatedAt: mods.serverTimestamp(),
+    });
+    batch.update(invRef, {
+      used: true,
+      usedBy: curUser.uid,
+      usedAt: mods.serverTimestamp(),
+    });
+    await batch.commit();
+
+    this.userProfile = {
+      uid: curUser.uid,
+      email: this.userProfile?.email || curUser.email || '',
+      displayName: this.userProfile?.displayName || curUser.displayName || '',
+      role: 'teacher',
+      teacherInviteCode: code,
+    };
+    this._notify();
+    return this.userProfile;
+  }
+
   async saveWorkspaceToCloud(labManager) {
     const mods = await this.ensureFirebaseLoaded();
     if (!this.user) {

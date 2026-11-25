@@ -594,7 +594,6 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
     } else if (item.kind === 'burette') {
       const liqMl = computeLiquidVolumeL(item.moles, item.tempK) * 1000;
       const stands = panel.sim.items.filter((i) => i.kind === 'stand');
-      const liqReagents = STARTER_REAGENTS.filter((r) => r.kind === 'liquid');
       const currentRate = item.valveRateMlS || 0;
       const closedWord = langCode === 'en' ? 'Closed' : 'Đóng';
       topSection = `
@@ -631,15 +630,6 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
                   })}
                   <button type="button" id="ins-bur-drop" class="py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500">${t('buretteAddDrop')}</button>
                 </div>
-                <div class="flex flex-col gap-1.5 pt-1 border-t border-theme/50">
-                  <span class="text-xs font-semibold text-muted">${t('buretteFillTitle')}</span>
-                  <div class="flex gap-1.5">
-                    <select id="bur-fill-sel" class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs">
-                      ${liqReagents.map((r) => `<option value="${r.id}">${t(r.i18nKey)}</option>`).join('')}
-                    </select>
-                    <button type="button" id="ins-bur-fill" class="px-2.5 py-1 rounded bg-accent text-white text-xs font-semibold">+25 mL</button>
-                  </div>
-                </div>
                 ${buildContainerLiquidTableCardHtml(item, t, item.tempK ?? panel.sim.environment.tempK)}
                 ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
               `
@@ -651,7 +641,6 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
       const stands = panel.sim.items.filter((i) => i.kind === 'stand');
       const vessels = panel.sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered && !i.isInverted);
       const mountedV = item.mountedOnVesselId ? panel.sim.getItem(item.mountedOnVesselId) : null;
-      const liqReagents = STARTER_REAGENTS.filter((r) => r.kind === 'liquid');
       const solMl = computeSolidVolumeMl(item.moles);
       const strat = item.liquidStratification || computePhaseStratification(item.moles, item.tempK, sfSpec, solMl);
       const liqMl = strat?.totalLiqMl || 0;
@@ -731,15 +720,6 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
                     </div>
                     <button type="button" id="ins-sep-mount-pick" ${vessels.length === 0 ? 'disabled' : ''} class="px-2 py-1 rounded bg-amber-600 text-white text-xs font-semibold hover:opacity-90 disabled:opacity-40">${t('sepMountPick')}</button>
                     ${mountedV ? `<button type="button" id="ins-sep-unmount" class="px-2 py-1 rounded border border-red-500/40 bg-red-500/10 text-red-400 text-xs">${t('sepMountUnmount')}</button>` : ''}
-                  </div>
-                </div>
-                <div class="flex flex-col gap-1.5 pt-1 border-t border-theme/50">
-                  <span class="text-xs font-semibold text-muted">${t('sepFillTitle')}</span>
-                  <div class="flex gap-1.5">
-                    <select id="sep-fill-sel" class="flex-1 px-2 py-1 rounded border border-theme bg-surface text-xs">
-                      ${liqReagents.map((r) => `<option value="${r.id}">${t(r.i18nKey)}</option>`).join('')}
-                    </select>
-                    <button type="button" id="ins-sep-fill" class="px-2.5 py-1 rounded bg-accent text-white text-xs font-semibold">+25 mL</button>
                   </div>
                 </div>
                 ${buildContainerLiquidTableCardHtml(item, t, item.tempK ?? panel.sim.environment.tempK)}

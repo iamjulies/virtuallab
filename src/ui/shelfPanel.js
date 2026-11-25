@@ -512,7 +512,10 @@ export class ShelfPanel {
         <div class="p-2.5 rounded-lg border border-theme bg-surface-alt flex flex-col gap-1.5">
           <div class="flex items-center justify-between">
             <span class="text-xs font-semibold">🧪 ${t('pipetteTool')}</span>
-            <button type="button" id="btn-add-pipette" class="px-2 py-0.5 rounded border border-theme bg-surface text-[11px] font-medium hover:border-accent">+ Bench</button>
+            ${(() => {
+              const pipAllowed = !activeMission || isApparatusAllowedInMission(activeMission, 'pipette_10');
+              return `<button type="button" id="btn-add-pipette" ${pipAllowed ? '' : 'data-locked="1" title="' + t('missionLockedShelfTip') + '"'} class="px-2 py-0.5 rounded border border-theme bg-surface text-[11px] font-medium ${pipAllowed ? 'hover:border-accent' : 'opacity-40 cursor-not-allowed'}">${pipAllowed ? '+ Bench' : '🔒'}</button>`;
+            })()}
           </div>
           <p class="text-[11px] text-muted leading-relaxed">${t('pipetteEmpty')}</p>
           ${
@@ -631,7 +634,11 @@ export class ShelfPanel {
     });
 
     // Quick add/select bench pipette
-    this.container.querySelector('#btn-add-pipette')?.addEventListener('click', () => {
+    this.container.querySelector('#btn-add-pipette')?.addEventListener('click', (e) => {
+      if (e.currentTarget.dataset.locked === '1') {
+        this.callbacks.onLockedAttempt?.();
+        return;
+      }
       if (this.callbacks.onAddApparatus) this.callbacks.onAddApparatus('pipette_10');
     });
     this.container.querySelectorAll('.bench-pip-select').forEach((btn) => {

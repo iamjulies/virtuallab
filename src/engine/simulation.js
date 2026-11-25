@@ -78,7 +78,7 @@ import {
 } from './gasNetwork.js';
 
 import { SIM_BENCH_FLOOR_Y, exportPositionSnapshotForSim, exportSnapshotForSim, restoreSnapshotForSim, computeVesselMoleSigForVessel, computeChemActivitySigForVessel, recordHistorySnapshotForVessel } from './simSnapshot.js';
-import { createSeededRng, getMissionById } from '../data/missions.js';
+import { createSeededRng, getMissionById, isApparatusAllowedInMission } from '../data/missions.js';
 import { createEmptyMissionTelemetry, evaluateMission, evaluateMissionWithVerification } from './missionEvaluator.js';
 import { getVesselBrimVolumeMl, moveFluidFraction, extractSyringeLiquidFraction, spoonScoopFromVesselImpl, spoonPourIntoVesselImpl, rinseSpoonImpl, stepSpoonAnimationsImpl, deliverSyringeSliceToVesselImpl, pumpSyringeToVesselImpl, stepSyringeDischargeImpl, addReagentToVesselImpl, stepTimedTransfersInnerImpl, pourBetweenVesselsImpl, transferSolidsToVesselImpl, buretteDispenseDropImpl, washBottleSquirtImpl, pipetteDrawFromVesselImpl, pipetteDrawFromSyringeImpl, pipetteDrawFromReagentImpl, pipetteDispenseToVesselImpl, stepVesselTiltPouringImpl } from './simTransfer.js';
 import { getSupportSurfaceForItemImpl, updateSupportAttachmentsImpl, recomputeScaleReadingsImpl, checkOverflowImpl, stepVesselOverflowImpl, stepSyringeOverflowImpl, shatterVesselImpl, shatterSyringeImpl, popSyringePlungerImpl, breakPipetteOnDropImpl, breakToolOnDropImpl, handleLandingImpactImpl, stepGravityPhysicsImpl, getBurnerHeatingSourceImpl, condenseEscapedVaporInCryoImpl, stepInvertedGravitySpillImpl, stepAmmoniaFountainSuctionImpl, getBathCoolingSourceImpl, stepGasFlameInteractionsImpl, stepSimulationImpl } from './simPhysics.js';
@@ -278,9 +278,22 @@ export class LabSimulation {
     return this.items.find((it) => it.id === id) || null;
   }
 
+  getActiveMissionPolicy() {
+    if (!this.missionState?.active) return null;
+    return getMissionById(this.missionState.missionId) || this.missionState;
+  }
+
   createApparatus(typeId, x = 280, y = 380, options = {}) {
     const spec = APPARATUS[typeId];
     if (!spec) return null;
+    if (!options?.bypassMissionLock) {
+      const policy = this.getActiveMissionPolicy();
+      if (policy && !isApparatusAllowedInMission(policy, typeId)) {
+        this.addLog({ type: 'alert', key: 'missionLockedShelfTip' });
+        this.emitChange();
+        return null;
+      }
+    }
     if (!options?.silentUndo) this.recordUndo();
     const id = `${typeId}_${this.nextId++}`;
     const base = {
@@ -1478,7 +1491,7 @@ export class LabSimulation {
     const normMode = mode === 'solid' ? 'solid' : mode === 'dual_hole' ? 'dual_hole' : 'holed';
     if (!st) {
       const slot = this.getMouthSlotCoords(v, chosenSide) || { x: v.x, y: v.y - 40 };
-      st = this.createApparatus('rubber_stopper', slot.x, slot.y, { silent: true });
+      st = this.createApparatus('rubber_stopper', slot.x, slot.y, { silent: true, bypassMissionLock: true });
       st.stopperMode = normMode;
       this.attachRubberStopper(st.id, v.id, chosenSide);
     } else if (mode && st.stopperMode !== normMode) {
@@ -2319,7 +2332,8 @@ export class LabSimulation {
     const tube = this.createApparatus(
       'test_tube_50',
       el.x,
-      parent.y - pSpec.height / 2 - tSpec.height * 0.28
+      parent.y - pSpec.height / 2 - tSpec.height * 0.28,
+      { silentUndo: true, bypassMissionLock: true }
     );
     tube.isInverted = true;
     tube.mountedOverElectrodeId = el.id;
@@ -2833,6 +2847,7 @@ export class LabSimulation {
     const mission = getMissionById(missionId);
     if (!mission) return null;
     const chosenSeed = seed != null ? Number(seed) : Math.floor(1000 + Math.random() * 9000);
+    this.missionState = null;
     this.missionTelemetry = createEmptyMissionTelemetry();
     const setupData = mission.setup(this, chosenSeed) || {};
     const resolvedMode = mode === 'exam' ? 'exam' : 'practice';
