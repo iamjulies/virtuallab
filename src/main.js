@@ -87,6 +87,8 @@ const benchHintEl = document.getElementById('bench-hint-text');
 const compareBtnEl = document.getElementById('btn-compare-mode');
 const compareRootEl = document.getElementById('comparison-panel-root');
 const resetBtnEl = document.getElementById('btn-reset-bench');
+const undoBenchBtnEl = document.getElementById('btn-undo-bench');
+const redoBenchBtnEl = document.getElementById('btn-redo-bench');
 const snapBtnEl = document.getElementById('btn-bench-snapshot');
 const snapMenuEl = document.getElementById('bench-snapshot-menu');
 const printReportBtnEl = document.getElementById('btn-print-report');
@@ -1242,6 +1244,19 @@ function runUndoAction() {
   }
 }
 
+function runRedoAction() {
+  const t = getTranslator();
+  const ok = labManager.redo(sim);
+  if (ok) {
+    soundEngine.playUndoWhoosh();
+    workbench.setSelection(Array.from(sim.selectedIds || []), sim.selectedId);
+    showToast(t('toastRedoSuccess'));
+    refreshChrome(true);
+  } else {
+    showToast(t('toastRedoEmpty'));
+  }
+}
+
 function runSelectAllAction() {
   soundEngine.playUiClick();
   const allIds = sim.items.map((it) => it.id);
@@ -1347,6 +1362,7 @@ function openCanvasContextMenu(clientX, clientY, logicalPt, hitItem) {
   const t = getTranslator();
   const hasClipboard = Array.isArray(labManager.clipboard) && labManager.clipboard.length > 0;
   const hasUndo = Array.isArray(sim.undoStack) && sim.undoStack.length > 0;
+  const hasRedo = Array.isArray(sim.redoStack) && sim.redoStack.length > 0;
   if (!hitItem) {
     contextUI.showMenu(clientX, clientY, [
       { label: t('ctxPaste'), shortcut: 'Ctrl+V', disabled: !hasClipboard, onClick: () => runPasteAction(true, logicalPt) },
@@ -1354,6 +1370,7 @@ function openCanvasContextMenu(clientX, clientY, logicalPt, hitItem) {
       { separator: true },
       { label: t('ctxSelectAll'), shortcut: 'Ctrl+A', disabled: sim.items.length === 0, onClick: () => runSelectAllAction() },
       { label: t('ctxUndo'), shortcut: 'Ctrl+Z', disabled: !hasUndo, onClick: () => runUndoAction() },
+      { label: t('ctxRedo'), shortcut: 'Ctrl+Shift+Z', disabled: !hasRedo, onClick: () => runRedoAction() },
     ]);
     return;
   }
@@ -1381,6 +1398,7 @@ function openCanvasContextMenu(clientX, clientY, logicalPt, hitItem) {
     { label: t('ctxPasteEmpty'), shortcut: 'Ctrl+Shift+V', disabled: !hasClipboard, onClick: () => runPasteAction(false, logicalPt) },
     { label: t('ctxSelectAll'), shortcut: 'Ctrl+A', onClick: () => runSelectAllAction() },
     { label: t('ctxUndo'), shortcut: 'Ctrl+Z', disabled: !hasUndo, onClick: () => runUndoAction() },
+    { label: t('ctxRedo'), shortcut: 'Ctrl+Shift+Z', disabled: !hasRedo, onClick: () => runRedoAction() },
     { separator: true },
     {
       label: t('ctxEmptyVessel'),
@@ -1760,6 +1778,16 @@ function refreshChrome(forceInspector = false) {
   if (resetBtnEl) resetBtnEl.textContent = `↺ ${t('resetBench')}`;
   if (snapBtnEl) snapBtnEl.textContent = t('btnBenchSnapshot');
   if (printReportBtnEl) printReportBtnEl.textContent = t('btnPrintReport');
+  if (undoBenchBtnEl) {
+    const uCount = Array.isArray(sim.undoStack) ? sim.undoStack.length : 0;
+    undoBenchBtnEl.disabled = uCount === 0;
+    undoBenchBtnEl.title = `${t('ctxUndo')} (Ctrl+Z)${uCount ? ` [${uCount}/10]` : ''}`;
+  }
+  if (redoBenchBtnEl) {
+    const rCount = Array.isArray(sim.redoStack) ? sim.redoStack.length : 0;
+    redoBenchBtnEl.disabled = rCount === 0;
+    redoBenchBtnEl.title = `${t('ctxRedo')} (Ctrl+Shift+Z)${rCount ? ` [${rCount}/10]` : ''}`;
+  }
 
   document.querySelectorAll('.mobile-tab-btn').forEach((btn) => {
     const tab = btn.dataset.tab;
@@ -1796,6 +1824,9 @@ zoomOutBtnEl?.addEventListener('click', () => {
 zoomResetBtnEl?.addEventListener('click', () => {
   workbench.resetZoom();
 });
+
+undoBenchBtnEl?.addEventListener('click', () => runUndoAction());
+redoBenchBtnEl?.addEventListener('click', () => runRedoAction());
 
 resetBtnEl?.addEventListener('click', () => {
   particles.clear();
@@ -2148,6 +2179,9 @@ window.addEventListener('keydown', (e) => {
   } else if (action === 'undo') {
     e.preventDefault();
     runUndoAction();
+  } else if (action === 'redo' || ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'y' && !anyModalOpen)) {
+    e.preventDefault();
+    runRedoAction();
   } else if (action === 'select_all') {
     e.preventDefault();
     shortcutTarget = 'canvas';

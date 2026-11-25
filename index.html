@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>ChemLab Studio — virlab_beta_v5+build.30</title>
+  <title>ChemLab Studio — virlab_beta_v5+build.31</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./assets/icon.svg" />
   <meta name="theme-color" content="#2563eb" />
@@ -37,6 +37,8 @@
           <div id="bench-top-toolbar" class="flex flex-wrap items-center justify-between gap-2 px-1">
             <span id="bench-hint-text" class="text-xs text-muted truncate"></span>
             <div class="flex flex-wrap items-center gap-1.5 shrink-0">
+              <button type="button" id="btn-undo-bench" class="px-2 py-1 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent shrink-0 transition disabled:opacity-40 disabled:pointer-events-none" disabled>↩️</button>
+              <button type="button" id="btn-redo-bench" class="px-2 py-1 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent shrink-0 transition disabled:opacity-40 disabled:pointer-events-none" disabled>↪️</button>
               <div id="bench-snapshot-wrap" class="relative">
                 <button type="button" id="btn-bench-snapshot" class="px-2.5 py-1 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent shrink-0 transition"></button>
                 <div id="bench-snapshot-menu" class="bench-snapshot-menu hidden">

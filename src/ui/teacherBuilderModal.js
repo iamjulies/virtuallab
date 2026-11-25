@@ -4,6 +4,12 @@
  * Tab 2: Review student submissions, proctoring flags (Green/Yellow/Red), and inspect snapshots.
  */
 import { APPARATUS, APPARATUS_ORDER } from '../data/apparatus.js';
+import {
+  MISSION_ARCHETYPES,
+  MIXTURE_PRESETS,
+  STANDARD_PREP_TARGETS,
+  SYNTHESIS_PRODUCT_PRESETS,
+} from '../data/missions.js';
 import { STARTER_REAGENTS } from '../data/species.js';
 import { exportSnapshotForSim } from '../engine/simSnapshot.js';
 import { buildHashedAnswerMap } from '../engine/examProctor.js';
@@ -16,6 +22,8 @@ export class TeacherBuilderModal {
     this.getLang = getLang;
     this.callbacks = callbacks; // { onNotify, onInspectSubmissionSnapshot }
     this.activeTab = 'design'; // 'design' | 'submissions'
+    this.selectedArchetype = 'blind_id';
+    this.selectedTier = 'medium';
     this.selectedExamCode = '';
     this.assignments = [];
     this.submissions = [];
@@ -102,11 +110,207 @@ export class TeacherBuilderModal {
     }
   }
 
+  _renderArchetypePanel(t, vessels) {
+    const a = this.selectedArchetype;
+    if (a === 'blind_id') {
+      return `
+        <div class="grid grid-cols-3 gap-1.5">
+          ${['easy', 'medium', 'hard']
+            .map(
+              (tier) => `<button type="button" data-ts-tier="${tier}" class="ts-tier-btn px-2 py-1 rounded-lg border text-[11px] font-semibold transition ${
+                this.selectedTier === tier ? 'border-accent bg-accent/15 text-accent' : 'border-theme bg-surface text-muted'
+              }">${t(`tier_${tier}`)}</button>`
+            )
+            .join('')}
+        </div>
+        <div class="text-[11px] text-muted">${t(`tierDesc_${this.selectedTier}`)}</div>
+        <div class="font-bold text-xs">${t('teacherBlindVesselsTitle')} (${vessels.length})</div>
+        <div class="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+          ${
+            vessels.length === 0
+              ? `<p class="text-muted">${t('teacherNoVesselsHint')}</p>`
+              : vessels
+                  .map(
+                    (v, idx) => `
+                <div class="p-1.5 rounded-lg border border-theme bg-surface flex items-center gap-2">
+                  <input type="checkbox" class="ts-blind-chk" data-vid="${v.id}" ${idx < 4 ? 'checked' : ''} />
+                  <span class="font-mono font-bold shrink-0">${t(APPARATUS[v.typeId]?.i18nKey || v.typeId)} ${v.label}</span>
+                  <input type="text" class="ts-blind-lbl w-12 px-1.5 py-0.5 rounded border border-theme bg-surface-alt font-mono text-xs" data-vid="${v.id}" value="?${String.fromCharCode(65 + idx)}" />
+                  <input type="text" class="ts-blind-ans flex-1 min-w-0 px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-xs" data-vid="${v.id}" placeholder="${t('teacherTrueNamePlaceholder')}" />
+                </div>`
+                  )
+                  .join('')
+          }
+        </div>`;
+    }
+    if (a === 'standard_prep') {
+      return `
+        <div class="p-2 rounded-lg border border-theme bg-surface flex flex-col gap-2">
+          <label class="inline-flex items-center gap-1.5 cursor-pointer font-semibold text-sky-300">
+            <input id="ts-blind-dosing" type="checkbox" checked />
+            <span>🙈 ${t('teacherBlindDosingLabel')}</span>
+          </label>
+          <div class="grid grid-cols-2 gap-1.5">
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherTargetSoluteLabel')}</span>
+              <select id="ts-prep-species" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono">
+                ${STANDARD_PREP_TARGETS.map((s) => `<option value="${s.id}">${s.label}</option>`).join('')}
+              </select>
+            </label>
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherPrepConcLabel')}</span>
+              <div class="flex gap-1">
+                <input id="ts-prep-conc" type="number" step="0.01" value="0.20" class="w-full px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" />
+                <select id="ts-prep-unit" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono">
+                  <option value="M">M</option>
+                  <option value="w%">%w/w</option>
+                </select>
+              </div>
+            </label>
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherPrepVolLabel')}</span>
+              <input id="ts-prep-vol" type="number" step="5" value="100" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" />
+            </label>
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherToleranceLabel')}</span>
+              <input id="ts-prep-tol" type="number" step="0.5" value="5" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" />
+            </label>
+          </div>
+        </div>`;
+    }
+    if (a === 'titration') {
+      return `
+        <div class="p-2 rounded-lg border border-theme bg-surface flex flex-col gap-1.5">
+          <div class="grid grid-cols-2 gap-1.5">
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherTitrAnalyteLabel')}</span>
+              <select id="ts-titr-analyte" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono">
+                <option value="hcl">HCl (?X)</option>
+                <option value="ch3cooh">CH₃COOH (?X)</option>
+                <option value="h2so4">H₂SO₄ (?X)</option>
+                <option value="fe2_redox">Fe²⁺ / H₂SO₄ (Redox)</option>
+                <option value="i2_redox">I₂ / KI (Redox)</option>
+              </select>
+            </label>
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherTitrBuretteLabel')}</span>
+              <select id="ts-titr-reagent" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono">
+                <option value="naoh">NaOH (Burette)</option>
+                <option value="hcl">HCl (Burette)</option>
+                <option value="kmno4_h2so4">KMnO₄ / H⁺ (Redox)</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid grid-cols-4 gap-1.5">
+            <select id="ts-titr-vid" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono">
+              ${vessels.length ? vessels.map((v) => `<option value="${v.id}">${v.label}</option>`).join('') : '<option value="">—</option>'}
+            </select>
+            <input id="ts-titr-min" type="number" step="0.01" value="0.08" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" title="Min M" />
+            <input id="ts-titr-max" type="number" step="0.01" value="0.18" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" title="Max M" />
+            <input id="ts-titr-tol" type="number" step="0.5" value="2" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" title="Tol %" />
+          </div>
+        </div>`;
+    }
+    if (a === 'synthesis') {
+      return `
+        <div class="p-2 rounded-lg border border-theme bg-surface flex flex-col gap-2">
+          <div class="grid grid-cols-3 gap-1.5">
+            <label class="col-span-3 flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherSynthProductLabel')}</span>
+              <select id="ts-syn-product" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono">
+                ${SYNTHESIS_PRODUCT_PRESETS.map((p) => `<option value="${p.id}">${p.label}</option>`).join('')}
+              </select>
+            </label>
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherMinMolLabel')}</span>
+              <input id="ts-syn-minmol" type="number" step="0.001" value="0.005" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" />
+            </label>
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherMinPurLabel')}</span>
+              <input id="ts-syn-minpur" type="number" step="5" value="70" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" />
+            </label>
+          </div>
+          <div class="flex flex-wrap gap-2 text-[11px]">
+            <label class="inline-flex items-center gap-1"><input type="checkbox" class="ts-syn-tech" value="filter" /> <span>${t('techFilter')}</span></label>
+            <label class="inline-flex items-center gap-1"><input type="checkbox" class="ts-syn-tech" value="sep_funnel" /> <span>${t('techSepFunnel')}</span></label>
+            <label class="inline-flex items-center gap-1"><input type="checkbox" class="ts-syn-tech" value="condenser" /> <span>${t('techCondenser')}</span></label>
+            <label class="inline-flex items-center gap-1"><input type="checkbox" class="ts-syn-tech" value="calcine" /> <span>${t('techCalcine')}</span></label>
+            <label class="inline-flex items-center gap-1"><input type="checkbox" class="ts-syn-tech" value="gas_dry" /> <span>${t('techGasDry')}</span></label>
+          </div>
+        </div>`;
+    }
+    if (a === 'mixture_analysis') {
+      return `
+        <div class="p-2 rounded-lg border border-theme bg-surface flex flex-col gap-2">
+          <div class="grid grid-cols-2 gap-1.5">
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherMixPresetLabel')}</span>
+              <select id="ts-mix-preset" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono">
+                ${MIXTURE_PRESETS.map((m) => `<option value="${m.id}">${m.label}</option>`).join('')}
+              </select>
+            </label>
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherMixVesselLabel')}</span>
+              <select id="ts-mix-vid" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono">
+                ${vessels.length ? vessels.map((v) => `<option value="${v.id}">${v.label}</option>`).join('') : '<option value="">—</option>'}
+              </select>
+            </label>
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">% min / max (A)</span>
+              <div class="flex gap-1">
+                <input id="ts-mix-min" type="number" value="35" class="w-full px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" />
+                <input id="ts-mix-max" type="number" value="70" class="w-full px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" />
+              </div>
+            </label>
+            <label class="flex flex-col gap-0.5">
+              <span class="text-muted">${t('teacherToleranceLabel')} / g</span>
+              <div class="flex gap-1">
+                <input id="ts-mix-tol" type="number" step="0.5" value="3" class="w-full px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" />
+                <input id="ts-mix-mass" type="number" step="0.5" value="5.0" class="w-full px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" />
+              </div>
+            </label>
+          </div>
+          <label class="inline-flex items-center gap-1.5 text-[11px] cursor-pointer text-amber-300">
+            <input id="ts-mix-syringe" type="checkbox" checked />
+            <span>⚠️ ${t('teacherMixSyringeWarn')}</span>
+          </label>
+        </div>`;
+    }
+    return `
+      <div class="p-2 rounded-lg border border-theme bg-surface flex flex-col gap-2">
+        <div class="grid grid-cols-2 gap-1.5">
+          <label class="flex flex-col gap-0.5 col-span-2">
+            <span class="text-muted">${t('teacherEcPresetLabel')}</span>
+            <select id="ts-ec-preset" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono">
+              <option value="voltaic_emf">🔋 ${t('teacherEcVoltaicOpt')}</option>
+              <option value="dc_faraday">⚡ ${t('teacherEcFaradayOpt')}</option>
+            </select>
+          </label>
+          <label class="flex flex-col gap-0.5">
+            <span class="text-muted">${t('teacherEcTargetVOrMol')}</span>
+            <input id="ts-ec-val" type="number" step="0.01" value="1.10" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" />
+          </label>
+          <label class="flex flex-col gap-0.5">
+            <span class="text-muted">${t('teacherEcTolOrMetal')}</span>
+            <input id="ts-ec-extra" type="text" value="0.08" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" placeholder="0.08V or Cu/Ni/H2_g" />
+          </label>
+        </div>
+      </div>`;
+  }
+
   _renderDesignTab(t, vessels) {
     return `
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
         <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2">
           <div class="font-bold text-sm">${t('teacherConfigSection')}</div>
+          <div class="flex flex-col gap-1">
+            <span class="text-muted">${t('teacherArchetypeLabel')}</span>
+            <div class="grid grid-cols-2 gap-1" id="ts-arch-pills">
+              ${MISSION_ARCHETYPES.map((ar) => `<button type="button" data-ts-arch="${ar.id}" class="ts-arch-btn px-2 py-1 rounded-lg border text-left text-[11px] font-semibold truncate transition ${
+                this.selectedArchetype === ar.id ? 'border-accent bg-accent/15 text-accent' : 'border-theme bg-surface text-muted hover:text-main'
+              }">${t(ar.i18nKey)}</button>`).join('')}
+            </div>
+          </div>
           <label class="flex flex-col gap-0.5">
             <span class="text-muted">${t('teacherTitleLabel')}</span>
             <input id="ts-title" type="text" value="${t('teacherDefaultTitle')}" class="px-2 py-1.5 rounded border border-theme bg-surface text-xs" />
@@ -157,46 +361,19 @@ export class TeacherBuilderModal {
         </div>
 
         <div class="p-3 rounded-xl border border-theme bg-surface-alt flex flex-col gap-2">
-          <div class="font-bold text-sm">${t('teacherBlindVesselsTitle')} (${vessels.length})</div>
-          <div class="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-            ${
-              vessels.length === 0
-                ? `<p class="text-muted">${t('teacherNoVesselsHint')}</p>`
-                : vessels
-                    .map(
-                      (v, idx) => `
-                  <div class="p-2 rounded-lg border border-theme bg-surface flex items-center gap-2">
-                    <input type="checkbox" class="ts-blind-chk" data-vid="${v.id}" ${idx < 4 ? 'checked' : ''} />
-                    <span class="font-mono font-bold shrink-0">${t(APPARATUS[v.typeId]?.i18nKey || v.typeId)} ${v.label}</span>
-                    <input type="text" class="ts-blind-lbl w-14 px-1.5 py-0.5 rounded border border-theme bg-surface-alt font-mono text-xs" data-vid="${v.id}" value="?${String.fromCharCode(65 + idx)}" />
-                    <input type="text" class="ts-blind-ans flex-1 min-w-0 px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-xs" data-vid="${v.id}" placeholder="${t('teacherTrueNamePlaceholder')}" />
-                  </div>`
-                    )
-                    .join('')
-            }
-          </div>
+          ${this._renderArchetypePanel(t, vessels)}
 
-          <div class="p-2 rounded-lg border border-theme bg-surface flex flex-col gap-1.5">
-            <label class="inline-flex items-center gap-1.5 cursor-pointer font-semibold">
-              <input id="ts-titr-enable" type="checkbox" />
-              <span>${t('teacherTitrationRandomLabel')}</span>
-            </label>
-            <div class="grid grid-cols-3 gap-1.5">
-              <select id="ts-titr-vid" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono">
-                ${vessels.map((v) => `<option value="${v.id}">${v.label}</option>`).join('')}
-              </select>
-              <input id="ts-titr-min" type="number" step="0.01" value="0.08" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" title="Min M" />
-              <input id="ts-titr-max" type="number" step="0.01" value="0.18" class="px-1.5 py-1 rounded border border-theme bg-surface-alt text-xs font-mono" title="Max M" />
-            </div>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2">
+          <div class="grid grid-cols-2 gap-2 pt-1 border-t border-theme/50">
             <label class="inline-flex items-center gap-1.5 cursor-pointer">
-              <input id="ts-limit-shelf" type="checkbox" />
+              <input id="ts-limit-shelf" type="checkbox" ${this.selectedArchetype === 'blind_id' && this.selectedTier === 'medium' ? 'checked' : ''} />
               <span>${t('teacherLimitShelfLabel')}</span>
             </label>
+            <label class="inline-flex items-center gap-1.5 cursor-pointer">
+              <input id="ts-initial-only" type="checkbox" ${this.selectedArchetype === 'blind_id' && this.selectedTier === 'hard' ? 'checked' : ''} />
+              <span>🔒 ${t('teacherInitialOnlyLabel')}</span>
+            </label>
           </div>
-          <div id="ts-shelf-scope-box" class="hidden grid grid-cols-2 gap-2 max-h-28 overflow-y-auto p-2 rounded-lg border border-theme bg-surface">
+          <div id="ts-shelf-scope-box" class="${this.selectedArchetype === 'blind_id' && this.selectedTier === 'medium' ? '' : 'hidden'} grid grid-cols-2 gap-2 max-h-28 overflow-y-auto p-2 rounded-lg border border-theme bg-surface">
             <div>
               <div class="font-semibold mb-1 text-muted">${t('equipmentTitle')}</div>
               ${APPARATUS_ORDER.slice(0, 16)
@@ -236,11 +413,25 @@ export class TeacherBuilderModal {
   }
 
   _bindDesignEvents(t, sim, vessels) {
+    this.rootEl.querySelectorAll('.ts-arch-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.selectedArchetype = btn.dataset.tsArch;
+        this.render();
+      });
+    });
+    this.rootEl.querySelectorAll('.ts-tier-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.selectedTier = btn.dataset.tsTier;
+        this.render();
+      });
+    });
     this.rootEl.querySelector('#ts-limit-shelf')?.addEventListener('change', (e) => {
       this.rootEl.querySelector('#ts-shelf-scope-box')?.classList.toggle('hidden', !e.target.checked);
     });
 
     const collectSpec = async () => {
+      const archetype = this.selectedArchetype || 'blind_id';
+      const difficultyTier = this.selectedTier || 'medium';
       const title = this.rootEl.querySelector('#ts-title')?.value?.trim() || 'Practical Exam';
       const goalText = this.rootEl.querySelector('#ts-goal')?.value?.trim() || '';
       const equationText = this.rootEl.querySelector('#ts-eq')?.value?.trim() || '';
@@ -251,47 +442,102 @@ export class TeacherBuilderModal {
       const lockEnvironment = Boolean(this.rootEl.querySelector('#ts-lock-env')?.checked);
       const requireFullscreen = Boolean(this.rootEl.querySelector('#ts-fullscreen')?.checked);
       const autoSubmitOnViolation = Boolean(this.rootEl.querySelector('#ts-autosubmit')?.checked);
+      const blindDosingMode = archetype === 'standard_prep' ? Boolean(this.rootEl.querySelector('#ts-blind-dosing')?.checked) : false;
 
       const blindVesselSpecs = [];
       const submitFields = [];
       const rawAnswers = {};
-      const chkEls = Array.from(this.rootEl.querySelectorAll('.ts-blind-chk'));
-      const optionsPool = [];
-      for (const chk of chkEls) {
-        if (!chk.checked) continue;
-        const vid = chk.dataset.vid;
-        const lbl = this.rootEl.querySelector(`.ts-blind-lbl[data-vid="${vid}"]`)?.value?.trim() || '?A';
-        const trueName = this.rootEl.querySelector(`.ts-blind-ans[data-vid="${vid}"]`)?.value?.trim() || '';
-        blindVesselSpecs.push({ origItemId: vid, blindLabel: lbl, trueName });
-        if (trueName && !optionsPool.includes(trueName)) optionsPool.push(trueName);
-        rawAnswers[`ans_${lbl}`] = trueName;
-      }
-      for (const sp of blindVesselSpecs) {
-        submitFields.push({
-          id: `ans_${sp.blindLabel}`,
-          labelKey: sp.blindLabel,
-          labelText: sp.blindLabel,
-          type: 'select',
-          options: optionsPool.length > 0 ? optionsPool : ['HCl', 'NaOH', 'BaCl₂', 'Na₂SO₄'],
-        });
-      }
-
       let titrationConfig = null;
-      if (this.rootEl.querySelector('#ts-titr-enable')?.checked) {
+      let standardPrepConfig = null;
+      let synthesisConfig = null;
+      let mixtureConfig = null;
+      let electrochemConfig = null;
+
+      if (archetype === 'blind_id') {
+        const chkEls = Array.from(this.rootEl.querySelectorAll('.ts-blind-chk'));
+        const optionsPool = [];
+        for (const chk of chkEls) {
+          if (!chk.checked) continue;
+          const vid = chk.dataset.vid;
+          const lbl = this.rootEl.querySelector(`.ts-blind-lbl[data-vid="${vid}"]`)?.value?.trim() || '?A';
+          const trueName = this.rootEl.querySelector(`.ts-blind-ans[data-vid="${vid}"]`)?.value?.trim() || '';
+          blindVesselSpecs.push({ origItemId: vid, blindLabel: lbl, trueName });
+          if (trueName && !optionsPool.includes(trueName)) optionsPool.push(trueName);
+          rawAnswers[`ans_${lbl}`] = trueName;
+        }
+        for (const sp of blindVesselSpecs) {
+          submitFields.push({
+            id: `ans_${sp.blindLabel}`,
+            labelKey: sp.blindLabel,
+            labelText: sp.blindLabel,
+            type: 'select',
+            options: optionsPool.length > 0 ? optionsPool : ['HCl', 'NaOH', 'BaCl₂', 'Na₂SO₄'],
+          });
+        }
+      } else if (archetype === 'standard_prep') {
+        const targetSpeciesId = this.rootEl.querySelector('#ts-prep-species')?.value || 'Cu2_aq';
+        const targetMolarityM = Number(this.rootEl.querySelector('#ts-prep-conc')?.value) || 0.20;
+        const concUnit = this.rootEl.querySelector('#ts-prep-unit')?.value || 'M';
+        const targetVolumeMl = Number(this.rootEl.querySelector('#ts-prep-vol')?.value) || 100;
+        const tolerancePct = Number(this.rootEl.querySelector('#ts-prep-tol')?.value) || 5.0;
+        standardPrepConfig = { targetSpeciesId, targetMolarityM, concUnit, targetVolumeMl, tolerancePct };
+        submitFields.push({ id: 'ans_mass_g', labelKey: 'm7FieldMassG', type: 'number', min: 0.01, max: 500, step: 0.01, placeholder: '4.99' });
+      } else if (archetype === 'titration') {
         const vid = this.rootEl.querySelector('#ts-titr-vid')?.value;
+        const analyteKind = this.rootEl.querySelector('#ts-titr-analyte')?.value || 'hcl';
+        const titrantReagent = this.rootEl.querySelector('#ts-titr-reagent')?.value || 'naoh';
         const minM = Number(this.rootEl.querySelector('#ts-titr-min')?.value) || 0.08;
         const maxM = Number(this.rootEl.querySelector('#ts-titr-max')?.value) || 0.18;
+        const tolerancePct = Number(this.rootEl.querySelector('#ts-titr-tol')?.value) || 2.0;
         if (vid) {
-          titrationConfig = { itemId: vid, minM, maxM };
+          titrationConfig = { itemId: vid, analyteKind, titrantReagent, minM, maxM, tolerancePct };
           submitFields.push({ id: 'ans_molarity', labelKey: 'm2FieldMolarity', type: 'number', min: 0.01, max: 2.0, step: 0.001, placeholder: '0.120' });
         }
+      } else if (archetype === 'synthesis') {
+        const targetProductId = this.rootEl.querySelector('#ts-syn-product')?.value || 'CH3COOC2H5_l';
+        const minYieldMol = Number(this.rootEl.querySelector('#ts-syn-minmol')?.value) || 0.005;
+        const minPurityPct = Number(this.rootEl.querySelector('#ts-syn-minpur')?.value) || 70;
+        const techniques = Array.from(this.rootEl.querySelectorAll('.ts-syn-tech:checked')).map((el) => el.value);
+        synthesisConfig = { targetProductId, minYieldMol, minPurityPct, techniques };
+        submitFields.push({ id: 'ans_product', labelKey: 'm3FieldProduct', type: 'select', options: SYNTHESIS_PRODUCT_PRESETS.map((p) => p.label) });
+      } else if (archetype === 'mixture_analysis') {
+        const presetId = this.rootEl.querySelector('#ts-mix-preset')?.value || 'fe_cu';
+        const preset = MIXTURE_PRESETS.find((m) => m.id === presetId) || MIXTURE_PRESETS[0];
+        const vesselId = this.rootEl.querySelector('#ts-mix-vid')?.value || vessels[0]?.id || '';
+        const minPctA = Number(this.rootEl.querySelector('#ts-mix-min')?.value) || preset.minPctA;
+        const maxPctA = Number(this.rootEl.querySelector('#ts-mix-max')?.value) || preset.maxPctA;
+        const tolerancePct = Number(this.rootEl.querySelector('#ts-mix-tol')?.value) || 3.0;
+        const totalMassG = Number(this.rootEl.querySelector('#ts-mix-mass')?.value) || preset.defaultMassG;
+        const requireGasSyringe = Boolean(this.rootEl.querySelector('#ts-mix-syringe')?.checked);
+        mixtureConfig = { vesselId, presetId, spA: preset.spA, spB: preset.spB, minPctA, maxPctA, tolerancePct, totalMassG, requireGasSyringe };
+        submitFields.push(
+          { id: 'ans_pct_a', labelKey: 'm8FieldPctA', labelText: `%m ${preset.nameA}`, type: 'number', min: 0, max: 100, step: 0.1, placeholder: '50.0' },
+          { id: 'ans_pct_b', labelKey: 'm8FieldPctB', labelText: `%m ${preset.nameB}`, type: 'number', min: 0, max: 100, step: 0.1, placeholder: '50.0' }
+        );
+      } else if (archetype === 'electrochem') {
+        const preset = this.rootEl.querySelector('#ts-ec-preset')?.value || 'voltaic_emf';
+        const val = Number(this.rootEl.querySelector('#ts-ec-val')?.value) || 1.10;
+        const extra = this.rootEl.querySelector('#ts-ec-extra')?.value?.trim() || '0.08';
+        electrochemConfig = preset === 'voltaic_emf'
+          ? { preset, targetEmfV: val, tolV: Number(extra) || 0.08 }
+          : { preset, targetAmountMol: val, targetPlateMetal: ['Cu', 'Ni', 'Ag'].includes(extra) ? extra : null, targetGasId: extra.endsWith('_g') ? extra : null };
+        submitFields.push(
+          { id: 'ans_anode', labelKey: 'm5FieldAnode', type: 'select', options: ['Zn', 'Fe', 'Ni', 'Cu', 'Ag', 'SHE (Pt|H₂)'] },
+          { id: 'ans_emf', labelKey: 'm5FieldEmf', type: 'number', min: 0, max: 12, step: 0.01, placeholder: String(val) }
+        );
       }
 
+      const initialOnly = Boolean(this.rootEl.querySelector('#ts-initial-only')?.checked);
       const limitShelf = Boolean(this.rootEl.querySelector('#ts-limit-shelf')?.checked);
-      const allowedApparatus = limitShelf
+      const shelfPolicy = initialOnly ? 'initial_only' : limitShelf ? 'scoped' : 'open';
+      const allowedApparatus = initialOnly
+        ? []
+        : limitShelf
         ? Array.from(this.rootEl.querySelectorAll('.ts-allow-app:checked')).map((el) => el.value)
         : null;
-      const allowedReagents = limitShelf
+      const allowedReagents = initialOnly
+        ? []
+        : limitShelf
         ? Array.from(this.rootEl.querySelectorAll('.ts-allow-reg:checked')).map((el) => el.value)
         : null;
 
@@ -301,6 +547,10 @@ export class TeacherBuilderModal {
 
       const publicDoc = {
         examCode,
+        archetype,
+        difficultyTier,
+        shelfPolicy,
+        blindDosingMode,
         title,
         goalText,
         equationText,
@@ -310,6 +560,10 @@ export class TeacherBuilderModal {
         proctorConfig: { maxSwitches, maxAwaySec, requireFullscreen, autoSubmitOnViolation },
         blindVesselSpecs,
         titrationConfig,
+        standardPrepConfig,
+        synthesisConfig,
+        mixtureConfig,
+        electrochemConfig,
         allowedApparatus,
         allowedReagents,
         submitFields,

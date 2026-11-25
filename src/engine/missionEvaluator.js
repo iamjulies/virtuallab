@@ -4,6 +4,7 @@
  */
 import { computeCaOOptimizationScore } from './chemistry.js';
 import { computeLiquidVolumeL, computePH } from './equilibrium.js';
+import { SPECIES } from '../data/species.js';
 import { computeSyringeGasVolumeMl, buildCombinedSyringeTotalMoles } from './gasNetwork.js';
 import { MISSION_REGISTRY } from '../data/missions.js';
 import { CONSTANTS } from '../data/constants.js';
@@ -25,6 +26,8 @@ export function createEmptyMissionTelemetry() {
     gasConnectedToSyringe: false,
     esterFormed: false,
     sepFunnelTaps: 0,
+    usedFilterFunnel: false,
+    usedMeasuringTools: false,
     contaminatedBlindIds: [],
     shatteredCount: 0,
     explosionCount: 0,
@@ -120,6 +123,12 @@ export function updateMissionTelemetryOnStep(sim) {
       }
     } else if (it.kind === 'separatory_funnel' && it.valveOpen && (it.flowRateMlS || 0) > 0.05) {
       tel.sepFunnelTaps = Math.max(1, tel.sepFunnelTaps);
+    } else if (it.kind === 'filter_funnel' && (it.filteredLiquidMl > 0 || it.solidMassG > 0 || it.receivingVesselId || Object.keys(it.moles || {}).length > 0)) {
+      tel.usedFilterFunnel = true;
+    } else if (it.kind === 'scale' || it.typeId === 'cylinder_100' || it.kind === 'wash_bottle') {
+      if ((it.measuredG > 0.01 || Object.keys(it.moles || {}).length > 0 || (it.squirtCount || 0) > 0)) {
+        tel.usedMeasuringTools = true;
+      }
     }
   }
 
@@ -195,27 +204,117 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
       tel.gasConnectedToSyringe ||
       tel.esterFormed ||
       tel.sepFunnelTaps > 0 ||
+      tel.usedFilterFunnel ||
+      tel.usedMeasuringTools ||
       (sim.logs?.length || 0) > 0;
 
     const procCrit = rubric.find((r) => r.category === 'process') || rubric[0];
     const quantCrit = rubric.find((r) => r.category === 'quantitative') || rubric[1];
     const identCrit = rubric.find((r) => r.category === 'identification') || rubric[2];
     const safeCrit = rubric.find((r) => r.category === 'safety') || rubric[3];
+    const arch = missionState.archetype || mission.archetype || 'blind_id';
 
     if (procCrit) {
-      results.push(makeCriterionResult(procCrit, hasEvidence ? procCrit.maxPoints : 0, hasEvidence ? 'Experimental trace verified' : 'No experimental actions recorded'));
+      let procPts = hasEvidence ? procCrit.maxPoints : 0;
+      let procDet = hasEvidence ? 'Experimental trace verified' : 'No experimental actions recorded';
+      if (arch === 'standard_prep') {
+        const usedTool = tel.usedMeasuringTools || tel.usedPipetteTransfer || (sim.items || []).some((i) => i.kind === 'scale');
+        procPts = usedTool && hasEvidence ? procCrit.maxPoints : hasEvidence ? procCrit.maxPoints * 0.6 : 0;
+        procDet = usedTool ? 'Measuring tools & preparation steps verified' : 'Use Scale / Cylinder / Pipette / Wash Bottle';
+      } else if (arch === 'synthesis' && setupData.synthesisMeta) {
+        const reqs = setupData.synthesisMeta.techniques || [];
+        let reqHits = 0;
+        for (const rk of reqs) {
+          if (rk === 'filter' && tel.usedFilterFunnel) reqHits++;
+          else if (rk === 'sep_funnel' && tel.sepFunnelTaps > 0) reqHits++;
+          else if (rk === 'condenser' && (sim.items || []).some((i) => i.kind === 'condenser' && i.coolantOn !== false)) reqHits++;
+          else if (rk === 'calcine' && tel.bunsenBlueUsed) reqHits++;
+          else if (rk === 'gas_dry' && tel.gasDriedViaH2SO4 && tel.gasConnectedToSyringe) reqHits++;
+        }
+        procPts = reqs.length > 0 ? procCrit.maxPoints * (reqHits / reqs.length) : (hasEvidence ? procCrit.maxPoints : 0);
+        procDet = reqs.length > 0 ? `${reqHits}/${reqs.length} techniques verified` : procDet;
+      }
+      results.push(makeCriterionResult(procCrit, procPts, procDet));
     }
     if (quantCrit) {
       let qPts = hasEvidence ? quantCrit.maxPoints * 0.5 : 0;
-      if (setupData.titrationMeta?.itemId && tel.usedBuretteDrops > 0) {
+      let qDet = hasEvidence ? 'Measurements/samples valid' : 'Missing lab work';
+      if (arch === 'titration' && setupData.titrationMeta?.itemId && tel.usedBuretteDrops > 0) {
         const tv = sim.getItem(setupData.titrationMeta.itemId);
         const liqL = tv ? computeLiquidVolumeL(tv.moles, tv.tempK) : 0;
         const ph = tv && liqL > 1e-6 ? computePH(tv.moles, liqL, tv.tempK) : null;
         if (ph !== null && ph >= 6.8 && ph <= 10.3) qPts = quantCrit.maxPoints;
+        qDet = ph !== null ? `pH = ${ph.toFixed(2)}` : qDet;
+      } else if (arch === 'standard_prep' && setupData.standardPrepMeta) {
+        const spMeta = setupData.standardPrepMeta;
+        const tol = (Number(spMeta.tolerancePct) || 5.0) / 100;
+        const tgtVolMl = Number(spMeta.targetVolumeMl) || 100;
+        const tgtVal = Number(spMeta.targetMolarityM) || 0.2;
+        let bestPts = 0;
+        for (const v of sim.items || []) {
+          if (v.kind !== 'vessel' || v.isShattered) continue;
+          const nSol = v.moles?.[spMeta.targetSpeciesId] || 0;
+          const liqL = computeLiquidVolumeL(v.moles, v.tempK);
+          const liqMl = liqL * 1000;
+          if (nSol <= 1e-7 || liqMl < 5) continue;
+          const actualConc = nSol / liqL;
+          const cErr = Math.abs(actualConc - tgtVal) / Math.max(1e-6, tgtVal);
+          const vErr = Math.abs(liqMl - tgtVolMl) / Math.max(1, tgtVolMl);
+          if (cErr <= tol && vErr <= tol) bestPts = Math.max(bestPts, quantCrit.maxPoints);
+          else if (cErr <= tol * 2 && vErr <= tol * 2) bestPts = Math.max(bestPts, quantCrit.maxPoints * 0.65);
+          else bestPts = Math.max(bestPts, quantCrit.maxPoints * 0.25);
+          qDet = `C=${actualConc.toFixed(3)}M · V=${liqMl.toFixed(1)}mL`;
+        }
+        qPts = bestPts;
+      } else if (arch === 'synthesis' && setupData.synthesisMeta?.targetProductId) {
+        const syn = setupData.synthesisMeta;
+        const minMol = Number(syn.minYieldMol) || 0.005;
+        const minPur = (Number(syn.minPurityPct) || 70) / 100;
+        let bestPts = 0;
+        for (const it of sim.items || []) {
+          if (it.isShattered) continue;
+          const map = it.kind === 'gas_syringe' ? buildCombinedSyringeTotalMoles(it) : (it.moles || {});
+          const prodMol = map[syn.targetProductId] || 0;
+          if (prodMol <= 1e-7) continue;
+          const totMol = Object.entries(map).reduce((s, [k, n]) => s + (k === 'H2O_l' ? 0 : (n || 0)), 0);
+          const pur = totMol > 0 ? prodMol / totMol : 0;
+          const yFac = Math.min(1, prodMol / minMol);
+          const pFac = pur >= minPur ? 1 : pur >= minPur * 0.6 ? 0.6 : 0.3;
+          const cand = quantCrit.maxPoints * (0.55 * yFac + 0.45 * pFac);
+          if (cand > bestPts) {
+            bestPts = cand;
+            qDet = `${(prodMol * 1000).toFixed(1)} mmol (${(pur * 100).toFixed(0)}% pure)`;
+          }
+        }
+        qPts = bestPts;
+      } else if (arch === 'electrochem' && setupData.electrochemMeta) {
+        const ec = setupData.electrochemMeta;
+        if (ec.preset === 'voltaic_emf') {
+          const dmm = (sim.items || []).find((i) => i.kind === 'volt_ammeter');
+          const meas = Math.abs(dmm?.measuredV || 0);
+          const tgt = Number(ec.targetEmfV) || 1.10;
+          const tolV = Number(ec.tolV) || 0.08;
+          qPts = Math.abs(meas - tgt) <= tolV ? quantCrit.maxPoints : meas > 0.2 ? quantCrit.maxPoints * 0.5 : 0;
+          qDet = `E=${meas.toFixed(2)}V (target ${tgt.toFixed(2)}±${tolV.toFixed(2)}V)`;
+        } else {
+          const tgtMol = Number(ec.targetAmountMol) || 0.005;
+          let maxGot = 0;
+          for (const it of sim.items || []) {
+            if (ec.targetGasId && it.kind === 'gas_syringe') {
+              maxGot = Math.max(maxGot, buildCombinedSyringeTotalMoles(it)[ec.targetGasId] || 0);
+            } else if (ec.targetPlateMetal && it.kind === 'electrode') {
+              const key = `plated${ec.targetPlateMetal}Mol`;
+              maxGot = Math.max(maxGot, it[key] || 0);
+            }
+          }
+          const err = tgtMol > 0 ? Math.abs(maxGot - tgtMol) / tgtMol : 1;
+          qPts = err <= 0.1 ? quantCrit.maxPoints : maxGot > 1e-5 ? quantCrit.maxPoints * 0.6 : 0;
+          qDet = `${(maxGot * 1000).toFixed(2)} mmol / ${(tgtMol * 1000).toFixed(2)} mmol`;
+        }
       } else if (hasEvidence && (tel.contaminatedBlindIds || []).length === 0) {
         qPts = quantCrit.maxPoints;
       }
-      results.push(makeCriterionResult(quantCrit, qPts, hasEvidence ? 'Measurements/samples valid' : 'Missing lab work'));
+      results.push(makeCriterionResult(quantCrit, qPts, qDet));
     }
     if (identCrit) {
       const fields = mission.submitFields || [];
@@ -223,12 +322,22 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
       for (const f of fields) {
         const uVal = userAnswers[f.id];
         if (f.type === 'number' && ak.targetMolarityM != null) {
+          const tol = (Number(setupData.titrationMeta?.tolerancePct) || 2.0) / 100;
           const num = Number(uVal);
           if (Number.isFinite(num) && num > 0) {
             const err = Math.abs(num - ak.targetMolarityM) / ak.targetMolarityM;
-            if (err <= 0.02) hits += 1;
-            else if (err <= 0.05) hits += 0.7;
-            else if (err <= 0.1) hits += 0.4;
+            if (err <= tol) hits += 1;
+            else if (err <= tol * 2.5) hits += 0.7;
+            else if (err <= tol * 5) hits += 0.4;
+          }
+        } else if (f.type === 'number' && (f.id === 'ans_pct_a' || f.id === 'ans_pct_b')) {
+          const ref = f.id === 'ans_pct_a' ? ak.pctA : ak.pctB;
+          const tolAbs = Number(setupData.mixtureMeta?.tolerancePct) || 3.0;
+          const num = Number(uVal);
+          if (Number.isFinite(num) && ref != null) {
+            const diff = Math.abs(num - ref);
+            if (diff <= tolAbs) hits += 1;
+            else if (diff <= tolAbs * 2) hits += 0.6;
           }
         } else if (ak[f.id] && String(uVal || '').trim() === String(ak[f.id]).trim()) {
           hits += 1;
@@ -492,6 +601,72 @@ export function evaluateMission(sim, missionState, userAnswers = {}, options = {
     if (userAnswers.ans_layer === ak.layer) identPts += 1.0;
     if (userAnswers.ans_ester === ak.esterName) identPts += 1.0;
     results.push(makeCriterionResult(mission.rubric[2], identPts, `${userAnswers.ans_layer || '—'} · ${userAnswers.ans_ester || '—'}`));
+
+    const safe = computeCommonSafetyPoints(mission.rubric[3].maxPoints, sim, tel);
+    results.push(makeCriterionResult(mission.rubric[3], safe.pts, isEn ? `${safe.incidents} safety incident(s)` : `${safe.incidents} sự cố an toàn`));
+  } else if (mission.id === 'mission_solution_prep') {
+    const prepMeta = setupData.standardPrepMeta || mission.standardPrepConfig || {};
+    const tgtM = Number(prepMeta.targetMolarityM || ak.targetMolarityM || 0.2);
+    const tgtVolMl = Number(prepMeta.targetVolumeMl || ak.targetVolumeMl || 100);
+    const tolFrac = (Number(prepMeta.tolerancePct || 5.0)) / 100;
+    const usedTools = tel.usedMeasuringTools || tel.usedPipetteTransfer || (sim.items || []).some((i) => i.kind === 'scale');
+    const procPts = (usedTools ? 2.0 : 0) + ((sim.items || []).some((i) => (i.moles?.H2O_l || 0) > 1.0) ? 1.0 : 0);
+    results.push(makeCriterionResult(mission.rubric[0], procPts, usedTools ? (isEn ? 'Scale/Cylinder/Wash bottle used' : 'Đã dùng Cân / Ống đong / Bình tia') : (isEn ? 'Use measuring tools' : 'Hãy dùng Cân & Bình tia')));
+
+    let qPts = 0;
+    let qDetail = isEn ? 'Prepare target 100 mL CuSO₄ solution' : 'Pha đúng 100 mL dung dịch CuSO₄';
+    for (const v of sim.items || []) {
+      if (v.kind !== 'vessel' || v.isShattered) continue;
+      const nCu = v.moles?.Cu2_aq || 0;
+      const liqL = computeLiquidVolumeL(v.moles, v.tempK);
+      const liqMl = liqL * 1000;
+      if (nCu <= 1e-6 || liqMl < 5) continue;
+      const cActual = nCu / liqL;
+      const cErr = Math.abs(cActual - tgtM) / tgtM;
+      const vErr = Math.abs(liqMl - tgtVolMl) / tgtVolMl;
+      let pts = 0;
+      if (cErr <= tolFrac && vErr <= tolFrac) pts = mission.rubric[1].maxPoints;
+      else if (cErr <= tolFrac * 2 && vErr <= tolFrac * 2) pts = mission.rubric[1].maxPoints * 0.65;
+      else pts = mission.rubric[1].maxPoints * 0.25;
+      if (pts >= qPts) {
+        qPts = pts;
+        qDetail = `C = ${cActual.toFixed(3)} M (${tgtM.toFixed(2)} M) · V = ${liqMl.toFixed(1)} mL`;
+      }
+    }
+    results.push(makeCriterionResult(mission.rubric[1], qPts, qDetail));
+
+    const uMass = Number(userAnswers.ans_mass_g);
+    const expMass = Number(ak.expectedMassG) || 4.99;
+    let idPts = 0;
+    if (Number.isFinite(uMass) && uMass > 0) {
+      const mErr = Math.abs(uMass - expMass) / expMass;
+      if (mErr <= 0.03) idPts = mission.rubric[2].maxPoints;
+      else if (mErr <= 0.08) idPts = mission.rubric[2].maxPoints * 0.6;
+    }
+    results.push(makeCriterionResult(mission.rubric[2], idPts, `m = ${Number.isFinite(uMass) ? uMass.toFixed(2) : '—'} g (ref ${expMass.toFixed(2)} g)`));
+
+    const safe = computeCommonSafetyPoints(mission.rubric[3].maxPoints, sim, tel);
+    results.push(makeCriterionResult(mission.rubric[3], safe.pts, isEn ? `${safe.incidents} safety incident(s)` : `${safe.incidents} sự cố an toàn`));
+  } else if (mission.id === 'mission_mixture_analysis') {
+    const syr = sim.getItem(setupData.targetSyringeId) || (sim.items || []).find((i) => i.kind === 'gas_syringe' && !i.isBroken);
+    const mixId = setupData.mixtureMeta?.vesselId;
+    const mixV = mixId ? sim.getItem(mixId) : null;
+    const procPts = (tel.gasConnectedToSyringe ? 1.5 : 0) + ((mixV && (mixV.moles?.Fe_s || 0) < 0.02) || (sim.logs?.length || 0) > 0 ? 1.5 : 0);
+    results.push(makeCriterionResult(mission.rubric[0], procPts, tel.gasConnectedToSyringe ? (isEn ? 'Closed gas-syringe trap OK' : 'Đã nối kín Gas syringe thu H₂') : (isEn ? 'Connect closed Gas syringe!' : 'Cần nối kín Gas syringe!')));
+
+    const allGas = syr ? buildCombinedSyringeTotalMoles(syr) : {};
+    const h2Mol = allGas.H2_g || 0;
+    const h2Ml = syr ? computeSyringeGasVolumeMl(syr, sim.environment) : 0;
+    const feReacted = Boolean(mixV && (mixV.moles?.Fe_s || 0) < 1e-4 && (mixV.moles?.Cu_s || 0) > 1e-4);
+    const quantPts = h2Mol >= 0.005 ? mission.rubric[1].maxPoints : feReacted || h2Mol > 0.0005 ? mission.rubric[1].maxPoints * 0.55 : 0;
+    results.push(makeCriterionResult(mission.rubric[1], quantPts, isEn ? `Collected ${h2Ml.toFixed(1)} mL H₂` : `Thu được ${h2Ml.toFixed(1)} mL khí H₂`));
+
+    const pctA = Number(userAnswers.ans_pct_a);
+    const pctB = Number(userAnswers.ans_pct_b);
+    let idPts = 0;
+    if (Number.isFinite(pctA) && ak.pctA != null && Math.abs(pctA - ak.pctA) <= 3.0) idPts += 1.5;
+    if (Number.isFinite(pctB) && ak.pctB != null && Math.abs(pctB - ak.pctB) <= 3.0) idPts += 1.5;
+    results.push(makeCriterionResult(mission.rubric[2], idPts, `%Fe=${userAnswers.ans_pct_a || '—'}% · %Cu=${userAnswers.ans_pct_b || '—'}%`));
 
     const safe = computeCommonSafetyPoints(mission.rubric[3].maxPoints, sim, tel);
     results.push(makeCriterionResult(mission.rubric[3], safe.pts, isEn ? `${safe.incidents} safety incident(s)` : `${safe.incidents} sự cố an toàn`));

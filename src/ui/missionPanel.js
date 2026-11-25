@@ -2,7 +2,7 @@
  * Practical Lab & Assessment Mode UI (Prompt 83).
  * Docked collapsible Mission HUD card + Mission Selector Modal + Assessment Result Modal.
  */
-import { MISSION_ORDER, getMissionById } from '../data/missions.js';
+import { MISSION_ARCHETYPES, MISSION_ORDER, getMissionById } from '../data/missions.js';
 import {
   evaluateMission,
   loadMissionProgress,
@@ -144,6 +144,12 @@ export class MissionDockPanel {
               <span class="text-[10.5px] font-bold px-1.5 py-0.5 rounded-full ${
                 isPractice ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/40' : 'bg-amber-500/15 text-amber-300 border border-amber-500/40'
               }">${isPractice ? `🎯 ${t('missionModePractice')}` : `📝 ${ms.examCode || t('missionModeExam')}`}</span>
+              ${(() => {
+                const archObj = MISSION_ARCHETYPES.find((a) => a.id === (mission.archetype || ms.archetype));
+                return archObj ? `<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded border ${archObj.badgeClass}">${t(archObj.i18nKey)}</span>` : '';
+              })()}
+              ${ms.shelfPolicy === 'initial_only' ? `<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-red-500/40 bg-red-500/10 text-red-300">🔒 ${t('tier_hard')}</span>` : ''}
+              ${ms.blindDosingMode ? `<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-sky-500/40 bg-sky-500/10 text-sky-300">🙈 Blind Dose</span>` : ''}
               <span id="mission-timer-badge" class="text-[11px] font-mono text-muted">${timerInit}</span>
               ${proctorBadgeHtml}
               ${isPractice && evalNow ? `<span id="mission-live-score" class="text-[11px] font-mono font-bold text-accent">${evalNow.totalScore.toFixed(1)}/10</span>` : ''}
@@ -340,16 +346,21 @@ export function openMissionSelectorModal(modalRootEl, sim, t, callbacks = {}) {
             const m = getMissionById(id);
             const rec = progress[id];
             const bestStr = rec ? `${'⭐'.repeat(rec.bestStars || 0)} ${rec.bestScore.toFixed(1)}/10` : t('missionNotAttempted');
-            const diffBadge = m.difficulty === 'basic'
+            const tierKey = m.difficultyTier || (m.difficulty === 'basic' ? 'easy' : m.difficulty === 'intermediate' ? 'medium' : 'hard');
+            const diffBadge = tierKey === 'easy'
               ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10'
-              : m.difficulty === 'intermediate'
+              : tierKey === 'medium'
               ? 'text-sky-400 border-sky-500/40 bg-sky-500/10'
               : 'text-amber-300 border-amber-500/40 bg-amber-500/10';
+            const archObj = MISSION_ARCHETYPES.find((a) => a.id === m.archetype);
             return `
               <div class="p-3 rounded-xl border ${curId === id ? 'border-accent bg-accent/10' : 'border-theme bg-surface-alt'} flex flex-col justify-between gap-2">
                 <div>
-                  <div class="flex items-center justify-between gap-1.5 mb-1">
-                    <span class="text-[10.5px] font-semibold px-1.5 py-0.5 rounded border ${diffBadge}">${t(`diff_${m.difficulty}`)}</span>
+                  <div class="flex items-center justify-between gap-1.5 mb-1 flex-wrap">
+                    <div class="flex items-center gap-1 flex-wrap">
+                      <span class="text-[10.5px] font-semibold px-1.5 py-0.5 rounded border ${diffBadge}">${t(`tier_${tierKey}`)}</span>
+                      ${archObj ? `<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded border ${archObj.badgeClass}">${t(archObj.i18nKey)}</span>` : ''}
+                    </div>
                     <span class="text-[11px] font-mono text-muted">${bestStr}</span>
                   </div>
                   <h3 class="text-sm font-bold leading-snug">${t(m.titleKey)}</h3>

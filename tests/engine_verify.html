@@ -35,6 +35,7 @@
     } from '../src/data/apparatus.js';
     import {
       GAS_DISPLAY_META,
+      ORGANIC_SUBCATEGORIES,
       REAGENT_CATEGORIES,
       SORTED_BOTTOM_SOLID_SPECIES,
       SORTED_PRECIPITATE_SPECIES,
@@ -58,11 +59,11 @@
     import { ParticleSystem } from '../src/canvas/particles.js';
     import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod, renderTlcPlate } from '../src/canvas/toolRenderer.js';
     import { resolveTlcUvActive, computeBeerLambertReading, computeUvVisSpectrum, computeIrSpectrum } from '../src/engine/analyticalTools.js';
-    import { buildPdfBytesFromCanvas, composeWorkbenchSnapshotCanvas, openPrintableLabReport, openLabReportPreviewModal } from '../src/storage/reportExport.js';
+    import { buildLabReportBundle, buildPdfBytesFromCanvas, composeWorkbenchSnapshotCanvas, openPrintableLabReport, openLabReportPreviewModal } from '../src/storage/reportExport.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
     import { DosingModal } from '../src/ui/dosingModal.js';
     import { ComparisonPanel } from '../src/ui/comparisonPanel.js';
-    import { MISSION_ORDER, MISSION_REGISTRY } from '../src/data/missions.js';
+    import { MISSION_ARCHETYPES, MISSION_ORDER, MISSION_REGISTRY, isReagentAllowedInMission } from '../src/data/missions.js';
     import { evaluateMission, loadMissionProgress, saveMissionAttempt } from '../src/engine/missionEvaluator.js';
     import { MissionDockPanel } from '../src/ui/missionPanel.js';
     import { ExamProctorController, buildHashedAnswerMap, fnv1aHash32, verifyHashedAnswer } from '../src/engine/examProctor.js';
@@ -110,7 +111,7 @@
     } from '../src/engine/chemistry.js';
     import { LabManager } from '../src/engine/labManager.js';
     import { LabSimulation } from '../src/engine/simulation.js';
-    import { computeVesselRedoxAndCellMetrics } from '../src/engine/electrochemistry.js';
+    import { computeVesselRedoxAndCellMetrics, ELECTRODE_MATERIALS } from '../src/engine/electrochemistry.js';
     import { checkThermometerInteractions, computeWashBottleStreamArc, syncDockedToolPositions } from '../src/engine/apparatusTools.js';
     import { calcEvaporationRateMol, computeHeatCapacityJK, computeSteamOpacity, stepVesselThermodynamics } from '../src/engine/thermodynamics.js';
     import {
@@ -1925,7 +1926,7 @@
           hasH2O2 &&
           STARTER_REAGENTS.some(r => r.id === 'caco3') &&
           STARTER_REAGENTS.some(r => r.id === 'nacl') &&
-          STARTER_REAGENTS.length === 42 &&
+          STARTER_REAGENTS.length >= 42 &&
           Math.abs(nvTest - 0.4) < 1e-9 &&
           aqLeft.length === 0 &&
           Math.abs((dryCheck.NH4Cl_s || 0) - 0.10) < 1e-9 &&
@@ -2493,7 +2494,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.30';
+      const expectedBuild = 'virlab_beta_v5+build.31';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2577,7 +2578,7 @@
       assert(
         'Build virlab_beta_v5+build.7 parity: All 43 apparatus & 34 starter reagents translated in VI/EN, Analytical Trio + Organic Ecosystem parity enforced',
         APPARATUS_ORDER.length === 44 &&
-          STARTER_REAGENTS.length === 42 &&
+          STARTER_REAGENTS.length >= 42 &&
           !APPARATUS.clay_triangle &&
           !APPARATUS.crucible_tongs &&
           allTranslated &&
@@ -7441,7 +7442,7 @@
       const mno2AcidOk = Math.abs((bMnColdAcid.moles.MnO2_s || 0) - 0.01) < 1e-6 && cl2HotTot > 0.002 && (bMnHotHCl.moles.Mn2_aq || 0) > 0.002;
 
       const iupacKmno4Ok =
-        STARTER_REAGENTS.length === 42 &&
+        STARTER_REAGENTS.length >= 42 &&
         STARTER_REAGENTS.some((r) => r.id === 'kmno4') &&
         !/\b(kali|mangan|axit|clo|oxi(?! hóa))\b/i.test(`${I18N.vi.reg_kmno4} ${I18N.vi.reg_kmno4_desc} ${I18N.vi.alertMn2O7Hazard}`);
 
@@ -7555,7 +7556,7 @@
         (vIRoom.moles.IO3_aq || 0) > (vIRoom.moles.IO_aq || 0) * 4;
 
       const iupacHalOk =
-        STARTER_REAGENTS.length === 42 &&
+        STARTER_REAGENTS.length >= 42 &&
         STARTER_REAGENTS.some((r) => r.id === 'br2') &&
         STARTER_REAGENTS.some((r) => r.id === 'i2') &&
         !/\b(brom|iot|clo|kali|natri|nhôm|sắt|axit)\b/i.test(`${I18N.vi.reg_br2} ${I18N.vi.reg_br2_desc} ${I18N.vi.reg_i2} ${I18N.vi.reg_i2_desc}`);
@@ -7671,7 +7672,7 @@
         (bSHNO3.moles.SO4_2_aq || 0) > 0.001;
 
       const iupacSulfOk =
-        STARTER_REAGENTS.length === 42 &&
+        STARTER_REAGENTS.length >= 42 &&
         STARTER_REAGENTS.some((r) => r.id === 's') &&
         !/\b(lưu huỳnh|sunfua|hiđro|axit|oxi(?! hóa)|etanol)\b/i.test(`${I18N.vi.reg_s} ${I18N.vi.reg_s_desc}`);
 
@@ -8459,7 +8460,7 @@
         totGas(cDDIn, 'CO_g') > 0.004;
 
       // 9) 'Dat den (CaC2)' rename & 10) Metal mp/bp + state at 1500 C (1773.15 K)
-      const renameOk = I18N.vi.reg_cac2 === 'Đất đèn (CaC₂)';
+      const renameOk = I18N.vi.reg_cac2 === 'Calcium carbide (CaC₂)' && /Đất đèn/i.test(I18N.vi.reg_cac2_desc || '');
       const simMet = new LabSimulation();
       simMet.setAtmosphereMode('inert');
       const c1500 = simMet.createApparatus('crucible_porcelain', 140, 400);
@@ -8751,7 +8752,7 @@
       const regCr = STARTER_REAGENTS.find((r) => r.id === 'k2cr2o7');
       const regSi = STARTER_REAGENTS.find((r) => r.id === 'sio2');
       const catOk =
-        STARTER_REAGENTS.length === 42 &&
+        STARTER_REAGENTS.length >= 42 &&
         oxides.length === 1 &&
         oxides[0].id === 'sio2' &&
         REAGENT_CATEGORIES.some((c) => c.id === 'oxide' && c.i18nKey === 'regCatOxide') &&
@@ -8943,7 +8944,7 @@
       const regA = STARTER_REAGENTS.find((r) => r.id === 'ch3cooh');
       const acids3 = STARTER_REAGENTS.filter((r) => r.category === 'acid');
       const regOrgOk =
-        STARTER_REAGENTS.length === 42 &&
+        STARTER_REAGENTS.length >= 42 &&
         acids3.length === 3 &&
         Boolean(regE && regE.category === 'organic' && regE.perMl?.C2H5OH_l > 0.017) &&
         Boolean(regA && regA.category === 'organic' && regA.perMl?.CH3COOH_l > 0.017) &&
@@ -9987,7 +9988,7 @@
 
       // 2) HCHO and HCOOH removed from STARTER_REAGENTS, both preparable from CH3OH
       const noDirectHchoHcooh =
-        STARTER_REAGENTS.length === 42 &&
+        STARTER_REAGENTS.length >= 42 &&
         !STARTER_REAGENTS.some((r) => r.id === 'hcho_37' || r.id === 'hcooh') &&
         Boolean(SPECIES.HCHO_aq && SPECIES.HCOOH_l);
       const vPrepAld = sim64.createApparatus('round_flask_250', 180, 300);
@@ -10135,8 +10136,8 @@
         STARTER_REAGENTS.find((r) => r.id === 'starch')?.bottleStyle?.vesselForm === 'rice_sack' &&
         STARTER_REAGENTS.find((r) => r.id === 'cellulose')?.bottleStyle?.vesselForm === 'cotton_plant' &&
         STARTER_REAGENTS.find((r) => r.id === 'albumin')?.bottleStyle?.vesselForm === 'chicken_egg' &&
-        STARTER_REAGENTS.find((r) => r.id === 'glucose')?.bottleStyle?.bottleMotif === 'grape' &&
-        STARTER_REAGENTS.find((r) => r.id === 'fructose')?.bottleStyle?.bottleMotif === 'honey' &&
+        STARTER_REAGENTS.find((r) => r.id === 'glucose')?.bottleStyle?.bottleMotif === 'skeletal_glucose' &&
+        STARTER_REAGENTS.find((r) => r.id === 'fructose')?.bottleStyle?.bottleMotif === 'skeletal_fructose' &&
         STARTER_REAGENTS.find((r) => r.id === 'sucrose')?.bottleStyle?.bottleMotif === 'sugarcane';
       const guidesOk = ['colorimeter', 'ph_conductometer', 'tlc_plate', 'dc_power', 'volt_ammeter', 'separatory_funnel', 'burette_50', 'pipette_10'].every(
         (id) => getApparatusUsageGuide(id, 'vi').length > 40 && getApparatusUsageGuide(id, 'en').length > 40
@@ -10525,7 +10526,7 @@
 
       // 1) Registry completeness: 6 missions, rubric sum === 10.0, all 4 categories covered, bilingual i18n keys exist
       const registryOk =
-        MISSION_ORDER.length === 6 &&
+        MISSION_ORDER.length >= 6 &&
         MISSION_ORDER.every((id) => {
           const m = MISSION_REGISTRY[id];
           if (!m) return false;
@@ -11370,6 +11371,159 @@
         'Build 30 invariants (Prompt 90): THEME_REGISTRY isDark 10/10, non-blocking Report Preview Modal + missing species safe, erlenmeyer_1000 left/right multi-phase symmetry, doubled ANTI balloons (r>=12.5) & particle caps + zero-lag render',
         regOk && i18nRepOk && modalBtnsOk && balloonRadiusOk && particleCapOk && e1kSymOk && fpsBudgetOk,
         `reg=${regOk}, i18n=${i18nRepOk}, modal=${modalBtnsOk}, bR=${balloonRadiusOk}(b=${balloonCount},d=${dropCount},g=${geyserCount}), sym=${e1kSymOk}(diff=${symDiff}), avgFrame=${avgMs.toFixed(2)}ms`
+      );
+    }
+
+    // TEST 228: Prompt 91 (virlab_beta_v5+build.31) — PDF Gas/Log Fixes, Teacher 6 Archetypes + Hard Initial-Only + BlindDosing, 10-Step Chemical Undo/Redo, Organic Sub-Filter & Skeletal Bottles, Full Nickel (Ni) Ecosystem
+    {
+      const tVi = (k, p) => {
+        let s = I18N.vi[k] ?? k;
+        if (p && typeof s === 'string') {
+          for (const [pk, pv] of Object.entries(p)) s = s.replace(`{${pk}}`, pv);
+        }
+        return s;
+      };
+
+      // 1) Report Export: zero "undefined" gases, reaction log formatted (zero "• []"), deduplicated sampledBlindLabels
+      const simRep = new LabSimulation();
+      const bRep = simRep.createApparatus('beaker_250', 250, 320);
+      bRep.moles.H2O_l = 2.0;
+      bRep.headspaceGasMoles.CO2_g = 0.0025;
+      simRep.logs.unshift({
+        type: 'reaction',
+        timeSec: 12,
+        equation: 'CaCO₃ + 2HCl → CaCl₂ + CO₂↑ + H₂O',
+        nameVi: 'Giải phóng khí CO₂',
+        nameEn: 'CO₂ gas evolution',
+      });
+      simRep.missionState = { active: true, missionId: 'mission_qualitative_4', archetype: 'blind_id', mode: 'practice', setupData: {} };
+      simRep.missionTelemetry = { usedPipetteTransfer: true, sampledBlindLabels: ['?A', '?B', '?B', '?B'] };
+      const mockEvalRep = { titleKey: 'mission_qualitative_4_title', totalScore: 8.5, grade: 'B', mode: 'practice', elapsedSec: 12, criteriaResults: [], equationText: '' };
+      const bundle = buildLabReportBundle({ sim: simRep, workbenchCanvas: null, isDark: false, labName: 'Lab 1', t: tVi, lang: 'vi', missionResult: mockEvalRep });
+      const pdfReportOk =
+        Boolean(bundle?.standaloneHtml) &&
+        !bundle.standaloneHtml.includes('undefined:') &&
+        !bundle.standaloneHtml.includes('• []') &&
+        bundle.standaloneHtml.includes('CO₂') &&
+        bundle.standaloneHtml.includes('Giải phóng khí CO₂') &&
+        !bundle.standaloneHtml.includes('?B, ?B');
+
+      // 2) Full 10-step chemical Undo + coalescing + Redo across pipette/burette/washBottle/spoon
+      const simU = new LabSimulation();
+      const vSrc = simU.createApparatus('beaker_250', 220, 350);
+      simU.addReagentToVessel(vSrc.id, 'h2o', 20, { silentAnim: true });
+      const vDst = simU.createApparatus('beaker_250', 420, 350);
+      const burU = simU.createApparatus('burette_50', 420, 200);
+      simU.addReagentToVessel(burU.id, 'naoh', 25, { silentAnim: true });
+      const wbU = simU.createApparatus('wash_bottle', 600, 350);
+      simU.undoStack = [];
+      simU.redoStack = [];
+      simU._lastUndoMeta = null;
+
+      // Step 1: Pipette draw & dispense from reagent
+      simU.pipetteDrawFromReagent('hcl_37', 5);
+      const pipItem = simU.items.find((i) => i.kind === 'pipette');
+      simU.pipetteDispenseToVessel(vDst.id, 3.0, pipItem);
+      const hclAfterPip = simU.getItem(vDst.id)?.moles?.H_aq || 0;
+      // Step 2: Burette drop burst (<650ms same key -> coalesced to 1 Undo step!)
+      simU.buretteDispenseDrop(burU.id, 0.5);
+      simU.buretteDispenseDrop(burU.id, 0.5);
+      // Step 3: Wash bottle squirt
+      simU.washBottleSquirt(wbU.id, vDst.id, 5);
+      const undoCountBefore = simU.undoStack.length;
+      const u1 = simU.undo(); // undoes washBottle
+      const h2oAfterWashUndo = simU.getItem(vDst.id)?.moles?.H2O_l || 0;
+      const r1 = simU.redo(); // restores washBottle
+      const h2oAfterRedo = simU.getItem(vDst.id)?.moles?.H2O_l || 0;
+      // Now execute 12 distinct chemical steps and check maxUndo === 10
+      for (let i = 0; i < 12; i++) {
+        simU.recordUndo({ actionKey: `chem_step_${i}`, vesselKey: vDst.id, coalesceMs: 650 });
+        const curDst = simU.getItem(vDst.id);
+        if (curDst) curDst.moles.Na_aq = (curDst.moles.Na_aq || 0) + 0.01;
+      }
+      const undoCap10Ok = simU.undoStack.length === 10 && simU.undo() && simU.redo();
+      const undoChemOk = hclAfterPip > 0.01 && undoCountBefore >= 3 && u1 && r1 && h2oAfterRedo > h2oAfterWashUndo + 0.1 && undoCap10Ok;
+
+      // 3) Teacher Studio 6 Archetypes + 8 Sample Missions + initial_only + blindDosingMode
+      const archOk =
+        MISSION_ARCHETYPES.length === 6 &&
+        MISSION_ORDER.length === 8 &&
+        MISSION_ORDER.every((id) => Boolean(MISSION_REGISTRY[id]?.archetype && MISSION_REGISTRY[id]?.difficultyTier));
+      const hardPolicyCheck = !isReagentAllowedInMission({ shelfPolicy: 'initial_only', allowedReagents: ['h2o'] }, 'h2o');
+      const simPrep = new LabSimulation();
+      const stPrep = simPrep.startMission('mission_solution_prep', 'practice', 707);
+      const evPrep = evaluateMission(simPrep, stPrep, {}, { t: tVi, langCode: 'vi' });
+      const simMix = new LabSimulation();
+      const stMix = simMix.startMission('mission_mixture_analysis', 'practice', 808);
+      const evMix = evaluateMission(simMix, stMix, { ans_pct_a: stMix.setupData.answerKey.pctA, ans_pct_b: stMix.setupData.answerKey.pctB }, { t: tVi, langCode: 'vi' });
+      const studioOk = archOk && hardPolicyCheck && stPrep?.blindDosingMode === true && Boolean(evPrep) && evMix?.criteriaResults?.[2]?.earned === 3.0;
+
+      // 4) Organic Sub-filter + skeletal bottle canvas + Nickel reagent & electrode
+      const orgReags = STARTER_REAGENTS.filter((r) => r.category === 'organic');
+      const orgGroupsCovered = ORGANIC_SUBCATEGORIES.filter((s) => s.id !== 'all').every((s) => orgReags.some((r) => r.organicGroup === s.id));
+      const niReg = STARTER_REAGENTS.find((r) => r.id === 'ni');
+      const etohCvs = getReagentDragCanvas('etoh', true);
+      const glcCvs = getReagentDragCanvas('glucose', true);
+      const niCvs = getReagentDragCanvas('ni', true);
+      const bottleUiOk = orgGroupsCovered && Boolean(niReg && SPECIES.Ni_s?.ferromagnetic && ELECTRODE_MATERIALS.Ni && etohCvs && glcCvs && niCvs);
+
+      // 5) Complete Nickel (Ni) chemistry & catalysis verification
+      // 5a: Cold conc HNO3 passivates Ni_s; hot conc HNO3 >= 55 C depassivates & dissolves Ni_s
+      const simNiA = new LabSimulation();
+      const vPass = simNiA.createApparatus('beaker_250', 250, 350);
+      vPass.moles = { Ni_s: 0.05, H_aq: 0.5, NO3_aq: 0.5, H2O_l: 0.5 }; // ~65% HNO3
+      vPass.tempK = 298.15;
+      stepVesselChemistry(vPass, 0.25, simNiA.environment);
+      const niColdPassivOk = vPass.niPassivated === true && Math.abs((vPass.moles.Ni_s || 0) - 0.05) < 1e-6;
+      vPass.tempK = 335.15;
+      for (let s = 0; s < 10; s++) stepVesselChemistry(vPass, 0.2, simNiA.environment);
+      const niHotNitricOk = !vPass.niPassivated && (vPass.moles.Ni2_aq || 0) > 1e-4;
+
+      // 5b: Hot NaOH leaves Ni_s inert + Ni(OH)2 + excess NH3 -> [Ni(NH3)6]2+
+      const vAlk = simNiA.createApparatus('beaker_250', 420, 350);
+      vAlk.moles = { Ni_s: 0.05, Na_aq: 0.5, OH_aq: 0.5, H2O_l: 2.0 };
+      vAlk.tempK = 365.15;
+      for (let s = 0; s < 8; s++) stepVesselChemistry(vAlk, 0.25, simNiA.environment);
+      const niAlkaliInertOk = Math.abs((vAlk.moles.Ni_s || 0) - 0.05) < 1e-6 && (vAlk.moles.Ni2_aq || 0) === 0;
+
+      const vAmm = simNiA.createApparatus('beaker_250', 580, 350);
+      vAmm.moles = { NiOH2_s: 0.02, NH3_aq: 0.40, H2O_l: 2.0 };
+      vAmm.tempK = 298.15;
+      for (let s = 0; s < 10; s++) stepVesselChemistry(vAmm, 0.2, simNiA.environment);
+      const niComplexOk = (vAmm.moles.NiNH3_6_2_aq || 0) > 0.015;
+
+      // 5c: Mond process (55 C synthesis -> Ni(CO)4, >180 C decomposition -> Ni_s + 4CO)
+      const vMond = simNiA.createApparatus('round_flask_250', 740, 350);
+      vMond.isStoppered = true;
+      vMond.moles = { Ni_s: 0.02 };
+      vMond.headspaceGasMoles = { CO_g: 0.12 };
+      for (let s = 0; s < 10; s++) {
+        vMond.tempK = 328.15;
+        simNiA.step(0.25);
+      }
+      const mondFormed = (vMond.moles.NiCO4_l || 0) + (vMond.headspaceGasMoles.NiCO4_g || 0) > 1e-5;
+      const niBeforeDec = vMond.moles.Ni_s || 0;
+      for (let s = 0; s < 15; s++) {
+        vMond.tempK = 483.15;
+        simNiA.step(0.25);
+      }
+      const mondDecompOk = mondFormed && (vMond.moles.Ni_s || 0) > niBeforeDec;
+
+      // 5d: Ni_s catalysis (Triolein + 3 H2 -> Tristearin solid, HCHO + H2 -> CH3OH)
+      const vCat = simNiA.createApparatus('round_flask_250', 880, 350);
+      vCat.isStoppered = true;
+      vCat.moles = { Ni_s: 0.01, C57H104O6_l: 0.01, HCHO_aq: 0.02, H2O_l: 0.5 };
+      vCat.headspaceGasMoles = { H2_g: 0.12 };
+      vCat.tempK = 445.15;
+      for (let s = 0; s < 12; s++) stepVesselChemistry(vCat, 0.25, simNiA.environment);
+      const niCatOk = (vCat.moles.C57H110O6_s || 0) > 0.002 && (vCat.moles.CH3OH_l || 0) > 0.003;
+
+      const niChemOk = niColdPassivOk && niHotNitricOk && niAlkaliInertOk && niComplexOk && mondDecompOk && niCatOk;
+
+      assert(
+        'Build 31 invariants (Prompt 91): PDF zero undefined/•[] + label dedup, 10-step chemical Undo/Redo coalesced, Teacher 6 Archetypes + 8 Missions + blindDosing/initial_only, Organic sub-filters & skeletal bottles, Full Nickel (Ni) ecosystem',
+        pdfReportOk && undoChemOk && studioOk && bottleUiOk && niChemOk,
+        `pdf=${pdfReportOk}, undo=${undoChemOk}, studio=${studioOk}, ui=${bottleUiOk}, ni=${niChemOk}(pass=${niColdPassivOk},hot=${niHotNitricOk},alk=${niAlkaliInertOk},cplx=${niComplexOk},mond=${mondDecompOk},cat=${niCatOk})`
       );
     }
 

@@ -237,6 +237,52 @@ export function stepAmmineComplexEquilibria(vessel, liquidVolL, dt, activeReacti
     }
   }
 
+  // 5. Nickel(II) hydroxide <-> Hexaamminenickel(II) [Ni(NH3)6]2+ (royal deep blue)
+  const nNiOH2 = moles.NiOH2_s || 0;
+  const nNiAmm = moles.NiNH3_6_2_aq || 0;
+  if (nNiOH2 + nNiAmm > 1e-11) {
+    const fracNi = cNH3 > 0.22 ? Math.min(1.0, (cNH3 - 0.22) / 0.40) : 0;
+    const targetNi = (nNiOH2 + nNiAmm) * fracNi;
+    let dXi = (targetNi - nNiAmm) * relax;
+    if (dXi > 1e-11 && cH < 1e-4) {
+      dXi = Math.min(dXi, nNiOH2, (moles.NH3_aq || 0) / 6);
+      heatJ += applyEquilibriumShift({
+        moles,
+        dXi,
+        deltas: { NiOH2_s: -1, NH3_aq: -6, NiNH3_6_2_aq: 1, OH_aq: 2 },
+        heatPerMolJ: -24000,
+        dt,
+        activeReactions,
+        buildMeta: () => ({
+          id: 'ni_ammine_complex',
+          equation: 'Ni(OH)₂(s) + 6NH₃(aq) ⇌ [Ni(NH₃)₆]²⁺(aq) + 2OH⁻(aq)',
+          nameVi: 'Hòa tan Ni(OH)₂ trong NH₃ dư tạo phức xanh dương thẫm [Ni(NH₃)₆]²⁺',
+          nameEn: 'Dissolution of Ni(OH)₂ in excess NH₃ forming deep royal blue [Ni(NH₃)₆]²⁺',
+          descVi: 'Kết tủa xanh lục nhạt Ni(OH)₂ không tan trong NaOH dư nhưng tan trong NH₃ dư tạo phức xanh dương thẫm [Ni(NH₃)₆]²⁺.',
+          descEn: 'Pale-green Ni(OH)₂ is insoluble in excess NaOH but dissolves in excess NH₃ yielding deep royal blue [Ni(NH₃)₆]²⁺.',
+        }),
+      });
+    } else if (dXi < -1e-11 && cH < 1e-4 && (moles.OH_aq || 0) >= 2 * Math.abs(dXi)) {
+      dXi = Math.max(dXi, -nNiAmm, -(moles.OH_aq || 0) / 2);
+      heatJ += applyEquilibriumShift({
+        moles,
+        dXi,
+        deltas: { NiOH2_s: -1, NH3_aq: -6, NiNH3_6_2_aq: 1, OH_aq: 2 },
+        heatPerMolJ: -24000,
+        dt,
+        activeReactions,
+        buildMeta: () => ({
+          id: 'ni_ammine_complex',
+          equation: '[Ni(NH₃)₆]²⁺(aq) + 2OH⁻(aq) → Ni(OH)₂(s)↓ + 6NH₃(aq)',
+          nameVi: 'Tái kết tủa xanh lục nhạt Ni(OH)₂ khi giảm NH₃',
+          nameEn: 'Reprecipitation of Ni(OH)₂ upon NH₃ depletion',
+          descVi: 'Giảm nồng độ NH₃ làm phức [Ni(NH₃)₆]²⁺ tách lại kết tủa xanh lục nhạt Ni(OH)₂.',
+          descEn: 'Depleting NH₃ shifts [Ni(NH₃)₆]²⁺ back into pale-green Ni(OH)₂.',
+        }),
+      });
+    }
+  }
+
   return heatJ;
 }
 

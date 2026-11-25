@@ -8,7 +8,7 @@ export const ELECTRODE_MATERIALS = {
   SHE: { id: 'SHE', formula: 'Pt | H₂(g) | H⁺',   color: '#94a3b8', stroke: '#38bdf8', e0: 0.0,     nEq: 2, ionId: 'H_aq',   solidId: null,   defaultMol: 0,    canPassivate: false, isSHE: true, nameVi: 'Điện cực Hydrogen chuẩn (SHE)', nameEn: 'Standard Hydrogen Electrode (SHE)' },
   Ag:  { id: 'Ag',  formula: 'Ag(s)',             color: '#e2e8f0', stroke: '#f8fafc', e0: 0.7996,  nEq: 1, ionId: 'Ag_aq',  solidId: 'Ag_s', defaultMol: 0.05, canPassivate: false, nameVi: 'Silver (Ag)',                     nameEn: 'Silver (Ag)' },
   Cu:  { id: 'Cu',  formula: 'Cu(s)',             color: '#d97706', stroke: '#f59e0b', e0: 0.3419,  nEq: 2, ionId: 'Cu2_aq', solidId: 'Cu_s', defaultMol: 0.08, canPassivate: false, nameVi: 'Copper (Cu)',                     nameEn: 'Copper (Cu)' },
-  Ni:  { id: 'Ni',  formula: 'Ni(s)',             color: '#9ca3af', stroke: '#d1d5db', e0: -0.257,  nEq: 2, ionId: 'Ni2_aq', solidId: 'Ni_s', defaultMol: 0.07, canPassivate: false, nameVi: 'Nickel (Ni)',                     nameEn: 'Nickel (Ni)' },
+  Ni:  { id: 'Ni',  formula: 'Ni(s)',             color: '#c4c4bc', stroke: '#e5e7eb', e0: -0.257,  nEq: 2, ionId: 'Ni2_aq', solidId: 'Ni_s', defaultMol: 0.07, canPassivate: true,  nameVi: 'Nickel (Ni)',                     nameEn: 'Nickel (Ni)' },
   Pb:  { id: 'Pb',  formula: 'Pb(s)',             color: '#64748b', stroke: '#94a3b8', e0: -0.126,  nEq: 2, ionId: 'Pb2_aq', solidId: 'Pb_s', defaultMol: 0.05, canPassivate: false, nameVi: 'Lead (Pb)',                       nameEn: 'Lead (Pb)' },
   Fe:  { id: 'Fe',  formula: 'Fe(s)',             color: '#475569', stroke: '#94a3b8', e0: -0.447,  nEq: 2, ionId: 'Fe2_aq', solidId: 'Fe_s', defaultMol: 0.10, canPassivate: true,  nameVi: 'Iron (Fe)',                       nameEn: 'Iron (Fe)' },
   Zn:  { id: 'Zn',  formula: 'Zn(s)',             color: '#94a3b8', stroke: '#cbd5e1', e0: -0.7618, nEq: 2, ionId: 'Zn2_aq', solidId: 'Zn_s', defaultMol: 0.08, canPassivate: false, nameVi: 'Zinc (Zn)',                       nameEn: 'Zinc (Zn)' },
@@ -56,8 +56,8 @@ function addMolSafe(moles, id, delta) {
 }
 
 function isVesselPassivatingForMetal(vessel, liqL, matId) {
-  if (!vessel || (matId !== 'Fe' && matId !== 'Al')) return false;
-  if ((matId === 'Fe' && vessel.fePassivated) || (matId === 'Al' && vessel.alPassivated)) return true;
+  if (!vessel || (matId !== 'Fe' && matId !== 'Al' && matId !== 'Ni')) return false;
+  if ((matId === 'Fe' && vessel.fePassivated) || (matId === 'Al' && vessel.alPassivated) || (matId === 'Ni' && vessel.niPassivated)) return true;
   const m = vessel.moles || {};
   const T = vessel.tempK || CONSTANTS.T_STD_K;
   if (T >= 323.15) return false;
@@ -276,7 +276,7 @@ function stepElectrodeDirectSurfaceChemistry(sim, el, v, liqL, dt, coupledAnodeE
   const nobleTargets = [
     { ionId: 'Ag_aq', sym: 'Ag', e0: 0.7996, nIon: 1, colKey: 'platedAgMol' },
     { ionId: 'Cu2_aq', sym: 'Cu', e0: 0.3419, nIon: 2, colKey: 'platedCuMol' },
-    { ionId: 'Ni2_aq', sym: 'Ni', e0: -0.257, nIon: 2, colKey: null },
+    { ionId: 'Ni2_aq', sym: 'Ni', e0: -0.257, nIon: 2, colKey: 'platedNiMol' },
     { ionId: 'Pb2_aq', sym: 'Pb', e0: -0.126, nIon: 2, colKey: null },
   ];
   for (const nt of nobleTargets) {
@@ -660,6 +660,23 @@ export function stepElectrochemistry(sim, dt) {
         elNeg.platedQuality = jADm2 > 6.5 ? 'burned' : 'smooth';
         elNeg.platedCuMol = (elNeg.platedCuMol || 0) + dCu;
         cathDesc = '[Cu(NH₃)₄]²⁺ + 2e⁻ → Cu(s) + 4NH₃';
+      } else if ((v.moles.Ni2_aq || 0) > 1e-7) {
+        const dNi = Math.min(v.moles.Ni2_aq, (neMol * 0.85) / 2);
+        addMolSafe(v.moles, 'Ni2_aq', -dNi);
+        addMolSafe(v.moles, 'Ni_s', dNi);
+        elNeg.platedMaterial = 'Ni';
+        elNeg.platedQuality = jADm2 > 6.5 ? 'burned' : 'smooth';
+        elNeg.platedNiMol = (elNeg.platedNiMol || 0) + dNi;
+        cathDesc = 'Ni²⁺ + 2e⁻ → Ni(s) (mạ bạc-nickel)';
+      } else if ((v.moles.NiNH3_6_2_aq || 0) > 1e-7) {
+        const dNi = Math.min(v.moles.NiNH3_6_2_aq, neMol / 2);
+        addMolSafe(v.moles, 'NiNH3_6_2_aq', -dNi);
+        addMolSafe(v.moles, 'NH3_aq', 6 * dNi);
+        addMolSafe(v.moles, 'Ni_s', dNi);
+        elNeg.platedMaterial = 'Ni';
+        elNeg.platedQuality = 'smooth';
+        elNeg.platedNiMol = (elNeg.platedNiMol || 0) + dNi;
+        cathDesc = '[Ni(NH₃)₆]²⁺ + 2e⁻ → Ni(s) + 6NH₃';
       } else if ((v.moles.H_aq || 0) > neMol * 1.2) {
         const dH2 = neMol / 2;
         addMolSafe(v.moles, 'H_aq', -2 * dH2);
@@ -1199,6 +1216,8 @@ export function computeVesselRedoxAndCellMetrics(vessel, items = [], liqL = 0, p
     ehV = 0.7996 + rtF * Math.log(Math.max(1e-12, (m.Ag_aq || 0) / vSafe));
   } else if ((m.Cu2_aq || 0) > 1e-7) {
     ehV = 0.3419 + (rtF / 2) * Math.log(Math.max(1e-12, (m.Cu2_aq || 0) / vSafe));
+  } else if ((m.Ni2_aq || 0) > 1e-7) {
+    ehV = -0.257 + (rtF / 2) * Math.log(Math.max(1e-12, (m.Ni2_aq || 0) / vSafe));
   } else if ((m.Zn2_aq || 0) > 1e-7) {
     ehV = -0.7618 + (rtF / 2) * Math.log(Math.max(1e-12, (m.Zn2_aq || 0) / vSafe));
   } else {

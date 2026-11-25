@@ -1,4 +1,4 @@
-const CACHE_NAME = 'virlab-beta-v5-build-30';
+const CACHE_NAME = 'virlab-beta-v5-build-31';
 const ASSETS = [
   './',
   './index.html',

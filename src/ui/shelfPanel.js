@@ -1,5 +1,5 @@
 import { APPARATUS, APPARATUS_CATEGORIES, APPARATUS_ORDER } from '../data/apparatus.js';
-import { REAGENT_CATEGORIES, STARTER_REAGENTS, getReagentGhsHazards } from '../data/species.js';
+import { REAGENT_CATEGORIES, ORGANIC_SUBCATEGORIES, STARTER_REAGENTS, getReagentGhsHazards } from '../data/species.js';
 import { drawReagentBottle } from '../canvas/reagentRenderer.js';
 import { getMissionById, isApparatusAllowedInMission, isReagentAllowedInMission } from '../data/missions.js';
 
@@ -124,6 +124,55 @@ function shelfMotifSvg(motif) {
       return `<g transform="translate(13,17)">
         <polygon points="5,0 9.5,2.5 9.5,7.5 5,10 0.5,7.5 0.5,2.5" fill="none" stroke="#fbbf24" stroke-width="1.25"/>
         <circle cx="5" cy="5" r="2.2" fill="none" stroke="#fde68a" stroke-width="1"/>
+      </g>`;
+    case 'skeletal_etoh':
+      return `<g transform="translate(10,16)">
+        <polyline points="2,6 6.5,2.5 11,6" fill="none" stroke="#38bdf8" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="12" y="7" font-size="4.4" fill="#fb7185" font-weight="bold">OH</text>
+      </g>`;
+    case 'skeletal_methanol':
+      return `<g transform="translate(11,16)">
+        <line x1="2" y1="6" x2="7.5" y2="2.5" stroke="#38bdf8" stroke-width="1.35" stroke-linecap="round"/>
+        <text x="8" y="4" font-size="4.4" fill="#fb7185" font-weight="bold">OH</text>
+      </g>`;
+    case 'skeletal_ch3cooh':
+      return `<g transform="translate(10,16)">
+        <polyline points="2,7 6.5,3.5 11,7" fill="none" stroke="#fda4af" stroke-width="1.25" stroke-linecap="round"/>
+        <line x1="5.8" y1="3.5" x2="5.8" y2="0" stroke="#fda4af" stroke-width="1"/>
+        <line x1="7.2" y1="3.5" x2="7.2" y2="0" stroke="#fda4af" stroke-width="1"/>
+        <text x="11.5" y="8" font-size="4.2" fill="#f43f5e" font-weight="bold">OH</text>
+      </g>`;
+    case 'skeletal_hcooh':
+    case 'skeletal_hcho':
+      return `<g transform="translate(11,16)">
+        <polyline points="2,7 6.5,3.5 11,7" fill="none" stroke="#38bdf8" stroke-width="1.25"/>
+        <line x1="5.8" y1="3.5" x2="5.8" y2="0" stroke="#38bdf8" stroke-width="1"/>
+        <line x1="7.2" y1="3.5" x2="7.2" y2="0" stroke="#38bdf8" stroke-width="1"/>
+      </g>`;
+    case 'skeletal_glycerol':
+      return `<g transform="translate(10,16)">
+        <polyline points="2,5.5 5.5,2 10,2 13.5,5.5" fill="none" stroke="#2dd4bf" stroke-width="1.3" stroke-linecap="round"/>
+        <circle cx="2" cy="7.5" r="1.1" fill="#f87171"/>
+        <circle cx="7.8" cy="5" r="1.1" fill="#f87171"/>
+        <circle cx="13.5" cy="7.5" r="1.1" fill="#f87171"/>
+      </g>`;
+    case 'skeletal_glucose':
+      return `<g transform="translate(12,15)">
+        <polygon points="6,1 10.5,3.5 10.5,8.5 6,11 1.5,8.5 1.5,3.5" fill="none" stroke="#c4b5fd" stroke-width="1.25"/>
+        <line x1="1.5" y1="3.5" x2="-1" y2="0.5" stroke="#c4b5fd" stroke-width="1.1"/>
+        <circle cx="6" cy="1.2" r="1.4" fill="#f87171"/>
+      </g>`;
+    case 'skeletal_fructose':
+      return `<g transform="translate(12,15)">
+        <polygon points="6,1.5 10.5,5 8.5,10.5 3.5,10.5 1.5,5" fill="none" stroke="#fcd34d" stroke-width="1.25"/>
+        <line x1="1.5" y1="5" x2="-1" y2="2" stroke="#fcd34d" stroke-width="1.1"/>
+        <circle cx="6" cy="1.5" r="1.4" fill="#f87171"/>
+      </g>`;
+    case 'skeletal_glycine':
+      return `<g transform="translate(11,16)">
+        <polyline points="2,6.5 6.5,3 11,6.5" fill="none" stroke="#d8b4fe" stroke-width="1.25"/>
+        <line x1="6.5" y1="3" x2="6.5" y2="-0.5" stroke="#f87171" stroke-width="1.2"/>
+        <circle cx="2" cy="6.5" r="1.3" fill="#60a5fa"/>
       </g>`;
     case 'alcohol_flame':
       return `<path d="M18 17c-2.2 2.4-2.5 4.8 0 6.5 2.5-1.7 2.2-4.1 0-6.5z" fill="#38bdf8" stroke="#e0f2fe" stroke-width="0.6"/>`;
@@ -266,6 +315,7 @@ export class ShelfPanel {
     this.callbacks = callbacks; // { onAddApparatus, onSelectReagent, onExternalDragMove, onExternalDrop }
     this.activeCategory = 'all';
     this.activeReagentCategory = 'all';
+    this.activeOrganicGroup = 'all';
     this.onlyAllowed = false;
     this.lastShelfSig = '';
     this._dragSession = null;
@@ -389,7 +439,7 @@ export class ShelfPanel {
   getShelfSignature(t) {
     const ms = this.sim?.missionState;
     const missionSig = ms?.active ? `${ms.missionId}:${ms.mode}:${this.onlyAllowed ? 1 : 0}` : 'free';
-    return `${t('equipmentTitle')}|${this.activeCategory}|${this.activeReagentCategory}|${missionSig}`;
+    return `${t('equipmentTitle')}|${this.activeCategory}|${this.activeReagentCategory}|${this.activeOrganicGroup}|${missionSig}`;
   }
 
   render(t, force = false) {
@@ -412,7 +462,13 @@ export class ShelfPanel {
     const baseReagents =
       this.activeReagentCategory === 'all'
         ? STARTER_REAGENTS
-        : STARTER_REAGENTS.filter((r) => r.category === this.activeReagentCategory);
+        : STARTER_REAGENTS.filter((r) => {
+            if (r.category !== this.activeReagentCategory) return false;
+            if (this.activeReagentCategory === 'organic' && this.activeOrganicGroup !== 'all') {
+              return r.organicGroup === this.activeOrganicGroup;
+            }
+            return true;
+          });
     const filteredReagents = hideLocked
       ? baseReagents.filter((r) => isReagentAllowedInMission(activeMission, r.id))
       : baseReagents;
@@ -422,7 +478,7 @@ export class ShelfPanel {
         ${
           activeMission
             ? `<div class="p-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-[11px] text-amber-300 font-medium flex items-center justify-between gap-2">
-                <span class="min-w-0 leading-snug">🎯 ${t('missionShelfScoped')}</span>
+                <span class="min-w-0 leading-snug">${activeMission.shelfPolicy === 'initial_only' ? `🔒 ${t('missionInitialOnlyBanner')}` : `🎯 ${t('missionShelfScoped')}`}</span>
                 <button
                   type="button"
                   id="btn-shelf-allowed-only"
@@ -489,6 +545,18 @@ export class ShelfPanel {
               }">${t(cat.i18nKey)}</button>`;
             }).join('')}
           </div>
+          ${
+            this.activeReagentCategory === 'organic'
+              ? `<div class="flex flex-wrap gap-1 mb-2 pl-1 border-l-2 border-accent/40" id="shelf-organic-subcats">
+                  ${ORGANIC_SUBCATEGORIES.map((sub) => {
+                    const active = this.activeOrganicGroup === sub.id;
+                    return `<button type="button" data-org-group="${sub.id}" class="org-sub-btn px-2 py-0.5 rounded-full text-[10.5px] font-medium border transition ${
+                      active ? 'border-accent bg-accent/20 text-accent font-semibold' : 'border-theme bg-surface text-muted hover:text-main'
+                    }">${t(sub.i18nKey)}</button>`;
+                  }).join('')}
+                </div>`
+              : ''
+          }
           <div class="space-y-1.5" id="shelf-reagents-list">
             ${filteredReagents.map((reg) => {
               const hazards = getReagentGhsHazards(reg);
@@ -541,6 +609,13 @@ export class ShelfPanel {
     this.container.querySelectorAll('.reg-cat-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         this.activeReagentCategory = btn.dataset.regCat;
+        if (this.activeReagentCategory !== 'organic') this.activeOrganicGroup = 'all';
+        this.render(this.getLang(), true);
+      });
+    });
+    this.container.querySelectorAll('.org-sub-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.activeOrganicGroup = btn.dataset.orgGroup;
         this.render(this.getLang(), true);
       });
     });

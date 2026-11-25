@@ -320,8 +320,9 @@ export class DosingModal {
     if (st.mode === 'reagent') {
       const reg = STARTER_REAGENTS.find((r) => r.id === st.reagentId);
       const isSolid = reg.kind === 'solid';
+      const blindDosing = Boolean(this.sim?.missionState?.active && this.sim.missionState.blindDosingMode);
       const title = isSolid ? t('dosingTitleSolid') : t('dosingTitleLiquid');
-      const unitList = isSolid ? ['g', 'mol'] : ['mL', 'g', 'mol'];
+      const unitList = blindDosing ? (isSolid ? ['g'] : ['mL', 'g']) : (isSolid ? ['g', 'mol'] : ['mL', 'g', 'mol']);
       const curUnit = unitList.includes(st.unit) ? st.unit : isSolid ? 'g' : 'mL';
       st.unit = curUnit;
       const dispValRaw = fromCanonicalAmount(reg, st.amount, curUnit);
@@ -330,7 +331,7 @@ export class DosingModal {
       const maxDispRaw = Math.max(minDisp * 2, fromCanonicalAmount(reg, reg.maxDose, curUnit));
       const maxDisp = curUnit === 'mol' ? Number(maxDispRaw.toFixed(4)) : Number(maxDispRaw.toFixed(2));
       const stepDisp = curUnit === 'mol' ? 0.001 : reg.step;
-      const convPreview = formatUnitConversions(reg, st.amount, curUnit);
+      const convPreview = blindDosing ? `🔒 ${t('blindDosingHiddenHint')}` : formatUnitConversions(reg, st.amount, curUnit);
       const presets =
         reg.dosePresets || (isSolid ? [0.25, 0.5, 1.0, 2.5, 5.0] : [1, 5, 10, 25, 50, 100]);
 
@@ -686,7 +687,8 @@ export class DosingModal {
       }
       const preview = this.container.querySelector('#dosing-mol-preview');
       if (preview && reg) {
-        preview.textContent = formatUnitConversions(reg, this.state.amount, unit);
+        const blindDosing = Boolean(this.sim?.missionState?.active && this.sim.missionState.blindDosingMode);
+        preview.textContent = blindDosing ? `🔒 ${this.getLang()('blindDosingHiddenHint')}` : formatUnitConversions(reg, this.state.amount, unit);
       }
     };
 

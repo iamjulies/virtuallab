@@ -516,14 +516,16 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     return rxn.k298 * arrheniusFactor(rxn.eaJ || 42000, T) * Math.max(1e-5, area) * hotFactor * stirBoost * iceMob * 9.0;
   }
 
-  if (rxn.type === 'mg_steam_rxn') {
+  if (rxn.type === 'mg_steam_rxn' || rxn.type === 'metal_steam_rxn') {
     if (T <= (rxn.minTempK || 373.65)) return 0;
-    const nMg = moles.Mg_s || 0;
+    const solidId = rxn.solidId || 'Mg_s';
+    const nMet = moles[solidId] || 0;
     const nSteam = (vessel.headspaceGasMoles?.H2O_g || 0) + (moles.H2O_l || 0);
-    if (nMg <= 1e-10 || nSteam <= 1e-9) return 0;
-    const area = computeSolidSurfaceAreaM2('Mg_s', nMg, vessel.particleCounts?.Mg_s ?? 6);
-    const k = (rxn.kAtThreshold || 0.42) * arrheniusFactor(rxn.eaJ || 36000, T - 373.65 + CONSTANTS.T_STD_K);
-    return Math.min(nMg * 0.9, nSteam * 0.9, k * Math.max(1e-4, area) * 14.0);
+    if (nMet <= 1e-10 || nSteam <= 1e-9) return 0;
+    const area = computeSolidSurfaceAreaM2(solidId, nMet, vessel.particleCounts?.[solidId] ?? 6);
+    const baseT = rxn.minTempK || 373.65;
+    const k = (rxn.kAtThreshold || 0.42) * arrheniusFactor(rxn.eaJ || 36000, T - baseT + CONSTANTS.T_STD_K);
+    return Math.min(nMet * 0.9, nSteam * 0.9, k * Math.max(1e-4, area) * 14.0);
   }
 
   if (rxn.type === 'al_alkali') {
@@ -1772,6 +1774,7 @@ export const DRY_COMPLEX_DISSOCIATIONS = {
   AgCl2_aq: { AgCl_s: 1, Cl_aq: 1 },
   CuCl2_comp_aq: { CuCl_s: 1, Cl_aq: 1 },
   CuNH3_4_2_aq: { Cu2_aq: 1, NH3_g: 4 },
+  NiNH3_6_2_aq: { Ni2_aq: 1, NH3_g: 6 },
   AgNH3_2_aq: { Ag_aq: 1, NH3_g: 2 },
   ZnNH3_4_2_aq: { Zn2_aq: 1, NH3_g: 4 },
   AlOH4_aq: { AlOH3_s: 1, OH_aq: 1 },
@@ -1974,6 +1977,7 @@ export const DRY_SALT_PAIRINGS = [
   ['H_aq', 1, 'NO3_aq', 1, 'HNO3_g', 1, true],
   ['Ag_aq', 2, 'S2_aq', 1, 'Ag2S_s', 1, false],
   ['Cu2_aq', 1, 'S2_aq', 1, 'CuS_s', 1, false],
+  ['Ni2_aq', 1, 'S2_aq', 1, 'NiS_s', 1, false],
   ['Fe2_aq', 1, 'S2_aq', 1, 'FeS_s', 1, false],
   ['Zn2_aq', 1, 'S2_aq', 1, 'ZnS_s', 1, false],
   ['Mn2_aq', 1, 'S2_aq', 1, 'MnS_s', 1, false],
@@ -2257,6 +2261,7 @@ export const METAL_REDOX_SPECS = {
   Al_s: { solidId: 'Al_s', formula: 'Al', name: 'Aluminium', E0: -1.66, maxValence: 3, ionId: 'Al3_aq', canPassivate: true, noble: false },
   Zn_s: { solidId: 'Zn_s', formula: 'Zn', name: 'Zinc', E0: -0.76, maxValence: 2, ionId: 'Zn2_aq', canPassivate: false, noble: false },
   Fe_s: { solidId: 'Fe_s', formula: 'Fe', name: 'Iron', E0: -0.44, maxValence: 3, ionId: 'Fe3_aq', canPassivate: true, noble: false },
+  Ni_s: { solidId: 'Ni_s', formula: 'Ni', name: 'Nickel', E0: -0.257, maxValence: 2, ionId: 'Ni2_aq', canPassivate: true, noble: false },
   Cu_s: { solidId: 'Cu_s', formula: 'Cu', name: 'Copper', E0: 0.34, maxValence: 2, ionId: 'Cu2_aq', canPassivate: false, noble: false },
   Ag_s: { solidId: 'Ag_s', formula: 'Ag', name: 'Silver', E0: 0.80, maxValence: 1, ionId: 'Ag_aq', canPassivate: false, noble: false },
   Pt_s: { solidId: 'Pt_s', formula: 'Pt', name: 'Platinum', E0: 1.18, maxValence: 4, ionId: 'PtCl6_2_aq', canPassivate: false, noble: true },
@@ -2406,10 +2411,12 @@ function stepMetalNitrateSolver(vessel, liquidVolL, dt, activeReactions, gasProd
       if ((wHNO3 >= 0.60 || cAcid >= 10.0) && T < 323.15) {
         if (solidId === 'Fe_s') vessel.fePassivated = true;
         if (solidId === 'Al_s') vessel.alPassivated = true;
+        if (solidId === 'Ni_s') vessel.niPassivated = true;
         continue;
       }
       if (solidId === 'Fe_s') vessel.fePassivated = false;
       if (solidId === 'Al_s') vessel.alPassivated = false;
+      if (solidId === 'Ni_s') vessel.niPassivated = false;
     }
 
     const mix = selectNitrateReductionMix(metalSpec, wHNO3, cAcid);
@@ -2767,7 +2774,120 @@ function stepMetalSulfuricSolver(vessel, liquidVolL, dt, activeReactions, gasPro
     }
   }
 
+  // 7. Nickel (Ni_s) in hot conc. H2SO4 (>= 65%, T >= 50 C -> NiSO4 + SO2↑ + 2H2O)
+  const nNiSulf = moles.Ni_s || 0;
+  if (nNiSulf > 1e-10 && sulf.w >= 0.65 && T >= 323.15) {
+    vessel.niPassivated = false;
+    const pCount = vessel.particleCounts?.Ni_s ?? 6;
+    const area = computeSolidSurfaceAreaM2('Ni_s', nNiSulf, pCount);
+    const k = 0.24 * arrheniusFactor(30000, T) * stirBoost * iceMob;
+    const dNi = Math.min(nNiSulf, getAvailAcidEq() / 2, k * Math.max(1e-5, area) * 3.5 * dt);
+    if (dNi > 1e-12) {
+      const usedAcid = consumeH2SO4Eq(2 * dNi);
+      const effNi = usedAcid / 2;
+      moles.Ni_s = Math.max(0, nNiSulf - effNi);
+      if (moles.Ni_s < 1e-13) delete moles.Ni_s;
+      moles.Ni2_aq = (moles.Ni2_aq || 0) + effNi;
+      moles.SO4_2_aq = (moles.SO4_2_aq || 0) + effNi;
+      moles.H2O_l = (moles.H2O_l || 0) + 2 * effNi;
+      gasProduced.SO2_g = (gasProduced.SO2_g || 0) + effNi;
+      totalHeatJ += 135000 * effNi;
+      activeReactions.push({
+        id: 'ni_h2so4_conc_hot',
+        equation: 'Ni(s) + 2H₂SO₄(đặc, nóng) → NiSO₄ + SO₂(g)↑ + 2H₂O(l)',
+        nameVi: 'Nickel tác dụng với H₂SO₄ đặc, nóng tạo muối NiSO₄ xanh lục + SO₂↑',
+        nameEn: 'Nickel oxidation in hot concentrated H₂SO₄ (green Ni²⁺ + SO₂↑)',
+        descVi: 'Khi đun nóng với H₂SO₄ đặc, Nickel tan tạo dung dịch NiSO₄ xanh lục và giải phóng khí hắc SO₂.',
+        descEn: 'In hot concentrated H₂SO₄, Nickel dissolves into green Ni²⁺ solution while evolving pungent SO₂ gas.',
+        rateMolS: effNi / Math.max(1e-4, dt),
+        vigorousGas: true,
+        dXi: effNi,
+      });
+    }
+  }
+
   return totalHeatJ;
+}
+
+/**
+ * Reversible Mond Carbonyl Process:
+ * Ni(s) + 4CO(g) -> Ni(CO)4(l/g) at mild heat (~40–90 °C, peak 50–60 °C);
+ * Ni(CO)4(l/g) -> Ni(s) + 4CO(g)↑ above 180 °C (453.15 K) depositing ultra-pure Nickel.
+ */
+function stepNickelMondProcess(vessel, dt, activeReactions, gasProduced) {
+  const moles = vessel.moles;
+  const head = vessel.headspaceGasMoles || {};
+  const T = vessel.tempK || CONSTANTS.T_STD_K;
+  let heatJ = 0;
+
+  const nNi = moles.Ni_s || 0;
+  const nCO = head.CO_g || 0;
+  if (nNi > 1e-10 && nCO > 1e-9 && T >= 313.15 && T <= 368.15) {
+    // Optimum synthesis window 50–60 °C (323–333 K)
+    const winFactor = Math.exp(-Math.pow((T - 328.15) / 26.0, 2));
+    const pCount = vessel.particleCounts?.Ni_s ?? 8;
+    const area = computeSolidSurfaceAreaM2('Ni_s', nNi, pCount);
+    const dXi = Math.min(nNi, nCO / 4, 0.85 * winFactor * Math.max(1e-4, area) * Math.min(3.5, nCO / 0.002) * dt);
+    if (dXi > 1e-12) {
+      moles.Ni_s = Math.max(0, nNi - dXi);
+      if (moles.Ni_s < 1e-13) delete moles.Ni_s;
+      head.CO_g = Math.max(0, nCO - 4 * dXi);
+      if (T >= 315.35) {
+        gasProduced.NiCO4_g = (gasProduced.NiCO4_g || 0) + dXi;
+      } else {
+        moles.NiCO4_l = (moles.NiCO4_l || 0) + dXi;
+      }
+      heatJ += 160000 * dXi;
+      activeReactions.push({
+        id: 'ni_mond_synthesis',
+        equation: 'Ni(s) + 4CO(g) —(50–60 °C)→ Ni(CO)₄(l/g)',
+        nameVi: 'Tổng hợp Nickel tetracarbonyl (Quy trình Mond tinh chế Ni)',
+        nameEn: 'Mond carbonyl synthesis: Ni(s) + 4CO(g) → Ni(CO)₄',
+        descVi: 'Ở 50–60 °C, khí CO phản ứng chọn lọc với Nickel tạo hơi/lỏng dễ bay hơi Ni(CO)₄ rất độc (sôi 42.2 °C).',
+        descEn: 'At 50–60 °C, Carbon monoxide selectively converts Nickel into volatile toxic Ni(CO)₄ (bp 42.2 °C).',
+        rateMolS: dXi / Math.max(1e-4, dt),
+        dXi,
+      });
+    }
+  }
+
+  // Thermal decomposition > 180 °C (453.15 K): Ni(CO)4 -> pure Ni(s) + 4 CO(g)↑
+  if (T >= 453.15) {
+    const nLiq = moles.NiCO4_l || 0;
+    const nGas = head.NiCO4_g || 0;
+    if (nLiq + nGas > 1e-10) {
+      const kDec = 1.6 * arrheniusFactor(36000, T - 453.15 + CONSTANTS.T_STD_K);
+      const frac = 1 - Math.exp(-Math.min(12.0, kDec) * dt);
+      const dLiq = nLiq * frac;
+      const dGas = nGas * frac;
+      const dTot = dLiq + dGas;
+      if (dTot > 1e-12) {
+        if (dLiq > 0) {
+          moles.NiCO4_l = Math.max(0, nLiq - dLiq);
+          if (moles.NiCO4_l < 1e-13) delete moles.NiCO4_l;
+        }
+        if (dGas > 0) {
+          head.NiCO4_g = Math.max(0, nGas - dGas);
+        }
+        moles.Ni_s = (moles.Ni_s || 0) + dTot;
+        gasProduced.CO_g = (gasProduced.CO_g || 0) + 4 * dTot;
+        heatJ -= 160000 * dTot;
+        activeReactions.push({
+          id: 'ni_mond_decomp',
+          equation: 'Ni(CO)₄(g) —(> 180 °C)→ Ni(s) + 4CO(g)↑',
+          nameVi: 'Nhiệt phân Ni(CO)₄ (>180 °C) thu Nickel tinh khiết & khí CO↑',
+          nameEn: 'Mond thermal decomposition (>180 °C): Ni(CO)₄ → Ni(s) + 4CO↑',
+          descVi: 'Trên 180 °C, Ni(CO)₄ phân hủy hoàn toàn kết tủa kim loại Nickel siêu tinh khiết và giải phóng khí CO.',
+          descEn: 'Above 180 °C, Nickel tetracarbonyl decomposes into ultra-pure metallic Ni and Carbon monoxide gas.',
+          rateMolS: dTot / Math.max(1e-4, dt),
+          vigorousGas: true,
+          dXi: dTot,
+        });
+      }
+    }
+  }
+
+  return heatJ;
 }
 
 /**
@@ -3326,6 +3446,7 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     reactionHeatJ += stepPropertyDrivenOrganic(vessel, strat, 0, dt, activeReactions, gasProduced, (id) => getReactantAvailableMol(vessel, id, env), options);
     reactionHeatJ += stepChemisorptionAndGarden(vessel, 0, dt, activeReactions);
   }
+  reactionHeatJ += stepNickelMondProcess(vessel, dt, activeReactions, gasProduced);
 
   // 5. Supersaturation & cryo-cooling crystallization (including ethanol salting-out)
   reactionHeatJ += applySupersaturationCrystallization(vessel, dt, activeReactions);
@@ -3428,8 +3549,8 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   const moles = vessel.moles;
   const liqV = computeLiquidVolumeL(moles, vessel.tempK);
 
-  // Clear Fe & Al passivation flags once outside cold concentrated HNO3 or cold concentrated H2SO4
-  if (vessel.fePassivated || vessel.alPassivated) {
+  // Clear Fe, Al & Ni passivation flags once outside cold concentrated HNO3 or cold concentrated H2SO4
+  if (vessel.fePassivated || vessel.alPassivated || vessel.niPassivated) {
     const nAcidCheck = Math.min(moles.H_aq || 0, moles.NO3_aq || 0);
     const cAcidCheck = liqV > 1e-5 ? nAcidCheck / liqV : 0;
     const mHno3C = nAcidCheck * CONSTANTS.M_HNO3;
@@ -3443,6 +3564,9 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
     }
     if ((moles.Al_s || 0) <= 1e-10 || (!inColdConcHNO3 && !inColdConcH2SO4)) {
       vessel.alPassivated = false;
+    }
+    if ((moles.Ni_s || 0) <= 1e-10 || !inColdConcHNO3) {
+      vessel.niPassivated = false;
     }
   }
 

@@ -1016,6 +1016,42 @@ function escPrintHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+function formatReportLogTime(l) {
+  if (l?.timeStr) return String(l.timeStr).trim();
+  const s = Math.max(0, Number.isFinite(l?.timeSec) ? l.timeSec : 0);
+  const mins = Math.floor(s / 60);
+  const rem = s - mins * 60;
+  return `${String(mins).padStart(2, '0')}:${rem.toFixed(1).padStart(4, '0')}s`;
+}
+
+function formatReportLogEntry(l, translate, isEn, hideRxnLogs = false) {
+  if (!l || typeof l !== 'object') return null;
+  const ts = formatReportLogTime(l);
+  if (l.key) {
+    let raw = translate(l.key);
+    if (l.params && typeof l.params === 'object') {
+      for (const [pk, pv] of Object.entries(l.params)) {
+        raw = raw.replaceAll(`{${pk}}`, String(pv ?? ''));
+      }
+    }
+    const body = String(raw || '').trim();
+    if (!body) return null;
+    const prefix = l.vesselLabel ? `${l.vesselLabel} · ` : '';
+    return `<li><code>[${escPrintHtml(ts)}]</code> ${escPrintHtml(prefix + body)}</li>`;
+  }
+  if (hideRxnLogs && l.type === 'reaction') {
+    const vLbl = l.vesselLabel || '?';
+    return `<li><code>[${escPrintHtml(ts)}]</code> ${escPrintHtml(vLbl)} · 🔒 ${escPrintHtml(translate('blindHiddenLogMsg'))}</li>`;
+  }
+  const msg = isEn
+    ? (l.nameEn || l.equation || l.descEn || '').trim()
+    : (l.nameVi || l.equation || l.descVi || '').trim();
+  if (!msg) return null;
+  const eqNote = l.equation && msg !== l.equation ? ` (${l.equation})` : '';
+  const prefix = l.vesselLabel ? `${l.vesselLabel} · ` : '';
+  return `<li><code>[${escPrintHtml(ts)}]</code> ${escPrintHtml(prefix + msg + eqNote)}</li>`;
+}
+
 function composeDirectReportPdfCanvas({ benchCanvas, sim, labName, lang, missionResult }) {
   const isEn = lang === 'en';
   const baseSnap = benchCanvas;
@@ -1121,7 +1157,9 @@ export function buildLabReportBundle({ sim, workbenchCanvas, isDark, labName, t,
         ? []
         : GAS_DISPLAY_META.map((g) => {
             const tot = (v.headspaceGasMoles?.[g.id] || 0) + (v.escapedGasMoles?.[g.id] || 0);
-            return tot > 1e-6 ? `${g.formula}: ${(tot * 1000).toFixed(2)} mmol` : '';
+            if (!(tot > 1e-6)) return '';
+            const formula = g.label || SPECIES[g.id]?.formula || g.id;
+            return `${formula}: ${(tot * 1000).toFixed(2)} mmol`;
           }).filter(Boolean);
 
       return `
@@ -1155,15 +1193,18 @@ export function buildLabReportBundle({ sim, workbenchCanvas, isDark, labName, t,
     })
     .join('');
 
+  const hideBlindLogs = Boolean(!mEval && vessels.some((v) => v.hideComposition));
   const logItems = (sim?.logs || [])
     .slice(0, 40)
-    .map((l) => `<li><code>[${escPrintHtml(l.timeStr || '')}]</code> ${escPrintHtml(translate(l.key, l.params))}</li>`);
+    .map((l) => formatReportLogEntry(l, translate, isEn, hideBlindLogs))
+    .filter(Boolean);
 
   if (mEval && logItems.length < 4 && sim?.missionTelemetry) {
     const tel = sim.missionTelemetry;
     const summarySteps = [];
     if (tel.usedPipetteTransfer) {
-      const lbls = (tel.sampledBlindLabels || []).length ? ` (${tel.sampledBlindLabels.join(', ')})` : '';
+      const uniqueLbls = [...new Set((tel.sampledBlindLabels || []).map((s) => String(s).trim()).filter(Boolean))];
+      const lbls = uniqueLbls.length ? ` (${uniqueLbls.join(', ')})` : '';
       summarySteps.push(isEn ? `Pipette / sampling transfers recorded${lbls}` : `Đã thực hiện lấy mẫu bằng Pipette / ống nghiệm${lbls}`);
     }
     if (tel.usedLitmusOrPh) {

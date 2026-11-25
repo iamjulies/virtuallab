@@ -1025,11 +1025,133 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
 }
 
 /**
+ * Heterogeneous Nickel (Ni_s) Catalytic Hydrogenation:
+ * Requires Ni_s catalyst + headspace H2_g + heating (T >= 373.15 K / 100 °C).
+ * Drives Triolein/Trilinolein fat hardening -> Tristearin, HCHO/CH3CHO reduction -> alcohols,
+ * and alkene/alkyne hydrogen additions.
+ */
+function stepNickelHydrogenation(vessel, dt, activeReactions, gasProduced) {
+  if (!vessel || vessel.isFrozenSolid || dt <= 0) return 0;
+  const moles = vessel.moles;
+  const head = vessel.headspaceGasMoles || {};
+  const nNi = moles?.Ni_s || 0;
+  const nH2Init = head.H2_g || 0;
+  const T = vessel.tempK || CONSTANTS.T_STD_K;
+  if (nNi <= 1e-8 || nH2Init <= 1e-8 || T < 373.15) return 0;
+
+  let heatJ = 0;
+  const pCount = vessel.particleCounts?.Ni_s ?? 6;
+  const isFine = Boolean(vessel.groundPowderMap?.Ni_s) || pCount >= 18;
+  const catFactor = Math.min(4.5, (0.4 + nNi * 30.0) * (isFine ? 1.85 : 1.0) * ((vessel.stirTimer || 0) > 0 ? 1.6 : 1.0));
+  const tFactor = Math.min(3.5, Math.exp((T - 423.15) / 55.0));
+
+  // 1. Fat hardening: unsaturated triglycerides (isFat && hydrogenatedSpeciesId) + n H2 -> solid Tristearin
+  for (const spId of Object.keys(moles)) {
+    const sp = SPECIES[spId];
+    const nFat = moles[spId] || 0;
+    const h2Now = head.H2_g || 0;
+    if (!sp?.isFat || !sp.hydrogenatedSpeciesId || !SPECIES[sp.hydrogenatedSpeciesId] || nFat <= 1e-9 || h2Now <= 1e-8) continue;
+    const nH2Need = Math.max(1, Number(sp.doubleBondsPerMolecule) || 3);
+    const kFat = 0.55 * catFactor * tFactor;
+    const dExt = Math.min(nFat, h2Now / nH2Need) * (1 - Math.exp(-kFat * dt));
+    if (dExt > 1e-12) {
+      moles[spId] = Math.max(0, nFat - dExt);
+      if (moles[spId] < 1e-13) delete moles[spId];
+      head.H2_g = Math.max(0, h2Now - nH2Need * dExt);
+      const targetId = sp.hydrogenatedSpeciesId;
+      moles[targetId] = (moles[targetId] || 0) + dExt;
+      heatJ += dExt * nH2Need * 124000;
+      activeReactions.push({
+        id: `ni_h2_fat_${spId}`,
+        equation: `${sp.formula} + ${nH2Need}H₂(g) —(Ni, t°)→ ${SPECIES[targetId].formula} (bơ rắn)`,
+        nameVi: `Cộng H₂ (xúc tác Ni, t°) chuyển hóa chất béo lỏng thành ${SPECIES[targetId].name}`,
+        nameEn: `Nickel-catalyzed hydrogenation hardening fat to solid ${SPECIES[targetId].name}`,
+        descVi: 'Xúc tác Ni và đun nóng cộng H₂ bão hòa các nối đôi C=C làm dầu thực vật lỏng rắn hóa thành mỡ rắn.',
+        descEn: 'Ni catalysis saturates C=C bonds with H₂(g), hardening liquid vegetable oil into solid Tristearin.',
+        rateMolS: dExt / dt,
+        dXi: dExt,
+      });
+    }
+  }
+
+  // 2. Aldehyde reduction: HCHO + H2 -> CH3OH, CH3CHO + H2 -> C2H5OH
+  for (const [aldId, alcId, aldName] of [
+    ['HCHO_aq', 'CH3OH_l', 'Formaldehyde (HCHO)'],
+    ['CH3CHO_l', 'C2H5OH_l', 'Acetaldehyde (CH₃CHO)'],
+  ]) {
+    const nAld = moles[aldId] || 0;
+    const h2Now = head.H2_g || 0;
+    if (nAld > 1e-9 && h2Now > 1e-8 && SPECIES[alcId]) {
+      const kAld = 0.72 * catFactor * tFactor;
+      const dExt = Math.min(nAld, h2Now) * (1 - Math.exp(-kAld * dt));
+      if (dExt > 1e-12) {
+        moles[aldId] = Math.max(0, nAld - dExt);
+        if (moles[aldId] < 1e-13) delete moles[aldId];
+        head.H2_g = Math.max(0, h2Now - dExt);
+        moles[alcId] = (moles[alcId] || 0) + dExt;
+        heatJ += dExt * 82000;
+        activeReactions.push({
+          id: `ni_h2_ald_${aldId}`,
+          equation: `${SPECIES[aldId]?.formula || aldId} + H₂(g) —(Ni, t°)→ ${SPECIES[alcId].formula}`,
+          nameVi: `Khử ${aldName} bằng H₂ (xúc tác Ni) tạo ancol`,
+          nameEn: `Nickel-catalyzed hydrogenation of ${aldName}`,
+          descVi: 'Trên bề mặt xúc tác Nickel nung nóng, H₂ cộng vào nhóm C=O khử aldehyde thành alcohol.',
+          descEn: 'Heated Nickel catalyzes H₂ addition across the carbonyl bond reducing aldehyde to alcohol.',
+          rateMolS: dExt / dt,
+          dXi: dExt,
+        });
+      }
+    }
+  }
+
+  // 3. Unsaturated hydrocarbons hydrogenation (moles & headspace)
+  const unsatTargets = [
+    { src: 'C6H12_l', dst: 'C6H14_l', inHead: false, outHead: false },
+    { src: 'C3H6_g', dst: 'C3H8_g', inHead: true, outHead: true },
+    { src: 'C2H2_g', dst: 'C2H4_g', inHead: true, outHead: true },
+    { src: 'C2H4_g', dst: 'C2H6_g', inHead: true, outHead: true },
+  ];
+  for (const ut of unsatTargets) {
+    if (!SPECIES[ut.src] || !SPECIES[ut.dst]) continue;
+    const srcMap = ut.inHead ? head : moles;
+    const nSrc = srcMap[ut.src] || 0;
+    const h2Now = head.H2_g || 0;
+    if (nSrc <= 1e-9 || h2Now <= 1e-8) continue;
+    const dExt = Math.min(nSrc, h2Now) * (1 - Math.exp(-0.85 * catFactor * tFactor * dt));
+    if (dExt > 1e-12) {
+      srcMap[ut.src] = Math.max(0, nSrc - dExt);
+      if (!ut.inHead && srcMap[ut.src] < 1e-13) delete srcMap[ut.src];
+      head.H2_g = Math.max(0, h2Now - dExt);
+      if (ut.outHead) {
+        if (gasProduced) gasProduced[ut.dst] = (gasProduced[ut.dst] || 0) + dExt;
+        else head[ut.dst] = (head[ut.dst] || 0) + dExt;
+      } else {
+        moles[ut.dst] = (moles[ut.dst] || 0) + dExt;
+      }
+      heatJ += dExt * 136000;
+      activeReactions.push({
+        id: `ni_h2_${ut.src}`,
+        equation: `${SPECIES[ut.src].formula} + H₂(g) —(Ni, t°)→ ${SPECIES[ut.dst].formula}`,
+        nameVi: `Hydrogen hóa ${SPECIES[ut.src].name} (xúc tác Ni, t°)`,
+        nameEn: `Ni-catalyzed hydrogenation of ${SPECIES[ut.src].name}`,
+        descVi: 'Xúc tác Nickel cộng H₂ bão hòa liên kết bội hydrocarbon khi đun nóng.',
+        descEn: 'Heated Nickel catalyzes hydrogen addition across unsaturated carbon bonds.',
+        rateMolS: dExt / dt,
+        dXi: dExt,
+      });
+    }
+  }
+
+  return heatJ;
+}
+
+/**
  * Combined entry point for property-driven organic chemistry inside stepVesselChemistry.
  */
 export function stepPropertyDrivenOrganic(vessel, strat, liquidVolL, dt, activeReactions, gasProduced, getMolFn, options = {}) {
   let heatJ = 0;
   heatJ += stepGeneralOrganicCombustion(vessel, dt, activeReactions, gasProduced, getMolFn, options);
   heatJ += stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeReactions, { ...options, gasProduced });
+  heatJ += stepNickelHydrogenation(vessel, dt, activeReactions, gasProduced);
   return heatJ;
 }

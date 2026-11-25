@@ -81,6 +81,7 @@ export class LabManager {
     this._wireLabHooks(lab);
     sim.setupPreset(presetName);
     sim.undoStack = [];
+    sim.redoStack = [];
     this.labs.push(lab);
     const newIndex = this.labs.length - 1;
     if (!options.keepActive) {
@@ -586,9 +587,9 @@ export class LabManager {
     return { ok: true, index: res.index, lab: res.lab };
   }
 
-  recordUndo(simOverride = null) {
+  recordUndo(simOverride = null, meta = null) {
     const sim = simOverride || this.getActiveSim();
-    return sim?.recordUndo?.() || false;
+    return sim?.recordUndo?.(meta) || false;
   }
 
   undo(simOverride = null) {
@@ -596,6 +597,18 @@ export class LabManager {
     const sim = simOverride || lab?.sim;
     if (!sim?.undo) return false;
     const ok = sim.undo();
+    if (ok && lab?.particles) {
+      lab.particles.clear();
+    }
+    if (ok) this.hooks.onChange?.();
+    return ok;
+  }
+
+  redo(simOverride = null) {
+    const lab = this.getActiveLab();
+    const sim = simOverride || lab?.sim;
+    if (!sim?.redo) return false;
+    const ok = sim.redo();
     if (ok && lab?.particles) {
       lab.particles.clear();
     }

@@ -86,6 +86,194 @@ function drawBottleMotifCanvas(ctx, motif, cx, cy) {
     ctx.beginPath();
     ctx.arc(0, 0, 2.8, 0, Math.PI * 2);
     ctx.stroke();
+  } else if (motif === 'skeletal_etoh') {
+    // EtOH zig-zag skeletal formula: C-C-OH
+    ctx.strokeStyle = '#0284c7';
+    ctx.lineWidth = 1.4;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-10, 2.5);
+    ctx.lineTo(-3, -2.5);
+    ctx.lineTo(4, 2.5);
+    ctx.stroke();
+    ctx.fillStyle = '#dc2626';
+    ctx.font = 'bold 6.5px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('OH', 5, 2.5);
+  } else if (motif === 'skeletal_methanol') {
+    // MeOH skeletal bond + OH
+    ctx.strokeStyle = '#0284c7';
+    ctx.lineWidth = 1.4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-9, 1.5);
+    ctx.lineTo(-1, -2.5);
+    ctx.stroke();
+    ctx.fillStyle = '#dc2626';
+    ctx.font = 'bold 6.5px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('OH', 0, -2);
+  } else if (motif === 'skeletal_ch3cooh') {
+    // Acetic acid skeletal: C-C(=O)-OH
+    ctx.strokeStyle = '#e11d48';
+    ctx.lineWidth = 1.3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-10, 3);
+    ctx.lineTo(-2.5, -1);
+    ctx.lineTo(4, 3);
+    // Double bond =O up
+    ctx.moveTo(-3.6, -1.2);
+    ctx.lineTo(-3.6, -5.8);
+    ctx.moveTo(-1.4, -1.2);
+    ctx.lineTo(-1.4, -5.8);
+    ctx.stroke();
+    ctx.fillStyle = '#dc2626';
+    ctx.font = 'bold 6px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('O', -2.5, -7.8);
+    ctx.textAlign = 'left';
+    ctx.fillText('OH', 4.5, 3);
+  } else if (motif === 'skeletal_hcooh') {
+    // Formic acid H-C(=O)-OH
+    ctx.strokeStyle = '#e11d48';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(-7, 2.5);
+    ctx.lineTo(-1.5, -1);
+    ctx.lineTo(4, 2.5);
+    ctx.moveTo(-2.5, -1.2);
+    ctx.lineTo(-2.5, -5.6);
+    ctx.moveTo(-0.5, -1.2);
+    ctx.lineTo(-0.5, -5.6);
+    ctx.stroke();
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 6px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('H', -7.5, 2.5);
+    ctx.fillStyle = '#dc2626';
+    ctx.textAlign = 'center';
+    ctx.fillText('O', -1.5, -7.6);
+    ctx.textAlign = 'left';
+    ctx.fillText('OH', 4.5, 2.5);
+  } else if (motif === 'skeletal_hcho') {
+    // Formaldehyde H2C=O
+    ctx.strokeStyle = '#0284c7';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(-7, 3.5);
+    ctx.lineTo(-1.5, -0.5);
+    ctx.lineTo(4, 3.5);
+    ctx.moveTo(-2.5, -0.8);
+    ctx.lineTo(-2.5, -5.8);
+    ctx.moveTo(-0.5, -0.8);
+    ctx.lineTo(-0.5, -5.8);
+    ctx.stroke();
+    ctx.fillStyle = '#dc2626';
+    ctx.font = 'bold 6.5px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('O', -1.5, -7.6);
+  } else if (motif === 'skeletal_glycerol') {
+    // 3-carbon zig-zag with 3 -OH
+    ctx.strokeStyle = '#0d9488';
+    ctx.lineWidth = 1.3;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-8, 1);
+    ctx.lineTo(-3, -3);
+    ctx.lineTo(3, -3);
+    ctx.lineTo(8, 1);
+    ctx.moveTo(-8, 1);
+    ctx.lineTo(-8, 4.5);
+    ctx.moveTo(0, -3);
+    ctx.lineTo(0, 1.5);
+    ctx.moveTo(8, 1);
+    ctx.lineTo(8, 4.5);
+    ctx.stroke();
+    ctx.fillStyle = '#dc2626';
+    ctx.font = 'bold 5.5px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('OH', -8, 7.2);
+    ctx.fillText('OH', 0, 4.2);
+    ctx.fillText('OH', 8, 7.2);
+  } else if (motif === 'skeletal_glucose') {
+    // 6-membered pyranose ring with ring O + C6-CH2OH branch
+    ctx.strokeStyle = '#6d28d9';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(2, -5.2);
+    ctx.lineTo(6.5, -2.5);
+    ctx.lineTo(6.5, 3);
+    ctx.lineTo(0, 6);
+    ctx.lineTo(-6.5, 3);
+    ctx.lineTo(-6.5, -2.5);
+    ctx.lineTo(-2, -5.2);
+    // -CH2OH substituent at C5 (-6.5, -2.5)
+    ctx.moveTo(-6.5, -2.5);
+    ctx.lineTo(-10.5, -6.5);
+    ctx.stroke();
+    ctx.fillStyle = '#dc2626';
+    ctx.font = 'bold 6px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('O', 0, -5.5);
+    ctx.fillStyle = '#6d28d9';
+    ctx.font = 'bold 5px system-ui, sans-serif';
+    ctx.fillText('OH', -10.5, -8.2);
+  } else if (motif === 'skeletal_fructose') {
+    // 5-membered furanose ring with top ring O + CH2OH side arm
+    ctx.strokeStyle = '#b45309';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(2.4, -4.5);
+    ctx.lineTo(6.5, 0);
+    ctx.lineTo(4, 5.2);
+    ctx.lineTo(-4, 5.2);
+    ctx.lineTo(-6.5, 0);
+    ctx.lineTo(-2.4, -4.5);
+    // -CH2OH at C5 (-6.5, 0)
+    ctx.moveTo(-6.5, 0);
+    ctx.lineTo(-10.5, -4);
+    ctx.stroke();
+    ctx.fillStyle = '#dc2626';
+    ctx.font = 'bold 6px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('O', 0, -5.4);
+    ctx.fillStyle = '#b45309';
+    ctx.font = 'bold 5px system-ui, sans-serif';
+    ctx.fillText('OH', -10.5, -6.2);
+  } else if (motif === 'skeletal_glycine') {
+    // H2N-CH2-C(=O)OH skeletal
+    ctx.strokeStyle = '#7e22ce';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(-5.5, 2.5);
+    ctx.lineTo(-0.5, -1);
+    ctx.lineTo(4.5, 2.5);
+    ctx.moveTo(-1.3, -1.2);
+    ctx.lineTo(-1.3, -5.5);
+    ctx.moveTo(0.4, -1.2);
+    ctx.lineTo(0.4, -5.5);
+    ctx.stroke();
+    ctx.fillStyle = '#2563eb';
+    ctx.font = 'bold 5.5px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('H₂N', -6, 2.5);
+    ctx.fillStyle = '#dc2626';
+    ctx.textAlign = 'center';
+    ctx.fillText('O', -0.5, -7.3);
+    ctx.textAlign = 'left';
+    ctx.fillText('OH', 5, 2.5);
   } else if (motif === 'alcohol_flame') {
     ctx.fillStyle = '#0ea5e9';
     ctx.beginPath();

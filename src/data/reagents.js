@@ -12,6 +12,15 @@ export const REAGENT_CATEGORIES = [
   { id: 'solvent_other', i18nKey: 'regCatOther' },
 ];
 
+export const ORGANIC_SUBCATEGORIES = [
+  { id: 'all', i18nKey: 'regOrgAll' },
+  { id: 'hydrocarbon_arene', i18nKey: 'regOrgHydrocarbon' },
+  { id: 'alcohol_aldehyde', i18nKey: 'regOrgAlcoholAldehyde' },
+  { id: 'acid_lipid_ester', i18nKey: 'regOrgAcidLipidEster' },
+  { id: 'carbohydrate', i18nKey: 'regOrgCarbohydrate' },
+  { id: 'amine_protein', i18nKey: 'regOrgAmineProtein' },
+];
+
 /**
  * Pure starter reagents displayed on the shelf.
  * `bottleStyle` drives bench bottle rendering, shelf SVG icons, and pouring animation with zero per-ID branching.
@@ -493,6 +502,36 @@ export const STARTER_REAGENTS = [
     speciesId: 'Fe_s',
   },
   {
+    id: 'ni',
+    kind: 'solid',
+    category: 'metal',
+    i18nKey: 'reg_ni',
+    descKey: 'reg_ni_desc',
+    formula: 'Ni',
+    defaultDose: 1.5,
+    minDose: 0.05,
+    maxDose: 250.0,
+    step: 0.05,
+    dosePresets: [0.3, 0.6, 1.5, 3.0, 6.0, 29.3],
+    swatch: '#d4d4ce',
+    bottleType: 'solid_jar',
+    bottleStyle: {
+      vesselForm: 'jar',
+      glassMaterial: 'clear',
+      capColor: '#6b7280',
+      accentColor: '#9ca3af',
+      shortLabel: 'Ni',
+      contentsKind: 'granules',
+      solidColor: '#d4d4ce',
+      solidDropColor: '#e5e5df',
+      solidStrokeColor: '#e5e7eb',
+      shelfFill: 'rgba(156, 163, 175, 0.22)',
+      shelfStroke: '#9ca3af',
+    },
+    densityGPerCm3: 8.908,
+    speciesId: 'Ni_s',
+  },
+  {
     id: 'bacl2_2h2o',
     kind: 'solid',
     category: 'salt',
@@ -926,6 +965,7 @@ export const STARTER_REAGENTS = [
     id: 'etoh',
     kind: 'liquid',
     category: 'organic',
+    organicGroup: 'alcohol_aldehyde',
     i18nKey: 'reg_etoh',
     descKey: 'reg_etoh_desc',
     formula: 'C₂H₅OH (l)',
@@ -938,7 +978,7 @@ export const STARTER_REAGENTS = [
     bottleType: 'reagent_bottle',
     bottleStyle: {
       vesselForm: 'winchester',
-      bottleMotif: 'alcohol_flame',
+      bottleMotif: 'skeletal_etoh',
       glassMaterial: 'amber',
       capColor: '#b45309',
       accentColor: '#38bdf8',
@@ -955,6 +995,7 @@ export const STARTER_REAGENTS = [
     id: 'ch3cooh',
     kind: 'liquid',
     category: 'organic',
+    organicGroup: 'acid_lipid_ester',
     i18nKey: 'reg_ch3cooh',
     descKey: 'reg_ch3cooh_desc',
     formula: 'CH₃COOH (l)',
@@ -967,7 +1008,7 @@ export const STARTER_REAGENTS = [
     bottleType: 'reagent_bottle',
     bottleStyle: {
       vesselForm: 'winchester',
-      bottleMotif: 'glacial_ice',
+      bottleMotif: 'skeletal_ch3cooh',
       glassMaterial: 'amber',
       capColor: '#be123c',
       accentColor: '#f43f5e',
@@ -984,6 +1025,7 @@ export const STARTER_REAGENTS = [
     id: 'benzene',
     kind: 'liquid',
     category: 'organic',
+    organicGroup: 'hydrocarbon_arene',
     i18nKey: 'reg_benzene',
     descKey: 'reg_benzene_desc',
     formula: 'C₆H₆ (l)',
@@ -1013,6 +1055,7 @@ export const STARTER_REAGENTS = [
     id: 'methanol',
     kind: 'liquid',
     category: 'organic',
+    organicGroup: 'alcohol_aldehyde',
     i18nKey: 'reg_methanol',
     descKey: 'reg_methanol_desc',
     formula: 'CH₃OH (l)',
@@ -1025,7 +1068,7 @@ export const STARTER_REAGENTS = [
     bottleType: 'reagent_bottle',
     bottleStyle: {
       vesselForm: 'bottle',
-      bottleMotif: 'skull_toxic',
+      bottleMotif: 'skeletal_methanol',
       glassMaterial: 'clear',
       capColor: '#0284c7',
       accentColor: '#38bdf8',
@@ -1042,6 +1085,7 @@ export const STARTER_REAGENTS = [
     id: 'glycerol',
     kind: 'liquid',
     category: 'organic',
+    organicGroup: 'alcohol_aldehyde',
     i18nKey: 'reg_glycerol',
     descKey: 'reg_glycerol_desc',
     formula: 'C₃H₅(OH)₃ (l)',
@@ -1054,7 +1098,7 @@ export const STARTER_REAGENTS = [
     bottleType: 'reagent_bottle',
     bottleStyle: {
       vesselForm: 'bottle',
-      bottleMotif: 'triol_drop',
+      bottleMotif: 'skeletal_glycerol',
       glassMaterial: 'clear',
       capColor: '#0d9488',
       accentColor: '#2dd4bf',
@@ -1071,6 +1115,7 @@ export const STARTER_REAGENTS = [
     id: 'triolein',
     kind: 'liquid',
     category: 'organic',
+    organicGroup: 'acid_lipid_ester',
     i18nKey: 'reg_triolein',
     descKey: 'reg_triolein_desc',
     formula: '(C₁₇H₃₃COO)₃C₃H₅',
@@ -1132,6 +1177,7 @@ export const STARTER_REAGENTS = [
   {
     id: 'glucose',
     category: 'organic',
+    organicGroup: 'carbohydrate',
     i18nKey: 'reg_glucose',
     descKey: 'reg_glucose_desc',
     formula: 'C₆H₁₂O₆ (Glucose)',
@@ -1145,7 +1191,7 @@ export const STARTER_REAGENTS = [
     bottleType: 'powder_jar',
     bottleStyle: {
       vesselForm: 'jar',
-      bottleMotif: 'grape',
+      bottleMotif: 'skeletal_glucose',
       glassMaterial: 'clear',
       capColor: '#7c3aed',
       accentColor: '#8b5cf6',
@@ -1166,6 +1212,7 @@ export const STARTER_REAGENTS = [
   {
     id: 'fructose',
     category: 'organic',
+    organicGroup: 'carbohydrate',
     i18nKey: 'reg_fructose',
     descKey: 'reg_fructose_desc',
     formula: 'C₆H₁₂O₆ (Fructose)',
@@ -1179,7 +1226,7 @@ export const STARTER_REAGENTS = [
     bottleType: 'powder_jar',
     bottleStyle: {
       vesselForm: 'jar',
-      bottleMotif: 'honey',
+      bottleMotif: 'skeletal_fructose',
       glassMaterial: 'clear',
       capColor: '#d97706',
       accentColor: '#f59e0b',
@@ -1200,6 +1247,7 @@ export const STARTER_REAGENTS = [
   {
     id: 'sucrose',
     category: 'organic',
+    organicGroup: 'carbohydrate',
     i18nKey: 'reg_sucrose',
     descKey: 'reg_sucrose_desc',
     formula: 'C₁₂H₂₂O₁₁',
@@ -1234,6 +1282,7 @@ export const STARTER_REAGENTS = [
   {
     id: 'starch',
     category: 'organic',
+    organicGroup: 'carbohydrate',
     i18nKey: 'reg_starch',
     descKey: 'reg_starch_desc',
     formula: '(C₆H₁₀O₅)ₙ (Starch)',
@@ -1268,6 +1317,7 @@ export const STARTER_REAGENTS = [
   {
     id: 'cellulose',
     category: 'organic',
+    organicGroup: 'carbohydrate',
     i18nKey: 'reg_cellulose',
     descKey: 'reg_cellulose_desc',
     formula: '(C₆H₁₀O₅)ₙ (Cellulose)',
@@ -1302,6 +1352,7 @@ export const STARTER_REAGENTS = [
   {
     id: 'glycine',
     category: 'organic',
+    organicGroup: 'amine_protein',
     i18nKey: 'reg_glycine',
     descKey: 'reg_glycine_desc',
     formula: 'H₂N–CH₂–COOH',
@@ -1315,7 +1366,7 @@ export const STARTER_REAGENTS = [
     bottleType: 'powder_jar',
     bottleStyle: {
       vesselForm: 'jar',
-      bottleMotif: 'amino',
+      bottleMotif: 'skeletal_glycine',
       glassMaterial: 'clear',
       capColor: '#a855f7',
       accentColor: '#c084fc',
@@ -1336,6 +1387,7 @@ export const STARTER_REAGENTS = [
   {
     id: 'albumin',
     category: 'organic',
+    organicGroup: 'amine_protein',
     i18nKey: 'reg_albumin',
     descKey: 'reg_albumin_desc',
     formula: 'Albumin (Protein)',

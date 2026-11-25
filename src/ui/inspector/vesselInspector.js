@@ -54,6 +54,8 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
   let topSection = '';
       const spec = APPARATUS[item.typeId];
       const isBlind = Boolean(item.hideComposition);
+      const blindDosing = Boolean(panel.sim?.missionState?.active && panel.sim.missionState.blindDosingMode);
+      const hideQuant = isBlind || blindDosing;
       const displayLabel = isBlind ? (item.blindLabel || item.label) : item.label;
       const liqL = computeLiquidVolumeL(item.moles, item.tempK);
       const liqMl = liqL * 1000;
@@ -128,6 +130,7 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
           ${(item.naohDeliquesceFrac || 0) > 0.15 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs font-medium">${t('badgeNaohDeliquesced')}</div>` : ''}
           ${(item.caCo3FilmFrac || 0) > 0.25 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-slate-400/40 bg-slate-500/10 text-main text-xs font-medium">${t('badgeCaCo3Film')}</div>` : ''}
           ${item.fePassivated && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-medium">${t('badgeFePassivated')}</div>` : ''}
+          ${item.niPassivated && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-xs font-medium">${t('badgeNiPassivated')}</div>` : ''}
           ${item.alPassivated && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-sky-400/40 bg-sky-400/10 text-sky-300 text-xs font-medium">${t('badgeAlPassivated')}</div>` : ''}
           ${item.caso4Passivated && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-slate-400/50 bg-slate-400/10 text-main text-xs font-medium">${t('badgeCaSO4Passivated')}</div>` : ''}
           ${(item.znCombustionTimer || 0) > 0.05 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-amber-400/60 bg-amber-400/15 text-amber-300 text-xs font-semibold">${t('badgeZnBurnO2')}</div>` : ''}
@@ -293,15 +296,15 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
               </div>
               <div class="p-2.5 rounded-lg border border-theme bg-surface">
                 <div class="text-xs font-semibold text-muted">${t('metricMixDensity')}</div>
-                <div class="text-sm font-bold font-mono mt-0.5 text-sky-400" id="live-mix-density">${isBlind ? 'ρ = 🔒' : `ρ = ${liqTabData.mixDensity > 0 ? liqTabData.mixDensity.toFixed(3) : '—'} g/mL`}</div>
+                <div class="text-sm font-bold font-mono mt-0.5 text-sky-400" id="live-mix-density">${hideQuant ? 'ρ = 🔒' : `ρ = ${liqTabData.mixDensity > 0 ? liqTabData.mixDensity.toFixed(3) : '—'} g/mL`}</div>
               </div>
               <div class="p-2.5 rounded-lg border border-theme bg-surface">
                 <div class="text-xs font-semibold text-muted">${t('metricNetMassTitle')}</div>
-                <div class="text-sm font-bold font-mono mt-0.5" id="live-mass">${formatNumber(contentsG, 2)} g</div>
+                <div class="text-sm font-bold font-mono mt-0.5" id="live-mass">${hideQuant ? '🔒' : `${formatNumber(contentsG, 2)} g`}</div>
               </div>
               <div class="p-2.5 rounded-lg border border-theme bg-surface">
                 <div class="text-xs font-semibold text-muted">${t('metricGrossMassTitle')}</div>
-                <div class="text-sm font-bold font-mono mt-0.5" id="live-mass-gross">${formatNumber(grossG, 2)} g</div>
+                <div class="text-sm font-bold font-mono mt-0.5" id="live-mass-gross">${hideQuant ? '🔒' : `${formatNumber(grossG, 2)} g`}</div>
                 <div class="text-[11px] text-muted font-mono mt-0.5" id="live-mass-tare">${t('tarePrefix')} ${formatNumber(spec.tareMassG, 0)}g</div>
               </div>
             </div>
@@ -377,11 +380,11 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
         <details class="rounded-xl border border-theme bg-surface-alt group" data-ins-sec="phases" ${open2}>
           <summary class="px-3 py-2.5 cursor-pointer select-none flex items-center justify-between gap-2 text-[13px] font-bold uppercase tracking-wide text-muted hover:text-main">
             <span>⚗️ ${t('groupPhaseComposition')}</span>
-            <span class="text-[11px] font-mono text-muted shrink-0 whitespace-nowrap">${isBlind ? `🔒 ${t('blindUnknownBadge')}` : `${liqTabData.rows.length}L · ${Object.keys(item.moles || {}).filter((k) => SPECIES[k]?.phase === 's' && hasDisplayableSpeciesAmount(k, item.moles[k])).length}S`}</span>
+            <span class="text-[11px] font-mono text-muted shrink-0 whitespace-nowrap">${hideQuant ? `🔒 ${t('blindUnknownBadge')}` : `${liqTabData.rows.length}L · ${Object.keys(item.moles || {}).filter((k) => SPECIES[k]?.phase === 's' && hasDisplayableSpeciesAmount(k, item.moles[k])).length}S`}</span>
           </summary>
           <div class="px-3 pb-3 flex flex-col gap-2.5 border-t border-theme/40 pt-2">
             ${
-              isBlind
+              hideQuant
                 ? `<div id="blind-obs-box">${buildBlindObservationCardHtml(item, t)}</div>`
                 : `
             <!-- Gas & Vapor -->

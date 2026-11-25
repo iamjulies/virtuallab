@@ -178,6 +178,7 @@ export function spoonScoopFromVesselImpl(sim, spoonId, vesselId, maxGrams = 1.6)
     const takeMol = Math.min(availMol, takeG / Math.max(10, sp?.molarMass || 60));
     if (takeMol <= 1e-9) return false;
 
+    sim.recordUndo({ actionKey: 'spoon_scoop', vesselKey: `${spoonId}:${vesselId}`, coalesceMs: 500 });
     v.moles[spId] = availMol - takeMol;
     if (v.moles[spId] < 1e-12) delete v.moles[spId];
     spoon.moles = spoon.moles || {};
@@ -205,6 +206,7 @@ export function spoonPourIntoVesselImpl(sim, spoonId, vesselId) {
     const entries = Object.entries(spoon.moles || {}).filter(([, n]) => n > 1e-10);
     if (entries.length === 0) return false;
 
+    sim.recordUndo({ actionKey: 'spoon_pour', vesselKey: `${spoonId}:${vesselId}`, coalesceMs: 500 });
     const cVessel = Math.max(18, computeHeatCapacityJK(v));
     let cSpoon = 0;
     for (const [spId, n] of entries) {
@@ -242,6 +244,7 @@ export function spoonPourIntoVesselImpl(sim, spoonId, vesselId) {
 export function rinseSpoonImpl(sim, spoonId) {
     const spoon = sim.getItem(spoonId);
     if (!spoon || spoon.kind !== 'spoon') return false;
+    sim.recordUndo({ actionKey: 'rinse_spoon', vesselKey: spoonId, coalesceMs: 400 });
     spoon.spoonAnim = null;
     spoon.tiltAngle = 0;
     spoon.moles = {};
@@ -470,6 +473,7 @@ export function pumpSyringeToVesselImpl(sim, syringeId, targetVesselId, targetVo
     const totMl = liqMl + gasMl;
     if (totMl <= 0.005) return 0;
 
+    sim.recordUndo({ actionKey: 'syringe_pump', vesselKey: `${syringeId}:${targetVesselId}`, coalesceMs: 650 });
     const reqMl = targetVolMl == null ? totMl : Math.min(totMl, Math.max(0, Number(targetVolMl) || 0));
     let transferredMl = 0;
     let liqMoveFrac = 0;
@@ -1221,6 +1225,7 @@ export function buretteDispenseDropImpl(sim, buretteId, dropMl = 0.05) {
     const liqMl = liqL * 1000;
     const actualMl = Math.min(liqMl, dropMl);
     if (actualMl <= 1e-5) return 0;
+    sim.recordUndo({ actionKey: 'burette_drop', vesselKey: buretteId, coalesceMs: 650 });
     const frac = Math.min(1, actualMl / liqMl);
     const tipY = b.y + (APPARATUS.burette_50?.height || 204) / 2;
     let target = null;
@@ -1272,6 +1277,7 @@ export function washBottleSquirtImpl(sim, bottleId, targetId = null, volMl = 5.0
     const wb = sim.getItem(bottleId);
     if (!wb || wb.kind !== 'wash_bottle' || (wb.waterMl || 0) <= 0.1) return 0;
     const actual = Math.min(wb.waterMl, volMl);
+    sim.recordUndo({ actionKey: 'wash_squirt', vesselKey: `${bottleId}:${targetId || 'bench'}`, coalesceMs: 650 });
     const arc = computeWashBottleStreamArc(wb, sim.items, SIM_BENCH_FLOOR_Y, CONSTANTS.GRAVITY_PX_S2 || 1800);
     const explicitTgt = targetId ? sim.getItem(targetId) : null;
     const tgt = explicitTgt && !explicitTgt.isShattered && !explicitTgt.isBroken ? explicitTgt : arc.hitTarget;
@@ -1331,6 +1337,7 @@ export function pipetteDrawFromVesselImpl(sim, vesselId, drawMl = 10.0, targetPi
 
     const srcSpec = APPARATUS[src.typeId] || APPARATUS.beaker_250;
     const actual = Math.min(availRoom, srcLiqMl, drawMl);
+    sim.recordUndo({ actionKey: 'pipette_draw', vesselKey: `${pip.id || 'pip'}:${vesselId}`, coalesceMs: 650 });
     const frac = actual / srcLiqMl;
     const oldVol = pip.volumeMl || 0;
     const oldPhen = pip.moles.Phenolphthalein_aq || 0;
@@ -1369,7 +1376,13 @@ export function pipetteDrawFromVesselImpl(sim, vesselId, drawMl = 10.0, targetPi
     if (src.hideComposition) {
       const sLbl = src.blindLabel || src.label || '?';
       pip.hideComposition = oldVol <= 0.05 ? true : Boolean(pip.hideComposition);
-      pip.blindLabel = oldVol > 0.05 && pip.blindLabel ? `${pip.blindLabel}+${sLbl}`.slice(0, 18) : sLbl;
+      if (oldVol > 0.05 && pip.blindLabel) {
+        const parts = pip.blindLabel.split('+').map((p) => p.trim()).filter(Boolean);
+        if (!parts.includes(sLbl)) parts.push(sLbl);
+        pip.blindLabel = parts.join(' + ').slice(0, 18);
+      } else {
+        pip.blindLabel = sLbl;
+      }
       pip.sourceLabel = pip.blindLabel;
       if (sim.missionState?.active) {
         const tel = ensureMissionTelemetry(sim);
@@ -1422,6 +1435,7 @@ export function pipetteDrawFromSyringeImpl(sim, syringeId, drawMl = 10.0, target
       : { css: 'rgba(186, 230, 253, 0.85)' };
 
     const actual = Math.min(availRoom, syrLiqMl, drawMl);
+    sim.recordUndo({ actionKey: 'pipette_draw_syr', vesselKey: `${pip.id || 'pip'}:${syringeId}`, coalesceMs: 650 });
     const frac = Math.min(1, actual / syrLiqMl);
     const oldVol = pip.volumeMl || 0;
     const oldPhen = pip.moles.Phenolphthalein_aq || 0;
@@ -1461,6 +1475,8 @@ export function pipetteDrawFromReagentImpl(sim, reagentId, drawMl = 2.0) {
     const reg = STARTER_REAGENTS.find((r) => r.id === reagentId && r.kind === 'liquid');
     if (!reg) return 0;
 
+    sim.recordUndo({ actionKey: 'pipette_reagent', vesselKey: reagentId, coalesceMs: 650 });
+    return sim.withUndoSuppressed(() => {
     // Create or reuse an unemptied/available Pipette 10 mL directly on the bench
     let pip = sim.items.find((it) => it.kind === 'pipette' && (it.capacityMl - (it.volumeMl || 0)) > 0.05);
     if (!pip) {
@@ -1487,6 +1503,7 @@ export function pipetteDrawFromReagentImpl(sim, reagentId, drawMl = 2.0) {
     sim.selectedId = pip.id;
     sim.emitChange();
     return actual;
+    });
 }
 
 export function pipetteDispenseToVesselImpl(sim, vesselId, dropMl = 0.05, sourcePipette = null) {
@@ -1510,6 +1527,7 @@ export function pipetteDispenseToVesselImpl(sim, vesselId, dropMl = 0.05, source
     }
     const actual = Math.min(pip.volumeMl, maxHeadroom, Math.max(0.05, dropMl));
     if (actual <= 1e-5) return 0;
+    sim.recordUndo({ actionKey: 'pipette_dispense', vesselKey: `${pip.id || 'pip'}:${vesselId}`, coalesceMs: 650 });
     const frac = actual / pip.volumeMl;
     const pipColor = pip.liquidColor || 'rgba(186, 230, 253, 0.85)';
 
@@ -1698,6 +1716,9 @@ export function stepVesselTiltPouringImpl(sim, v, dt) {
           dMl = Math.min(dMl, Math.max(0, dstCapMl - dstCurMl));
         }
         const frac = curLiqMl > 1e-6 ? Math.min(1, dMl / curLiqMl) : 0;
+        if (frac > 1e-9) {
+          sim.recordUndo({ actionKey: 'tilt_pour', vesselKey: v.id, coalesceMs: 650 });
+        }
         liqOutFrac = frac;
         const visColor = computeSolutionVisuals(
           v.moles,

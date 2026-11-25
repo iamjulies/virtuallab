@@ -22,6 +22,7 @@ export const DEFAULT_SHORTCUTS = [
   { id: 'export_vlab', defaultCombo: 'Ctrl+E', labelKey: 'scExportVlab' },
   { id: 'import_vlab', defaultCombo: 'Shift+E', labelKey: 'scImportVlab' },
   { id: 'undo', defaultCombo: 'Ctrl+Z', labelKey: 'scUndo' },
+  { id: 'redo', defaultCombo: 'Ctrl+Shift+Z', labelKey: 'scRedo' },
   { id: 'select_all', defaultCombo: 'Ctrl+A', labelKey: 'scSelectAll' },
   { id: 'copy', defaultCombo: 'Ctrl+C', labelKey: 'scCopy' },
   { id: 'cut', defaultCombo: 'Ctrl+X', labelKey: 'scCut' },

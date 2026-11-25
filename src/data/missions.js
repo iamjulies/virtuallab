@@ -6,6 +6,42 @@ import { APPARATUS } from './apparatus.js';
 import { CONSTANTS } from './constants.js';
 import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
 
+export const MISSION_ARCHETYPES = [
+  { id: 'blind_id', i18nKey: 'archBlindId', badgeClass: 'text-amber-300 border-amber-500/40 bg-amber-500/10' },
+  { id: 'standard_prep', i18nKey: 'archStandardPrep', badgeClass: 'text-sky-400 border-sky-500/40 bg-sky-500/10' },
+  { id: 'titration', i18nKey: 'archTitration', badgeClass: 'text-purple-300 border-purple-500/40 bg-purple-500/10' },
+  { id: 'synthesis', i18nKey: 'archSynthesis', badgeClass: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10' },
+  { id: 'mixture_analysis', i18nKey: 'archMixture', badgeClass: 'text-orange-300 border-orange-500/40 bg-orange-500/10' },
+  { id: 'electrochem', i18nKey: 'archElectrochem', badgeClass: 'text-cyan-300 border-cyan-500/40 bg-cyan-500/10' },
+];
+
+export const STANDARD_PREP_TARGETS = [
+  { id: 'Cu2_aq', label: 'CuSO₄ (Cu²⁺)', speciesId: 'Cu2_aq', counterId: 'SO4_2_aq', formula: 'CuSO₄', defaultM: 0.20 },
+  { id: 'NaOH_aq', label: 'NaOH (OH⁻)', speciesId: 'OH_aq', counterId: 'Na_aq', formula: 'NaOH', defaultM: 0.15 },
+  { id: 'HCl_aq', label: 'HCl (H⁺)', speciesId: 'H_aq', counterId: 'Cl_aq', formula: 'HCl', defaultM: 0.25 },
+  { id: 'NaCl_aq', label: 'NaCl (Na⁺)', speciesId: 'Na_aq', counterId: 'Cl_aq', formula: 'NaCl', defaultM: 0.50 },
+  { id: 'AgNO3_aq', label: 'AgNO₃ (Ag⁺)', speciesId: 'Ag_aq', counterId: 'NO3_aq', formula: 'AgNO₃', defaultM: 0.10 },
+  { id: 'Ni2_aq', label: 'NiSO₄ / NiCl₂ (Ni²⁺)', speciesId: 'Ni2_aq', counterId: 'Cl_aq', formula: 'Ni²⁺', defaultM: 0.15 },
+];
+
+export const MIXTURE_PRESETS = [
+  { id: 'fe_cu', label: 'Fe + Cu (5.0 g)', spA: 'Fe_s', nameA: 'Fe', spB: 'Cu_s', nameB: 'Cu', minPctA: 35, maxPctA: 70, defaultMassG: 5.0, gasId: 'H2_g' },
+  { id: 'caco3_nacl', label: 'CaCO₃ + NaCl (6.0 g)', spA: 'CaCO3_s', nameA: 'CaCO₃', spB: 'NaCl_s', nameB: 'NaCl', minPctA: 30, maxPctA: 75, defaultMassG: 6.0, gasId: 'CO2_g' },
+  { id: 'zn_cu', label: 'Zn + Cu (5.0 g)', spA: 'Zn_s', nameA: 'Zn', spB: 'Cu_s', nameB: 'Cu', minPctA: 35, maxPctA: 75, defaultMassG: 5.0, gasId: 'H2_g' },
+  { id: 'na2co3_nacl', label: 'Na₂CO₃ + NaCl (6.0 g)', spA: 'Na2CO3_s', nameA: 'Na₂CO₃', spB: 'NaCl_s', nameB: 'NaCl', minPctA: 30, maxPctA: 70, defaultMassG: 6.0, gasId: 'CO2_g' },
+];
+
+export const SYNTHESIS_PRODUCT_PRESETS = [
+  { id: 'NiNH3_6_2_aq', label: '[Ni(NH₃)₆]²⁺ (aq)' },
+  { id: 'CuNH3_4_2_aq', label: '[Cu(NH₃)₄]²⁺ (aq)' },
+  { id: 'CH3COOC2H5_l', label: 'Ethyl acetate (CH₃COOC₂H₅)' },
+  { id: 'CaO_s', label: 'Calcium oxide (CaO)' },
+  { id: 'C57H110O6_s', label: 'Tristearin (C₁₇H₃₅COO)₃C₃H₅' },
+  { id: 'C17H33COONa_s', label: 'Sodium oleate Soap' },
+  { id: 'Cl2_g', label: 'Dry Chlorine (Cl₂)' },
+  { id: 'H2_g', label: 'Dry Hydrogen (H₂)' },
+];
+
 export function createSeededRng(seed = 1) {
   let s = (Math.floor(Math.abs(Number(seed) || 1)) % 2147483647) || 1;
   return () => {
@@ -53,8 +89,11 @@ export const MISSION_REGISTRY = {
   mission_qualitative_4: {
     id: 'mission_qualitative_4',
     order: 1,
-    topic: 'qualitative',
+    archetype: 'blind_id',
     difficulty: 'basic',
+    difficultyTier: 'medium',
+    shelfPolicy: 'scoped',
+    topic: 'qualitative',
     titleKey: 'm1Title',
     shortTitleKey: 'm1Short',
     summaryKey: 'm1Summary',
@@ -123,8 +162,11 @@ export const MISSION_REGISTRY = {
   mission_titration_hcl: {
     id: 'mission_titration_hcl',
     order: 2,
+    archetype: 'titration',
     topic: 'titration',
     difficulty: 'basic',
+    difficultyTier: 'easy',
+    shelfPolicy: 'scoped',
     titleKey: 'm2Title',
     shortTitleKey: 'm2Short',
     summaryKey: 'm2Summary',
@@ -196,8 +238,11 @@ export const MISSION_REGISTRY = {
   mission_calcination_cao: {
     id: 'mission_calcination_cao',
     order: 3,
+    archetype: 'synthesis',
     topic: 'calcination',
     difficulty: 'intermediate',
+    difficultyTier: 'medium',
+    shelfPolicy: 'scoped',
     titleKey: 'm3Title',
     shortTitleKey: 'm3Short',
     summaryKey: 'm3Summary',
@@ -252,8 +297,11 @@ export const MISSION_REGISTRY = {
   mission_gas_prep: {
     id: 'mission_gas_prep',
     order: 4,
+    archetype: 'synthesis',
     topic: 'gas_prep',
     difficulty: 'intermediate',
+    difficultyTier: 'medium',
+    shelfPolicy: 'scoped',
     titleKey: 'm4Title',
     shortTitleKey: 'm4Short',
     summaryKey: 'm4Summary',
@@ -310,8 +358,11 @@ export const MISSION_REGISTRY = {
   mission_electrochem_cell: {
     id: 'mission_electrochem_cell',
     order: 5,
+    archetype: 'electrochem',
     topic: 'electrochemistry',
     difficulty: 'advanced',
+    difficultyTier: 'hard',
+    shelfPolicy: 'scoped',
     titleKey: 'm5Title',
     shortTitleKey: 'm5Short',
     summaryKey: 'm5Summary',
@@ -409,8 +460,11 @@ export const MISSION_REGISTRY = {
   mission_ester_synth: {
     id: 'mission_ester_synth',
     order: 6,
+    archetype: 'synthesis',
     topic: 'organic',
     difficulty: 'advanced',
+    difficultyTier: 'hard',
+    shelfPolicy: 'scoped',
     titleKey: 'm6Title',
     shortTitleKey: 'm6Short',
     summaryKey: 'm6Summary',
@@ -468,6 +522,145 @@ export const MISSION_REGISTRY = {
       };
     },
   },
+
+  mission_solution_prep: {
+    id: 'mission_solution_prep',
+    order: 7,
+    archetype: 'standard_prep',
+    topic: 'standard_prep',
+    difficulty: 'basic',
+    difficultyTier: 'medium',
+    shelfPolicy: 'scoped',
+    blindDosingMode: true,
+    titleKey: 'm7Title',
+    shortTitleKey: 'm7Short',
+    summaryKey: 'm7Summary',
+    goalKey: 'm7Goal',
+    equationText: 'm(CuSO₄·5H₂O) = C_M · V(L) · M(249.68 g/mol)   |   C_M = n / V',
+    allowedApparatus: ['beaker_250', 'erlenmeyer_250', 'cylinder_100', 'pipette_10', 'wash_bottle', 'scale', 'stir_bar'],
+    allowedReagents: ['cuso4_5h2o', 'h2o'],
+    maxExtraTools: 6,
+    hints: ['m7Hint1', 'm7Hint2', 'm7Hint3'],
+    standardPrepConfig: {
+      targetSpeciesId: 'Cu2_aq',
+      targetMolarityM: 0.20,
+      targetVolumeMl: 100,
+      tolerancePct: 5.0,
+      concUnit: 'M',
+    },
+    submitFields: [
+      { id: 'ans_mass_g', labelKey: 'm7FieldMassG', type: 'number', min: 0.1, max: 100, step: 0.01, placeholder: '4.99' },
+    ],
+    rubric: [
+      { id: 'm7_proc', category: 'process', maxPoints: 3.0, labelKey: 'm7RubProc' },
+      { id: 'm7_quant', category: 'quantitative', maxPoints: 4.0, labelKey: 'm7RubQuant' },
+      { id: 'm7_ident', category: 'identification', maxPoints: 2.0, labelKey: 'm7RubIdent' },
+      { id: 'm7_safe', category: 'safety', maxPoints: 1.0, labelKey: 'm7RubSafe' },
+    ],
+    setup(sim, seed = 707) {
+      createCleanBench(sim);
+      const rng = createSeededRng(seed);
+      const targetM = +[0.15, 0.20, 0.25][Math.floor(rng() * 3)].toFixed(2);
+      const targetVolMl = 100;
+      const expectedMassG = +(targetM * (targetVolMl / 1000) * 249.685).toFixed(2);
+      let prepBeaker = null;
+      sim.withUndoSuppressed(() => {
+        prepBeaker = sim.createApparatus('beaker_250', 360, 420, { silentUndo: true });
+        prepBeaker.label = 'Prep-100mL';
+        sim.createApparatus('scale', 210, 442, { silentUndo: true });
+        sim.createApparatus('cylinder_100', 520, 420, { silentUndo: true });
+        sim.createApparatus('wash_bottle', 660, 415, { silentUndo: true });
+        sim.createApparatus('pipette_10', 760, 360, { silentUndo: true });
+      });
+      sim.selectedId = prepBeaker.id;
+      return {
+        answerKey: {
+          targetSpeciesId: 'Cu2_aq',
+          targetMolarityM: targetM,
+          targetVolumeMl: targetVolMl,
+          tolerancePct: 5.0,
+          expectedMassG,
+        },
+        standardPrepMeta: {
+          targetSpeciesId: 'Cu2_aq',
+          targetMolarityM: targetM,
+          targetVolumeMl: targetVolMl,
+          tolerancePct: 5.0,
+          concUnit: 'M',
+        },
+        prepVesselId: prepBeaker.id,
+      };
+    },
+  },
+
+  mission_mixture_analysis: {
+    id: 'mission_mixture_analysis',
+    order: 8,
+    archetype: 'mixture_analysis',
+    topic: 'mixture_analysis',
+    difficulty: 'intermediate',
+    difficultyTier: 'hard',
+    shelfPolicy: 'scoped',
+    titleKey: 'm8Title',
+    shortTitleKey: 'm8Short',
+    summaryKey: 'm8Summary',
+    goalKey: 'm8Goal',
+    equationText: 'Fe(s) + 2HCl(aq) → FeCl₂ + H₂↑  (Cu inert)   |   n(Fe) = n(H₂)',
+    allowedApparatus: ['erlenmeyer_250', 'round_flask_250', 'beaker_250', 'gas_syringe', 'rubber_stopper', 'separatory_funnel', 'pipette_10', 'scale', 'filter_funnel'],
+    allowedReagents: ['hcl_37', 'h2o'],
+    maxExtraTools: 6,
+    hints: ['m8Hint1', 'm8Hint2', 'm8Hint3'],
+    submitFields: [
+      { id: 'ans_pct_a', labelKey: 'm8FieldPctA', type: 'number', min: 0, max: 100, step: 0.1, placeholder: '55.0' },
+      { id: 'ans_pct_b', labelKey: 'm8FieldPctB', type: 'number', min: 0, max: 100, step: 0.1, placeholder: '45.0' },
+    ],
+    rubric: [
+      { id: 'm8_proc', category: 'process', maxPoints: 3.0, labelKey: 'm8RubProc' },
+      { id: 'm8_quant', category: 'quantitative', maxPoints: 3.0, labelKey: 'm8RubQuant' },
+      { id: 'm8_ident', category: 'identification', maxPoints: 3.0, labelKey: 'm8RubIdent' },
+      { id: 'm8_safe', category: 'safety', maxPoints: 1.0, labelKey: 'm8RubSafe' },
+    ],
+    setup(sim, seed = 808) {
+      createCleanBench(sim);
+      const rng = createSeededRng(seed);
+      const pctFe = +(40 + Math.floor(rng() * 7) * 5).toFixed(1); // 40..70%
+      const pctCu = +(100 - pctFe).toFixed(1);
+      const totalMassG = 5.0;
+      const molFe = +((totalMassG * (pctFe / 100)) / 55.845).toFixed(5);
+      const molCu = +((totalMassG * (pctCu / 100)) / 63.546).toFixed(5);
+      let mixFlask = null;
+      let syr = null;
+      sim.withUndoSuppressed(() => {
+        mixFlask = sim.createApparatus('erlenmeyer_250', 300, 415, { silentUndo: true });
+        mixFlask.moles = { Fe_s: molFe, Cu_s: molCu };
+        mixFlask.hideComposition = true;
+        mixFlask.blindLabel = 'Mix Fe/Cu (5.0g)';
+        mixFlask.label = 'Mix (5.00 g)';
+        syr = sim.createApparatus('gas_syringe', 560, 405, { silentUndo: true });
+        sim.createApparatus('rubber_stopper', 420, 440, { silentUndo: true });
+        sim.createApparatus('pipette_10', 690, 360, { silentUndo: true });
+      });
+      sim.selectedId = mixFlask.id;
+      return {
+        answerKey: {
+          pctA: pctFe,
+          pctB: pctCu,
+          tolerancePct: 3.0,
+          gasId: 'H2_g',
+        },
+        mixtureMeta: {
+          vesselId: mixFlask.id,
+          pctA: pctFe,
+          pctB: pctCu,
+          tolerancePct: 3.0,
+          gasId: 'H2_g',
+          totalMassG,
+        },
+        blindVesselIds: [mixFlask.id],
+        targetSyringeId: syr.id,
+      };
+    },
+  },
 };
 
 export const MISSION_ORDER = [
@@ -477,6 +670,8 @@ export const MISSION_ORDER = [
   'mission_gas_prep',
   'mission_electrochem_cell',
   'mission_ester_synth',
+  'mission_solution_prep',
+  'mission_mixture_analysis',
 ];
 
 export function getMissionById(id) {
@@ -490,12 +685,14 @@ export function getActiveMissionPolicy(sim) {
 }
 
 export function isApparatusAllowedInMission(missionOrState, typeId) {
+  if (missionOrState?.shelfPolicy === 'initial_only') return false;
   if (!missionOrState || !Array.isArray(missionOrState.allowedApparatus) || missionOrState.allowedApparatus.length === 0) return true;
   if (!APPARATUS[typeId]) return false;
   return missionOrState.allowedApparatus.includes(typeId);
 }
 
 export function isReagentAllowedInMission(missionOrState, reagentId) {
+  if (missionOrState?.shelfPolicy === 'initial_only') return false;
   if (!missionOrState || missionOrState.allowedReagents === null || missionOrState.allowedReagents === undefined) return true;
   return missionOrState.allowedReagents.includes(reagentId);
 }

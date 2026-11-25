@@ -14,6 +14,21 @@ const AW = {
 };
 
 export const HYDROCARBON_SPECIES = {
+  C2H6_g: {
+    id: 'C2H6_g',
+    formula: 'C₂H₆(g)',
+    name: 'Ethane',
+    phase: 'g',
+    gasOrder: 52.5,
+    molarMass: 2 * AW.C + 6 * AW.H,
+    cp: 52.6,
+    color: '#f8fafc',
+    atoms: { C: 2, H: 6 },
+    autoIgnitionK: 745.15,
+    dHCombustJ: -1560000,
+    functionalGroups: { isAlkane: true },
+    ghsHazards: ['flammable'],
+  },
   C3H8_g: {
     id: 'C3H8_g',
     formula: 'C₃H₈(g)',

@@ -1,7 +1,7 @@
 /**
  * Physical & chemical constants (SI / IUPAC standard units).
  */
-export const APP_VERSION_TAG = 'virlab_beta_v5+build.30';
+export const APP_VERSION_TAG = 'virlab_beta_v5+build.31';
 
 /**
  * Single source of truth for all 10 workbench visual themes.
@@ -279,6 +279,7 @@ export const VOLATILE_LIQUID_PROPS = {
   C3H7Br_l: { group: 'organic_heavy', boilTempK: 332.55, dHVapJ: 30100, vaporSpeciesId: 'C3H7Br_g' },
   C6H10_l: { group: 'organic_light', boilTempK: 356.15, dHVapJ: 33400, vaporSpeciesId: 'C6H10_g' },
   C6H5COOC2H5_l: { group: 'organic_heavy', boilTempK: 486.15, dHVapJ: 54000, vaporSpeciesId: 'C6H5COOC2H5_g' },
+  NiCO4_l: { group: 'organic_heavy', boilTempK: 315.35, dHVapJ: 29000, vaporSpeciesId: 'NiCO4_g' },
 };
 
 /**

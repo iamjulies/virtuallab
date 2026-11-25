@@ -38,9 +38,9 @@ import { INORGANIC_SOLID_GAS_SPECIES } from './inorganic/solids_gases.js';
 import { HYDROCARBON_SPECIES } from './organic/hydrocarbons.js';
 import { OXYGEN_SPECIES } from './organic/oxygen_compounds.js';
 import { NITROGEN_BIO_SPECIES } from './organic/nitrogen_bio.js';
-import { REAGENT_CATEGORIES, STARTER_REAGENTS, REAGENTS } from './reagents.js';
+import { REAGENT_CATEGORIES, ORGANIC_SUBCATEGORIES, STARTER_REAGENTS, REAGENTS } from './reagents.js';
 
-export { REAGENT_CATEGORIES, STARTER_REAGENTS, REAGENTS };
+export { REAGENT_CATEGORIES, ORGANIC_SUBCATEGORIES, STARTER_REAGENTS, REAGENTS };
 
 export const SPECIES = {
   ...INORGANIC_SOLID_GAS_SPECIES,

@@ -71,6 +71,7 @@ export function stepSulfurChemistry(vessel, liquidVolL, dt, activeReactions, gas
       { id: 'Al', sId: 'Al_s', cM: 2, cS: 3, minK: 473.15, rate: 2.8, prodS: 'Al2S3_s', propKey: '_al2s3PropagateTimer', heatJ: 724000, timer: 'alCombustionTimer', eq: '2Al(s) + 3S(s) —(t° ≥ 200 °C)→ Al₂S₃(s)', nameVi: 'Aluminium phản ứng tỏa nhiệt rất mạnh với Sulfur tạo Al₂S₃', nameEn: 'Aluminium reacts strongly with Sulfur yielding Al₂S₃' },
       { id: 'Mg', sId: 'Mg_s', cM: 1, cS: 1, minK: 723.15, rate: 45.0, prodS: 'MgS_s', propKey: '_mgsPropagateTimer', heatJ: 345700, timer: 'mgCombustionTimer', eq: 'Mg(s) + S(l/g) —(450–500 °C)→ MgS(s)', nameVi: 'Magnesium cháy lóe sáng chói với Sulfur tạo MgS trắng ngà', nameEn: 'Magnesium ignites brilliantly with Sulfur forming off-white MgS' },
       { id: 'Fe', sId: 'Fe_s', cM: 1, cS: 1, minK: 673.15, rate: 9.5, prodS: 'FeS_s', propKey: '_fesPropagateTimer', heatJ: 95000, eq: 'Fe(s) + S(l/g) —(t° ≥ 450–500 °C)→ FeS(s)', nameVi: 'Iron hóa hợp với Sulfur nóng đỏ tạo Iron(II) sulfide (FeS đen xám)', nameEn: 'Iron combines with Sulfur at red heat forming black non-magnetic FeS' },
+      { id: 'Ni', sId: 'Ni_s', cM: 1, cS: 1, minK: 693.15, rate: 7.5, prodS: 'NiS_s', propKey: '_nisPropagateTimer', heatJ: 82000, eq: 'Ni(s) + S(l/g) —(t° ≥ 420 °C)→ NiS(s)', nameVi: 'Nickel tác dụng với Sulfur đun nóng tạo Nickel(II) sulfide (NiS đen)', nameEn: 'Heated Nickel combines with Sulfur forming black Nickel(II) sulfide (NiS)' },
     ];
     for (const ms of metalSulfurSpecs) {
       const curS = moles.S_s || 0;

@@ -121,7 +121,10 @@ export class LabSimulation {
       onReagentDispense: null,
     };
     this.undoStack = [];
+    this.redoStack = [];
     this.maxUndo = 10;
+    this.maxRedo = 10;
+    this._lastUndoMeta = null;
     this._suppressUndo = 0;
     this._dirtySeq = 1;
     this.missionState = null;
@@ -143,25 +146,61 @@ export class LabSimulation {
 
   restoreSnapshot(snap) { return restoreSnapshotForSim(this, snap); }
 
-  pushUndoSnapshot(snap) {
+  pushUndoSnapshot(snap, meta = null) {
     if (!snap || this._suppressUndo > 0) return false;
     if (!Array.isArray(this.undoStack)) this.undoStack = [];
+    const now = Date.now();
+    if (
+      meta?.actionKey &&
+      this._lastUndoMeta &&
+      this._lastUndoMeta.actionKey === meta.actionKey &&
+      this._lastUndoMeta.vesselKey === meta.vesselKey &&
+      now - this._lastUndoMeta.ts <= (meta.coalesceMs || 650) &&
+      this.undoStack.length > 0
+    ) {
+      this._lastUndoMeta.ts = now;
+      if (!meta.keepRedo) this.redoStack = [];
+      return false;
+    }
     this.undoStack.push(snap);
     const limit = this.maxUndo || 10;
     while (this.undoStack.length > limit) {
       this.undoStack.shift();
     }
+    if (!meta?.keepRedo) {
+      this.redoStack = [];
+    }
+    this._lastUndoMeta = meta?.actionKey
+      ? { actionKey: meta.actionKey, vesselKey: meta.vesselKey || '', ts: now }
+      : null;
     return true;
   }
 
-  recordUndo() {
+  recordUndo(meta = null) {
     if (this._suppressUndo > 0) return false;
-    return this.pushUndoSnapshot(this.exportSnapshot());
+    return this.pushUndoSnapshot(this.exportSnapshot(), meta);
   }
 
   undo() {
     if (!Array.isArray(this.undoStack) || this.undoStack.length === 0) return false;
     const snap = this.undoStack.pop();
+    if (!Array.isArray(this.redoStack)) this.redoStack = [];
+    const curSnap = snap?.type === 'positions' ? this.exportPositionSnapshot() : this.exportSnapshot();
+    this.redoStack.push(curSnap);
+    const rLim = this.maxRedo || 10;
+    while (this.redoStack.length > rLim) {
+      this.redoStack.shift();
+    }
+    this._lastUndoMeta = null;
+    return this.restoreSnapshot(snap);
+  }
+
+  redo() {
+    if (!Array.isArray(this.redoStack) || this.redoStack.length === 0) return false;
+    const snap = this.redoStack.pop();
+    const curSnap = snap?.type === 'positions' ? this.exportPositionSnapshot() : this.exportSnapshot();
+    this.pushUndoSnapshot(curSnap, { keepRedo: true });
+    this._lastUndoMeta = null;
     return this.restoreSnapshot(snap);
   }
 
@@ -1279,7 +1318,8 @@ export class LabSimulation {
     if (!st || st.kind !== 'rubber_stopper' || !v || v.kind !== 'vessel' || v.isShattered) return false;
     const spec = APPARATUS[v.typeId];
     if (!spec?.stopperable) return false;
-
+    this.recordUndo({ actionKey: 'stopper_attach', vesselKey: vesselId, coalesceMs: 300 });
+    return this.withUndoSuppressed(() => {
     const chosenSide = spec.hasTwoEnds ? (side === 'left' || side === 'right' ? side : 'right') : 'main';
     if (st.attachedToId && (st.attachedToId !== v.id || st.attachedSide !== chosenSide)) {
       this.detachRubberStopper(st.id, { keepPos: true, silent: true });
@@ -1323,11 +1363,13 @@ export class LabSimulation {
     this.checkOverflow(v);
     this.emitChange();
     return true;
+    });
   }
 
   detachRubberStopper(stopperId, opts = {}) {
     const st = this.getItem(stopperId);
     if (!st || st.kind !== 'rubber_stopper' || !st.attachedToId) return false;
+    if (!opts.silent) this.recordUndo({ actionKey: 'stopper_detach', vesselKey: st.attachedToId, coalesceMs: 300 });
     const v = this.getItem(st.attachedToId);
     const oldSide = st.attachedSide || 'main';
     st.attachedToId = null;
@@ -1960,6 +2002,7 @@ export class LabSimulation {
   transferSolidsToVessel(sourceId, targetId, fraction = 1.0) { return transferSolidsToVesselImpl(this, sourceId, targetId, fraction); }
 
   grindMortar(mortarId) {
+    this.recordUndo({ actionKey: 'mortar_grind', vesselKey: mortarId, coalesceMs: 650 });
     return grindMortarSolids(this, mortarId);
   }
 
@@ -2047,6 +2090,8 @@ export class LabSimulation {
     const bar = this.getItem(stirBarId);
     const v = this.getItem(vesselId);
     if (!bar || bar.kind !== 'stir_bar' || !v || v.kind !== 'vessel' || v.isShattered || v.isStoppered) return false;
+    this.recordUndo({ actionKey: 'stir_bar', vesselKey: vesselId, coalesceMs: 400 });
+    return this.withUndoSuppressed(() => {
     if (bar.inVesselId && bar.inVesselId !== v.id) {
       this.removeStirBarFromVessel(bar.id);
     }
@@ -2057,11 +2102,13 @@ export class LabSimulation {
     this.recomputeScaleReadings();
     this.emitChange();
     return true;
+    });
   }
 
   removeStirBarFromVessel(stirBarId) {
     const bar = this.getItem(stirBarId);
     if (!bar || bar.kind !== 'stir_bar') return false;
+    if (bar.inVesselId) this.recordUndo({ actionKey: 'stir_bar', vesselKey: bar.inVesselId, coalesceMs: 400 });
     if (bar.inVesselId) {
       const v = this.getItem(bar.inVesselId);
       if (v) {
@@ -2082,6 +2129,8 @@ export class LabSimulation {
     const chips = this.getItem(chipId);
     const v = this.getItem(vesselId);
     if (!chips || chips.kind !== 'boiling_chips' || !v || v.kind !== 'vessel' || v.isShattered || v.isStoppered) return false;
+    this.recordUndo({ actionKey: 'boiling_chips', vesselKey: vesselId, coalesceMs: 400 });
+    return this.withUndoSuppressed(() => {
     if (chips.inVesselId && chips.inVesselId !== v.id) {
       this.removeBoilingChipsFromVessel(chips.id);
     }
@@ -2092,11 +2141,13 @@ export class LabSimulation {
     this.recomputeScaleReadings();
     this.emitChange();
     return true;
+    });
   }
 
   removeBoilingChipsFromVessel(chipId) {
     const chips = this.getItem(chipId);
     if (!chips || chips.kind !== 'boiling_chips') return false;
+    if (chips.inVesselId) this.recordUndo({ actionKey: 'boiling_chips', vesselKey: chips.inVesselId, coalesceMs: 400 });
     if (chips.inVesselId) {
       const v = this.getItem(chips.inVesselId);
       if (v) {
@@ -2115,6 +2166,7 @@ export class LabSimulation {
   connectCondenserOutlet(condenserId, vesselId = null) {
     const cond = this.getItem(condenserId);
     if (!cond || cond.kind !== 'condenser' || cond.isBroken) return false;
+    this.recordUndo({ actionKey: 'cond_outlet', vesselKey: condenserId, coalesceMs: 400 });
     if (!vesselId) {
       cond.outletTargetId = null;
       this.emitChange();
@@ -2854,6 +2906,10 @@ export class LabSimulation {
     this.missionState = {
       active: true,
       missionId: mission.id,
+      archetype: mission.archetype || 'blind_id',
+      difficultyTier: mission.difficultyTier || 'medium',
+      shelfPolicy: mission.shelfPolicy || 'scoped',
+      blindDosingMode: Boolean(mission.blindDosingMode),
       mode: resolvedMode,
       examMode: Boolean(extraOpts.examMode ?? resolvedMode === 'exam'),
       examCode: extraOpts.examCode || null,
@@ -2865,9 +2921,11 @@ export class LabSimulation {
       proctorConfig: extraOpts.proctorConfig || {},
       hintsUsed: 0,
       lastEvaluation: null,
-      draftAnswers: {},
+      draftAnswers: extraOpts.draftAnswers || {},
     };
     this.undoStack = [];
+    this.redoStack = [];
+    this._lastUndoMeta = null;
     this.emitChange();
     return this.missionState;
   }
@@ -2919,40 +2977,111 @@ export class LabSimulation {
       }
     }
 
-    // Optional seeded titration randomization (if teacher configured titrationRange)
+    // Optional seeded titration randomization (if teacher configured titrationConfig)
     let titrationMeta = null;
     if (assignmentDoc.titrationConfig?.itemId) {
       const tv = this.getItem(assignmentDoc.titrationConfig.itemId);
       if (tv) {
         const minM = Number(assignmentDoc.titrationConfig.minM) || 0.08;
         const maxM = Number(assignmentDoc.titrationConfig.maxM) || 0.18;
+        const tolPct = Number(assignmentDoc.titrationConfig.tolerancePct) || 2.0;
+        const analyteKind = assignmentDoc.titrationConfig.analyteKind || 'hcl';
         const targetM = +(minM + rng() * Math.max(0.01, maxM - minM)).toFixed(3);
-        const liqL = Math.max(0.01, ((tv.moles?.H2O_l || 1.38) * 18.015) / 1000);
-        const molH = +(targetM * liqL).toFixed(6);
-        tv.moles.H_aq = molH;
-        tv.moles.Cl_aq = molH;
+        const volMl = Number(assignmentDoc.titrationConfig.volMl) || Math.max(10, Math.round(((tv.moles?.H2O_l || 1.38) * 18.015)));
+        const liqL = volMl / 1000;
+        const molSolute = +(targetM * liqL).toFixed(6);
+        const h2oMol = (volMl * 0.997) / 18.01528;
+        if (analyteKind === 'ch3cooh') {
+          tv.moles = { H2O_l: h2oMol, CH3COOH_l: molSolute };
+        } else if (analyteKind === 'h2so4') {
+          tv.moles = { H2O_l: h2oMol, H_aq: 2 * molSolute, SO4_2_aq: molSolute };
+        } else if (analyteKind === 'fe2_redox') {
+          tv.moles = { H2O_l: h2oMol, Fe2_aq: molSolute, SO4_2_aq: molSolute + 0.05, H_aq: 0.10 };
+        } else if (analyteKind === 'i2_redox') {
+          tv.moles = { H2O_l: h2oMol, I2_aq: molSolute, I_aq: 0.05 };
+        } else {
+          tv.moles = { H2O_l: h2oMol, H_aq: molSolute, Cl_aq: molSolute };
+        }
         tv.hideComposition = true;
         tv.blindLabel = tv.blindLabel || '?X';
         tv.label = tv.blindLabel;
         if (!blindVesselIds.includes(tv.id)) blindVesselIds.push(tv.id);
-        titrationMeta = { targetMolarityM: targetM, itemId: tv.id };
+        titrationMeta = {
+          targetMolarityM: targetM,
+          itemId: tv.id,
+          analyteKind,
+          titrantReagent: assignmentDoc.titrationConfig.titrantReagent || 'naoh',
+          tolerancePct: tolPct,
+        };
         setupAnswerKey.targetMolarityM = targetM;
       }
     }
+
+    // Standard Solution Preparation setup meta
+    const standardPrepMeta = assignmentDoc.standardPrepConfig
+      ? {
+          ...assignmentDoc.standardPrepConfig,
+          targetMolarityM: Number(assignmentDoc.standardPrepConfig.targetMolarityM) || 0.2,
+          targetVolumeMl: Number(assignmentDoc.standardPrepConfig.targetVolumeMl) || 100,
+          tolerancePct: Number(assignmentDoc.standardPrepConfig.tolerancePct) || 5.0,
+        }
+      : null;
+
+    // Seeded Mixture Composition Analysis setup
+    let mixtureMeta = null;
+    if (assignmentDoc.mixtureConfig?.vesselId && assignmentDoc.mixtureConfig.spA && assignmentDoc.mixtureConfig.spB) {
+      const mv = this.getItem(assignmentDoc.mixtureConfig.vesselId);
+      const minPct = Math.max(5, Math.min(90, Number(assignmentDoc.mixtureConfig.minPctA) || 30));
+      const maxPct = Math.max(minPct + 5, Math.min(95, Number(assignmentDoc.mixtureConfig.maxPctA) || 70));
+      const pctA = +(minPct + Math.floor(rng() * Math.max(1, Math.floor((maxPct - minPct) / 5) + 1)) * 5).toFixed(1);
+      const pctB = +(100 - pctA).toFixed(1);
+      const totalMassG = Math.max(0.5, Number(assignmentDoc.mixtureConfig.totalMassG) || 5.0);
+      const mA = SPECIES[assignmentDoc.mixtureConfig.spA]?.molarMass || 55.845;
+      const mB = SPECIES[assignmentDoc.mixtureConfig.spB]?.molarMass || 63.546;
+      if (mv) {
+        mv.moles = {
+          [assignmentDoc.mixtureConfig.spA]: +((totalMassG * (pctA / 100)) / mA).toFixed(5),
+          [assignmentDoc.mixtureConfig.spB]: +((totalMassG * (pctB / 100)) / mB).toFixed(5),
+        };
+        mv.hideComposition = true;
+        mv.blindLabel = mv.blindLabel || `Mix (${totalMassG.toFixed(1)} g)`;
+        mv.label = mv.blindLabel;
+        if (!blindVesselIds.includes(mv.id)) blindVesselIds.push(mv.id);
+      }
+      mixtureMeta = {
+        ...assignmentDoc.mixtureConfig,
+        pctA,
+        pctB,
+        tolerancePct: Number(assignmentDoc.mixtureConfig.tolerancePct) || 3.0,
+      };
+      setupAnswerKey.pctA = pctA;
+      setupAnswerKey.pctB = pctB;
+    }
+
+    const synthesisMeta = assignmentDoc.synthesisConfig ? { ...assignmentDoc.synthesisConfig } : null;
+    const electrochemMeta = assignmentDoc.electrochemConfig ? { ...assignmentDoc.electrochemConfig } : null;
+
+    const archetype = assignmentDoc.archetype || (titrationMeta ? 'titration' : blindSpecs.length > 0 ? 'blind_id' : 'synthesis');
+    const difficultyTier = assignmentDoc.difficultyTier || (assignmentDoc.shelfPolicy === 'initial_only' ? 'hard' : assignmentDoc.allowedReagents ? 'medium' : 'easy');
+    const shelfPolicy = assignmentDoc.shelfPolicy || (difficultyTier === 'hard' && archetype === 'blind_id' ? 'initial_only' : assignmentDoc.allowedReagents || assignmentDoc.allowedApparatus ? 'scoped' : 'open');
 
     this.missionState = {
       active: true,
       customAssignment: true,
       missionId: assignmentDoc.examCode,
       examCode: assignmentDoc.examCode,
+      archetype,
+      difficultyTier,
+      shelfPolicy,
+      blindDosingMode: Boolean(assignmentDoc.blindDosingMode),
       titleText: assignmentDoc.title || assignmentDoc.examCode,
       goalText: assignmentDoc.goalText || '',
       equationText: assignmentDoc.equationText || '',
       mode: assignmentDoc.mode === 'practice' ? 'practice' : 'exam',
       examMode: true,
       lockEnvironment: assignmentDoc.lockEnvironment !== false,
-      allowedApparatus: assignmentDoc.allowedApparatus ?? null,
-      allowedReagents: assignmentDoc.allowedReagents ?? null,
+      allowedApparatus: shelfPolicy === 'initial_only' ? [] : (assignmentDoc.allowedApparatus ?? null),
+      allowedReagents: shelfPolicy === 'initial_only' ? [] : (assignmentDoc.allowedReagents ?? null),
       proctorConfig: assignmentDoc.proctorConfig || { maxSwitches: 3, maxAwaySec: 20, requireFullscreen: false },
       rubric: assignmentDoc.rubric || [],
       submitFields: assignmentDoc.submitFields || [],
@@ -2964,6 +3093,10 @@ export class LabSimulation {
       setupData: {
         blindVesselIds,
         titrationMeta,
+        standardPrepMeta,
+        mixtureMeta,
+        synthesisMeta,
+        electrochemMeta,
         answerKey: setupAnswerKey,
       },
       hintsUsed: 0,
@@ -2971,6 +3104,8 @@ export class LabSimulation {
       draftAnswers: options.draftAnswers || {},
     };
     this.undoStack = [];
+    this.redoStack = [];
+    this._lastUndoMeta = null;
     this.emitChange();
     return this.missionState;
   }

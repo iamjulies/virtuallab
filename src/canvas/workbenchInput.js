@@ -1063,10 +1063,10 @@ export function bindWorkbenchEventsImpl(wb) {
       if (
         !wb.dragState.undoRecorded &&
         wb.dragState.preDragSnap &&
-        Math.hypot(pt.x - wb.dragState.offsetX - wb.dragState.startX, pt.y - wb.dragState.offsetY - wb.dragState.startY) > 3
+        Math.hypot(pt.x - wb.dragState.offsetX - wb.dragState.startX, pt.y - wb.dragState.offsetY - wb.dragState.startY) > 8
       ) {
         wb.dragState.undoRecorded = true;
-        wb.sim.pushUndoSnapshot?.(wb.dragState.preDragSnap);
+        wb.sim.pushUndoSnapshot?.(wb.dragState.preDragSnap, { actionKey: 'move', vesselKey: wb.dragState.itemId, coalesceMs: 650 });
       }
 
       // Once user actually drags a docked stir bar (>6 px), undock it cleanly so simple clicks still inspect without ejecting!

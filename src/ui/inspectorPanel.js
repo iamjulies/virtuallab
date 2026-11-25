@@ -73,7 +73,7 @@ export class InspectorPanel {
       const purgedFlag = (item.headspaceGasMoles?.H2_g || 0) > 1e-5 || (item.moles.CuO_s || 0) > 1e-7
         ? ((item.airO2PurgeFrac ?? 1) <= 0.14 ? 'P' : 'U')
         : 'N';
-      const airFlags = `${(item.naTarnishFrac || 0) > 0.25 ? 1 : 0}${(item.kTarnishFrac || 0) > 0.25 ? 1 : 0}${(item.naohDeliquesceFrac || 0) > 0.15 ? 1 : 0}${(item.caCo3FilmFrac || 0) > 0.25 ? 1 : 0}${item.fePassivated ? 1 : 0}${item.alPassivated ? 1 : 0}${item.caso4Passivated ? 1 : 0}${(item.znCombustionTimer || 0) > 0.05 ? 1 : 0}${(item.mgCombustionTimer || 0) > 0.05 ? 1 : 0}${(item.alCombustionTimer || 0) > 0.05 ? 1 : 0}${purgedFlag}`;
+      const airFlags = `${(item.naTarnishFrac || 0) > 0.25 ? 1 : 0}${(item.kTarnishFrac || 0) > 0.25 ? 1 : 0}${(item.naohDeliquesceFrac || 0) > 0.15 ? 1 : 0}${(item.caCo3FilmFrac || 0) > 0.25 ? 1 : 0}${item.fePassivated ? 1 : 0}${item.alPassivated ? 1 : 0}${item.niPassivated ? 1 : 0}${item.caso4Passivated ? 1 : 0}${(item.znCombustionTimer || 0) > 0.05 ? 1 : 0}${(item.mgCombustionTimer || 0) > 0.05 ? 1 : 0}${(item.alCombustionTimer || 0) > 0.05 ? 1 : 0}${purgedFlag}`;
       const aromaInfo = computeVesselAroma(item);
       const aromaKey = aromaInfo ? aromaInfo.kind : 'none';
       const phenFlags = `${item.isSupersaturated ? 1 : 0}${(item.znPassivationFrac || 0) > 0.35 ? 1 : 0}${(item.pickeringFoamMl || 0) > 0.5 ? 1 : 0}${(item.langmuirCoverage || 0) > 0.55 ? 1 : 0}${(item.soapFoamMl || 0) > 0.5 ? 1 : 0}${item.hasBoilingChips ? 1 : 0}${item.soapSoftPotassiumGel ? 1 : 0}${item.soapSaltedOutCake ? 1 : 0}${aromaKey}`;
