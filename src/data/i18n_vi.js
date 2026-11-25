@@ -1,6 +1,6 @@
 export const I18N_VI = {
   appTitle: 'ChemLab Studio',
-  appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.29',
+  appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.30',
   toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
   quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
   quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -1163,4 +1163,12 @@ export const I18N_VI = {
   adminInviteStatusFree: 'Sẵn sàng',
   adminInviteStatusUsed: 'Đã dùng',
   adminInviteStatusExpired: 'Hết hạn',
+  // Build 30 (Prompt 90): Report Preview Modal
+  reportPreviewTitle: 'Xem trước Báo cáo Thực hành Hóa học',
+  reportPreviewEvalTitle: 'Xem trước Phiếu Thực hành & Chấm điểm',
+  reportDlHtmlBtn: 'Tải HTML',
+  reportDlPngBtn: 'Tải PNG',
+  reportDlPdfBtn: 'Tải PDF',
+  reportPrintBtn: 'In / Lưu PDF trình duyệt',
+  reportPreviewCloseBtn: 'Đóng',
 };

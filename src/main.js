@@ -1,4 +1,5 @@
 import { I18N } from './data/i18n.js';
+import { THEME_REGISTRY, isThemeDark } from './data/constants.js';
 import { APPARATUS } from './data/apparatus.js';
 import { STARTER_REAGENTS } from './data/species.js';
 import { LabManager } from './engine/labManager.js';
@@ -40,7 +41,7 @@ import { WorkspaceStorageModal } from './ui/workspaceStorageModal.js';
 import { StorageCabinetModal } from './ui/storageCabinetModal.js';
 import { MissionDockPanel, openMissionSelectorModal, openMissionResultModal } from './ui/missionPanel.js';
 import { TeacherBuilderModal } from './ui/teacherBuilderModal.js';
-import { exportWorkbenchSnapshotAsset, openPrintableLabReport } from './storage/reportExport.js';
+import { exportWorkbenchSnapshotAsset, openPrintableLabReport, openLabReportPreviewModal } from './storage/reportExport.js';
 import {
   ShortcutsModal,
   loadCustomShortcuts,
@@ -90,6 +91,7 @@ const snapBtnEl = document.getElementById('btn-bench-snapshot');
 const snapMenuEl = document.getElementById('bench-snapshot-menu');
 const printReportBtnEl = document.getElementById('btn-print-report');
 const printReportRootEl = document.getElementById('print-lab-report');
+const reportPreviewRootEl = document.getElementById('report-preview-modal-root');
 const zoomLoupeBtnEl = document.getElementById('btn-zoom-loupe');
 const zoomControlsEl = document.getElementById('canvas-zoom-controls');
 const zoomOutBtnEl = document.getElementById('btn-zoom-out');
@@ -172,9 +174,6 @@ function ensureLabSubscribed(lab) {
 ensureLabSubscribed(labManager.getActiveLab());
 
 let lastGutsSpillMs = 0;
-function isThemeDark(themeName) {
-  return themeName === 'dark' || themeName === 'petal' || themeName === 'sos' || themeName === 'guts' || themeName === 'anti';
-}
 
 function handleVisualAlert(type, vessel, meta) {
   const t = getTranslator();
@@ -193,8 +192,10 @@ function handleVisualAlert(type, vessel, meta) {
   if ((burstType === 'shatter' || burstType === 'explosion') && appState.theme === 'hte') {
     workbench?.triggerHteStorm?.(1.0);
   }
-  if (appState.theme === 'anti' && (burstType === 'stopper_pop' || burstType === 'h2_pop' || burstType === 'explosion')) {
-    particles.emitAntiBalloons?.(vessel.x, Math.max(40, vessel.y - 36), burstType === 'explosion' ? 4 : 2);
+  if (appState.theme === 'anti' && (burstType === 'stopper_pop' || burstType === 'h2_pop' || burstType === 'explosion' || burstType === 'shatter')) {
+    const bCount = burstType === 'explosion' || burstType === 'shatter' ? 6 : 5;
+    particles.emitAntiBalloons?.(vessel.x, Math.max(40, vessel.y - 36), bCount);
+    particles.emitAntiPaintSplash?.(vessel.x, vessel.y, BENCH_FLOOR_Y, burstType === 'explosion' || burstType === 'shatter' ? 16 : 12);
   }
   if (
     appState.theme === 'guts' &&
@@ -528,7 +529,7 @@ comparisonPanel = new ComparisonPanel(compareRootEl, sim, getTranslator, {
 });
 
 function applyThemeChoice(nextTheme = null) {
-  const order = ['dark', 'light', 'olivia', 'petal', 'ctrl', 'sos', 'hte', 'guts', 'homogenic', 'anti'];
+  const order = THEME_REGISTRY.map((th) => th.id);
   const target = order.includes(nextTheme)
     ? nextTheme
     : order[(order.indexOf(appState.theme) + 1) % order.length];
@@ -542,19 +543,6 @@ function applyThemeChoice(nextTheme = null) {
   }
   return target;
 }
-
-const THEME_OPTIONS = [
-  { id: 'dark', icon: '🌙', key: 'themeDark' },
-  { id: 'light', icon: '☀️', key: 'themeLight' },
-  { id: 'olivia', icon: '🩷', key: 'themeOlivia' },
-  { id: 'petal', icon: '🥀', key: 'themePetal' },
-  { id: 'ctrl', icon: '📓', key: 'themeCtrl' },
-  { id: 'sos', icon: '🌊', key: 'themeSos' },
-  { id: 'hte', icon: '🕯️', key: 'themeHte' },
-  { id: 'guts', icon: '✦', key: 'themeGuts' },
-  { id: 'homogenic', icon: '❄️', key: 'themeHomogenic' },
-  { id: 'anti', icon: '👑', key: 'themeAnti' },
-];
 
 let quickHoldMode = null;
 let zHoldTimer = null;
@@ -582,9 +570,9 @@ function showQuickHoldPopup(mode) {
   let buttonsHtml = '';
   if (mode === 'theme') {
     title = t('quickThemesTitle');
-    buttonsHtml = THEME_OPTIONS.map(
+    buttonsHtml = THEME_REGISTRY.map(
       (th) => `<button type="button" class="quick-hold-btn ${appState.theme === th.id ? 'active' : ''}" data-pick-theme="${th.id}">
-        <span>${th.icon}</span><span class="truncate">${t(th.key)}</span>
+        <span>${th.icon}</span><span class="truncate">${t(th.i18nKey)}</span>
       </button>`
     ).join('');
   } else {
@@ -1032,19 +1020,7 @@ function showMissionResultFlow(evalResult) {
     onStartMission: (mid, mMode) => startMissionFlow(mid, mMode),
     onExitMission: () => exitMissionFlow(),
     onPrintResult: (res) => {
-      const activeLab = labManager.getActiveLab();
-      const labName = activeLab?.customName || `Lab ${activeLab?.number || 1}`;
-      workbench?.render();
-      openPrintableLabReport({
-        sim,
-        workbenchCanvas: canvasEl,
-        isDark: appState.theme !== 'light' && appState.theme !== 'olivia' && appState.theme !== 'ctrl',
-        labName,
-        t: getTranslator(),
-        lang: appState.lang,
-        reportRootEl: printReportRootEl,
-        missionResult: res,
-      });
+      openReportFlow(res);
     },
   });
 }
@@ -1851,7 +1827,7 @@ snapMenuEl?.querySelectorAll('.bench-snap-opt').forEach((btn) => {
     exportWorkbenchSnapshotAsset({
       format: fmt,
       workbenchCanvas: canvasEl,
-      isDark: appState.theme !== 'light' && appState.theme !== 'olivia' && appState.theme !== 'ctrl',
+      isDark: isThemeDark(appState.theme),
       sim,
       labName,
       lang: appState.lang,
@@ -1859,19 +1835,39 @@ snapMenuEl?.querySelectorAll('.bench-snap-opt').forEach((btn) => {
     showToast(`📷 ${fmt.toUpperCase()} (${labName})`);
   });
 });
-printReportBtnEl?.addEventListener('click', () => {
+
+let renderLoopPausedForPrint = false;
+let prePrintSimPaused = false;
+function openReportFlow(missionResult = null) {
   const activeLab = labManager.getActiveLab();
   const labName = activeLab?.customName || `Lab ${activeLab?.number || 1}`;
   workbench?.render();
-  openPrintableLabReport({
+  openLabReportPreviewModal({
     sim,
     workbenchCanvas: canvasEl,
-    isDark: appState.theme !== 'light' && appState.theme !== 'olivia' && appState.theme !== 'ctrl',
+    isDark: isThemeDark(appState.theme),
     labName,
     t: getTranslator(),
     lang: appState.lang,
+    modalRootEl: reportPreviewRootEl,
     reportRootEl: printReportRootEl,
+    missionResult,
+    onBeforePrint: () => {
+      renderLoopPausedForPrint = true;
+      prePrintSimPaused = Boolean(sim.environment?.paused);
+      if (sim.environment) sim.environment.paused = true;
+    },
+    onAfterPrint: () => {
+      renderLoopPausedForPrint = false;
+      if (sim.environment) sim.environment.paused = prePrintSimPaused;
+      prevMs = performance.now();
+    },
+    onNotify: (msg) => showToast(msg),
   });
+}
+
+printReportBtnEl?.addEventListener('click', () => {
+  openReportFlow(null);
 });
 
 // Customizable Keyboard Shortcuts Registry & Modal
@@ -1919,8 +1915,8 @@ window.addEventListener('keyup', (e) => {
       hideQuickHoldPopup();
     } else if (!e.shiftKey) {
       const next = applyThemeChoice();
-      const thObj = THEME_OPTIONS.find((x) => x.id === next);
-      showToast(`🎨 ${thObj ? getTranslator()(thObj.key) : next}`);
+      const thObj = THEME_REGISTRY.find((x) => x.id === next);
+      showToast(`🎨 ${thObj ? getTranslator()(thObj.i18nKey) : next}`);
     }
   } else if (baseKey && baseKey === presetBase && quickHoldMode === 'preset') {
     hideQuickHoldPopup();
@@ -2385,6 +2381,11 @@ let renderClockSec = prevMs / 1000;
 let uiSyncAccum = 0;
 
 function frame(nowMs) {
+  if (renderLoopPausedForPrint) {
+    prevMs = nowMs;
+    requestAnimationFrame(frame);
+    return;
+  }
   const dt = Math.min(0.05, Math.max(0.001, (nowMs - prevMs) / 1000));
   prevMs = nowMs;
   lastFrameDt = dt;

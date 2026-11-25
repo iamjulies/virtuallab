@@ -1653,9 +1653,33 @@ export class ParticleSystem {
       } else if (p.kind === 'homogenic_geyser') {
         p.vy += 125 * dt;
         p.vx *= 0.98;
+      } else if (p.kind === 'homogenic_steam') {
+        p.vy -= 18 * dt;
+        p.vx *= 0.97;
+        p.r = Math.min(9.5, (p.r || 3.5) + 4.2 * dt);
       } else if (p.kind === 'anti_balloon') {
         p.vx = Math.sin(p.life * 2.4 + (p.phase || 0)) * 18;
         p.vy = -(36 + Math.cos(p.life * 1.5 + (p.phase || 0)) * 6);
+      } else if (p.kind === 'anti_paint_drop') {
+        p.vy += 380 * dt;
+        p.vx *= 0.99;
+        const limitY = p.stopY || 440;
+        if (p.y >= limitY) {
+          p.y = limitY;
+          p.life = p.maxLife;
+          this._pushCappedParticle('anti_paint_blot', 14, {
+            kind: 'anti_paint_blot',
+            x: p.x,
+            y: limitY + (Math.random() * 4 - 2),
+            vx: 0,
+            vy: 0,
+            r: 4.5 + Math.random() * 4.5,
+            life: 0,
+            maxLife: 4.2,
+          });
+        }
+      } else if (p.kind === 'anti_paint_blot') {
+        // Stationary Roy Nachum red paint blot fading slowly on bench surface
       } else if (p.kind === 'pipette_suck') {
         p.vx *= 0.98;
       } else if (p.kind === 'metaball_drop') {
@@ -1990,29 +2014,58 @@ export class ParticleSystem {
         ctx.fill();
         ctx.stroke();
       } else if (p.kind === 'homogenic_geyser') {
-        ctx.fillStyle = p.color || 'rgba(249, 115, 22, 0.88)';
+        ctx.fillStyle = p.color || 'rgba(249, 115, 22, 0.92)';
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r || 1.8, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, p.r || 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.kind === 'homogenic_steam') {
+        ctx.fillStyle = p.color || 'rgba(224, 242, 254, 0.34)';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r || 4.0, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.kind === 'anti_paint_drop') {
+        ctx.fillStyle = 'rgba(220, 38, 38, 0.92)';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r || 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.kind === 'anti_paint_blot') {
+        ctx.fillStyle = 'rgba(220, 38, 38, 0.38)';
+        ctx.beginPath();
+        ctx.ellipse(p.x, p.y, p.r || 5.5, (p.r || 5.5) * 0.36, 0, 0, Math.PI * 2);
         ctx.fill();
       } else if (p.kind === 'anti_balloon') {
         ctx.translate(p.x, p.y);
-        const br = p.r || 7.2;
-        ctx.strokeStyle = 'rgba(220, 38, 38, 0.72)';
-        ctx.lineWidth = 0.9;
+        const br = p.r || 14.4;
+        // Vivid waving Roy Nachum crimson string
+        ctx.strokeStyle = 'rgba(220, 38, 38, 0.85)';
+        ctx.lineWidth = 1.25;
         ctx.beginPath();
-        ctx.moveTo(0, br * 1.15);
-        ctx.quadraticCurveTo(Math.sin(p.life * 4) * 3, br * 2.0, -1, br * 2.9);
+        ctx.moveTo(0, br * 1.12);
+        ctx.quadraticCurveTo(Math.sin(p.life * 4 + (p.phase || 0)) * 5.2, br * 2.05, -1.5, br * 3.0);
         ctx.stroke();
+
+        // Matte black balloon knot triangle at bottom
         ctx.fillStyle = '#09090b';
-        ctx.strokeStyle = 'rgba(248, 250, 252, 0.35)';
-        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(-2.6, br * 1.18);
+        ctx.lineTo(0, br * 0.96);
+        ctx.lineTo(2.6, br * 1.18);
+        ctx.closePath();
+        ctx.fill();
+
+        // Doubled obsidian gallery balloon body
+        ctx.fillStyle = '#09090b';
+        ctx.strokeStyle = 'rgba(248, 250, 252, 0.42)';
+        ctx.lineWidth = 1.05;
         ctx.beginPath();
         ctx.ellipse(0, 0, br * 0.86, br, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+
+        // Crisp glossy white specular reflection
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
         ctx.beginPath();
-        ctx.ellipse(-br * 0.28, -br * 0.32, br * 0.18, br * 0.32, -0.35, 0, Math.PI * 2);
+        ctx.ellipse(-br * 0.30, -br * 0.32, br * 0.16, br * 0.32, -0.35, 0, Math.PI * 2);
         ctx.fill();
       }
 
@@ -2177,40 +2230,90 @@ export class ParticleSystem {
     });
   }
 
+  _pushCappedParticle(kind, cap, particle) {
+    let count = 0;
+    let firstIdx = -1;
+    for (let i = 0; i < this.particles.length; i++) {
+      if (this.particles[i].kind === kind) {
+        if (firstIdx < 0) firstIdx = i;
+        count++;
+      }
+    }
+    if (count >= cap && firstIdx >= 0) {
+      this.particles.splice(firstIdx, 1);
+    }
+    this.particles.push(particle);
+  }
+
   /**
-   * Homogenic Theme Signature Gimmick: Geothermal magma rift geyser embers rising around superheated vessels.
+   * Homogenic Theme Signature Gimmick: Geothermal magma rift geyser embers & hot spring steam rising around superheated vessels.
    */
   emitHomogenicGeyserSpark(x, y) {
     for (let i = 0; i < 2; i++) {
-      this.particles.push({
+      this._pushCappedParticle('homogenic_geyser', 18, {
         kind: 'homogenic_geyser',
-        x: x + (Math.random() - 0.5) * 28,
+        x: x + (Math.random() - 0.5) * 34,
         y: y + (Math.random() - 0.5) * 4,
-        vx: (Math.random() - 0.5) * 26,
-        vy: -(52 + Math.random() * 48),
-        r: 1.5 + Math.random() * 1.2,
+        vx: (Math.random() - 0.5) * 34,
+        vy: -(82 + Math.random() * 68),
+        r: 2.0 + Math.random() * 1.5,
         life: 0,
-        maxLife: 0.72 + Math.random() * 0.32,
-        color: i === 0 ? 'rgba(249, 115, 22, 0.92)' : 'rgba(254, 240, 138, 0.92)',
+        maxLife: 0.82 + Math.random() * 0.36,
+        color: i === 0 ? 'rgba(249, 115, 22, 0.94)' : 'rgba(254, 240, 138, 0.96)',
+      });
+    }
+    if (Math.random() < 0.45) {
+      this._pushCappedParticle('homogenic_steam', 10, {
+        kind: 'homogenic_steam',
+        x: x + (Math.random() - 0.5) * 28,
+        y: y - 4,
+        vx: (Math.random() - 0.5) * 16,
+        vy: -(48 + Math.random() * 28),
+        r: 3.6 + Math.random() * 1.8,
+        life: 0,
+        maxLife: 0.85,
+        color: 'rgba(219, 234, 254, 0.36)',
       });
     }
   }
 
   /**
-   * ANTI Theme Signature Gimmick: Sleek black balloons trailing thin red string drifting upward on gas evolution/pop.
+   * ANTI Theme Signature Gimmick: Doubled sleek black balloons trailing crimson string drifting upward on gas evolution/pop.
    */
   emitAntiBalloons(x, y, count = 1) {
     for (let i = 0; i < count; i++) {
-      this.particles.push({
+      this._pushCappedParticle('anti_balloon', 14, {
         kind: 'anti_balloon',
-        x: x + (Math.random() - 0.5) * 22,
-        y: y - Math.random() * 10,
-        vx: (Math.random() - 0.5) * 14,
+        x: x + (Math.random() - 0.5) * 28,
+        y: y - Math.random() * 12,
+        vx: (Math.random() - 0.5) * 16,
         vy: -(34 + Math.random() * 16),
-        r: 6.4 + Math.random() * 2.2,
+        r: 12.8 + Math.random() * 4.4,
         phase: Math.random() * Math.PI * 2,
         life: 0,
         maxLife: 4.5 + Math.random() * 1.5,
+      });
+    }
+  }
+
+  /**
+   * ANTI Pop/Shatter Gimmick: Roy Nachum red oil paint splatters onto bench (capped <= 16 droplets).
+   */
+  emitAntiPaintSplash(x, y, floorY = 440, count = 14) {
+    const safeCount = Math.min(16, Math.max(1, count));
+    for (let i = 0; i < safeCount; i++) {
+      const ang = -Math.PI * (0.1 + Math.random() * 0.8);
+      const spd = 95 + Math.random() * 145;
+      this._pushCappedParticle('anti_paint_drop', 16, {
+        kind: 'anti_paint_drop',
+        x: x + (Math.random() - 0.5) * 18,
+        y: y - Math.random() * 16,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd,
+        r: 2.2 + Math.random() * 2.2,
+        stopY: floorY,
+        life: 0,
+        maxLife: 1.6,
       });
     }
   }

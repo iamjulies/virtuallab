@@ -944,50 +944,67 @@ export function exportTlcPlateAsset({ format, plate, uvLight, t, lang, labName }
 
 export function composeWorkbenchSnapshotCanvas({ workbenchCanvas, isDark, sim, labName, lang }) {
   const isEn = lang === 'en';
-  const tempC = kelvinToCelsius(sim.environment?.tempK ?? CONSTANTS.T_STD_K).toFixed(1);
-  const pBar = (sim.environment?.pressureBar ?? CONSTANTS.P_STD_BAR).toFixed(2);
-  const atmMode = sim.environment?.atmosphereMode || 'air';
-  const srcW = Math.max(320, workbenchCanvas?.width || 1000);
-  const srcH = Math.max(200, workbenchCanvas?.height || 640);
-  const targetW = Math.min(1800, srcW);
-  const scale = targetW / srcW;
-  const imgH = Math.round(srcH * scale);
-  const headerH = 56;
-  const footerH = 30;
+  try {
+    const tempC = kelvinToCelsius(sim?.environment?.tempK ?? CONSTANTS.T_STD_K).toFixed(1);
+    const pBar = (sim?.environment?.pressureBar ?? CONSTANTS.P_STD_BAR).toFixed(2);
+    const atmMode = sim?.environment?.atmosphereMode || 'air';
+    const srcW = Math.max(320, workbenchCanvas?.width || 1000);
+    const srcH = Math.max(200, workbenchCanvas?.height || 640);
+    const targetW = Math.min(1800, srcW);
+    const scale = targetW / srcW;
+    const imgH = Math.round(srcH * scale);
+    const headerH = 56;
+    const footerH = 30;
 
-  const canvas = document.createElement('canvas');
-  canvas.width = targetW + 32;
-  canvas.height = headerH + imgH + footerH + 16;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW + 32;
+    canvas.height = headerH + imgH + footerH + 16;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.fillStyle = '#0f172a';
-  ctx.font = 'bold 18px system-ui, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillText(`ChemLab Studio — ${labName || 'Workbench'}`, 16, 12);
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 18px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`ChemLab Studio — ${labName || 'Workbench'}`, 16, 12);
 
-  ctx.fillStyle = '#475569';
-  ctx.font = '12.5px ui-monospace, monospace';
-  ctx.fillText(`T = ${tempC}°C · P = ${pBar} bar · Atm: ${atmMode.toUpperCase()}`, 16, 36);
+    ctx.fillStyle = '#475569';
+    ctx.font = '12.5px ui-monospace, monospace';
+    ctx.fillText(`T = ${tempC}°C · P = ${pBar} bar · Atm: ${atmMode.toUpperCase()}`, 16, 36);
 
-  // Fill active bench theme color behind the transparent workbench canvas so colors & glass shine cleanly
-  ctx.fillStyle = isDark ? '#0b1220' : '#f1f5f9';
-  ctx.fillRect(16, headerH, targetW, imgH);
-  if (workbenchCanvas && workbenchCanvas.width > 0 && workbenchCanvas.height > 0) {
-    ctx.drawImage(workbenchCanvas, 16, headerH, targetW, imgH);
+    // Fill active bench theme color behind the transparent workbench canvas so colors & glass shine cleanly
+    ctx.fillStyle = isDark ? '#0b1220' : '#f1f5f9';
+    ctx.fillRect(16, headerH, targetW, imgH);
+    if (workbenchCanvas && workbenchCanvas.width > 0 && workbenchCanvas.height > 0) {
+      ctx.drawImage(workbenchCanvas, 16, headerH, targetW, imgH);
+    }
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(16, headerH, targetW, imgH);
+
+    ctx.fillStyle = '#64748b';
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${isEn ? 'Captured' : 'Chụp lúc'}: ${new Date().toLocaleString()}`, canvas.width - 16, headerH + imgH + 18);
+    return canvas;
+  } catch (err) {
+    const fallback = document.createElement('canvas');
+    fallback.width = 640;
+    fallback.height = 240;
+    const fCtx = fallback.getContext('2d');
+    if (fCtx) {
+      fCtx.fillStyle = isDark ? '#0b1220' : '#f1f5f9';
+      fCtx.fillRect(0, 0, fallback.width, fallback.height);
+      fCtx.fillStyle = isDark ? '#e2e8f0' : '#0f172a';
+      fCtx.font = 'bold 14px system-ui, sans-serif';
+      fCtx.fillText(`ChemLab Studio — ${labName || 'Workbench'}`, 20, 40);
+      fCtx.font = '12px system-ui, sans-serif';
+      fCtx.fillText(isEn ? 'Workbench snapshot preview unavailable' : 'Không thể chụp trực tiếp ảnh bàn thí nghiệm', 20, 72);
+    }
+    return fallback;
   }
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(16, headerH, targetW, imgH);
-
-  ctx.fillStyle = '#64748b';
-  ctx.font = '11px ui-monospace, monospace';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(`${isEn ? 'Captured' : 'Chụp lúc'}: ${new Date().toLocaleString()}`, canvas.width - 16, headerH + imgH + 18);
-  return canvas;
 }
 
 export function exportWorkbenchSnapshotAsset({ format, workbenchCanvas, isDark, sim, labName, lang }) {
@@ -999,36 +1016,85 @@ function escPrintHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function openPrintableLabReport({ sim, workbenchCanvas, isDark, labName, t, lang, reportRootEl, missionResult = null }) {
-  if (!reportRootEl) return;
+function composeDirectReportPdfCanvas({ benchCanvas, sim, labName, lang, missionResult }) {
   const isEn = lang === 'en';
+  const baseSnap = benchCanvas;
+  const vessels = (sim?.items || []).filter((i) => i.kind === 'vessel' && !i.isShattered);
+  const mEval = missionResult || sim?.missionState?.lastEvaluation || null;
+  const lineH = 18;
+  const extraRows = (mEval ? 5 : 0) + Math.min(8, vessels.length) * 2 + 4;
+  const summaryH = Math.max(90, extraRows * lineH + 30);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(800, baseSnap?.width || 1000);
+  canvas.height = (baseSnap?.height || 520) + summaryH;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (baseSnap) ctx.drawImage(baseSnap, 0, 0);
+
+  let cy = (baseSnap?.height || 520) + 14;
+  ctx.fillStyle = '#0f172a';
+  ctx.font = 'bold 14px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(
+    mEval
+      ? `${isEn ? 'Practical Assessment' : 'Phiếu Thực hành'}: ${(mEval.totalScore ?? 0).toFixed(1)}/10 (${mEval.grade || ''})`
+      : `${isEn ? 'Active Vessels' : 'Bình phản ứng'}: ${vessels.length}`,
+    16,
+    cy
+  );
+  cy += 22;
+  ctx.font = '12px ui-monospace, monospace';
+  ctx.fillStyle = '#334155';
+  for (const v of vessels.slice(0, 8)) {
+    const isBlind = Boolean(v.hideComposition) && !mEval;
+    const liqL = computeLiquidVolumeL(v.moles, v.tempK);
+    const ph = v.isFrozenSolid || isBlind ? null : computePH(v.moles, liqL, v.tempK);
+    const lbl = isBlind ? v.blindLabel || v.label : v.label;
+    const line = `• ${lbl}: T=${kelvinToCelsius(v.tempK).toFixed(1)}°C | V=${(liqL * 1000).toFixed(1)} mL | pH=${ph === null ? '—' : ph.toFixed(2)}`;
+    ctx.fillText(line, 20, cy);
+    cy += lineH;
+  }
+  return canvas;
+}
+
+export function buildLabReportBundle({ sim, workbenchCanvas, isDark, labName, t, lang, missionResult = null }) {
+  const isEn = lang === 'en';
+  const translate = typeof t === 'function' ? t : (k) => String(k ?? '');
   const benchCanvas = composeWorkbenchSnapshotCanvas({ workbenchCanvas, isDark, sim, labName, lang });
-  const benchImgUrl = benchCanvas.toDataURL('image/png');
-  const vessels = sim.items.filter((i) => i.kind === 'vessel' && !i.isShattered);
-  const env = sim.environment || {};
-  const mEval = missionResult || sim.missionState?.lastEvaluation || null;
+  let benchImgUrl = '';
+  try {
+    benchImgUrl = benchCanvas.toDataURL('image/png');
+  } catch {
+    benchImgUrl = '';
+  }
+  const vessels = (sim?.items || []).filter((i) => i.kind === 'vessel' && !i.isShattered);
+  const env = sim?.environment || {};
+  const mEval = missionResult || sim?.missionState?.lastEvaluation || null;
 
   const missionHtml = mEval
     ? `
       <section class="print-mission-card">
-        <h2>${escPrintHtml(isEn ? 'Practical Assessment Sheet' : 'Phiếu Thực hành & Chấm điểm')} — ${escPrintHtml(t(mEval.titleKey))}</h2>
+        <h2>${escPrintHtml(isEn ? 'Practical Assessment Sheet' : 'Phiếu Thực hành & Chấm điểm')} — ${escPrintHtml(translate(mEval.titleKey))}</h2>
         <div class="print-metrics-grid">
-          <span><strong>${escPrintHtml(isEn ? 'Score' : 'Điểm số')}:</strong> ${mEval.totalScore.toFixed(1)} / 10</span>
-          <span><strong>${escPrintHtml(isEn ? 'Grade' : 'Xếp loại')}:</strong> ${escPrintHtml(mEval.medal)} ${escPrintHtml(mEval.grade)}</span>
-          <span><strong>${escPrintHtml(isEn ? 'Mode' : 'Chế độ')}:</strong> ${escPrintHtml(mEval.mode === 'exam' ? t('missionModeExam') : t('missionModePractice'))}</span>
-          <span><strong>${escPrintHtml(isEn ? 'Time' : 'Thời gian')}:</strong> ${mEval.elapsedSec}s</span>
+          <span><strong>${escPrintHtml(isEn ? 'Score' : 'Điểm số')}:</strong> ${(mEval.totalScore ?? 0).toFixed(1)} / 10</span>
+          <span><strong>${escPrintHtml(isEn ? 'Grade' : 'Xếp loại')}:</strong> ${escPrintHtml(mEval.medal || '')} ${escPrintHtml(mEval.grade || '')}</span>
+          <span><strong>${escPrintHtml(isEn ? 'Mode' : 'Chế độ')}:</strong> ${escPrintHtml(mEval.mode === 'exam' ? translate('missionModeExam') : translate('missionModePractice'))}</span>
+          <span><strong>${escPrintHtml(isEn ? 'Time' : 'Thời gian')}:</strong> ${mEval.elapsedSec ?? 0}s</span>
         </div>
         <table>
           <thead><tr><th>${escPrintHtml(isEn ? 'Criterion' : 'Tiêu chí')}</th><th>${escPrintHtml(isEn ? 'Detail' : 'Chi tiết')}</th><th>${escPrintHtml(isEn ? 'Points' : 'Điểm')}</th></tr></thead>
           <tbody>
-            ${mEval.criteriaResults
+            ${(mEval.criteriaResults || [])
               .map(
-                (cr) => `<tr><td>${escPrintHtml(t(cr.labelKey))}</td><td>${escPrintHtml(cr.detail || cr.status)}</td><td><strong>${cr.earned.toFixed(1)} / ${cr.maxPoints.toFixed(1)}</strong></td></tr>`
+                (cr) => `<tr><td>${escPrintHtml(translate(cr.labelKey))}</td><td>${escPrintHtml(cr.detail || cr.status)}</td><td><strong>${(cr.earned ?? 0).toFixed(1)} / ${(cr.maxPoints ?? 0).toFixed(1)}</strong></td></tr>`
               )
               .join('')}
           </tbody>
         </table>
-        <p style="font-size:10.5px;margin:6px 0 0 0;"><strong>${escPrintHtml(t('missionEquationsTitle'))}:</strong> <code>${escPrintHtml(mEval.equationText)}</code></p>
+        <p style="font-size:10.5px;margin:6px 0 0 0;"><strong>${escPrintHtml(translate('missionEquationsTitle'))}:</strong> <code>${escPrintHtml(mEval.equationText || '')}</code></p>
       </section>
     `
     : '';
@@ -1046,7 +1112,11 @@ export function openPrintableLabReport({ sim, workbenchCanvas, isDark, labName, 
         ? []
         : Object.entries(v.moles || {})
             .filter(([id, n]) => n > 1e-8 && SPECIES[id]?.phase === 's')
-            .map(([id, n]) => `${SPECIES[id].formula}: ${n.toFixed(4)} mol (${(n * SPECIES[id].molarMass).toFixed(2)} g)`);
+            .map(([id, n]) => {
+              const fStr = SPECIES[id]?.formula || id;
+              const mm = SPECIES[id]?.molarMass || 0;
+              return `${fStr}: ${n.toFixed(4)} mol (${(n * mm).toFixed(2)} g)`;
+            });
       const gases = isBlind
         ? []
         : GAS_DISPLAY_META.map((g) => {
@@ -1056,7 +1126,7 @@ export function openPrintableLabReport({ sim, workbenchCanvas, isDark, labName, 
 
       return `
         <section class="print-vessel-card">
-          <h3>${escPrintHtml(t(spec.i18nKey || v.typeId))} ${escPrintHtml(isBlind ? (v.blindLabel || v.label) : v.label)}</h3>
+          <h3>${escPrintHtml(translate(spec.i18nKey || v.typeId))} ${escPrintHtml(isBlind ? (v.blindLabel || v.label) : v.label)}</h3>
           <div class="print-metrics-grid">
             <span>T = ${kelvinToCelsius(v.tempK).toFixed(1)}°C</span>
             <span>P = ${localPBar.toFixed(2)} bar</span>
@@ -1067,29 +1137,29 @@ export function openPrintableLabReport({ sim, workbenchCanvas, isDark, labName, 
           </div>
           ${
             isBlind
-              ? `<p class="print-muted">🔒 ${escPrintHtml(t('blindUnknownBadge'))}</p>`
+              ? `<p class="print-muted">🔒 ${escPrintHtml(translate('blindUnknownBadge'))}</p>`
               : liqData.rows.length > 0
-              ? `<table><thead><tr><th>${escPrintHtml(t('colSpecies'))}</th><th>mol</th><th>g</th><th>M</th></tr></thead><tbody>
+              ? `<table><thead><tr><th>${escPrintHtml(translate('colSpecies'))}</th><th>mol</th><th>g</th><th>M</th></tr></thead><tbody>
                   ${liqData.rows.map((r) => {
                     const fStr = r.sp?.formula || r.formula || r.spId || '—';
                     const cVal = Number.isFinite(r.cM) && r.cM > 0 ? r.cM.toFixed(3) : r.molarityM != null ? r.molarityM.toFixed(3) : '—';
                     return `<tr><td>${escPrintHtml(fStr)}</td><td>${r.mol.toFixed(4)}</td><td>${r.massG.toFixed(3)}</td><td>${cVal}</td></tr>`;
                   }).join('')}
                 </tbody></table>`
-              : `<p class="print-muted">${escPrintHtml(t('emptyLiquidMsg'))}</p>`
+              : `<p class="print-muted">${escPrintHtml(translate('emptyLiquidMsg'))}</p>`
           }
-          ${solids.length > 0 ? `<p><strong>${escPrintHtml(t('solidTableTitle'))}:</strong> ${escPrintHtml(solids.join(' · '))}</p>` : ''}
-          ${gases.length > 0 ? `<p><strong>${escPrintHtml(t('gasTableTitle'))}:</strong> ${escPrintHtml(gases.join(' · '))}</p>` : ''}
+          ${solids.length > 0 ? `<p><strong>${escPrintHtml(translate('solidTableTitle'))}:</strong> ${escPrintHtml(solids.join(' · '))}</p>` : ''}
+          ${gases.length > 0 ? `<p><strong>${escPrintHtml(translate('gasTableTitle'))}:</strong> ${escPrintHtml(gases.join(' · '))}</p>` : ''}
         </section>
       `;
     })
     .join('');
 
-  const logItems = (sim.logs || [])
+  const logItems = (sim?.logs || [])
     .slice(0, 40)
-    .map((l) => `<li><code>[${escPrintHtml(l.timeStr || '')}]</code> ${escPrintHtml(t(l.key, l.params))}</li>`);
+    .map((l) => `<li><code>[${escPrintHtml(l.timeStr || '')}]</code> ${escPrintHtml(translate(l.key, l.params))}</li>`);
 
-  if (mEval && logItems.length < 4 && sim.missionTelemetry) {
+  if (mEval && logItems.length < 4 && sim?.missionTelemetry) {
     const tel = sim.missionTelemetry;
     const summarySteps = [];
     if (tel.usedPipetteTransfer) {
@@ -1136,25 +1206,191 @@ export function openPrintableLabReport({ sim, workbenchCanvas, isDark, labName, 
     }
   }
   const logsHtml = logItems.join('');
+  const titleText = `ChemLab Studio — ${mEval ? (isEn ? 'Practical Assessment Sheet' : 'Phiếu Thực hành & Chấm điểm') : isEn ? 'Laboratory Report' : 'Báo cáo Thực hành Hóa học'}`;
 
-  reportRootEl.innerHTML = `
+  const bodyHtml = `
     <div class="print-report-page">
       <header class="print-report-hdr">
-        <h1>ChemLab Studio — ${escPrintHtml(mEval ? (isEn ? 'Practical Assessment Sheet' : 'Phiếu Thực hành & Chấm điểm') : isEn ? 'Laboratory Report' : 'Báo cáo Thực hành Hóa học')}</h1>
+        <h1>${escPrintHtml(titleText)}</h1>
         <p>${escPrintHtml(labName || 'Lab 1')} · ${new Date().toLocaleString()} · T = ${kelvinToCelsius(env.tempK ?? 298.15).toFixed(1)}°C · P = ${(env.pressureBar ?? 1.01325).toFixed(2)} bar</p>
       </header>
       ${missionHtml}
-      <div class="print-bench-img-wrap">
-        <img src="${benchImgUrl}" alt="Workbench Snapshot" />
-      </div>
+      ${benchImgUrl ? `<div class="print-bench-img-wrap"><img src="${benchImgUrl}" alt="Workbench Snapshot" /></div>` : ''}
       <h2>${escPrintHtml(isEn ? 'Active Vessels & 3-Phase Composition' : 'Bình phản ứng & Thành phần 3 pha')}</h2>
       ${vesselsHtml || `<p class="print-muted">—</p>`}
-      <h2>${escPrintHtml(t('reactionLogTitle'))}</h2>
+      <h2>${escPrintHtml(translate('reactionLogTitle'))}</h2>
       <ul class="print-log-list">${logsHtml || '<li>—</li>'}</ul>
     </div>
   `;
 
-  if (typeof window !== 'undefined' && typeof window.print === 'function') {
-    window.print();
+  const standaloneHtml = `<!DOCTYPE html><html lang="${isEn ? 'en' : 'vi'}"><head><meta charset="UTF-8"/><title>${escPrintHtml(titleText)}</title><style>body{font-family:system-ui,-apple-system,sans-serif;max-width:960px;margin:24px auto;padding:0 16px;color:#0f172a;background:#fff}h1{font-size:20px;margin:0 0 6px}h2{font-size:15px;border-bottom:1px solid #cbd5e1;padding-bottom:4px;margin:16px 0 8px}.print-report-hdr{border-bottom:2px solid #0f172a;padding-bottom:8px;margin-bottom:12px}.print-bench-img-wrap img{width:100%;max-height:420px;object-fit:contain;border:1px solid #cbd5e1;border-radius:8px}.print-vessel-card,.print-mission-card{border:1px solid #cbd5e1;border-radius:8px;padding:10px 12px;margin-bottom:10px}.print-metrics-grid{display:flex;flex-wrap:wrap;gap:12px;font-family:ui-monospace,monospace;font-size:12px;margin:6px 0}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #e2e8f0;padding:4px 6px;text-align:left}.print-log-list{font-size:12px;padding-left:18px}.print-muted{color:#64748b;font-size:12px}</style></head><body>${bodyHtml}</body></html>`;
+
+  return { benchCanvas, bodyHtml, standaloneHtml, isEval: Boolean(mEval) };
+}
+
+function triggerNonBlockingBrowserPrint({ reportRootEl, bodyHtml, onBeforePrint, onAfterPrint }) {
+  if (!reportRootEl) return;
+  reportRootEl.innerHTML = bodyHtml || '';
+  if (typeof window === 'undefined' || typeof window.print !== 'function') return;
+
+  let restored = false;
+  const finish = () => {
+    if (restored) return;
+    restored = true;
+    try {
+      onAfterPrint?.();
+    } catch {}
+    setTimeout(() => {
+      if (reportRootEl) reportRootEl.innerHTML = '';
+    }, 350);
+  };
+
+  try {
+    onBeforePrint?.();
+  } catch {}
+  window.addEventListener('afterprint', finish, { once: true });
+  setTimeout(() => {
+    try {
+      window.print();
+    } finally {
+      setTimeout(finish, 450);
+    }
+  }, 90);
+}
+
+export function openLabReportPreviewModal({
+  sim,
+  workbenchCanvas,
+  isDark,
+  labName,
+  t,
+  lang,
+  modalRootEl,
+  reportRootEl,
+  missionResult = null,
+  onBeforePrint = null,
+  onAfterPrint = null,
+  onNotify = null,
+}) {
+  const translate = typeof t === 'function' ? t : (k) => String(k ?? '');
+  try {
+    const bundle = buildLabReportBundle({ sim, workbenchCanvas, isDark, labName, t: translate, lang, missionResult });
+    if (!modalRootEl) {
+      if (reportRootEl) reportRootEl.innerHTML = bundle.bodyHtml;
+      return bundle;
+    }
+
+    const closeLabel = translate('reportPreviewCloseBtn');
+    const titleLabel = bundle.isEval ? translate('reportPreviewEvalTitle') : translate('reportPreviewTitle');
+
+    modalRootEl.className = 'report-preview-backdrop';
+    modalRootEl.innerHTML = `
+      <div class="report-preview-card" role="dialog" aria-modal="true" aria-labelledby="report-preview-heading">
+        <header class="report-preview-header">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="text-base">📋</span>
+            <h2 id="report-preview-heading" class="text-sm font-bold text-main truncate">${escPrintHtml(titleLabel)}</h2>
+          </div>
+          <div class="report-preview-actions">
+            <button type="button" id="btn-report-dl-html" class="report-action-btn">🌐 ${escPrintHtml(translate('reportDlHtmlBtn'))}</button>
+            <button type="button" id="btn-report-dl-png" class="report-action-btn">🖼️ ${escPrintHtml(translate('reportDlPngBtn'))}</button>
+            <button type="button" id="btn-report-dl-pdf" class="report-action-btn">📄 ${escPrintHtml(translate('reportDlPdfBtn'))}</button>
+            <button type="button" id="btn-report-print-browser" class="report-action-btn report-action-primary">🖨️ ${escPrintHtml(translate('reportPrintBtn'))}</button>
+            <button type="button" id="btn-report-close-x" class="report-action-close" title="${escPrintHtml(closeLabel)}" aria-label="${escPrintHtml(closeLabel)}">×</button>
+          </div>
+        </header>
+        <div class="report-preview-body">
+          <div class="report-preview-sheet">${bundle.bodyHtml}</div>
+        </div>
+      </div>
+    `;
+
+    const closeModal = () => {
+      window.removeEventListener('keydown', onKeyDown);
+      modalRootEl.className = 'hidden';
+      modalRootEl.innerHTML = '';
+      if (reportRootEl) reportRootEl.innerHTML = '';
+    };
+    const onKeyDown = (ev) => {
+      if (ev.key === 'Escape') closeModal();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    modalRootEl.addEventListener('click', (ev) => {
+      if (ev.target === modalRootEl) closeModal();
+    });
+    modalRootEl.querySelector('#btn-report-close-x')?.addEventListener('click', closeModal);
+
+    modalRootEl.querySelector('#btn-report-dl-html')?.addEventListener('click', () => {
+      try {
+        triggerBlobDownload(new Blob([bundle.standaloneHtml], { type: 'text/html;charset=utf-8' }), buildExportFilename(labName, 'lab-report', 'html'));
+        onNotify?.(`🌐 HTML (${labName})`);
+      } catch {}
+    });
+    modalRootEl.querySelector('#btn-report-dl-png')?.addEventListener('click', () => {
+      try {
+        exportCanvasInFormat(bundle.benchCanvas, 'png', buildExportFilename(labName, 'lab-report', 'png'));
+        onNotify?.(`🖼️ PNG (${labName})`);
+      } catch {}
+    });
+    modalRootEl.querySelector('#btn-report-dl-pdf')?.addEventListener('click', () => {
+      try {
+        const pdfCvs = composeDirectReportPdfCanvas({ benchCanvas: bundle.benchCanvas, sim, labName, lang, missionResult });
+        exportCanvasInFormat(pdfCvs, 'pdf', buildExportFilename(labName, 'lab-report', 'pdf'));
+        onNotify?.(`📄 PDF (${labName})`);
+      } catch {}
+    });
+    modalRootEl.querySelector('#btn-report-print-browser')?.addEventListener('click', () => {
+      triggerNonBlockingBrowserPrint({
+        reportRootEl,
+        bodyHtml: bundle.bodyHtml,
+        onBeforePrint,
+        onAfterPrint,
+      });
+    });
+
+    return bundle;
+  } catch (err) {
+    console.warn('[ChemLab] Report preview fallback:', err);
+    return null;
+  }
+}
+
+export function openPrintableLabReport({
+  sim,
+  workbenchCanvas,
+  isDark,
+  labName,
+  t,
+  lang,
+  reportRootEl,
+  missionResult = null,
+  previewModalEl = null,
+  onBeforePrint = null,
+  onAfterPrint = null,
+  onNotify = null,
+}) {
+  try {
+    if (previewModalEl) {
+      return openLabReportPreviewModal({
+        sim,
+        workbenchCanvas,
+        isDark,
+        labName,
+        t,
+        lang,
+        modalRootEl: previewModalEl,
+        reportRootEl,
+        missionResult,
+        onBeforePrint,
+        onAfterPrint,
+        onNotify,
+      });
+    }
+    const bundle = buildLabReportBundle({ sim, workbenchCanvas, isDark, labName, t, lang, missionResult });
+    if (reportRootEl) reportRootEl.innerHTML = bundle.bodyHtml;
+    return bundle;
+  } catch (err) {
+    console.warn('[ChemLab] openPrintableLabReport error suppressed:', err);
+    return null;
   }
 }

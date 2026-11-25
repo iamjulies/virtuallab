@@ -15,7 +15,7 @@ import {
   getVesselEndPorts,
   getVesselTubingPort,
 } from '../data/apparatus.js';
-import { CONSTANTS } from '../data/constants.js';
+import { CONSTANTS, getThemeMeta } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computePH, computeSolutionVisuals } from '../engine/equilibrium.js';
 import {
@@ -990,39 +990,77 @@ export class LabWorkbenchCanvas {
         bCtx.fillRect(gx, gy, 2, 2);
       }
     } else if (this.themeName === 'homogenic') {
-      // Cold Metallic Silver gradient + McQueen Cobalt upper glint
+      // Cold Metallic Silver gradient + McQueen Cobalt & Scarlet Kimono atmospheric depth glow
       const homGrad = bCtx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
-      homGrad.addColorStop(0, '#D5DFEB');
+      homGrad.addColorStop(0, '#D2DDE9');
       homGrad.addColorStop(0.55, '#E4ECF5');
       homGrad.addColorStop(1, '#EEF3F9');
       bCtx.fillStyle = homGrad;
       bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
-      const cobaltGlint = bCtx.createRadialGradient(BENCH_LOGICAL_W * 0.82, 26, 12, BENCH_LOGICAL_W * 0.78, 80, 420);
-      cobaltGlint.addColorStop(0, 'rgba(29, 78, 216, 0.14)');
-      cobaltGlint.addColorStop(0.6, 'rgba(217, 119, 6, 0.05)');
+      const cobaltGlint = bCtx.createRadialGradient(BENCH_LOGICAL_W * 0.82, 36, 16, BENCH_LOGICAL_W * 0.78, 90, 440);
+      cobaltGlint.addColorStop(0, 'rgba(29, 78, 216, 0.24)');
+      cobaltGlint.addColorStop(0.55, 'rgba(29, 78, 216, 0.08)');
       cobaltGlint.addColorStop(1, 'rgba(29, 78, 216, 0)');
       bCtx.fillStyle = cobaltGlint;
       bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      const scarletLining = bCtx.createRadialGradient(BENCH_LOGICAL_W * 0.16, BENCH_FLOOR_Y * 0.82, 12, BENCH_LOGICAL_W * 0.18, BENCH_FLOOR_Y * 0.78, 340);
+      scarletLining.addColorStop(0, 'rgba(220, 38, 38, 0.16)');
+      scarletLining.addColorStop(0.6, 'rgba(220, 38, 38, 0.05)');
+      scarletLining.addColorStop(1, 'rgba(220, 38, 38, 0)');
+      bCtx.fillStyle = scarletLining;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
     } else if (this.themeName === 'anti') {
-      // Stark Monochrome Obsidian + Roy Nachum red oil paint slash at upper left
+      // Stark Monochrome Obsidian + Roy Nachum vivid red oil paint slash, vertical drips & spatter
       const antiGrad = bCtx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
       antiGrad.addColorStop(0, '#0B0B0E');
       antiGrad.addColorStop(0.6, '#121216');
       antiGrad.addColorStop(1, '#16161B');
       bCtx.fillStyle = antiGrad;
       bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
-      const redSlash = bCtx.createLinearGradient(0, 0, 420, 260);
-      redSlash.addColorStop(0, 'rgba(220, 38, 38, 0.24)');
-      redSlash.addColorStop(0.6, 'rgba(220, 38, 38, 0.08)');
+      const redSlash = bCtx.createLinearGradient(0, 0, 480, 300);
+      redSlash.addColorStop(0, 'rgba(220, 38, 38, 0.42)');
+      redSlash.addColorStop(0.55, 'rgba(220, 38, 38, 0.22)');
       redSlash.addColorStop(1, 'rgba(220, 38, 38, 0)');
       bCtx.fillStyle = redSlash;
       bCtx.beginPath();
       bCtx.moveTo(0, 0);
-      bCtx.lineTo(440, 0);
-      bCtx.lineTo(175, 290);
-      bCtx.lineTo(0, 240);
+      bCtx.lineTo(500, 0);
+      bCtx.lineTo(310, 175);
+      bCtx.lineTo(225, 315);
+      bCtx.lineTo(0, 275);
       bCtx.closePath();
       bCtx.fill();
+
+      // Static vertical oil paint drips & edge spatter cached once offscreen
+      const drips = [
+        [86, 260, 46, 3.2],
+        [152, 275, 64, 3.8],
+        [218, 250, 38, 2.6],
+        [292, 165, 52, 3.0],
+        [365, 118, 34, 2.4],
+      ];
+      for (const [dx, topY, len, rad] of drips) {
+        bCtx.strokeStyle = 'rgba(220, 38, 38, 0.36)';
+        bCtx.lineWidth = rad * 1.4;
+        bCtx.lineCap = 'round';
+        bCtx.beginPath();
+        bCtx.moveTo(dx, topY - 12);
+        bCtx.lineTo(dx, topY + len);
+        bCtx.stroke();
+        bCtx.fillStyle = 'rgba(220, 38, 38, 0.44)';
+        bCtx.beginPath();
+        bCtx.arc(dx, topY + len + 2, rad, 0, Math.PI * 2);
+        bCtx.fill();
+      }
+      const spatters = [
+        [258, 285, 3.5], [278, 262, 2.2], [332, 205, 3.0], [412, 92, 2.5], [182, 346, 2.8], [462, 46, 2.2],
+      ];
+      bCtx.fillStyle = 'rgba(220, 38, 38, 0.34)';
+      for (const [sx, sy, sr] of spatters) {
+        bCtx.beginPath();
+        bCtx.arc(sx, sy, sr, 0, Math.PI * 2);
+        bCtx.fill();
+      }
     }
 
     if (uvOn) {
@@ -1055,15 +1093,22 @@ export class LabWorkbenchCanvas {
         : 'rgba(15, 23, 42, 0.06)';
     bCtx.fillStyle = bgGrid;
     if (this.themeName === 'anti') {
-      // Tactile 2x3 Braille dot cells across background canvas (ANTI album cover Braille poetry)
+      // Tactile 2-layer 3D Braille dot cells embossed into obsidian gallery wall (cached offscreen)
       for (let cellIdx = 0, gx = 56; gx < BENCH_LOGICAL_W - 40; gx += 84) {
         for (let gy = 52; gy < BENCH_FLOOR_Y - 40; gy += 64, cellIdx++) {
           for (let r = 0; r < 3; r++) {
             for (let c = 0; c < 2; c++) {
               const bit = (cellIdx * 7 + r * 3 + c * 5) % 3 !== 0;
               if (!bit) continue;
+              const dx = gx + c * 5.2;
+              const dy = gy + r * 5.2;
+              bCtx.fillStyle = 'rgba(0, 0, 0, 0.78)';
               bCtx.beginPath();
-              bCtx.arc(gx + c * 5, gy + r * 5, 1.15, 0, Math.PI * 2);
+              bCtx.arc(dx + 1, dy + 1, 1.45, 0, Math.PI * 2);
+              bCtx.fill();
+              bCtx.fillStyle = 'rgba(248, 250, 252, 0.22)';
+              bCtx.beginPath();
+              bCtx.arc(dx, dy, 1.35, 0, Math.PI * 2);
               bCtx.fill();
             }
           }
@@ -1132,11 +1177,42 @@ export class LabWorkbenchCanvas {
       bCtx.fillRect(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, 5);
     } else if (this.themeName === 'homogenic') {
       const sheen = bCtx.createLinearGradient(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
-      sheen.addColorStop(0, 'rgba(29, 78, 216, 0.16)');
-      sheen.addColorStop(0.5, 'rgba(226, 232, 240, 0.18)');
-      sheen.addColorStop(1, 'rgba(217, 119, 6, 0.16)');
+      sheen.addColorStop(0, 'rgba(29, 78, 216, 0.22)');
+      sheen.addColorStop(0.5, 'rgba(226, 232, 240, 0.20)');
+      sheen.addColorStop(1, 'rgba(220, 38, 38, 0.16)');
       bCtx.fillStyle = sheen;
-      bCtx.fillRect(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, 4);
+      bCtx.fillRect(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, 5);
+
+      // Iceland hexagonal basalt tiles & subtle copper/cobalt tectonic veins cached offscreen
+      const bw = 64;
+      for (let idx = 0, bx = -12; bx < BENCH_LOGICAL_W + bw; bx += bw, idx++) {
+        const y0 = BENCH_FLOOR_Y;
+        const y1 = BENCH_LOGICAL_H;
+        const slant = (idx % 2 === 0 ? 12 : -10);
+        bCtx.fillStyle = idx % 3 === 0 ? 'rgba(15, 23, 42, 0.24)' : 'rgba(148, 163, 184, 0.10)';
+        bCtx.beginPath();
+        bCtx.moveTo(bx, y0);
+        bCtx.lineTo(bx + bw, y0);
+        bCtx.lineTo(bx + bw + slant, y1);
+        bCtx.lineTo(bx + slant, y1);
+        bCtx.closePath();
+        bCtx.fill();
+        bCtx.strokeStyle = idx % 4 === 0 ? 'rgba(29, 78, 216, 0.28)' : 'rgba(217, 119, 6, 0.24)';
+        bCtx.lineWidth = 1;
+        bCtx.beginPath();
+        bCtx.moveTo(bx + bw * 0.5, y0 + 8);
+        bCtx.lineTo(bx + bw * 0.5 + slant * 0.45, y0 + 28);
+        bCtx.lineTo(bx + bw * 0.65, y1 - 12);
+        bCtx.stroke();
+      }
+    } else if (this.themeName === 'anti') {
+      // Roy Nachum crisp double red-white gallery bench edge highlight cached offscreen
+      bCtx.strokeStyle = 'rgba(220, 38, 38, 0.72)';
+      bCtx.lineWidth = 2.0;
+      bCtx.beginPath();
+      bCtx.moveTo(0, BENCH_FLOOR_Y + 4);
+      bCtx.lineTo(BENCH_LOGICAL_W, BENCH_FLOOR_Y + 4);
+      bCtx.stroke();
     }
 
     bCtx.strokeStyle =
@@ -1197,12 +1273,7 @@ export class LabWorkbenchCanvas {
       if (this.dragState?.pipetteTargetId) activeTooltipIds.add(this.dragState.pipetteTargetId);
       if (this.portDragState?.condId) activeTooltipIds.add(this.portDragState.condId);
     }
-    const labelCaseMode =
-      this.themeName === 'olivia' || this.themeName === 'petal'
-        ? 'lower'
-        : this.themeName === 'sos'
-        ? 'upper'
-        : false;
+    const labelCaseMode = getThemeMeta(this.themeName)?.textCase || false;
     beginCanvasLabelFrame(activeTooltipIds, labelCaseMode, this.themeName);
 
     renderTubingConnections(ctx, this.sim.items, this.isDark, timeNow, this.langCode);
@@ -1504,7 +1575,7 @@ export class LabWorkbenchCanvas {
       for (const it of this.sim.items) {
         if (it.kind !== 'vessel' || it.isShattered) continue;
         if (it.isBoiling || (it.tempK || 298.15) >= 358.15 || (it.lastExothermicJ || 0) > 25) {
-          if (Math.random() < geyserDt * 4.5) {
+          if (Math.random() < geyserDt * 6.0) {
             const sp = APPARATUS[it.typeId] || { height: 90 };
             this.particles?.emitHomogenicGeyserSpark?.(it.x, it.y + sp.height * 0.5 - 2);
           }
@@ -1514,14 +1585,14 @@ export class LabWorkbenchCanvas {
       const antiDt = Math.max(0.008, Math.min(0.05, timeNow - (this._prevAntiTime ?? timeNow - 0.016)));
       this._prevAntiTime = timeNow;
       this._antiBalloonTimer = (this._antiBalloonTimer || 0) + antiDt;
-      if (this._antiBalloonTimer >= 1.15) {
+      if (this._antiBalloonTimer >= 0.95) {
         for (const it of this.sim.items) {
           if (it.kind !== 'vessel' || it.isShattered || it.isStoppered) continue;
           const gasTotal = Object.values(it.lastGasRateMap || {}).reduce((s, v) => s + (v || 0), 0);
           if (it.isBoiling || gasTotal > 0.002) {
             this._antiBalloonTimer = 0;
             const sp = APPARATUS[it.typeId] || { height: 90 };
-            this.particles?.emitAntiBalloons?.(it.x, it.y - sp.height * 0.45, 1);
+            this.particles?.emitAntiBalloons?.(it.x, it.y - sp.height * 0.45, 2);
             break;
           }
         }

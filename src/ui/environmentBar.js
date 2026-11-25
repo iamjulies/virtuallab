@@ -1,4 +1,4 @@
-import { APP_VERSION_TAG, CONSTANTS, kelvinToCelsius, waterBoilingPointK } from '../data/constants.js';
+import { APP_VERSION_TAG, CONSTANTS, THEME_REGISTRY, getThemeMeta, kelvinToCelsius, waterBoilingPointK } from '../data/constants.js';
 import { PRESET_MENU_ITEMS } from '../data/presets.js';
 import { getMissionById } from '../data/missions.js';
 
@@ -40,22 +40,8 @@ export class EnvironmentBar {
                 const missionLbl = activeMission
                   ? `🎯 ${activeMission.titleText || t(activeMission.shortTitleKey || activeMission.titleKey)}`
                   : `🎯 ${t('modeMissionsShort')}`;
-                const freeLbl =
-                  theme === 'olivia'
-                    ? 'u + me = <3 · 🐝'
-                    : theme === 'ctrl'
-                    ? 'draft · 4:20 pm'
-                    : theme === 'sos'
-                    ? 'deep sea · sos'
-                    : theme === 'hte'
-                    ? 'golden hour · rain'
-                    : theme === 'guts'
-                    ? 'guts · ✦ spilled'
-                    : theme === 'homogenic'
-                    ? 'ice · volcanic · 🌋'
-                    : theme === 'anti'
-                    ? 'gallery · ♛ anti'
-                    : `⚗️ ${t('modeFreeSandbox')}`;
+                const meta = getThemeMeta(theme);
+                const freeLbl = meta?.freeBadge || `⚗️ ${t('modeFreeSandbox')}`;
                 return `<div class="inline-flex items-center gap-1 rounded-full p-0.5 border border-theme bg-surface-alt">
                   <button type="button" id="btn-mode-free" title="${t('modeFreeSandbox')}"
                     class="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap transition cursor-pointer ${
@@ -202,18 +188,11 @@ export class EnvironmentBar {
             }
           </button>
 
-          <!-- Theme Selector (10 themes: Dark, Light, Olivia, Petal, Ctrl, SOS, HTE, GUTS, Homogenic, ANTI) -->
+          <!-- Theme Selector (driven by THEME_REGISTRY) -->
           <select id="theme-select" style="max-width: 155px;" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-main text-xs font-semibold truncate" title="Theme">
-            <option value="dark" ${theme === 'dark' ? 'selected' : ''}>🌙 ${t('themeDark')}</option>
-            <option value="light" ${theme === 'light' ? 'selected' : ''}>☀️ ${t('themeLight')}</option>
-            <option value="olivia" ${theme === 'olivia' ? 'selected' : ''}>🩷 ${t('themeOlivia')}</option>
-            <option value="petal" ${theme === 'petal' ? 'selected' : ''}>🥀 ${t('themePetal')}</option>
-            <option value="ctrl" ${theme === 'ctrl' ? 'selected' : ''}>📓 ${t('themeCtrl')}</option>
-            <option value="sos" ${theme === 'sos' ? 'selected' : ''}>🌊 ${t('themeSos')}</option>
-            <option value="hte" ${theme === 'hte' ? 'selected' : ''}>🕯️ ${t('themeHte')}</option>
-            <option value="guts" ${theme === 'guts' ? 'selected' : ''}>✦ ${t('themeGuts')}</option>
-            <option value="homogenic" ${theme === 'homogenic' ? 'selected' : ''}>❄️ ${t('themeHomogenic')}</option>
-            <option value="anti" ${theme === 'anti' ? 'selected' : ''}>👑 ${t('themeAnti')}</option>
+            ${THEME_REGISTRY.map(
+              (th) => `<option value="${th.id}" ${theme === th.id ? 'selected' : ''}>${th.icon} ${t(th.i18nKey)}</option>`
+            ).join('\n            ')}
           </select>
 
           <!-- Language Toggle VI / EN -->

@@ -1,5 +1,5 @@
 import { APPARATUS } from '../data/apparatus.js';
-import { CONSTANTS } from '../data/constants.js';
+import { CONSTANTS, isThemeDark } from '../data/constants.js';
 import { I18N } from '../data/i18n.js';
 import { SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computePH } from '../engine/equilibrium.js';
@@ -340,7 +340,7 @@ export class ComparisonPanel {
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+    const isDark = isThemeDark(document.documentElement.getAttribute('data-theme'));
 
     ctx.save();
     ctx.scale(dpr, dpr);

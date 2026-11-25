@@ -1,6 +1,6 @@
 export const I18N_EN = {
   appTitle: 'ChemLab Studio',
-  appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.29',
+  appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.30',
   toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
   quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
   quickPresetsHoldTitle: 'Guided Experiments (Hold F · Release to close)',
@@ -1155,4 +1155,12 @@ export const I18N_EN = {
   adminInviteStatusFree: 'Ready',
   adminInviteStatusUsed: 'Used',
   adminInviteStatusExpired: 'Expired',
+  // Build 30 (Prompt 90): Report Preview Modal
+  reportPreviewTitle: 'Laboratory Report Preview',
+  reportPreviewEvalTitle: 'Practical Assessment Sheet Preview',
+  reportDlHtmlBtn: 'Download HTML',
+  reportDlPngBtn: 'Download PNG',
+  reportDlPdfBtn: 'Download PDF',
+  reportPrintBtn: 'Print / Browser PDF',
+  reportPreviewCloseBtn: 'Close',
 };

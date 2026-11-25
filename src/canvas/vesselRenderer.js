@@ -578,28 +578,6 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.restore();
   }
 
-  // Draw porcelain opaque interior glaze for dishes/mortars/crucibles, or glass interior fill
-  ctx.save();
-  traceVesselInteriorClip(ctx, spec, x, y, sagFrac);
-  const isPorcelain = spec.shape === 'dish' || spec.shape === 'mortar' || spec.shape === 'crucible';
-  ctx.fillStyle = isPorcelain
-    ? isDark
-      ? 'rgba(241, 245, 249, 0.78)'
-      : 'rgba(255, 255, 255, 0.94)'
-    : pal.glassFill;
-  ctx.fill();
-  ctx.clip();
-
-  // Horizontal Fused Quartz Combustion Tube glowing hot center furnace zone when heated
-  if (spec.isHorizontalTube && vessel.tempK >= 650) {
-    const heatG = Math.min(1, (vessel.tempK - 650) / 850);
-    const qGrad = ctx.createRadialGradient(x, y, 6, x, y, 52);
-    qGrad.addColorStop(0, `rgba(251, 146, 60, ${(0.35 * heatG).toFixed(2)})`);
-    qGrad.addColorStop(1, 'rgba(251, 146, 60, 0)');
-    ctx.fillStyle = qGrad;
-    ctx.fillRect(x - w / 2, y - h / 2, w, h);
-  }
-
   // Compute liquid & solid levels calibrated to VesselGeometry slice profile
   const liqL = computeLiquidVolumeL(vessel.moles, vessel.tempK);
   const liqMl = liqL * 1000;
@@ -617,6 +595,32 @@ export function renderVessel(ctx, vessel, opts) {
   const hasWater =
     liqMl > 0.15 &&
     ((vessel.moles.H2O_l || 0) > 1e-7 || (vessel.moles.C2H5OH_l || 0) > 1e-7 || (vessel.moles.CH3COOH_l || 0) > 1e-7 || strat.totalLiqMl > 0.15);
+
+  // Draw porcelain opaque interior glaze for dishes/mortars/crucibles, or glass interior fill
+  ctx.save();
+  try {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    traceVesselInteriorClip(ctx, spec, x, y, sagFrac);
+    const isPorcelain = spec.shape === 'dish' || spec.shape === 'mortar' || spec.shape === 'crucible';
+    ctx.fillStyle = isPorcelain
+      ? isDark
+        ? 'rgba(241, 245, 249, 0.78)'
+        : 'rgba(255, 255, 255, 0.94)'
+      : pal.glassFill;
+    ctx.fill();
+    ctx.clip();
+    const fillSpanW = Math.max(w + 16, h * 0.9);
+
+  // Horizontal Fused Quartz Combustion Tube glowing hot center furnace zone when heated
+  if (spec.isHorizontalTube && vessel.tempK >= 650) {
+    const heatG = Math.min(1, (vessel.tempK - 650) / 850);
+    const qGrad = ctx.createRadialGradient(x, y, 6, x, y, 52);
+    qGrad.addColorStop(0, `rgba(251, 146, 60, ${(0.35 * heatG).toFixed(2)})`);
+    qGrad.addColorStop(1, 'rgba(251, 146, 60, 0)');
+    ctx.fillStyle = qGrad;
+    ctx.fillRect(x - w / 2, y - h / 2, w, h);
+  }
 
   // Colored headspace gas tint (Cl2 / NO2 / Br2 / I2) inside any upright vessel even without water
   if (!vessel.isInverted) {
@@ -786,8 +790,11 @@ export function renderVessel(ctx, vessel, opts) {
       if (strat.isMultiPhase && strat.layers.length >= 2) {
         for (let li = 0; li < strat.layers.length; li++) {
           const layer = strat.layers[li];
-          const layTopY = li === strat.layers.length - 1 ? surfaceY : volumeMlToY(layer.topMl);
-          const layBotY = li === 0 ? interiorBottom + 4 : volumeMlToY(layer.botMl);
+          const rawTopY = li === strat.layers.length - 1 ? surfaceY : volumeMlToY(layer.topMl);
+          const rawBotY = li === 0 ? interiorBottom + 4 : volumeMlToY(layer.botMl);
+          if (!Number.isFinite(rawTopY) || !Number.isFinite(rawBotY)) continue;
+          const layTopY = Math.min(rawTopY, rawBotY);
+          const layBotY = Math.max(rawTopY, rawBotY);
           const layVis = computeSolutionVisuals(
             vessel.moles,
             Math.max(1e-6, layer.volMl / 1000),
@@ -803,11 +810,11 @@ export function renderVessel(ctx, vessel, opts) {
             }
           );
           ctx.fillStyle = layVis.css;
-          ctx.fillRect(x - w / 2, layTopY, w, Math.max(1, layBotY - layTopY));
+          ctx.fillRect(x - fillSpanW / 2, layTopY, fillSpanW, Math.max(1, layBotY - layTopY));
           if (li < strat.layers.length - 1) {
             ctx.beginPath();
-            ctx.moveTo(x - w / 2, layTopY);
-            ctx.lineTo(x + w / 2, layTopY);
+            ctx.moveTo(x - fillSpanW / 2, layTopY);
+            ctx.lineTo(x + fillSpanW / 2, layTopY);
             ctx.strokeStyle = isDark ? 'rgba(226, 232, 240, 0.74)' : 'rgba(148, 163, 184, 0.85)';
             ctx.lineWidth = 1.6;
             ctx.stroke();
@@ -819,8 +826,8 @@ export function renderVessel(ctx, vessel, opts) {
         ctx.fillStyle = vis.css;
         if (sw?.active && !hasIce && !spec.isUTube) {
           ctx.beginPath();
-          ctx.moveTo(x - w / 2, interiorBottom + 4);
-          const spanHalf = Math.max(surfaceHalfWPx + 6, w * 0.48);
+          ctx.moveTo(x - fillSpanW / 2, interiorBottom + 4);
+          const spanHalf = Math.max(surfaceHalfWPx + 6, fillSpanW * 0.48);
           if (isViscousWave && sw.n >= 3) {
             ctx.lineTo(x - spanHalf, surfaceY + sw.h[0]);
             for (let wi = 0; wi < sw.n - 1; wi++) {
@@ -837,11 +844,11 @@ export function renderVessel(ctx, vessel, opts) {
               ctx.lineTo(wx, surfaceY + sw.h[wi]);
             }
           }
-          ctx.lineTo(x + w / 2, interiorBottom + 4);
+          ctx.lineTo(x + fillSpanW / 2, interiorBottom + 4);
           ctx.closePath();
           ctx.fill();
         } else {
-          ctx.fillRect(x - w / 2, surfaceY, w, interiorBottom - surfaceY + 4);
+          ctx.fillRect(x - fillSpanW / 2, surfaceY, fillSpanW, interiorBottom - surfaceY + 4);
         }
         // Viscous liquid wall-clinging meniscus & slow-draining film trail
         const filmLevel = sw?.viscousFilmLevel || 0;
@@ -1421,7 +1428,9 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.stroke();
   }
 
-  ctx.restore(); // Remove clip
+  } finally {
+    ctx.restore(); // Always remove clip cleanly
+  }
 
   // Blit offscreen-cached static glass silhouette, selection/thermal halo, specular highlight, and ISO graduations
   const shellEntry = getCachedVesselGlassShell(spec, pal, isDark, isSelected, isDropTarget, vessel.softenGlowFrac || 0, sagFrac);
@@ -1649,42 +1658,62 @@ export function renderVessel(ctx, vessel, opts) {
       }
       ctx.restore();
     } else if (themeName === 'homogenic') {
-      // Bjork "Homogenic" Shaun Leane stacked gold brass neck coils
+      // Bjork "Homogenic" Shaun Leane stacked gold brass neck coils with 3D metallic highlight
       ctx.save();
-      const coilW = Math.max(11, (spec.neckRadius || 16) * 0.72);
+      const coilW = Math.max(12, (spec.neckRadius || 16) * 0.78);
       for (let c = 0; c < 4; c++) {
-        const cy = top - 1 + c * 2.8;
-        ctx.strokeStyle = c % 2 === 0 ? '#d97706' : '#fbbf24';
-        ctx.lineWidth = 2.0;
+        const cy = top - 1 + c * 3.0;
+        ctx.strokeStyle = '#d97706';
+        ctx.lineWidth = 2.6;
         ctx.beginPath();
         ctx.moveTo(x - coilW, cy);
         ctx.lineTo(x + coilW, cy);
         ctx.stroke();
+        ctx.strokeStyle = c % 2 === 0 ? '#fef08a' : '#fbbf24';
+        ctx.lineWidth = 1.05;
+        ctx.beginPath();
+        ctx.moveTo(x - coilW + 1.5, cy - 0.55);
+        ctx.lineTo(x + coilW - 1.5, cy - 0.55);
+        ctx.stroke();
       }
       ctx.restore();
     } else if (themeName === 'anti') {
-      // Rihanna "ANTI" tilted gold crown over rubber stopper
+      // Rihanna "ANTI" scaled gold crown (1.35x) + 3 tip crimson jewels over rubber stopper
       ctx.save();
-      ctx.translate(x, top - 12);
+      ctx.translate(x, top - 15);
       ctx.rotate(-0.16);
+      ctx.scale(1.35, 1.35);
       ctx.fillStyle = '#eab308';
       ctx.strokeStyle = '#854d0e';
-      ctx.lineWidth = 0.9;
+      ctx.lineWidth = 0.85;
       ctx.beginPath();
       ctx.moveTo(-7, 4);
-      ctx.lineTo(-8.5, -5);
+      ctx.lineTo(-8.5, -5.2);
       ctx.lineTo(-3.5, 0);
-      ctx.lineTo(0, -7);
+      ctx.lineTo(0, -7.2);
       ctx.lineTo(3.5, 0);
-      ctx.lineTo(8.5, -5);
+      ctx.lineTo(8.5, -5.2);
       ctx.lineTo(7, 4);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = '#dc2626';
+      ctx.strokeStyle = '#fef08a';
+      ctx.lineWidth = 0.65;
       ctx.beginPath();
-      ctx.arc(0, 1.2, 1.3, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(-6.2, 2.8);
+      ctx.lineTo(6.2, 2.8);
+      ctx.stroke();
+      ctx.fillStyle = '#dc2626';
+      for (const [jx, jy, jr] of [
+        [-8.3, -5.2, 1.0],
+        [0, -7.2, 1.15],
+        [8.3, -5.2, 1.0],
+        [0, 1.2, 1.25],
+      ]) {
+        ctx.beginPath();
+        ctx.arc(jx, jy, jr, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
     }
   } else if (vessel.hasPhenCotton && !vessel.isShattered && !spec.hasTwoEnds && !vessel._physCottonMain) {
@@ -1753,49 +1782,94 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.restore();
   }
 
-  // Homogenic Theme Signature Gimmick: Iceland Fire & Ice crystals + volcanic magma base rifts
+  // Homogenic Theme Signature Gimmick: Two-tier tall faceted glacial crystals & branching volcanic magma rifts (zero shadowBlur!)
   if (themeName === 'homogenic' && !vessel.isShattered) {
     const vTempK = vessel.tempK || 298.15;
     if (vessel.isFrozenSolid || vTempK <= 283.15) {
       ctx.save();
-      const frostAlpha = Math.min(0.88, 0.42 + Math.max(0, 283.15 - vTempK) / 35);
-      for (let k = -2; k <= 2; k++) {
-        const fx = x + k * (w * 0.19);
-        const fy = bottom - 3 - Math.abs(k) * 4;
-        const fh = 8 + (2 - Math.abs(k)) * 3.5;
+      const frostAlpha = Math.min(0.92, 0.56 + Math.max(0, 283.15 - vTempK) / 30);
+      const halfSpan = Math.max(16, w * 0.44);
+      const clusters = [
+        [-halfSpan * 1.05, 22, 5.2, -0.18],
+        [-halfSpan * 0.72, 27, 6.2, -0.08],
+        [-halfSpan * 0.36, 17, 4.4, -0.03],
+        [halfSpan * 0.36, 18, 4.5, 0.04],
+        [halfSpan * 0.74, 28, 6.4, 0.09],
+        [halfSpan * 1.06, 20, 5.0, 0.19],
+      ];
+      for (const [dx, crysH, crysW, tiltRad] of clusters) {
+        ctx.save();
+        ctx.translate(x + dx, bottom - 1);
+        ctx.rotate(tiltRad);
         ctx.fillStyle = `rgba(224, 242, 254, ${frostAlpha.toFixed(2)})`;
-        ctx.strokeStyle = 'rgba(29, 78, 216, 0.55)';
-        ctx.lineWidth = 0.85;
+        ctx.strokeStyle = 'rgba(29, 78, 216, 0.78)';
+        ctx.lineWidth = 1.05;
         ctx.beginPath();
-        ctx.moveTo(fx - 3.5, fy);
-        ctx.lineTo(fx, fy - fh);
-        ctx.lineTo(fx + 3.5, fy);
+        ctx.moveTo(-crysW, 0);
+        ctx.lineTo(-crysW * 0.55, -crysH * 0.62);
+        ctx.lineTo(0, -crysH);
+        ctx.lineTo(crysW * 0.55, -crysH * 0.60);
+        ctx.lineTo(crysW, 0);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+        // Faceted inner highlight ridge + secondary lower tier crystal
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.lineWidth = 0.85;
+        ctx.beginPath();
+        ctx.moveTo(0, -crysH + 1.5);
+        ctx.lineTo(0, -2);
+        ctx.stroke();
+        ctx.fillStyle = `rgba(147, 197, 253, ${(frostAlpha * 0.72).toFixed(2)})`;
+        ctx.beginPath();
+        ctx.moveTo(-crysW * 1.15, 0);
+        ctx.lineTo(-crysW * 0.65, -crysH * 0.42);
+        ctx.lineTo(0, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
       }
       ctx.restore();
     }
     if (vessel.isBoiling || vTempK >= 358.15 || (vessel.lastExothermicJ || 0) > 25) {
       ctx.save();
       const pulse = 0.72 + Math.sin((timeNow || 0) * 6.5 + x) * 0.28;
-      const riftSpan = Math.max(22, w * 0.68);
-      const lavaGlow = ctx.createRadialGradient(x, bottom + 1, 2, x, bottom + 1, riftSpan);
-      lavaGlow.addColorStop(0, `rgba(254, 240, 138, ${(0.58 * pulse).toFixed(2)})`);
-      lavaGlow.addColorStop(0.45, `rgba(220, 38, 38, ${(0.46 * pulse).toFixed(2)})`);
+      const riftSpan = Math.max(30, w * 0.68) * 1.45;
+      const lavaGlow = ctx.createRadialGradient(x, bottom + 2, 2, x, bottom + 2, riftSpan);
+      lavaGlow.addColorStop(0, `rgba(254, 240, 138, ${(0.64 * pulse).toFixed(2)})`);
+      lavaGlow.addColorStop(0.45, `rgba(220, 38, 38, ${(0.52 * pulse).toFixed(2)})`);
       lavaGlow.addColorStop(1, 'rgba(220, 38, 38, 0)');
       ctx.fillStyle = lavaGlow;
       ctx.beginPath();
-      ctx.ellipse(x, bottom + 1, riftSpan, 6.5, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, bottom + 2, riftSpan, 9.5, 0, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = `rgba(249, 115, 22, ${(0.88 * pulse).toFixed(2)})`;
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.moveTo(x - riftSpan * 0.78, bottom + 2);
-      ctx.lineTo(x - riftSpan * 0.3, bottom);
-      ctx.lineTo(x, bottom + 2.5);
-      ctx.lineTo(x + riftSpan * 0.35, bottom + 0.5);
-      ctx.lineTo(x + riftSpan * 0.8, bottom + 2.5);
+
+      const traceRifts = () => {
+        ctx.beginPath();
+        ctx.moveTo(x - riftSpan * 0.88, bottom + 3);
+        ctx.lineTo(x - riftSpan * 0.48, bottom);
+        ctx.lineTo(x - riftSpan * 0.16, bottom + 4);
+        ctx.lineTo(x + riftSpan * 0.14, bottom + 0.5);
+        ctx.lineTo(x + riftSpan * 0.46, bottom + 3.5);
+        ctx.lineTo(x + riftSpan * 0.88, bottom + 1.5);
+        // Side geothermal tectonic branches
+        ctx.moveTo(x - riftSpan * 0.48, bottom);
+        ctx.lineTo(x - riftSpan * 0.62, bottom + 8.5);
+        ctx.moveTo(x - riftSpan * 0.16, bottom + 4);
+        ctx.lineTo(x - riftSpan * 0.04, bottom + 10.5);
+        ctx.moveTo(x + riftSpan * 0.46, bottom + 3.5);
+        ctx.lineTo(x + riftSpan * 0.64, bottom + 9.0);
+      };
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = `rgba(234, 88, 12, ${(0.68 * pulse).toFixed(2)})`;
+      ctx.lineWidth = 4.6;
+      traceRifts();
+      ctx.stroke();
+
+      ctx.strokeStyle = `rgba(254, 240, 138, ${(0.95 * pulse).toFixed(2)})`;
+      ctx.lineWidth = 1.5;
+      traceRifts();
       ctx.stroke();
       ctx.restore();
     }

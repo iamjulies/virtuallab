@@ -17,7 +17,7 @@
   <pre id="details"></pre>
 
   <script type="module">
-    import { CONSTANTS, calcCaCO3EqPressureAtm, nonVolatileSoluteMoles, solutionBoilingPointK, waterBoilingPointK } from '../src/data/constants.js';
+    import { CONSTANTS, THEME_REGISTRY, isThemeDark, calcCaCO3EqPressureAtm, nonVolatileSoluteMoles, solutionBoilingPointK, waterBoilingPointK } from '../src/data/constants.js';
     import {
       APPARATUS,
       APPARATUS_ORDER,
@@ -58,7 +58,7 @@
     import { ParticleSystem } from '../src/canvas/particles.js';
     import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod, renderTlcPlate } from '../src/canvas/toolRenderer.js';
     import { resolveTlcUvActive, computeBeerLambertReading, computeUvVisSpectrum, computeIrSpectrum } from '../src/engine/analyticalTools.js';
-    import { buildPdfBytesFromCanvas, composeWorkbenchSnapshotCanvas, openPrintableLabReport } from '../src/storage/reportExport.js';
+    import { buildPdfBytesFromCanvas, composeWorkbenchSnapshotCanvas, openPrintableLabReport, openLabReportPreviewModal } from '../src/storage/reportExport.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
     import { DosingModal } from '../src/ui/dosingModal.js';
     import { ComparisonPanel } from '../src/ui/comparisonPanel.js';
@@ -2493,7 +2493,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.29';
+      const expectedBuild = 'virlab_beta_v5+build.30';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -11246,6 +11246,130 @@
         'Build 29 invariants (Prompt 89): 10 themes selector/i18n, isDark parity (anti=dark, homogenic=light), Homogenic Fire/Ice/Brass + ANTI Braille/Gold Crown/Black Balloon gimmicks across all 10 themes',
         i18n10Ok && selector10Ok && geyserOk && balloonOk && all10RenderOk,
         `i18n=${i18n10Ok}, sel=${selector10Ok}(${sel10Opts.length}), geyser=${geyserOk}, balloon=${balloonOk}, render10=${all10RenderOk}(${render10Err})`
+      );
+    }
+
+    // TEST 227: Prompt 90 (virlab_beta_v5+build.30) — Non-blocking Report Preview Modal, THEME_REGISTRY, erlenmeyer_1000 Left/Right Symmetry, Doubled ANTI Balloons, Zero-Lag Caps & 60 FPS Check
+    {
+      const regOk =
+        Array.isArray(THEME_REGISTRY) &&
+        THEME_REGISTRY.length === 10 &&
+        ['light', 'olivia', 'ctrl', 'hte', 'homogenic'].every((id) => isThemeDark(id) === false) &&
+        ['dark', 'petal', 'sos', 'guts', 'anti'].every((id) => isThemeDark(id) === true);
+
+      const i18nRepOk = ['reportPreviewTitle', 'reportPreviewEvalTitle', 'reportDlHtmlBtn', 'reportDlPngBtn', 'reportDlPdfBtn', 'reportPrintBtn', 'reportPreviewCloseBtn']
+        .every((k) => Boolean(I18N.vi[k] && I18N.en[k]));
+
+      // Report Preview non-blocking & unknown-species resilience test
+      const simRep = new LabSimulation();
+      const vRep = simRep.createApparatus('erlenmeyer_1000', 500, 360);
+      vRep.moles.unknown_solid_x = 0.25;
+      simRep.addReagentToVessel(vRep.id, 'h2o', 150, { silentAnim: true });
+
+      const modalRoot = document.createElement('div');
+      const printRoot = document.createElement('div');
+      let syncPrintCalled = false;
+      const origPrint = window.print;
+      window.print = () => {
+        syncPrintCalled = true;
+      };
+      let repBundle = null;
+      let repThrew = false;
+      try {
+        repBundle = openPrintableLabReport({
+          sim: simRep,
+          workbenchCanvas: null,
+          isDark: true,
+          labName: 'Test Lab 90',
+          t: (k) => I18N.vi[k] || k,
+          lang: 'vi',
+          reportRootEl: printRoot,
+          previewModalEl: modalRoot,
+        });
+      } catch {
+        repThrew = true;
+      } finally {
+        window.print = origPrint;
+      }
+      const modalBtnsOk =
+        Boolean(repBundle && !repThrew && !syncPrintCalled) &&
+        Boolean(modalRoot.querySelector('#btn-report-dl-html')) &&
+        Boolean(modalRoot.querySelector('#btn-report-dl-png')) &&
+        Boolean(modalRoot.querySelector('#btn-report-dl-pdf')) &&
+        Boolean(modalRoot.querySelector('#btn-report-print-browser')) &&
+        Boolean(modalRoot.querySelector('#btn-report-close-x'));
+      modalRoot.querySelector('#btn-report-close-x')?.click();
+
+      // Particle doubling & anti-lag cap invariants
+      const pAnti = new ParticleSystem();
+      pAnti.emitAntiBalloons(500, 300, 20);
+      pAnti.emitAntiPaintSplash(500, 360, 440, 20);
+      for (let k = 0; k < 12; k++) pAnti.emitHomogenicGeyserSpark(500, 440);
+      const balloonCount = pAnti.particles.filter((p) => p.kind === 'anti_balloon').length;
+      const dropCount = pAnti.particles.filter((p) => p.kind === 'anti_paint_drop').length;
+      const geyserCount = pAnti.particles.filter((p) => p.kind === 'homogenic_geyser').length;
+      const balloonRadiusOk = pAnti.particles.filter((p) => p.kind === 'anti_balloon').every((p) => p.r >= 12.5);
+      const particleCapOk = balloonCount <= 14 && dropCount <= 16 && geyserCount <= 18;
+
+      // erlenmeyer_1000 left/right multi-phase liquid symmetry & frame speed check (ANTI & Homogenic)
+      const simSym = new LabSimulation();
+      const bathS = simSym.createApparatus('ice_bath', 280, 440);
+      simSym.setBathTargetTempC(bathS.id, 180);
+      const e250S = simSym.createApparatus('erlenmeyer_250', 280, 385);
+      e250S.isStoppered = true;
+      e250S.stopperMode = 'dual_hole';
+      const condS = simSym.createApparatus('liebig_condenser', 480, 210);
+      condS.waterFlowOn = true;
+      e250S.connectedTargetId = condS.id;
+      condS.connectedFromId = e250S.id;
+      const e1kS = simSym.createApparatus('erlenmeyer_1000', 740, 360.5);
+      e1kS.isStoppered = true;
+      condS.outletTargetId = e1kS.id;
+      simSym.addReagentToVessel(e1kS.id, 'h2o', 260, { silentAnim: true });
+      simSym.addReagentToVessel(e1kS.id, 'ethyl_acetate', 240, { silentAnim: true });
+      simSym.addReagentToVessel(e1kS.id, 'br2', 8, { silentAnim: true });
+      e1kS.esterOverheatFrac = 0.65;
+      for (let s = 0; s < 10; s++) simSym.step(0.05);
+
+      const boxS = document.createElement('div');
+      boxS.style.width = '1000px';
+      boxS.style.height = '560px';
+      const cvsS = document.createElement('canvas');
+      cvsS.width = 1000;
+      cvsS.height = 560;
+      boxS.appendChild(cvsS);
+      document.body.appendChild(boxS);
+      const ctxS = cvsS.getContext('2d');
+      const wbS = new LabWorkbenchCanvas(cvsS, simSym, pAnti, {});
+      wbS.setTheme(true, 'anti');
+      wbS.resize();
+      wbS.renderWorldScene(ctxS, 2.0, { includeLabels: false });
+      const dprS = wbS.dpr || 1;
+      const sxS = wbS.viewScale || 1;
+      const oxS = wbS.viewOffsetX || 0;
+      const oyS = wbS.viewOffsetY || 0;
+      const pxS = (lx, ly) => [...ctxS.getImageData(Math.round((oxS + lx * sxS) * dprS), Math.round((oyS + ly * sxS) * dprS), 1, 1).data];
+      const bgSample = pxS(180, 120);
+      const leftLiqPx = pxS(e1kS.x - 24, e1kS.y + 52);
+      const rightLiqPx = pxS(e1kS.x + 24, e1kS.y + 52);
+      const leftColored = Math.abs(leftLiqPx[0] - bgSample[0]) + Math.abs(leftLiqPx[1] - bgSample[1]) + Math.abs(leftLiqPx[2] - bgSample[2]) > 20;
+      const symDiff = Math.abs(leftLiqPx[0] - rightLiqPx[0]) + Math.abs(leftLiqPx[1] - rightLiqPx[1]) + Math.abs(leftLiqPx[2] - rightLiqPx[2]);
+      const e1kSymOk = leftColored && symDiff <= 25;
+
+      // Quick 60 FPS frame budget verification on ANTI & Homogenic
+      const t0 = performance.now();
+      for (let f = 0; f < 10; f++) {
+        wbS.setTheme(f % 2 === 0, f % 2 === 0 ? 'anti' : 'homogenic');
+        wbS.renderWorldScene(ctxS, 2.0 + f * 0.016, { includeLabels: true });
+      }
+      const avgMs = (performance.now() - t0) / 10;
+      const fpsBudgetOk = avgMs < 25;
+      document.body.removeChild(boxS);
+
+      assert(
+        'Build 30 invariants (Prompt 90): THEME_REGISTRY isDark 10/10, non-blocking Report Preview Modal + missing species safe, erlenmeyer_1000 left/right multi-phase symmetry, doubled ANTI balloons (r>=12.5) & particle caps + zero-lag render',
+        regOk && i18nRepOk && modalBtnsOk && balloonRadiusOk && particleCapOk && e1kSymOk && fpsBudgetOk,
+        `reg=${regOk}, i18n=${i18nRepOk}, modal=${modalBtnsOk}, bR=${balloonRadiusOk}(b=${balloonCount},d=${dropCount},g=${geyserCount}), sym=${e1kSymOk}(diff=${symDiff}), avgFrame=${avgMs.toFixed(2)}ms`
       );
     }
 

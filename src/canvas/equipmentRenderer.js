@@ -1146,17 +1146,19 @@ export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
       ctx.fill();
     }
   } else if (_currentCanvasTheme === 'homogenic') {
-    // 4 tiered Shaun Leane gold brass neck coils on clamp collar
+    // 4 tiered Shaun Leane gold brass neck coils on clamp collar with 3D specular highlight
     const dirSign = rodX >= attachX ? -1 : 1;
     for (let r = 0; r < 4; r++) {
-      const rx = rodX + dirSign * (3.5 + r * 3.2);
-      ctx.fillStyle = r % 2 === 0 ? '#d97706' : '#fbbf24';
+      const rx = rodX + dirSign * (3.5 + r * 3.4);
+      ctx.fillStyle = '#d97706';
       ctx.strokeStyle = '#92400e';
-      ctx.lineWidth = 0.7;
+      ctx.lineWidth = 0.75;
       ctx.beginPath();
-      ctx.roundRect(rx - 1.3, attachY - 4.8, 2.6, 9.6, 1.2);
+      ctx.roundRect(rx - 1.5, attachY - 5.4, 3.0, 10.8, 1.3);
       ctx.fill();
       ctx.stroke();
+      ctx.fillStyle = '#fef08a';
+      ctx.fillRect(rx - 0.55, attachY - 4.0, 1.1, 8.0);
     }
   }
   ctx.restore();
@@ -1508,6 +1510,31 @@ export function renderGasSyringe(ctx, item, isSelected, isDark, env, langCode = 
   ctx.beginPath();
   ctx.roundRect(barrelDir > 0 ? rodTailX : rodTailX - 8, y - 16, 8, 32, 3);
   ctx.stroke();
+  if (_currentCanvasTheme === 'anti') {
+    // Small Roy Nachum ANTI gold crown charm perched on syringe plunger grip
+    ctx.save();
+    ctx.translate(barrelDir > 0 ? rodTailX + 4 : rodTailX - 4, y - 20);
+    ctx.rotate(-0.14);
+    ctx.fillStyle = '#eab308';
+    ctx.strokeStyle = '#854d0e';
+    ctx.lineWidth = 0.75;
+    ctx.beginPath();
+    ctx.moveTo(-4.8, 2.5);
+    ctx.lineTo(-5.8, -3.5);
+    ctx.lineTo(-2.4, 0);
+    ctx.lineTo(0, -4.8);
+    ctx.lineTo(2.4, 0);
+    ctx.lineTo(5.8, -3.5);
+    ctx.lineTo(4.8, 2.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#dc2626';
+    ctx.beginPath();
+    ctx.arc(0, -4.8, 0.85, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 
   // Ceramic enamel graduations every 10 mL (0..250 mL) + major numeric ticks every 50 mL (never mirrored!)
   ctx.font = '600 7.5px system-ui, sans-serif';

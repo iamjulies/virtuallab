@@ -1,7 +1,33 @@
 /**
  * Physical & chemical constants (SI / IUPAC standard units).
  */
-export const APP_VERSION_TAG = 'virlab_beta_v5+build.29';
+export const APP_VERSION_TAG = 'virlab_beta_v5+build.30';
+
+/**
+ * Single source of truth for all 10 workbench visual themes.
+ */
+export const THEME_REGISTRY = [
+  { id: 'dark', icon: '🌙', i18nKey: 'themeDark', isDark: true, textCase: false, freeBadge: null },
+  { id: 'light', icon: '☀️', i18nKey: 'themeLight', isDark: false, textCase: false, freeBadge: null },
+  { id: 'olivia', icon: '🩷', i18nKey: 'themeOlivia', isDark: false, textCase: 'lower', freeBadge: 'u + me = <3 · 🐝' },
+  { id: 'petal', icon: '🥀', i18nKey: 'themePetal', isDark: true, textCase: 'lower', freeBadge: null },
+  { id: 'ctrl', icon: '📓', i18nKey: 'themeCtrl', isDark: false, textCase: false, freeBadge: 'draft · 4:20 pm' },
+  { id: 'sos', icon: '🌊', i18nKey: 'themeSos', isDark: true, textCase: 'upper', freeBadge: 'deep sea · sos' },
+  { id: 'hte', icon: '🕯️', i18nKey: 'themeHte', isDark: false, textCase: false, freeBadge: 'golden hour · rain' },
+  { id: 'guts', icon: '✦', i18nKey: 'themeGuts', isDark: true, textCase: false, freeBadge: 'guts · ✦ spilled' },
+  { id: 'homogenic', icon: '❄️', i18nKey: 'themeHomogenic', isDark: false, textCase: false, freeBadge: 'ice · volcanic · 🌋' },
+  { id: 'anti', icon: '👑', i18nKey: 'themeAnti', isDark: true, textCase: false, freeBadge: 'gallery · ♛ anti' },
+];
+
+const THEME_BY_ID = new Map(THEME_REGISTRY.map((th) => [th.id, th]));
+
+export function getThemeMeta(themeId) {
+  return THEME_BY_ID.get(themeId) || THEME_REGISTRY[0];
+}
+
+export function isThemeDark(themeId) {
+  return Boolean(getThemeMeta(themeId).isDark);
+}
 
 export const CONSTANTS = {
   // Ideal gas constant
