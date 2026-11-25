@@ -25,6 +25,7 @@ import {
 } from './inspector/inspectorUtils.js';
 import { renderToolOrEmptyBenchHtml, updateToolLiveNumbers } from './inspector/toolInspectors.js';
 import { renderVesselInspectorHtml, updateVesselLiveNumbers } from './inspector/vesselInspector.js';
+import { collectConnectedAssemblyIds, isLabLockedFromExternalStorage } from '../engine/labManager.js';
 import {
   drawAnalyticalChartView,
   drawSpectroscopyScanChart,
@@ -58,10 +59,14 @@ export class InspectorPanel {
     const logLen = this.sim.logs.length;
     const standCount = this.sim.items.filter((i) => i.kind === 'stand').length;
     const labsInfo = this.callbacks.getLabsMeta?.();
-    const labSig = labsInfo ? `${labsInfo.labs.length}:${labsInfo.activeIndex}` : '';
+    const labSig = labsInfo
+      ? `${labsInfo.labs.length}:${labsInfo.activeIndex}:${labsInfo.labs.map((lb) => `${lb.customName || ''}:${isLabLockedFromExternalStorage(lb) ? 1 : 0}`).join(',')}`
+      : '';
+    const isStor = this.sim?.isStorageCabinet ? 1 : 0;
+    const asmLen = item ? collectConnectedAssemblyIds(this.sim, item.id).length : 0;
     const atmMode = this.sim.environment?.atmosphereMode || 'air';
     const itemCount = this.sim.items.length;
-    if (!item) return `none|${atmMode}|${labSig}|${itemCount}|${this.logMode}|${langCode}|${logLen}`;
+    if (!item) return `none|${isStor}|${atmMode}|${labSig}|${itemCount}|${this.logMode}|${langCode}|${logLen}`;
 
     if (item.kind === 'vessel') {
       const spKeys = Object.keys(item.moles)
@@ -94,7 +99,7 @@ export class InspectorPanel {
       const caoSig = caoScore
         ? `${caoScore.points}:${caoScore.groundFine ? 1 : 0}${caoScore.ventedWhileHeating ? 1 : 0}${caoScore.roaringBlueZone ? 1 : 0}${caoScore.cooledProtected ? 1 : 0}`
         : 'n';
-      return `v|${item.hideComposition ? 1 : 0}|${item.blindLabel || ''}|${atmMode}|${labSig}|${airFlags}|${item.id}|${item.isStoppered}|${item.lidState || 'open'}|${cmpFlag}|${softenFlag}|${sootFlag}|${mirrorFlag}|${resFlag}|${escSig}|${hasElec}|${caoSig}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${this.logMode}|${langCode}|${logLen}`;
+      return `v|${isStor}|${asmLen}|${item.hideComposition ? 1 : 0}|${item.blindLabel || ''}|${atmMode}|${labSig}|${airFlags}|${item.id}|${item.isStoppered}|${item.lidState || 'open'}|${cmpFlag}|${softenFlag}|${sootFlag}|${mirrorFlag}|${resFlag}|${escSig}|${hasElec}|${caoSig}|${item.isInverted ? 1 : 0}|${item.hasStirBar ? 1 : 0}|${item.magStirRpm || 0}|${item.isFrozenSolid ? 1 : 0}|${hasFrost}|${phenFlags}|${item.connectedTargetId || item.connectedSyringeId}|${item.isShattered}|${item.clampedToId}|${standCount}|${spKeys}|${rxnKeys}|${this.logMode}|${langCode}|${logLen}`;
     }
     if (item.kind === 'bath') {
       const nestedCnt = this.sim.items.filter((i) => i.submergedInBathId === item.id).length;
@@ -200,7 +205,7 @@ export class InspectorPanel {
       const spIds = (item.spots || []).map((s) => s.id).join(',');
       return `tlc|${item.id}|${item.clampedToId || ''}|${spIds}|${standCount}|${langCode}|${logLen}`;
     }
-    return `other|${item.id}|${langCode}|${logLen}`;
+    return `other|${isStor}|${asmLen}|${labSig}|${item.id}|${langCode}|${logLen}`;
   }
 
   update(langCode, force = false) {
@@ -217,14 +222,86 @@ export class InspectorPanel {
     this.drawChart();
   }
 
+  _renderStorageActionHeaderHtml(item, t) {
+    const isStorage = Boolean(this.sim?.isStorageCabinet);
+    const labsMeta = this.callbacks.getLabsMeta?.();
+    const labsList = Array.isArray(labsMeta?.labs) ? labsMeta.labs : [];
+    const asmIds = item ? collectConnectedAssemblyIds(this.sim, item.id) : [];
+
+    if (isStorage) {
+      const defaultIdx = Number.isInteger(labsMeta?.activeIndex) ? labsMeta.activeIndex : 0;
+      const curTargetLab = labsList[defaultIdx] || labsList[0];
+      const curTargetLocked = Boolean(curTargetLab && isLabLockedFromExternalStorage(curTargetLab));
+      const optHtml = labsList
+        .map((lb, idx) => {
+          const locked = isLabLockedFromExternalStorage(lb);
+          const name = lb.customName?.trim() || `${t('labTabPrefix')} ${lb.number || idx + 1}`;
+          return `<option value="${idx}" ${idx === defaultIdx ? 'selected' : ''}>${locked ? '🔒 ' : '🧪 '}${name}</option>`;
+        })
+        .join('');
+      return `
+        <div class="p-2.5 rounded-xl border border-sky-500/40 bg-sky-500/10 flex flex-col gap-2" id="ins-storage-action-bar">
+          <div class="flex items-center justify-between gap-2 text-xs">
+            <span class="font-bold text-sky-400">❄️ ${t('storageFrozenPill')}</span>
+            <span class="text-[11px] text-muted truncate">${t('storageInspectorSub')}</span>
+          </div>
+          ${
+            item
+              ? `<div class="flex flex-col gap-1.5">
+                  <div class="flex items-center gap-1.5">
+                    <label for="ins-cab-target-lab" class="text-[11px] text-muted shrink-0">${t('storageTargetLabLabel')}</label>
+                    <select id="ins-cab-target-lab" class="flex-1 min-w-0 px-2 py-1 rounded-lg border border-theme bg-surface text-xs text-main">${optHtml}</select>
+                  </div>
+                  <div class="grid grid-cols-3 gap-1.5">
+                    <button type="button" id="ins-cab-move" class="px-2 py-1.5 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-1">📤 ${t('cabinetMoveToBench')}</button>
+                    <button type="button" id="ins-cab-clone" class="px-2 py-1.5 rounded-lg border border-accent/50 bg-accent/15 text-accent text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-1">🧬 ${t('cabinetCloneToBench')}</button>
+                    <button type="button" id="ins-cab-delete" class="px-2 py-1.5 rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-1">🗑️ ${t('cabinetDeleteEntry')}</button>
+                  </div>
+                  ${
+                    asmIds.length > 1
+                      ? `<button type="button" id="ins-cab-move-asm" class="w-full px-2 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 text-amber-300 text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-1.5">📦 ${t('storageTakeAssemblyBtn').replace('{n}', String(asmIds.length))}</button>`
+                      : ''
+                  }
+                  ${
+                    curTargetLocked
+                      ? `<div class="text-[11px] text-amber-400 font-medium">🔒 ${t('toastStorageExamBlocked')}</div>`
+                      : ''
+                  }
+                </div>`
+              : `<div class="text-[11px] text-muted">${t('storageInspectorSelectHint')}</div>`
+          }
+        </div>
+      `;
+    }
+
+    if (item && (item.kind !== 'vessel' || asmIds.length > 1)) {
+      return `
+        <div class="flex flex-wrap gap-1.5">
+          ${
+            item.kind !== 'vessel'
+              ? `<button type="button" id="ins-store-cabinet" class="flex-1 min-w-[120px] px-2.5 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-1.5">📥 ${t('ctxStoreCabinet')}</button>`
+              : ''
+          }
+          ${
+            asmIds.length > 1
+              ? `<button type="button" id="ins-store-assembly" class="flex-1 min-w-[140px] px-2.5 py-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-1.5">📦 ${t('storageStoreAssemblyBtn').replace('{n}', String(asmIds.length))}</button>`
+              : ''
+          }
+        </div>
+      `;
+    }
+    return '';
+  }
+
   renderFull(t, langCode) {
     const item = this.sim.getItem(this.sim.selectedId);
+    const storageHeader = this._renderStorageActionHeaderHtml(item, t);
     const topSection =
       item && item.kind === 'vessel'
         ? renderVesselInspectorHtml(this, item, t, langCode)
         : renderToolOrEmptyBenchHtml(this, item, t, langCode);
     const logsAndCrossLabHtml = renderInspectorLogsAndCrossLabHtml(this, item, langCode, t);
-    this.container.innerHTML = `<div class="flex flex-col gap-3">${topSection}${logsAndCrossLabHtml}</div>`;
+    this.container.innerHTML = `<div class="flex flex-col gap-3">${storageHeader}${topSection}${logsAndCrossLabHtml}</div>`;
     this.bindInspectorEvents(item, t);
   }
 
@@ -273,6 +350,32 @@ export class InspectorPanel {
     });
 
     if (!item) return;
+
+    if (this.sim?.isStorageCabinet) {
+      const getTargetIdx = () =>
+        Number(this.container.querySelector('#ins-cab-target-lab')?.value ?? (this.callbacks.getLabsMeta?.()?.activeIndex || 0));
+      this.container.querySelector('#ins-cab-move')?.addEventListener('click', () => {
+        this.callbacks.onWithdrawStorageItem?.(item.id, { mode: 'move', targetLabIndex: getTargetIdx(), assembly: false });
+      });
+      this.container.querySelector('#ins-cab-clone')?.addEventListener('click', () => {
+        this.callbacks.onWithdrawStorageItem?.(item.id, { mode: 'clone', targetLabIndex: getTargetIdx(), assembly: false });
+      });
+      this.container.querySelector('#ins-cab-move-asm')?.addEventListener('click', () => {
+        this.callbacks.onWithdrawStorageItem?.(item.id, { mode: 'move', targetLabIndex: getTargetIdx(), assembly: true });
+      });
+      this.container.querySelector('#ins-cab-delete')?.addEventListener('click', () => {
+        this.callbacks.onDeleteStorageItem?.(item.id);
+      });
+    } else {
+      this.container.querySelectorAll('#ins-store-cabinet').forEach((btn) => {
+        if (item.kind !== 'vessel') {
+          btn.addEventListener('click', () => this.callbacks.onStoreToCabinet?.(item.id));
+        }
+      });
+      this.container.querySelector('#ins-store-assembly')?.addEventListener('click', () => {
+        this.callbacks.onStoreAssemblyToCabinet?.(item.id);
+      });
+    }
 
     this.container.querySelectorAll('.exp-act-btn').forEach((btn) => {
       btn.addEventListener('click', () => {

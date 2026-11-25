@@ -172,16 +172,25 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
                 : ''
               : (() => {
                   const isCompared = Array.isArray(panel.sim.compareVesselIds) && panel.sim.compareVesselIds.includes(item.id);
-                  const btns = [
-                    `<button type="button" id="ins-pour" title="${t('actionPourTo')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t('btnPourShort')}</button>`,
-                    `<button type="button" id="ins-stir" ${item.isFrozenSolid ? 'disabled' : ''} title="${t('actionStirTip')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent disabled:opacity-40 flex items-center justify-center gap-1.5 text-center">${t('btnStirShort')}</button>`,
-                  ];
-                  if (spec.hasLid) {
+                  const inStorage = Boolean(panel.sim?.isStorageCabinet);
+                  const btns = inStorage
+                    ? [
+                        `<button type="button" id="ins-sticky-label" title="${t('stickyLabelBtn')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t('btnLabelShort')}</button>`,
+                        ...(stands.length > 0
+                          ? [`<button type="button" id="ins-toggle-clamp" title="${t(item.clampedToId ? 'actionUnclampStand' : 'actionClampStand')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t(item.clampedToId ? 'btnUnclampShort' : 'btnClampShort')}</button>`]
+                          : []),
+                      ]
+                    : [
+                        `<button type="button" id="ins-pour" title="${t('actionPourTo')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1.5 text-center">${t('btnPourShort')}</button>`,
+                        `<button type="button" id="ins-stir" ${item.isFrozenSolid ? 'disabled' : ''} title="${t('actionStirTip')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent disabled:opacity-40 flex items-center justify-center gap-1.5 text-center">${t('btnStirShort')}</button>`,
+                      ];
+                  if (!inStorage && spec.hasLid) {
                     const lidStateTxt = item.lidState === 'closed' ? t('crucibleLidClosed') : item.lidState === 'ajar' ? t('crucibleLidAjar') : t('crucibleLidOpen');
                     btns.push(
                       `<button type="button" id="ins-crucible-lid" title="${t('crucibleLidLabel')} ${lidStateTxt}" class="w-full px-2 py-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 text-xs font-semibold hover:border-accent flex items-center justify-center gap-1 text-center truncate">${t('crucibleLidLabel')} ${lidStateTxt}</button>`
                     );
                   }
+                  if (!inStorage) {
                   btns.push(
                     `<button type="button" id="ins-toggle-compare" title="${t(isCompared ? 'actionCompareVesselRemove' : 'actionCompareVesselAdd')}" class="w-full px-2 py-1.5 rounded-lg border ${
                       isCompared ? 'border-sky-500 bg-sky-500/20 text-sky-400 font-semibold' : 'border-theme bg-surface'
@@ -220,6 +229,7 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
                     `<button type="button" id="ins-store-cabinet" title="${t('ctxStoreCabinet')}" class="w-full px-2 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-semibold hover:opacity-90 flex items-center justify-center gap-1.5 text-center">${t('btnStoreShort')}</button>`,
                     `<button type="button" id="ins-rinse" title="${t('actionRinse')}" class="w-full px-2 py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium text-muted hover:text-main flex items-center justify-center gap-1.5 text-center">${t('btnRinseShort')}</button>`
                   );
+                  }
                   return renderActionGridHtml(btns);
                 })()
           }

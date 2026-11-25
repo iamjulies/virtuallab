@@ -77,15 +77,29 @@ import {
   stepVesselGasAndPressure,
 } from './gasNetwork.js';
 
-import { SIM_BENCH_FLOOR_Y } from './simSnapshot.js';
+import { SIM_BENCH_FLOOR_Y, STORAGE_SHELF_Y_LEVELS } from './simSnapshot.js';
 import { getVesselBrimVolumeMl, moveFluidFraction, extractSyringeLiquidFraction } from './simTransfer.js';
 
 const createEmptyGasMap = createZeroGasMap;
 
+/**
+ * Resolve floor support Y (normal lab bench floor vs 3-tier physical storage cabinet shelves).
+ */
+function getCabinetShelfFloorY(sim, item, halfExtY) {
+  if (!sim?.isStorageCabinet) return SIM_BENCH_FLOOR_Y - halfExtY + 2;
+  const bottomY = (item?.y ?? 0) + halfExtY;
+  for (const shelfY of STORAGE_SHELF_Y_LEVELS) {
+    if (bottomY <= shelfY + 18) {
+      return shelfY - halfExtY + 2;
+    }
+  }
+  return SIM_BENCH_FLOOR_Y - halfExtY + 2;
+}
+
 export function getSupportSurfaceForItemImpl(sim, item) {
     const spec = APPARATUS[item.typeId];
     const halfExtY = getItemRotatedHalfExtentY(spec, item);
-    const floorCenterY = SIM_BENCH_FLOOR_Y - halfExtY + 2;
+    const floorCenterY = getCabinetShelfFloorY(sim, item, halfExtY);
     let bestCenterY = floorCenterY;
     let bestSupport = null;
 
@@ -818,6 +832,14 @@ export function handleLandingImpactImpl(sim, item, dropDistPx, impactVy, support
     const spec = APPARATUS[item.typeId];
     if (!spec) return;
 
+    // Inside Frozen Storage Shelf: zero shattering & zero drop-spill accidents
+    if (sim?.isStorageCabinet) {
+      if (dropDistPx >= 95) {
+        item.landingTiltVel = (Math.random() < 0.5 ? -1 : 1) * 1.1;
+      }
+      return;
+    }
+
     // Supports (scales/burners/stands) thud & damp without shattering
     if (item.kind === 'scale' || item.kind === 'burner' || item.kind === 'stand') {
       if (dropDistPx >= 95) {
@@ -1347,6 +1369,15 @@ export function stepSimulationImpl(sim, realDeltaSec, options = {}) {
     }
 
     if (sim.environment.paused) return;
+
+    // Storage Shelf mode: keep real shelf gravity, clamps, mouth tools & scales live while completely freezing chemistry, thermal exchange, evaporation & spills
+    if (sim.isStorageCabinet) {
+      const frozenDt = Math.min(0.25, realDeltaSec * (sim.environment?.speed || 1));
+      sim.stepGravityPhysics(frozenDt, realDeltaSec);
+      sim.syncAttachedMouthTools();
+      sim.recomputeScaleReadings?.();
+      return;
+    }
 
     sim.condenseEscapedVaporInCryo();
 

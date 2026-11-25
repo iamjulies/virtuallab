@@ -438,8 +438,9 @@ export class ShelfPanel {
 
   getShelfSignature(t) {
     const ms = this.sim?.missionState;
+    const isStor = this.sim?.isStorageCabinet ? 1 : 0;
     const missionSig = ms?.active ? `${ms.missionId}:${ms.mode}:${this.onlyAllowed ? 1 : 0}` : 'free';
-    return `${t('equipmentTitle')}|${this.activeCategory}|${this.activeReagentCategory}|${this.activeOrganicGroup}|${missionSig}`;
+    return `${t('equipmentTitle')}|${isStor}|${this.activeCategory}|${this.activeReagentCategory}|${this.activeOrganicGroup}|${missionSig}`;
   }
 
   render(t, force = false) {
@@ -448,7 +449,8 @@ export class ShelfPanel {
     if (!force && sig === this.lastShelfSig) return;
     this.lastShelfSig = sig;
 
-    const activeMission = this.sim?.missionState?.active
+    const isStorageView = Boolean(this.sim?.isStorageCabinet);
+    const activeMission = !isStorageView && this.sim?.missionState?.active
       ? (getMissionById(this.sim.missionState.missionId) || this.sim.missionState)
       : null;
     const hideLocked = Boolean(activeMission && this.onlyAllowed);
@@ -475,6 +477,13 @@ export class ShelfPanel {
 
     this.container.innerHTML = `
       <div class="flex flex-col gap-3">
+        ${
+          isStorageView
+            ? `<div class="p-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-[11px] text-sky-400 font-medium leading-snug">
+                ❄️ ${t('storageShelfPanelNotice')}
+              </div>`
+            : ''
+        }
         ${
           activeMission
             ? `<div class="p-2 rounded-lg border border-amber-500/40 bg-amber-500/10 text-[11px] text-amber-300 font-medium flex items-center justify-between gap-2">
@@ -564,14 +573,14 @@ export class ShelfPanel {
               const ghsKeyMap = { flammable: 'ghsFlammable', corrosive: 'ghsCorrosive', toxic: 'ghsToxic', oxidizer: 'ghsOxidizer' };
               const hazardBadges = hazards.map((h) => ghsMap[h] || '').join('');
               const hazardTip = hazards.length ? `GHS: ${hazards.map((h) => t(ghsKeyMap[h] || h)).join(', ')}` : '';
-              const allowed = !activeMission || isReagentAllowedInMission(activeMission, reg.id);
+              const allowed = !isStorageView && (!activeMission || isReagentAllowedInMission(activeMission, reg.id));
               return `
               <div
                 role="button"
                 tabindex="0"
                 data-reagent-id="${reg.id}"
                 ${allowed ? '' : 'data-locked="1" aria-disabled="true"'}
-                title="${allowed ? hazardTip : t('missionLockedShelfTip')}"
+                title="${isStorageView ? t('storageShelfLockedTip') : allowed ? hazardTip : t('missionLockedShelfTip')}"
                 class="reagent-card w-full flex items-center justify-between gap-2 p-1.5 rounded-lg border border-theme bg-surface-alt transition text-left select-none ${
                   allowed ? 'hover:border-accent cursor-grab active:cursor-grabbing' : 'opacity-40 cursor-not-allowed'
                 }"
@@ -681,7 +690,7 @@ export class ShelfPanel {
       });
       el.addEventListener('click', () => {
         if (isLocked) {
-          this.callbacks.onLockedAttempt?.();
+          this.callbacks.onLockedAttempt?.(isStorageView ? 'storage' : 'mission');
           return;
         }
         if (this._lastPointerUpMs && Date.now() - this._lastPointerUpMs < 180) return;
@@ -691,7 +700,7 @@ export class ShelfPanel {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           if (isLocked) {
-            this.callbacks.onLockedAttempt?.();
+            this.callbacks.onLockedAttempt?.(isStorageView ? 'storage' : 'mission');
             return;
           }
           this.callbacks.onSelectReagent?.(id);
@@ -699,7 +708,7 @@ export class ShelfPanel {
       });
       el.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        if (isLocked) return;
+        if (isLocked && !isStorageView) return;
         this.callbacks.onContextMenu?.(e.clientX, e.clientY, { kind: 'shelf_reagent', reagentId: id });
       });
     });

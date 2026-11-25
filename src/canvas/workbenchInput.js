@@ -616,6 +616,11 @@ export function dropFromShelfImpl(wb, clientX, clientY, payloadType, payloadId) 
     }
 
     if (payloadType === 'reagent' && payloadId) {
+      if (wb.sim?.isStorageCabinet) {
+        wb.dropTargetVesselId = null;
+        wb.callbacks.onStorageDosingBlocked?.();
+        return null;
+      }
       const regPolicy = wb.sim.getActiveMissionPolicy?.();
       if (regPolicy && !isReagentAllowedInMission(regPolicy, payloadId)) {
         wb.sim.addLog?.({ type: 'alert', key: 'missionLockedShelfTip' });

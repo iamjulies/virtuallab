@@ -1,7 +1,7 @@
 /**
  * Physical & chemical constants (SI / IUPAC standard units).
  */
-export const APP_VERSION_TAG = 'virlab_beta_v5+build.31';
+export const APP_VERSION_TAG = 'virlab_beta_v5+build.32';
 
 /**
  * Single source of truth for all 10 workbench visual themes.

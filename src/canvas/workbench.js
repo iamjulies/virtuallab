@@ -17,6 +17,7 @@ import {
 } from '../data/apparatus.js';
 import { CONSTANTS, getThemeMeta } from '../data/constants.js';
 import { SPECIES } from '../data/species.js';
+import { STORAGE_SHELF_Y_LEVELS } from '../engine/simSnapshot.js';
 import { computeLiquidVolumeL, computePH, computeSolutionVisuals } from '../engine/equilibrium.js';
 import {
   buildRigidTubePoints,
@@ -156,6 +157,11 @@ export class LabWorkbenchCanvas {
     this._bgCacheKey = '';
   }
 
+  setStorageHighlightFilter(fn = null, active = false) {
+    this.storageFilterPredicate = typeof fn === 'function' ? fn : null;
+    this.storageSearchActive = Boolean(active && this.storageFilterPredicate);
+  }
+
   setLang(langCode) {
     this.langCode = langCode || 'vi';
   }
@@ -163,6 +169,7 @@ export class LabWorkbenchCanvas {
   setSim(sim, particles = null) {
     this.sim = sim;
     if (particles) this.particles = particles;
+    this._bgCacheKey = '';
     this.dragState = null;
     this.portDragState = null;
     this.pickState = null;
@@ -853,10 +860,122 @@ export class LabWorkbenchCanvas {
     ctx.restore();
   }
 
+  _renderStorageShelfPlanks(bCtx) {
+    const theme = this.themeName;
+    const isLight = !this.isDark;
+    const railFill =
+      theme === 'olivia'
+        ? '#E7CFB2'
+        : theme === 'ctrl'
+        ? '#B7D4E8'
+        : theme === 'hte'
+        ? '#A67F52'
+        : theme === 'homogenic'
+        ? '#334155'
+        : theme === 'anti'
+        ? '#1F2937'
+        : theme === 'guts'
+        ? '#1C1033'
+        : theme === 'sos'
+        ? '#0E2439'
+        : theme === 'petal'
+        ? '#1D1D23'
+        : isLight
+        ? '#94A3B8'
+        : '#1E293B';
+    const plankTop =
+      theme === 'olivia'
+        ? '#F6DCE4'
+        : theme === 'ctrl'
+        ? '#CFE7F7'
+        : theme === 'hte'
+        ? '#CFA778'
+        : theme === 'homogenic'
+        ? '#64748B'
+        : theme === 'anti'
+        ? '#27272A'
+        : theme === 'guts'
+        ? '#2E1A4D'
+        : theme === 'sos'
+        ? '#1B3D5C'
+        : theme === 'petal'
+        ? '#2C2C34'
+        : isLight
+        ? '#CBD5E1'
+        : '#334155';
+    const plankEdge =
+      theme === 'olivia'
+        ? '#D95F86'
+        : theme === 'ctrl'
+        ? '#4F6358'
+        : theme === 'hte'
+        ? '#786350'
+        : theme === 'homogenic'
+        ? '#94A3B8'
+        : theme === 'anti'
+        ? '#DC2626'
+        : theme === 'guts'
+        ? '#C084FC'
+        : theme === 'sos'
+        ? '#5BB5C9'
+        : theme === 'petal'
+        ? '#A1A1AA'
+        : isLight
+        ? '#475569'
+        : '#38BDF8';
+    const textCol = isLight ? 'rgba(15, 23, 42, 0.58)' : 'rgba(226, 232, 240, 0.55)';
+
+    bCtx.save();
+    // Cabinet inner side frame pillars
+    bCtx.fillStyle = railFill;
+    bCtx.fillRect(0, 0, 14, BENCH_LOGICAL_H);
+    bCtx.fillRect(BENCH_LOGICAL_W - 14, 0, 14, BENCH_LOGICAL_H);
+
+    // Subtle frosted cold-storage aura at top of shelf chamber
+    const chillGrad = bCtx.createLinearGradient(0, 0, 0, 120);
+    chillGrad.addColorStop(0, isLight ? 'rgba(56, 189, 248, 0.12)' : 'rgba(56, 189, 248, 0.09)');
+    chillGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+    bCtx.fillStyle = chillGrad;
+    bCtx.fillRect(14, 0, BENCH_LOGICAL_W - 28, 120);
+
+    const tierNames = ['I', 'II', 'III'];
+    STORAGE_SHELF_Y_LEVELS.forEach((shelfY, idx) => {
+      // Soft drop shadow underneath shelf deck
+      bCtx.fillStyle = 'rgba(2, 6, 23, 0.24)';
+      bCtx.fillRect(14, shelfY + 9, BENCH_LOGICAL_W - 28, 7);
+
+      // Horizontal load-bearing shelf board (surface line right at shelfY)
+      bCtx.fillStyle = plankTop;
+      bCtx.fillRect(14, shelfY - 1, BENCH_LOGICAL_W - 28, 10);
+
+      // Crisp front rim highlight
+      bCtx.strokeStyle = plankEdge;
+      bCtx.lineWidth = 1.6;
+      bCtx.beginPath();
+      bCtx.moveTo(14, shelfY);
+      bCtx.lineTo(BENCH_LOGICAL_W - 14, shelfY);
+      bCtx.stroke();
+
+      // Side shelf brackets
+      bCtx.fillStyle = plankEdge;
+      bCtx.fillRect(14, shelfY + 6, 16, 10);
+      bCtx.fillRect(BENCH_LOGICAL_W - 30, shelfY + 6, 16, 10);
+
+      // Tier Roman numeral badge
+      bCtx.fillStyle = textCol;
+      bCtx.font = 'bold 10px ui-monospace, SFMono-Regular, monospace';
+      bCtx.textAlign = 'left';
+      bCtx.textBaseline = 'bottom';
+      bCtx.fillText(`TẦNG ${tierNames[idx]}`, 24, shelfY - 4);
+    });
+    bCtx.restore();
+  }
+
   _ensureBgCache() {
     const uvOn = Boolean(this.sim?.environment?.uvLight);
+    const isCab = Boolean(this.sim?.isStorageCabinet);
     const cacheScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-    const key = `${this.themeName}|${this.isDark ? 1 : 0}|${uvOn ? 1 : 0}|${cacheScale}`;
+    const key = `${this.themeName}|${this.isDark ? 1 : 0}|${uvOn ? 1 : 0}|${isCab ? 1 : 0}|${cacheScale}`;
     if (this._bgCacheCanvas && this._bgCacheKey === key) {
       return this._bgCacheCanvas;
     }
@@ -1240,6 +1359,9 @@ export class LabWorkbenchCanvas {
     bCtx.moveTo(0, BENCH_FLOOR_Y);
     bCtx.lineTo(BENCH_LOGICAL_W, BENCH_FLOOR_Y);
     bCtx.stroke();
+    if (isCab) {
+      this._renderStorageShelfPlanks(bCtx);
+    }
     bCtx.restore();
 
     this._bgCacheKey = key;
@@ -1297,11 +1419,17 @@ export class LabWorkbenchCanvas {
     renderVoltAmmeterAndWires(ctx, this.sim.items, this.sim.selectedId, this.isDark);
 
     const selectedSet = this.getSelectedIdSet();
+    const filterActive = Boolean(this.sim?.isStorageCabinet && this.storageSearchActive && this.storageFilterPredicate);
     for (const item of ordered) {
       const isSelected = item.id === this.sim.selectedId || selectedSet.has(item.id);
       const isPickCandidate = Boolean(this.pickState?.candidateIds?.has(item.id));
       const isDropTgt = item.id === this.dropTargetVesselId || (isPickCandidate && item.id === this.hoverItemId);
+      const filterMatched = filterActive ? Boolean(this.storageFilterPredicate(item)) : true;
       setCurrentLabelItemId(item.id);
+      ctx.save();
+      if (filterActive && !filterMatched) {
+        ctx.globalAlpha = 0.22;
+      }
       if (item.kind === 'stand') {
         renderRetortStand(ctx, item, isSelected, this.isDark);
       } else if (item.kind === 'scale') {
@@ -1375,6 +1503,17 @@ export class LabWorkbenchCanvas {
           renderRetortClampJaw(ctx, st, item, this.isDark);
         }
       }
+      if (filterActive && filterMatched) {
+        const spSpec = APPARATUS[item.typeId] || { width: 64, height: 80 };
+        const rx = Math.max(24, (spSpec.width || 64) * 0.56);
+        const ry = Math.max(24, (spSpec.height || 80) * 0.54);
+        ctx.strokeStyle = '#facc15';
+        ctx.lineWidth = 2.4;
+        ctx.setLineDash([5, 3]);
+        ctx.strokeRect((item.x || 0) - rx, (item.y || 0) - ry, rx * 2, ry * 2);
+        ctx.setLineDash([]);
+      }
+      ctx.restore();
     }
     setCurrentLabelItemId(null);
 

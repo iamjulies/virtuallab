@@ -1,30 +1,129 @@
 import { APPARATUS } from '../data/apparatus.js';
 import { CONSTANTS } from '../data/constants.js';
+import { MISSION_REGISTRY } from '../data/missions.js';
 import { ParticleSystem } from '../canvas/particles.js';
 import { LabSimulation, SIM_BENCH_FLOOR_Y } from './simulation.js';
+import { STORAGE_SHELF_Y_LEVELS } from './simSnapshot.js';
+
+export const LINK_REF_FIELDS = [
+  'dockedToStandId',
+  'clampedToId',
+  'dockedVesselId',
+  'restingOnId',
+  'attachedToId',
+  'connectedTargetId',
+  'connectedSyringeId',
+  'connectedFromId',
+  'outletTargetId',
+  'posElectrodeId',
+  'negElectrodeId',
+  'vesselAId',
+  'vesselBId',
+  'gasTargetId',
+  'filtrateTargetId',
+  'targetVesselId',
+  'mountedOnVesselId',
+  'inVesselId',
+  'refluxVesselId',
+  'contactVesselId',
+  'sprayTargetId',
+  'mountedOverElectrodeId',
+];
 
 /**
- * Orchestrates up to 10 concurrent active lab benches sharing a single UI viewport.
- * Active lab runs at 60 FPS with full Canvas particles; background labs advance smoothly at ~15 Hz
- * so reactions, heating, electrolysis and crystals progress live with near-zero CPU overhead.
+ * BFS over undirected apparatus relationships (stand clamps, tubing, stoppers, mounts, circuits)
+ * so storing/withdrawing an assembly keeps all connected items together.
+ */
+export function collectConnectedAssemblyIds(sim, seedItemId) {
+  if (!sim || !Array.isArray(sim.items) || !seedItemId) return [];
+  const byId = new Map(sim.items.map((it) => [it.id, it]));
+  if (!byId.has(seedItemId)) return [];
+
+  const adj = new Map();
+  const addEdge = (a, b) => {
+    if (!a || !b || a === b || !byId.has(a) || !byId.has(b)) return;
+    if (!adj.has(a)) adj.set(a, new Set());
+    if (!adj.has(b)) adj.set(b, new Set());
+    adj.get(a).add(b);
+    adj.get(b).add(a);
+  };
+
+  for (const it of sim.items) {
+    for (const f of LINK_REF_FIELDS) {
+      if (it[f]) addEdge(it.id, it[f]);
+    }
+  }
+
+  const visited = new Set([seedItemId]);
+  const q = [seedItemId];
+  while (q.length > 0) {
+    const cur = q.shift();
+    for (const nb of adj.get(cur) || []) {
+      if (!visited.has(nb)) {
+        visited.add(nb);
+        q.push(nb);
+      }
+    }
+  }
+  return sim.items.filter((it) => visited.has(it.id)).map((it) => it.id);
+}
+
+/**
+ * Security check: forbid transferring items from external Storage into Exam tabs
+ * or Shelf-Locked Mission tabs (shelfPolicy/shelfLimitMode !== 'unrestricted').
+ */
+export function isLabLockedFromExternalStorage(labOrSim) {
+  const sim = labOrSim?.sim || labOrSim;
+  const st = sim?.missionState;
+  if (!st || !st.active) return false;
+  if (st.examMode) return true;
+  const def = st.missionId ? MISSION_REGISTRY[st.missionId] : null;
+  const policy =
+    st.customConfig?.shelfPolicy ||
+    st.customConfig?.shelfLimitMode ||
+    st.shelfPolicy ||
+    st.shelfLimitMode ||
+    def?.shelfPolicy ||
+    'unrestricted';
+  return policy !== 'unrestricted';
+}
+
+/**
+ * Orchestrates up to 10 concurrent active lab benches + infinite physical Storage Shelf pages.
  */
 export class LabManager {
   constructor(hooks = {}) {
     this.maxLabs = CONSTANTS.MAX_LABS || 10;
-    this.hooks = hooks; // { onAlert(labIndex, type, vessel, meta), onChange(), onActiveParticlesNeeded(vessel, metrics, dt) }
+    this.hooks = hooks;
     this.labs = [];
     this.activeIndex = 0;
     this.nextLabNumber = 1;
+    this.storageLabs = [];
+    this.activeStorageIndex = 0;
+    this.viewingStorage = false;
+    this.nextStorageNumber = 1;
+    this._lastWithdrawError = null;
     this.clipboard = null;
     this.tabClipboard = null;
-    this.storageCabinet = []; // Infinite-capacity frozen storage locker ({ id, storedAt, apparatusId, speciesIds, hasChemicals, stickyLabel, snapshot })
     this.pasteSequence = 0;
     this._bgCursor = 0;
+    this.addStoragePage({ silent: true, keepActive: true });
     this.addLab('starter', { silent: true });
   }
 
-  getActiveLab() {
+  getActiveWorkbenchLab() {
     return this.labs[this.activeIndex] || this.labs[0];
+  }
+
+  getActiveStorageLab() {
+    if (this.storageLabs.length === 0) {
+      this.addStoragePage({ silent: true, keepActive: false });
+    }
+    return this.storageLabs[this.activeStorageIndex] || this.storageLabs[0];
+  }
+
+  getActiveLab() {
+    return this.viewingStorage ? this.getActiveStorageLab() : this.getActiveWorkbenchLab();
   }
 
   getActiveSim() {
@@ -33,6 +132,24 @@ export class LabManager {
 
   getActiveParticles() {
     return this.getActiveLab().particles;
+  }
+
+  getTotalStorageItemCount() {
+    return this.storageLabs.reduce((s, pg) => s + (pg?.sim?.items?.length || 0), 0);
+  }
+
+  get storageCabinet() {
+    return this._serializeStorageCabinetEntries();
+  }
+
+  set storageCabinet(entries) {
+    this.storageLabs = [];
+    this.activeStorageIndex = 0;
+    this.nextStorageNumber = 1;
+    this.addStoragePage({ silent: true, keepActive: false });
+    if (Array.isArray(entries) && entries.length > 0) {
+      this.mergeStorageCabinet(entries, { silent: true });
+    }
   }
 
   _wireLabHooks(lab) {
@@ -226,12 +343,135 @@ export class LabManager {
     const lab = this.getActiveLab();
     const sim = simOverride || lab?.sim;
     if (!sim) return false;
+    const wasStorage = Boolean(sim.isStorageCabinet);
     sim.recordUndo?.();
     sim.setupPreset('clean');
+    if (wasStorage) sim.isStorageCabinet = true;
     lab?.particles?.clear?.();
     sim.emitChange?.();
     this.hooks.onChange?.();
     return true;
+  }
+
+  setViewingStorage(flag) {
+    const next = Boolean(flag);
+    if (next && this.storageLabs.length === 0) {
+      this.addStoragePage({ silent: true, keepActive: false });
+    }
+    this.viewingStorage = next;
+    this.hooks.onChange?.();
+    return this.viewingStorage;
+  }
+
+  addStoragePage(opts = {}) {
+    const num = this.nextStorageNumber++;
+    const sim = new LabSimulation();
+    sim.setupPreset('clean');
+    sim.isStorageCabinet = true;
+    sim.undoStack = [];
+    sim.redoStack = [];
+    const page = {
+      id: `storage_${num}`,
+      number: num,
+      customName: opts.customName ? String(opts.customName).trim() : '',
+      sim,
+      particles: new ParticleSystem(),
+      unreadAlerts: 0,
+      bgAccum: 0,
+    };
+    this.storageLabs.push(page);
+    const idx = this.storageLabs.length - 1;
+    if (!opts.keepActive) {
+      this.activeStorageIndex = idx;
+    }
+    if (!opts.silent) this.hooks.onChange?.();
+    return { ok: true, index: idx, page };
+  }
+
+  switchStoragePage(index) {
+    if (this.storageLabs.length === 0) return false;
+    const clamped = Math.max(0, Math.min(this.storageLabs.length - 1, Number(index) || 0));
+    this.activeStorageIndex = clamped;
+    this.hooks.onChange?.();
+    return true;
+  }
+
+  removeEmptyStoragePage(index = this.activeStorageIndex) {
+    if (this.storageLabs.length <= 1 || index < 0 || index >= this.storageLabs.length) return false;
+    if ((this.storageLabs[index]?.sim?.items?.length || 0) > 0) return false;
+    this.storageLabs.splice(index, 1);
+    if (this.activeStorageIndex >= this.storageLabs.length) {
+      this.activeStorageIndex = this.storageLabs.length - 1;
+    }
+    this.hooks.onChange?.();
+    return true;
+  }
+
+  _buildStorageEntryMeta(snap, pageIndex = 0) {
+    const speciesIds = Object.entries(snap.moles || {})
+      .filter(([, n]) => Number(n) > 1e-12)
+      .map(([spId]) => spId);
+    const gasIds = [
+      ...Object.entries(snap.headspaceGasMoles || {})
+        .filter(([g, n]) => g !== 'H2O_g' && Number(n) > 1e-10)
+        .map(([g]) => g),
+      ...Object.entries(snap.gasMoles || {})
+        .filter(([g, n]) => g !== 'H2O_g' && Number(n) > 1e-10)
+        .map(([g]) => g),
+    ];
+    return {
+      id: snap.id,
+      cabinetPageIndex: pageIndex,
+      x: snap.x,
+      y: snap.y,
+      storedAt: snap._storedAt || Date.now(),
+      apparatusId: snap.typeId,
+      kind: snap.kind,
+      speciesIds: Array.from(new Set([...speciesIds, ...gasIds])),
+      hasChemicals:
+        speciesIds.length > 0 ||
+        gasIds.length > 0 ||
+        (snap.volumeMl || 0) > 0 ||
+        (snap.condensedWaterMol || 0) > 1e-6 ||
+        (snap.condensedEtOHMol || 0) > 1e-6 ||
+        (snap.frozenWaterMol || 0) > 1e-6,
+      stickyLabel: snap.stickyLabel ? { ...snap.stickyLabel } : null,
+      tempK: snap.tempK ?? CONSTANTS.T_STD_K,
+      snapshot: snap,
+    };
+  }
+
+  _serializeStorageCabinetEntries() {
+    const out = [];
+    for (let p = 0; p < this.storageLabs.length; p++) {
+      const pg = this.storageLabs[p];
+      for (const it of pg?.sim?.items || []) {
+        const snap = this._cloneItemSnapshot(it);
+        snap._storedAt = it._storedAt || Date.now();
+        out.push(this._buildStorageEntryMeta(snap, p));
+      }
+    }
+    return out;
+  }
+
+  _findOpenShelfSlot(dstSim, spec, clusterOffsetX = 0) {
+    const h = spec?.height || 80;
+    const tiers = [STORAGE_SHELF_Y_LEVELS[2], STORAGE_SHELF_Y_LEVELS[1], STORAGE_SHELF_Y_LEVELS[0]];
+    const items = dstSim.items || [];
+    for (const shelfY of tiers) {
+      const centerY = shelfY - h / 2 + 2;
+      for (let x = 130; x <= 870; x += 110) {
+        const occupied = items.some(
+          (other) => Math.abs((other.x || 0) - x) < 76 && Math.abs((other.y || 0) - centerY) < 70
+        );
+        if (!occupied) return { x, y: centerY };
+      }
+    }
+    const idx = items.length;
+    return {
+      x: Math.max(90, Math.min(910, 140 + ((idx * 105) % 720) + clusterOffsetX)),
+      y: STORAGE_SHELF_Y_LEVELS[2] - h / 2 + 2,
+    };
   }
 
   _cloneItemSnapshot(it) {
@@ -251,137 +491,259 @@ export class LabManager {
     return clone;
   }
 
+  _insertClusterSnapshots(rawSnaps, dstSim, opts = {}) {
+    if (!dstSim || !Array.isArray(rawSnaps) || rawSnaps.length === 0) return [];
+    const preserveCoords = Boolean(opts.preserveCoords);
+    const snaps = rawSnaps.map((s) => this._cloneItemSnapshot(s));
+    const idSet = new Set(snaps.map((s) => s.id));
+
+    // Anchor offsets relative to bounding centroid / min baseline
+    const minX = Math.min(...snaps.map((s) => Number(s.x) || 200));
+    const maxX = Math.max(...snaps.map((s) => Number(s.x) || 200));
+    const centerX = (minX + maxX) * 0.5;
+    const maxBottomY = Math.max(
+      ...snaps.map((s) => (Number(s.y) || 400) + (APPARATUS[s.typeId]?.height || 80) / 2 - 2)
+    );
+
+    let anchorX = centerX;
+    let floorAnchorY = maxBottomY;
+    if (!preserveCoords) {
+      if (dstSim.isStorageCabinet && snaps.length === 1) {
+        const spec0 = APPARATUS[snaps[0].typeId] || APPARATUS.beaker_250;
+        const slot = Number.isFinite(opts.targetX) && Number.isFinite(opts.targetY)
+          ? { x: opts.targetX, y: opts.targetY }
+          : this._findOpenShelfSlot(dstSim, spec0);
+        anchorX = slot.x;
+        floorAnchorY = slot.y + (spec0.height || 80) / 2 - 2;
+      } else if (Number.isFinite(opts.targetX) && Number.isFinite(opts.targetY)) {
+        anchorX = Math.max(80, Math.min(920, opts.targetX));
+        const spec0 = APPARATUS[snaps[0].typeId] || APPARATUS.beaker_250;
+        floorAnchorY = Math.min(SIM_BENCH_FLOOR_Y, opts.targetY + (spec0.height || 80) / 2 - 2);
+      } else if (dstSim.isStorageCabinet) {
+        // Multi-item assembly stored on bench-level floor shelf so clamp heights align safely
+        const spanW = maxX - minX;
+        const baseSlotX = Math.max(90 + spanW * 0.5, Math.min(910 - spanW * 0.5, 220 + ((dstSim.items.length * 140) % 520)));
+        anchorX = baseSlotX;
+        floorAnchorY = SIM_BENCH_FLOOR_Y;
+      } else {
+        const slotCount = dstSim.items.length;
+        anchorX = 180 + ((slotCount * 115) % 620);
+        floorAnchorY = SIM_BENCH_FLOOR_Y;
+      }
+    }
+
+    const idMap = new Map();
+    const pairs = [];
+    // Pass 1: Create destination apparatus shells first so intermediate updateSupportAttachments() inside createApparatus never wipes unremapped links
+    for (const s of snaps) {
+      const spec = APPARATUS[s.typeId];
+      if (!spec) continue;
+      let targetX = preserveCoords && Number.isFinite(s.x) ? s.x : anchorX + ((Number(s.x) || centerX) - centerX);
+      let targetY = preserveCoords && Number.isFinite(s.y) ? s.y : floorAnchorY + ((Number(s.y) || maxBottomY) - maxBottomY);
+      targetX = Math.max(50, Math.min(950, targetX));
+      targetY = Math.max(55, Math.min(SIM_BENCH_FLOOR_Y - (spec.height || 80) / 2 + 2, targetY));
+
+      const item = dstSim.createApparatus(s.typeId, targetX, targetY, { silentUndo: true });
+      if (!item) continue;
+      idMap.set(s.id, item.id);
+      pairs.push({ item, snap: s, targetX, targetY });
+    }
+
+    // Pass 2: Apply cloned state & remap all internal cluster link IDs atomically
+    const created = [];
+    for (const { item, snap, targetX, targetY } of pairs) {
+      const keepId = item.id;
+      const keepLabel = snap.label || item.label;
+      Object.assign(item, snap);
+      item.id = keepId;
+      item.label = keepLabel;
+      item.x = targetX;
+      item.y = targetY;
+      item.isDragging = false;
+      item.vy = 0;
+      item.fallStartY = targetY;
+      item.tiltAngle = 0;
+      if (item.stickyLabel?.text) item.stickyLabel = { ...item.stickyLabel };
+
+      for (const f of LINK_REF_FIELDS) {
+        const ref = item[f];
+        if (!ref) continue;
+        if (idSet.has(ref) && idMap.has(ref)) {
+          item[f] = idMap.get(ref);
+        } else {
+          delete item[f];
+        }
+      }
+      created.push(item);
+    }
+
+    dstSim.updateSupportAttachments();
+    dstSim.recomputeScaleReadings();
+    dstSim.emitChange();
+    return created;
+  }
+
   /**
-   * Store a bench apparatus/vessel (frozen cleanly in time — zero reactions/evaporation/cooling)
-   * into the infinite-capacity Storage Cabinet.
+   * Store a bench apparatus/vessel (or its full connected assembly when opts.assembly === true)
+   * into the physical Frozen Storage Shelf.
    */
   storeItemToCabinet(itemId, simOverride = null, opts = {}) {
-    const sim = simOverride || this.getActiveSim();
-    if (!sim) return null;
+    const sim = simOverride || this.getActiveWorkbenchLab()?.sim;
+    if (!sim || !itemId) return null;
     const it = sim.getItem(itemId);
     if (!it) return null;
+
+    const targetPageIdx = Number.isInteger(opts.pageIndex)
+      ? Math.max(0, Math.min(this.storageLabs.length - 1, opts.pageIndex))
+      : this.activeStorageIndex;
+    const storagePage = this.storageLabs[targetPageIdx] || this.getActiveStorageLab();
+    const dstSim = storagePage.sim;
+
+    const idsToStore = opts.assembly ? collectConnectedAssemblyIds(sim, itemId) : [itemId];
+    const srcItems = idsToStore.map((id) => sim.getItem(id)).filter(Boolean);
+    if (srcItems.length === 0) return null;
+
     if (!opts.silentUndo) sim.recordUndo?.();
-
-    const snap = this._cloneItemSnapshot(it);
-    // Detach spatial relationships so stored copy is standalone
-    delete snap.dockedToStandId;
-    delete snap.dockedVesselId;
-    delete snap.restingOnId;
-    delete snap.attachedToId;
-    delete snap.connectedTargetId;
-    delete snap.connectedSyringeId;
-    delete snap.connectedFromId;
-    delete snap.outletTargetId;
-    delete snap.posElectrodeId;
-    delete snap.negElectrodeId;
-
-    const speciesIds = Object.entries(snap.moles || {})
-      .filter(([, n]) => Number(n) > 1e-12)
-      .map(([spId]) => spId);
-    const gasIds = [
-      ...Object.entries(snap.headspaceGasMoles || {})
-        .filter(([g, n]) => g !== 'H2O_g' && Number(n) > 1e-10)
-        .map(([g]) => g),
-      ...Object.entries(snap.gasMoles || {})
-        .filter(([g, n]) => g !== 'H2O_g' && Number(n) > 1e-10)
-        .map(([g]) => g),
-    ];
-
-    const entry = {
-      id: `cab_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      storedAt: Date.now(),
-      apparatusId: snap.typeId,
-      kind: snap.kind,
-      speciesIds: Array.from(new Set([...speciesIds, ...gasIds])),
-      hasChemicals:
-        speciesIds.length > 0 ||
-        gasIds.length > 0 ||
-        (snap.volumeMl || 0) > 0 ||
-        (snap.condensedWaterMol || 0) > 1e-6 ||
-        (snap.condensedEtOHMol || 0) > 1e-6 ||
-        (snap.frozenWaterMol || 0) > 1e-6,
-      stickyLabel: snap.stickyLabel ? { ...snap.stickyLabel } : null,
-      tempK: snap.tempK ?? CONSTANTS.T_STD_K,
-      snapshot: snap,
-    };
-    this.storageCabinet.unshift(entry);
+    const created = this._insertClusterSnapshots(srcItems, dstSim, {
+      targetX: opts.targetX,
+      targetY: opts.targetY,
+      preserveCoords: Boolean(opts.preserveCoords),
+    });
+    if (created.length === 0) return null;
+    for (const ci of created) ci._storedAt = Date.now();
+    dstSim.selectedIds = new Set(created.map((c) => c.id));
+    dstSim.selectedId = created[0].id;
 
     if (!opts.keepOnBench) {
-      sim.removeApparatus(it.id);
+      sim.withUndoSuppressed?.(() => {
+        for (const id of idsToStore) {
+          sim.removeApparatus(id);
+        }
+      });
     }
     this.hooks.onChange?.();
-    return entry;
+    return this._buildStorageEntryMeta(this._cloneItemSnapshot(created[0]), this.storageLabs.indexOf(storagePage));
+  }
+
+  storeAssemblyToCabinet(itemId, simOverride = null, opts = {}) {
+    return this.storeItemToCabinet(itemId, simOverride, { ...opts, assembly: true });
+  }
+
+  _findItemAcrossStorage(entryId) {
+    for (let p = 0; p < this.storageLabs.length; p++) {
+      const pg = this.storageLabs[p];
+      const it = pg?.sim?.getItem?.(entryId);
+      if (it) return { pageIndex: p, page: pg, item: it };
+    }
+    return null;
   }
 
   withdrawFromCabinet(entryId, opts = {}) {
-    const idx = this.storageCabinet.findIndex((e) => e.id === entryId);
-    if (idx < 0) return null;
-    const entry = this.storageCabinet[idx];
-    const sim = opts.simOverride || this.getActiveSim();
-    if (!sim || !entry?.snapshot?.typeId) return null;
-    const spec = APPARATUS[entry.snapshot.typeId];
-    if (!spec) return null;
+    this._lastWithdrawError = null;
+    const found = this._findItemAcrossStorage(entryId);
+    if (!found) return null;
+    const { page: storagePage, item: srcItem } = found;
+    const srcSim = storagePage.sim;
 
-    sim.recordUndo?.();
-    const dropX = Number.isFinite(opts.targetX)
-      ? Math.max(60, Math.min(940, opts.targetX))
-      : 160 + ((sim.items.length * 115) % 660);
-    const dropY = Number.isFinite(opts.targetY)
-      ? Math.max(65, Math.min(SIM_BENCH_FLOOR_Y - (spec.height || 80) / 2 + 2, opts.targetY))
-      : SIM_BENCH_FLOOR_Y - (spec.height || 80) / 2 + 2;
+    const dstLab = opts.simOverride
+      ? null
+      : this.labs[Number.isInteger(opts.targetLabIndex) ? opts.targetLabIndex : this.activeIndex] || this.getActiveWorkbenchLab();
+    const dstSim = opts.simOverride || dstLab?.sim;
+    if (!dstSim) return null;
 
-    const item = sim.createApparatus(entry.snapshot.typeId, dropX, dropY, { silentUndo: true });
-    if (!item) return null;
+    // Security policy check: block external storage transfers into Exam / Shelf-Locked missions
+    if (!opts.bypassLock && isLabLockedFromExternalStorage(dstLab || dstSim)) {
+      this._lastWithdrawError = 'exam_locked';
+      this.hooks.onExamTransferBlocked?.(storagePage, dstLab || dstSim);
+      return null;
+    }
 
-    const s = JSON.parse(JSON.stringify(entry.snapshot));
-    const keepId = item.id;
-    const keepLabel = item.label;
-    Object.assign(item, s);
-    item.id = keepId;
-    item.label = keepLabel;
-    item.x = dropX;
-    item.y = dropY;
-    item.isDragging = false;
-    item.vy = 0;
-    item.fallStartY = dropY;
-    item.tiltAngle = 0;
-    if (item.stickyLabel?.text) item.stickyLabel = { ...item.stickyLabel };
+    const idsToMove = opts.assembly ? collectConnectedAssemblyIds(srcSim, entryId) : [entryId];
+    const srcCluster = idsToMove.map((id) => srcSim.getItem(id)).filter(Boolean);
+    if (srcCluster.length === 0) return null;
+
+    dstSim.recordUndo?.();
+    const created = this._insertClusterSnapshots(srcCluster, dstSim, {
+      targetX: opts.targetX,
+      targetY: opts.targetY,
+    });
+    if (created.length === 0) return null;
 
     if (opts.mode !== 'clone') {
-      this.storageCabinet.splice(idx, 1);
+      srcSim.recordUndo?.();
+      srcSim.withUndoSuppressed?.(() => {
+        for (const id of idsToMove) {
+          srcSim.removeApparatus(id);
+        }
+      });
     }
-    sim.selectedIds = new Set([item.id]);
-    sim.selectedId = item.id;
-    sim.updateSupportAttachments();
-    sim.recomputeScaleReadings();
-    sim.emitChange();
+    dstSim.selectedIds = new Set(created.map((c) => c.id));
+    dstSim.selectedId = created[0].id;
+    dstSim.emitChange();
     this.hooks.onChange?.();
-    return item;
+    return created[0];
   }
 
   removeFromCabinet(entryId) {
-    const idx = this.storageCabinet.findIndex((e) => e.id === entryId);
-    if (idx < 0) return false;
-    this.storageCabinet.splice(idx, 1);
+    const found = this._findItemAcrossStorage(entryId);
+    if (!found) return false;
+    found.page.sim.recordUndo?.();
+    found.page.sim.removeApparatus(entryId);
     this.hooks.onChange?.();
     return true;
   }
 
-  mergeStorageCabinet(entries = []) {
-    if (!Array.isArray(entries)) return 0;
+  mergeStorageCabinet(entries = [], opts = {}) {
+    if (!Array.isArray(entries) || entries.length === 0) return 0;
+    if (this.storageLabs.length === 0) {
+      this.addStoragePage({ silent: true, keepActive: false });
+    }
     let added = 0;
-    const seen = new Set(this.storageCabinet.map((e) => e.id));
+
+    // Group entries by explicit cabinetPageIndex if present (Build 32+), or pack legacy entries cleanly across 3 tiers
+    const maxExistingPage = Math.max(0, ...entries.map((e) => (Number.isInteger(e?.cabinetPageIndex) ? e.cabinetPageIndex : 0)));
+    while (this.storageLabs.length <= maxExistingPage) {
+      this.addStoragePage({ silent: true, keepActive: true });
+    }
+
+    const byPage = new Map();
     for (const raw of entries) {
       if (!raw || !raw.snapshot?.typeId) continue;
-      const copy = JSON.parse(JSON.stringify(raw));
-      if (!copy.id || seen.has(copy.id)) {
-        copy.id = `cab_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      }
-      seen.add(copy.id);
-      this.storageCabinet.push(copy);
-      added++;
+      const pIdx = Number.isInteger(raw.cabinetPageIndex) && raw.cabinetPageIndex >= 0 ? raw.cabinetPageIndex : 0;
+      if (!byPage.has(pIdx)) byPage.set(pIdx, []);
+      byPage.get(pIdx).push(raw);
     }
-    if (added > 0) this.hooks.onChange?.();
+
+    for (const [pIdx, list] of byPage.entries()) {
+      const dstSim = (this.storageLabs[pIdx] || this.storageLabs[0]).sim;
+      const withCoords = [];
+      const legacyNoCoords = [];
+      for (const raw of list) {
+        const snap = this._cloneItemSnapshot(raw.snapshot);
+        if (Number.isFinite(raw.x) && Number.isFinite(raw.y) && Number.isInteger(raw.cabinetPageIndex)) {
+          snap.x = raw.x;
+          snap.y = raw.y;
+          withCoords.push(snap);
+        } else {
+          legacyNoCoords.push(snap);
+        }
+      }
+
+      if (withCoords.length > 0) {
+        const created = this._insertClusterSnapshots(withCoords, dstSim, { preserveCoords: true });
+        added += created.length;
+      }
+
+      if (legacyNoCoords.length > 0) {
+        // Place each legacy entry cleanly across open 3-tier shelf slots
+        for (const snap of legacyNoCoords) {
+          const created = this._insertClusterSnapshots([snap], dstSim, { preserveCoords: false });
+          added += created.length;
+        }
+      }
+    }
+
+    if (added > 0 && !opts.silent) this.hooks.onChange?.();
     return added;
   }
 
@@ -621,10 +983,16 @@ export class LabManager {
    * (max 2 background labs or ~4 ms/frame time budget) with staggered phase accumulation.
    */
   stepAllLabs(dt, onBgAlertChange = null) {
+    if (this.viewingStorage) {
+      const sLab = this.getActiveStorageLab();
+      sLab?.sim?.step(dt);
+    }
     const active = this.labs[this.activeIndex];
     if (active) {
       active.sim.step(dt);
-      active.particles.update(dt * (active.sim.environment.paused ? 0 : active.sim.environment.speed));
+      if (!this.viewingStorage) {
+        active.particles.update(dt * (active.sim.environment.paused ? 0 : active.sim.environment.speed));
+      }
     }
 
     const nLabs = this.labs.length;

@@ -78,6 +78,7 @@ import {
 
 
 export const SIM_BENCH_FLOOR_Y = 482;
+export const STORAGE_SHELF_Y_LEVELS = [195, 340, SIM_BENCH_FLOOR_Y];
 
 export function exportPositionSnapshotForSim(sim) {
     return {

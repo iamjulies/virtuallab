@@ -66,7 +66,9 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
       const atm = computeAtmospherePartialPressures(panel.sim.environment);
       const labsMeta = panel.callbacks.getLabsMeta?.();
       const activeLab = labsMeta?.labs?.[labsMeta.activeIndex];
-      const labBadge = activeLab?.customName || `${t('labTabPrefix')} ${activeLab?.number || 1}`;
+      const labBadge = panel.sim?.isStorageCabinet
+        ? `❄️ ${t('storageShelfLabel')} ${labsMeta?.storagePageNum || 1}`
+        : activeLab?.customName || `${t('labTabPrefix')} ${activeLab?.number || 1}`;
       const roomTempK = panel.sim.environment?.tempK ?? CONSTANTS.T_STD_K;
       const roomTempC = kelvinToCelsius(roomTempK);
       topSection = `

@@ -129,6 +129,7 @@ export class LabSimulation {
     this._dirtySeq = 1;
     this.missionState = null;
     this.missionTelemetry = createEmptyMissionTelemetry();
+    this.isStorageCabinet = false;
   }
 
   withUndoSuppressed(fn) {

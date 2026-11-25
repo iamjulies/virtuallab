@@ -2,7 +2,7 @@ import { I18N } from './data/i18n.js';
 import { THEME_REGISTRY, isThemeDark } from './data/constants.js';
 import { APPARATUS } from './data/apparatus.js';
 import { STARTER_REAGENTS } from './data/species.js';
-import { LabManager } from './engine/labManager.js';
+import { LabManager, collectConnectedAssemblyIds, isLabLockedFromExternalStorage } from './engine/labManager.js';
 import { LabWorkbenchCanvas, BENCH_FLOOR_Y } from './canvas/workbench.js';
 import { EnvironmentBar } from './ui/environmentBar.js';
 import { ShelfPanel } from './ui/shelfPanel.js';
@@ -142,7 +142,10 @@ const labManager = new LabManager({
     renderLabTabs(getTranslator());
   },
   onExamTransferBlocked: () => {
-    showToast(`🔒 ${getTranslator()('examIsolatedTransferBlocked')}`);
+    const key = labManager._lastWithdrawError === 'exam_locked' || labManager.viewingStorage
+      ? 'toastStorageExamBlocked'
+      : 'examIsolatedTransferBlocked';
+    showToast(`🔒 ${getTranslator()(key)}`);
   },
   onChange: () => {
     syncActiveLabRefs();
@@ -431,6 +434,9 @@ workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
   onRequestDosing: (reagentId, vesselId) => {
     dosingModal.openReagent(reagentId, vesselId);
   },
+  onStorageDosingBlocked: () => {
+    showToast(`❄️ ${getTranslator()('storageShelfLockedTip')}`);
+  },
   onExternalTabDragHover: (clientX, clientY, item) => {
     clearLabDropHighlights(!item);
     if (!item) return;
@@ -464,8 +470,11 @@ workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
     const hit = item ? findDropLabTab(clientX, clientY) : null;
     if (!hit) return false;
     if (hit.storageTab) {
-      storeSelectedToCabinet(item.id);
+      if (!appState.viewingStorage) storeSelectedToCabinet(item.id);
       return true;
+    }
+    if (appState.viewingStorage) {
+      return Boolean(withdrawStorageItemToLab(item.id, { mode: 'move', targetLabIndex: hit.idx, assembly: false, stayInStorage: false }));
     }
     const moved = labManager.moveItemBetweenLabs(item.id, labManager.activeIndex, hit.idx);
     if (moved) {
@@ -770,14 +779,18 @@ const shelfPanel = new ShelfPanel(shelfEl, sim, getTranslator, {
     shortcutTarget = 'canvas';
     openShelfContextMenu(clientX, clientY, payload);
   },
-  onLockedAttempt: () => {
-    showToast(`🔒 ${getTranslator()('missionLockedShelfTip')}`);
+  onLockedAttempt: (reason = 'mission') => {
+    const key = reason === 'storage' ? 'storageShelfLockedTip' : 'missionLockedShelfTip';
+    showToast(`${reason === 'storage' ? '❄️' : '🔒'} ${getTranslator()(key)}`);
   },
 });
 
 const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
   onEditStickyLabel: (vessel) => openStickyLabelEditor(vessel),
   onStoreToCabinet: (itemId) => storeSelectedToCabinet(itemId),
+  onStoreAssemblyToCabinet: (itemId) => storeAssemblySelectedToCabinet(itemId),
+  onWithdrawStorageItem: (itemId, opts) => withdrawStorageItemToLab(itemId, opts),
+  onDeleteStorageItem: (itemId) => deleteStorageItem(itemId),
   onOpenTransfer: (sourceId) => {
     const others = sim.items.filter(
       (i) =>
@@ -843,7 +856,11 @@ const inspectorPanel = new InspectorPanel(inspectorEl, sim, getTranslator, {
     });
     document.body.appendChild(wrap);
   },
-  getLabsMeta: () => ({ labs: labManager.labs, activeIndex: labManager.activeIndex }),
+  getLabsMeta: () => ({
+    labs: labManager.labs,
+    activeIndex: labManager.activeIndex,
+    storagePageNum: (labManager.activeStorageIndex || 0) + 1,
+  }),
   onMoveToLab: (itemId, dstIdx) => {
     const moved = labManager.moveItemBetweenLabs(itemId, labManager.activeIndex, dstIdx);
     if (moved) {
@@ -1196,7 +1213,7 @@ function openStickyLabelEditor(vessel) {
 }
 
 function storeSelectedToCabinet(itemId) {
-  if (!itemId) return;
+  if (!itemId || sim?.isStorageCabinet) return;
   const t = getTranslator();
   const entry = labManager.storeItemToCabinet(itemId, sim);
   if (entry) {
@@ -1204,6 +1221,58 @@ function storeSelectedToCabinet(itemId) {
     soundEngine.playUiClick();
     refreshChrome(true);
     showToast(t('cabinetStoredToast'));
+  }
+}
+
+function storeAssemblySelectedToCabinet(itemId) {
+  if (!itemId || sim?.isStorageCabinet) return;
+  const t = getTranslator();
+  const ids = collectConnectedAssemblyIds(sim, itemId);
+  const entry = labManager.storeAssemblyToCabinet(itemId, sim);
+  if (entry) {
+    saveToLocalStorage(labManager);
+    soundEngine.playGlassClink(entry.apparatusId || 'beaker_250', 0.8);
+    refreshChrome(true);
+    showToast(`📦 ${t('storageStoredAssemblyToast').replace('{n}', String(ids.length))}`);
+  }
+}
+
+function withdrawStorageItemToLab(itemId, opts = {}) {
+  const t = getTranslator();
+  const targetIdx = Number.isInteger(opts.targetLabIndex) ? opts.targetLabIndex : labManager.activeIndex;
+  const dstLab = labManager.labs[targetIdx];
+  if (dstLab && isLabLockedFromExternalStorage(dstLab)) {
+    showToast(`🔒 ${t('toastStorageExamBlocked')}`);
+    return null;
+  }
+  const res = labManager.withdrawFromCabinet(itemId, {
+    mode: opts.mode === 'clone' ? 'clone' : 'move',
+    targetLabIndex: targetIdx,
+    assembly: Boolean(opts.assembly),
+  });
+  if (res) {
+    saveToLocalStorage(labManager);
+    soundEngine.playGlassClink(res.typeId, 0.8);
+    if (opts.stayInStorage === false) {
+      labManager.switchLab(targetIdx);
+      cabinetModal?.close();
+    } else if (opts.mode !== 'clone' && (sim?.items?.length || 0) === 0 && opts.stayInStorage !== true) {
+      labManager.switchLab(targetIdx);
+      cabinetModal?.close();
+    }
+    syncActiveLabRefs();
+    refreshChrome(true);
+    showToast(`${opts.mode === 'clone' ? '🧬' : '📤'} ${t('cabinetWithdrawnToast')}`);
+  }
+  return res;
+}
+
+function deleteStorageItem(itemId) {
+  if (!itemId) return;
+  if (labManager.removeFromCabinet(itemId)) {
+    saveToLocalStorage(labManager);
+    soundEngine.playTrashCrumple();
+    refreshChrome(true);
   }
 }
 
@@ -1363,6 +1432,55 @@ function openCanvasContextMenu(clientX, clientY, logicalPt, hitItem) {
   const hasClipboard = Array.isArray(labManager.clipboard) && labManager.clipboard.length > 0;
   const hasUndo = Array.isArray(sim.undoStack) && sim.undoStack.length > 0;
   const hasRedo = Array.isArray(sim.redoStack) && sim.redoStack.length > 0;
+  const inStorage = Boolean(appState.viewingStorage || sim?.isStorageCabinet);
+
+  if (inStorage) {
+    if (!hitItem) {
+      contextUI.showMenu(clientX, clientY, [
+        { label: t('ctxPaste'), shortcut: 'Ctrl+V', disabled: !hasClipboard, onClick: () => runPasteAction(true, logicalPt) },
+        { label: t('ctxSelectAll'), shortcut: 'Ctrl+A', disabled: sim.items.length === 0, onClick: () => runSelectAllAction() },
+        { label: t('ctxUndo'), shortcut: 'Ctrl+Z', disabled: !hasUndo, onClick: () => runUndoAction() },
+        { label: t('ctxRedo'), shortcut: 'Ctrl+Shift+Z', disabled: !hasRedo, onClick: () => runRedoAction() },
+        { separator: true },
+        { label: `➕ ${t('storageAddShelfBtn')}`, onClick: () => { labManager.addStoragePage(); refreshChrome(true); } },
+        { label: `↩️ ${t('storageBackToLabBtn')}`, onClick: () => cabinetModal.close() },
+      ]);
+      return;
+    }
+
+    const buildWithdrawSubmenu = (mode, assembly = false) =>
+      labManager.labs.map((lb, idx) => {
+        const locked = isLabLockedFromExternalStorage(lb);
+        return {
+          label: `${locked ? '🔒 ' : ''}${getLabTitle(lb, t)}`,
+          disabled: locked,
+          onClick: () => withdrawStorageItemToLab(hitItem.id, { mode, targetLabIndex: idx, assembly, stayInStorage: false }),
+        };
+      });
+    const asmIds = collectConnectedAssemblyIds(sim, hitItem.id);
+
+    contextUI.showMenu(clientX, clientY, [
+      { label: t('ctxCabTakeToLab'), submenu: buildWithdrawSubmenu('move', false) },
+      { label: t('ctxCabCloneToLab'), submenu: buildWithdrawSubmenu('clone', false) },
+      ...(asmIds.length > 1
+        ? [{ label: `📦 ${t('storageTakeAssemblyBtn').replace('{n}', String(asmIds.length))}`, submenu: buildWithdrawSubmenu('move', true) }]
+        : []),
+      { separator: true },
+      { label: t('ctxCopy'), shortcut: 'Ctrl+C', onClick: () => runCopyAction() },
+      { label: t('ctxSelectAll'), shortcut: 'Ctrl+A', onClick: () => runSelectAllAction() },
+      { label: t('ctxUndo'), shortcut: 'Ctrl+Z', disabled: !hasUndo, onClick: () => runUndoAction() },
+      { label: t('ctxRedo'), shortcut: 'Ctrl+Shift+Z', disabled: !hasRedo, onClick: () => runRedoAction() },
+      ...(hitItem.kind === 'vessel' ? [{ separator: true }, { label: t('ctxStickyLabel'), onClick: () => openStickyLabelEditor(hitItem) }] : []),
+      ...(APPARATUS[hitItem.typeId]?.flippable || APPARATUS[hitItem.typeId]?.hasTwoEnds
+        ? [{ label: t('ctxFlipLR'), onClick: () => { soundEngine.playUiClick(); sim.flipItemLR(hitItem.id); } }]
+        : []),
+      { separator: true },
+      { label: t('ctxCabDelete'), danger: true, onClick: () => deleteStorageItem(hitItem.id) },
+      { label: t('ctxInfo'), onClick: () => contextUI.showInfoModal({ kind: 'item', item: hitItem }, t, appState.lang) },
+    ]);
+    return;
+  }
+
   if (!hitItem) {
     contextUI.showMenu(clientX, clientY, [
       { label: t('ctxPaste'), shortcut: 'Ctrl+V', disabled: !hasClipboard, onClick: () => runPasteAction(true, logicalPt) },
@@ -1414,6 +1532,9 @@ function openCanvasContextMenu(clientX, clientY, logicalPt, hitItem) {
       ? [{ label: t('ctxInvertVessel'), onClick: () => { soundEngine.playUiClick(); sim.toggleVesselInverted(hitItem.id); } }]
       : []),
     { label: t('ctxStoreCabinet'), onClick: () => storeSelectedToCabinet(hitItem.id) },
+    ...(collectConnectedAssemblyIds(sim, hitItem.id).length > 1
+      ? [{ label: `📦 ${t('storageStoreAssemblyBtn').replace('{n}', String(collectConnectedAssemblyIds(sim, hitItem.id).length))}`, onClick: () => storeAssemblySelectedToCabinet(hitItem.id) }]
+      : []),
     { separator: true },
     {
       label: t('ctxInfo'),
@@ -1635,7 +1756,7 @@ function renderLabTabs(t) {
   if (!labTabsEl) return;
   ensureLabTabsDelegation();
   const userEmail = cloudSync.user?.email || '';
-  const cabLen = Array.isArray(labManager?.storageCabinet) ? labManager.storageCabinet.length : 0;
+  const cabLen = labManager?.getTotalStorageItemCount?.() ?? 0;
   const sig = `${appState.lang}|${userEmail}|${shortcutTarget}|${renamingTabIndex}|${appState.viewingStorage ? 1 : 0}|${cabLen}|${labManager.activeIndex}|${labManager.labs
     .map((lb) => `${lb.id}:${lb.customName || ''}:${lb.sim.items.length}:${lb.sim.environment.atmosphereMode}:${(lb.unreadAlerts || 0) > 0 ? 1 : 0}`)
     .join(',')}`;
@@ -1757,7 +1878,7 @@ function applyThemeAndDevice() {
 let lastEnvBarSig = '';
 function refreshChrome(forceInspector = false) {
   const t = getTranslator();
-  appState.cabinetCount = Array.isArray(labManager?.storageCabinet) ? labManager.storageCabinet.length : 0;
+  appState.cabinetCount = labManager?.getTotalStorageItemCount?.() ?? 0;
   workbench.setLang(appState.lang);
   const env = sim.environment || {};
   const envSig = `${appState.lang}|${appState.theme}|${appState.deviceMode}|${appState.soundEnabled ? 1 : 0}|${appState.cloudSignedIn ? 1 : 0}|${appState.isTeacher ? 1 : 0}|${appState.cabinetCount}|${sim.missionState?.active ? `${sim.missionState.missionId}:${sim.missionState.mode}:${sim.missionState.lockEnvironment ? 1 : 0}` : 'free'}|${Math.round((env.tempK || 298.15) * 10)}|${Math.round((env.pressureBar || 1) * 100)}|${env.speed}|${env.paused ? 1 : 0}|${env.uvLight ? 1 : 0}|${env.atmosphereMode}|${env.opticsMode || 'normal'}`;
@@ -1979,7 +2100,6 @@ window.addEventListener('keydown', (e) => {
   const action = findActionByCombo(combo);
   const anyModalOpen =
     (modalEl && !modalEl.classList.contains('hidden')) ||
-    cabinetModal?.isOpen ||
     storageModal?.isOpen ||
     shortcutsModal?.isOpen ||
     contextUI.isDialogOpen();
@@ -2252,59 +2372,14 @@ const cabinetModal = new StorageCabinetModal(labManager, getTranslator, () => ap
   },
   onOpenChange: (isOpen) => {
     appState.viewingStorage = Boolean(isOpen);
+    document.querySelector('.workbench-canvas-wrap')?.classList.toggle('viewing-storage', appState.viewingStorage);
     document.getElementById('bench-top-toolbar')?.classList.toggle('hidden', appState.viewingStorage);
-    document.getElementById('canvas-zoom-hud')?.classList.toggle('hidden', appState.viewingStorage);
-    renderLabTabs(getTranslator());
+    syncActiveLabRefs();
+    refreshChrome(true);
     if (!isOpen) setTimeout(() => workbench.resize(), 20);
   },
-  onCubbyContextMenu: (clientX, clientY, entry) => {
-    const t = getTranslator();
-    const takeSubmenu = labManager.labs.map((lb, idx) => ({
-      label: getLabTitle(lb, t),
-      onClick: () => {
-        const moved = labManager.withdrawFromCabinet(entry.id, { mode: 'move', simOverride: lb.sim });
-        if (moved) {
-          saveToLocalStorage(labManager);
-          soundEngine.playGlassClink(moved.typeId, 0.8);
-          labManager.switchLab(idx);
-          cabinetModal.close();
-          syncActiveLabRefs();
-          refreshChrome(true);
-          showToast(`📤 ${t('cabinetWithdrawnToast')}`);
-        }
-      },
-    }));
-    const cloneSubmenu = labManager.labs.map((lb, idx) => ({
-      label: getLabTitle(lb, t),
-      onClick: () => {
-        const cloned = labManager.withdrawFromCabinet(entry.id, { mode: 'clone', simOverride: lb.sim });
-        if (cloned) {
-          saveToLocalStorage(labManager);
-          soundEngine.playGlassClink(cloned.typeId, 0.8);
-          labManager.switchLab(idx);
-          cabinetModal.close();
-          syncActiveLabRefs();
-          refreshChrome(true);
-          showToast(`🧬 ${t('cabinetWithdrawnToast')}`);
-        }
-      },
-    }));
-    contextUI.showMenu(clientX, clientY, [
-      { label: t('ctxCabTakeToLab'), submenu: takeSubmenu },
-      { label: t('ctxCabCloneToLab'), submenu: cloneSubmenu },
-      { separator: true },
-      {
-        label: t('ctxCabDelete'),
-        danger: true,
-        onClick: () => {
-          labManager.removeFromCabinet(entry.id);
-          saveToLocalStorage(labManager);
-          soundEngine.playTrashCrumple();
-          cabinetModal.render();
-          refreshChrome(true);
-        },
-      },
-    ]);
+  onApplyStorageHighlight: (pred, active) => {
+    workbench?.setStorageHighlightFilter?.(pred, active);
   },
 });
 

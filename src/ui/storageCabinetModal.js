@@ -1,38 +1,5 @@
 import { APPARATUS } from '../data/apparatus.js';
 import { SPECIES } from '../data/species.js';
-import { kelvinToCelsius } from '../data/constants.js';
-import {
-  beginCanvasLabelFrame,
-  flushCanvasLabelFrame,
-  renderBurner,
-  renderGasSyringe,
-  renderPipette,
-  renderRetortStand,
-  renderScale,
-  renderVessel,
-} from '../canvas/vesselRenderer.js';
-import {
-  renderBurette,
-  renderDcPowerAndWires,
-  renderDiffusionTube,
-  renderElectrodeRod,
-  renderFilterFunnel,
-  renderFlameLoop,
-  renderIceBath,
-  renderIndicatorStrip,
-  renderIronSpoon,
-  renderLiebigCondenser,
-  renderPhenCotton,
-  renderRubberStopper,
-  renderSaltBridge,
-  renderSeparatoryFunnel,
-  renderSplint,
-  renderStirBar,
-  renderBoilingChips,
-  renderThermometer,
-  renderVoltAmmeterAndWires,
-  renderWashBottle,
-} from '../canvas/toolRenderer.js';
 import {
   VLAB_SCOPES,
   exportScopedVlabFile,
@@ -41,83 +8,133 @@ import {
 } from '../storage/workspaceStorage.js';
 import { soundEngine } from '../audio/soundEngine.js';
 
-const CABINET_PAGE_SIZE = 12; // 6 x 2 equal locker cubbies
+const NON_ORGANIC_CARBON_IDS = new Set([
+  'CO_g', 'CO2_g', 'CO3_2_aq', 'HCO3_aq', 'H2CO3_aq', 'C_s',
+  'CaCO3_s', 'Na2CO3_s', 'K2CO3_s', 'MgCO3_s', 'BaCO3_s', 'FeCO3_s',
+  'CaC2_s', 'Na2C2_s', 'Fe3C_s', 'SiC_s', 'Al4C3_s', 'MgC2_s', 'Mg2C3_s', 'KC8_s',
+]);
 
-function classifyEntryFilter(entry) {
-  const spList = entry?.speciesIds || [];
-  const hasGasMoles =
-    Object.values(entry?.snapshot?.gasMoles || {}).some((n) => Number(n) > 1e-9) ||
-    Object.entries(entry?.snapshot?.headspaceGasMoles || {}).some(([g, n]) => g !== 'H2O_g' && Number(n) > 1e-9);
-  if (!entry?.hasChemicals && !hasGasMoles) return 'apparatus';
-  if (spList.includes('H_aq') || spList.includes('H2CO3_aq') || spList.some((id) => /^HCl|^HNO3|^H2SO4/.test(id))) {
+const METAL_ELEMENTS = new Set([
+  'Li', 'Na', 'K', 'Mg', 'Ca', 'Ba', 'Al', 'Zn', 'Fe', 'Ni', 'Cu', 'Ag', 'Pt', 'Au', 'Cr', 'Mn', 'Pb', 'Sn',
+]);
+
+function isOrganicSpecies(id) {
+  if (!id || NON_ORGANIC_CARBON_IDS.has(id)) return false;
+  const sp = SPECIES[id];
+  if (!sp) return false;
+  if (sp.isPolymer || sp.isFat || sp.isSoapIon || sp.isSoapSolid) return true;
+  if (Array.isArray(sp.functionalGroups) && sp.functionalGroups.length > 0) return true;
+  if (sp.liquidGroup === 'light_organic' || sp.liquidGroup === 'heavy_organic' || sp.liquidGroup === 'miscible_organic') return true;
+  if ((sp.combustionCO2 || 0) > 0) return true;
+  const atoms = sp.atoms;
+  if (atoms && (atoms.C || 0) > 0 && (atoms.H || 0) > 0) return true;
+  return /^(CH[234]|C\d+H|HCHO|HCOO|NH2CH2)/.test(id);
+}
+
+function isPureMetalSpecies(id) {
+  const sp = SPECIES[id];
+  const base = String(id || '').replace(/_s$/, '');
+  if (sp && sp.phase === 's' && (sp.isMetal || sp.isDenseMetal)) return true;
+  if (!sp) return METAL_ELEMENTS.has(base);
+  if (sp.phase !== 's') return false;
+  if (METAL_ELEMENTS.has(base)) return true;
+  const keys = sp.atoms ? Object.keys(sp.atoms) : [];
+  return keys.length === 1 && METAL_ELEMENTS.has(keys[0]);
+}
+
+function isOxideSpecies(id) {
+  if (!id || isOrganicSpecies(id)) return false;
+  const sp = SPECIES[id];
+  if (!sp || sp.phase !== 's') return false;
+  if (sp.atoms) {
+    const keys = Object.keys(sp.atoms);
+    return keys.length === 2 && keys.includes('O') && !keys.includes('H');
+  }
+  const base = id.replace(/_s$/, '');
+  // Match inorganic binary oxides like CuO, Fe2O3, Fe3O4, SiO2, MnO2, Al2O3, CaO, MgO, Cr2O3, P2O5
+  return /^[A-Z][a-z]?\d*O\d*$/.test(base) && !base.startsWith('O');
+}
+
+function isBaseSpecies(id) {
+  if (id === 'OH_aq' || id === 'NH3_aq') return true;
+  const sp = SPECIES[id];
+  if (!sp || sp.phase !== 's') return false;
+  return /OH\d*_s$/.test(id);
+}
+
+/**
+ * Property-driven classification of any workbench/storage item into:
+ * 'apparatus' | 'acid' | 'base' | 'oxide' | 'salt' | 'metal' | 'organic' | 'gas'
+ */
+export function classifyStorageItemFilter(itemOrEntry) {
+  const src = itemOrEntry?.snapshot || itemOrEntry;
+  if (!src) return 'apparatus';
+  const moles = src.moles || {};
+  const speciesIds = Object.entries(moles)
+    .filter(([, n]) => Number(n) > 1e-12)
+    .map(([id]) => id);
+  const gasList = [
+    ...Object.entries(src.gasMoles || {}).filter(([, n]) => Number(n) > 1e-10).map(([g]) => g),
+    ...Object.entries(src.headspaceGasMoles || {}).filter(([g, n]) => g !== 'H2O_g' && Number(n) > 1e-10).map(([g]) => g),
+  ];
+  const hasGasMoles = gasList.length > 0;
+  const hasChem =
+    speciesIds.length > 0 ||
+    hasGasMoles ||
+    (src.volumeMl || 0) > 0 ||
+    (src.condensedWaterMol || 0) > 1e-6 ||
+    (src.condensedEtOHMol || 0) > 1e-6 ||
+    (src.frozenWaterMol || 0) > 1e-6;
+
+  if (!hasChem) return 'apparatus';
+
+  const allIds = Array.from(new Set([...speciesIds, ...gasList]));
+  if (allIds.some((id) => isOrganicSpecies(id))) {
+    // Organic carboxylic acids can also show under organic cleanly
+    return 'organic';
+  }
+  if (
+    allIds.includes('H_aq') ||
+    allIds.includes('H2CO3_aq') ||
+    allIds.some((id) => /^(HCl|HNO3|H2SO4|H3PO4|HIO3)/.test(id))
+  ) {
     return 'acid';
   }
-  if (spList.includes('OH_aq') || spList.includes('NH3_aq') || spList.includes('NaOH_s') || spList.includes('KOH_s') || spList.includes('BaOH2_s') || spList.includes('CaOH2_s') || spList.includes('MgOH2_s') || spList.includes('AlOH3_s')) {
+  if (allIds.some((id) => isBaseSpecies(id))) {
     return 'base';
   }
-  if (spList.some((id) => ['Na_s', 'K_s', 'Zn_s', 'Mg_s', 'Fe_s', 'Al_s', 'Cu_s', 'Ag_s'].includes(id))) {
+  if (allIds.some((id) => isPureMetalSpecies(id))) {
     return 'metal';
   }
-  if (hasGasMoles || spList.some((id) => id.endsWith('_g'))) {
+  if (allIds.some((id) => isOxideSpecies(id))) {
+    return 'oxide';
+  }
+  if (hasGasMoles || allIds.some((id) => SPECIES[id]?.phase === 'g')) {
     return 'gas';
   }
   return 'salt';
 }
 
-function drawCubbyThumbnail(canvas, entry) {
-  if (!canvas || !entry?.snapshot) return;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  const cw = canvas.width;
-  const ch = canvas.height;
-  ctx.clearRect(0, 0, cw, ch);
-
-  const clone = JSON.parse(JSON.stringify(entry.snapshot));
-  clone.x = 0;
-  clone.y = 0;
-  clone.tiltAngle = 0;
-  clone.tiltDeg = 0;
-  clone.landingTilt = 0;
-  const spec = APPARATUS[clone.typeId] || { width: 72, height: 96 };
-  const scale = Math.min((cw - 14) / Math.max(30, spec.width || 72), (ch - 10) / Math.max(30, spec.height || 96), 1.0);
-  const themeName = document.documentElement.getAttribute('data-theme') || 'dark';
-  const isDark = themeName === 'dark' || themeName === 'petal' || themeName === 'sos' || themeName === 'guts' || themeName === 'anti';
-
-  ctx.save();
-  ctx.translate(cw * 0.5, ch * 0.52);
-  ctx.scale(scale, scale);
-  beginCanvasLabelFrame(new Set([clone.id || '__cab']), false);
-  try {
-    if (clone.kind === 'vessel') {
-      renderVessel(ctx, clone, { isSelected: false, isDropTarget: false, isDark, themeName, timeNow: 0, langCode: 'vi' });
-    } else if (clone.kind === 'gas_syringe') renderGasSyringe(ctx, clone, false, isDark, { tempK: clone.tempK || 298.15, pressureBar: 1.0 }, 'vi', 0);
-    else if (clone.kind === 'pipette') renderPipette(ctx, clone, false, isDark, 'vi', 0);
-    else if (clone.kind === 'filter_funnel') renderFilterFunnel(ctx, clone, false, false, isDark, 'vi', 0);
-    else if (clone.kind === 'separatory_funnel') renderSeparatoryFunnel(ctx, clone, false, false, isDark, 'vi', 0);
-    else if (clone.kind === 'burette') renderBurette(ctx, clone, false, false, isDark, 0);
-    else if (clone.kind === 'condenser') renderLiebigCondenser(ctx, clone, false, isDark, 0, 'vi');
-    else if (clone.kind === 'spoon') renderIronSpoon(ctx, clone, false, isDark, 0);
-    else if (clone.kind === 'thermometer') renderThermometer(ctx, clone, false, isDark, 'vi');
-    else if (clone.kind === 'bath') renderIceBath(ctx, clone, false, isDark, 0, 'vi');
-    else if (clone.kind === 'burner') renderBurner(ctx, clone, false, false, isDark, 0);
-    else if (clone.kind === 'stand') renderRetortStand(ctx, clone, false, isDark);
-    else if (clone.kind === 'scale') renderScale(ctx, clone, false, isDark);
-    else if (clone.kind === 'wash_bottle') renderWashBottle(ctx, clone, false, isDark, 'vi', 0);
-    else if (clone.kind === 'splint') renderSplint(ctx, clone, false, isDark, 0);
-    else if (clone.kind === 'flame_loop') renderFlameLoop(ctx, clone, false, isDark, 0);
-    else if (clone.kind === 'indicator_strip') renderIndicatorStrip(ctx, clone, false, isDark, 'vi');
-    else if (clone.kind === 'stir_bar') renderStirBar(ctx, clone, false, isDark);
-    else if (clone.kind === 'boiling_chips') renderBoilingChips(ctx, clone, false, isDark);
-    else if (clone.kind === 'electrode') renderElectrodeRod(ctx, clone, false, isDark, 0);
-    else if (clone.kind === 'salt_bridge') renderSaltBridge(ctx, clone, [clone], false, isDark, 0, 'vi');
-    else if (clone.kind === 'rubber_stopper') renderRubberStopper(ctx, clone, false, isDark, null);
-    else if (clone.kind === 'phen_cotton') renderPhenCotton(ctx, clone, false, isDark);
-    else if (clone.kind === 'dc_power') renderDcPowerAndWires(ctx, [clone], null, isDark);
-    else if (clone.kind === 'volt_ammeter') renderVoltAmmeterAndWires(ctx, [clone], null, isDark);
-    else if (clone.kind === 'diffusion_tube') renderDiffusionTube(ctx, clone, false, false, isDark, 'vi');
-  } catch {}
-  flushCanvasLabelFrame(ctx);
-  ctx.restore();
+export function itemMatchesStorageSearch(item, searchQuery = '', filterGroup = 'all', t = (k) => k) {
+  if (!item) return false;
+  if (filterGroup && filterGroup !== 'all') {
+    if (classifyStorageItemFilter(item) !== filterGroup) return false;
+  }
+  const q = String(searchQuery || '').trim().toLowerCase();
+  if (!q) return true;
+  const spec = APPARATUS[item.typeId] || {};
+  const appName = (spec.i18nKey ? t(spec.i18nKey) : item.typeId || '').toLowerCase();
+  const labelTxt = `${item.label || ''} ${item.stickyLabel?.text || ''}`.toLowerCase();
+  const chemKeys = [
+    ...Object.keys(item.moles || {}).filter((k) => (item.moles[k] || 0) > 1e-12),
+    ...Object.keys(item.gasMoles || {}).filter((k) => (item.gasMoles[k] || 0) > 1e-10),
+    ...Object.keys(item.headspaceGasMoles || {}).filter((k) => k !== 'H2O_g' && (item.headspaceGasMoles[k] || 0) > 1e-10),
+  ];
+  const chemTxt = chemKeys
+    .map((id) => `${id} ${SPECIES[id]?.formula || ''} ${SPECIES[id]?.name || ''}`)
+    .join(' ')
+    .toLowerCase();
+  return appName.includes(q) || labelTxt.includes(q) || chemTxt.includes(q);
 }
 
 export class StorageCabinetModal {
@@ -125,13 +142,11 @@ export class StorageCabinetModal {
     this.labManager = labManager;
     this.getTranslator = getTranslator;
     this.getLang = getLang;
-    this.callbacks = callbacks; // { onNotify, onRefresh, onOpenChange }
+    this.callbacks = callbacks; // { onNotify, onRefresh, onOpenChange, onApplyStorageHighlight }
     this.isOpen = false;
     this.searchQuery = '';
     this.filterGroup = 'all';
-    this.currentPage = 1;
     this.rootEl = null;
-    this._wheelBound = false;
     this._ensureRoot();
   }
 
@@ -144,44 +159,61 @@ export class StorageCabinetModal {
       document.querySelector('.workbench-canvas-wrap')?.appendChild(el);
     }
     this.rootEl = el;
-    if (el && !this._wheelBound) {
-      this._wheelBound = true;
-      // Wheel anywhere over the Storage Locker changes pages (disabling stored vessel tilt wheeling)
-      el.addEventListener(
-        'wheel',
-        (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (Math.abs(e.deltaY) < 4) return;
-          const next = this.currentPage + (e.deltaY > 0 ? 1 : -1);
-          this.setPage(next);
-        },
-        { passive: false }
-      );
-    }
+  }
+
+  get currentPage() {
+    return (this.labManager?.activeStorageIndex ?? 0) + 1;
   }
 
   setPage(pageNum) {
-    const total = this._lastTotalPages || 1;
+    const total = Math.max(1, this.labManager?.storageLabs?.length || 1);
     const clamped = Math.max(1, Math.min(total, Math.round(Number(pageNum) || 1)));
-    if (clamped !== this.currentPage) {
-      this.currentPage = clamped;
-      this.render();
+    this.labManager?.switchStoragePage?.(clamped - 1);
+    this.callbacks.onRefresh?.();
+    this.render();
+  }
+
+  _syncHighlight() {
+    const t = this.getTranslator();
+    const hasFilter = this.filterGroup !== 'all' || this.searchQuery.trim().length > 0;
+    const pred = hasFilter
+      ? (it) => itemMatchesStorageSearch(it, this.searchQuery, this.filterGroup, t)
+      : null;
+    this.callbacks.onApplyStorageHighlight?.(pred, hasFilter && this.isOpen);
+  }
+
+  _jumpToFirstMatchingPage() {
+    if (!this.labManager?.storageLabs?.length) return;
+    const t = this.getTranslator();
+    const hasFilter = this.filterGroup !== 'all' || this.searchQuery.trim().length > 0;
+    if (!hasFilter) return;
+    const curPg = this.labManager.storageLabs[this.labManager.activeStorageIndex];
+    const curHasMatch = (curPg?.sim?.items || []).some((it) => itemMatchesStorageSearch(it, this.searchQuery, this.filterGroup, t));
+    if (curHasMatch) return;
+    const foundIdx = this.labManager.storageLabs.findIndex((pg) =>
+      (pg?.sim?.items || []).some((it) => itemMatchesStorageSearch(it, this.searchQuery, this.filterGroup, t))
+    );
+    if (foundIdx >= 0 && foundIdx !== this.labManager.activeStorageIndex) {
+      this.labManager.switchStoragePage(foundIdx);
+      this.callbacks.onRefresh?.();
     }
   }
 
   open() {
     this._ensureRoot();
     this.isOpen = true;
+    this.labManager?.setViewingStorage?.(true);
     this.rootEl?.classList.remove('hidden');
-    this.render();
     this.callbacks.onOpenChange?.(true);
+    this.render();
   }
 
   close() {
     if (!this.isOpen) return;
     this.isOpen = false;
+    this.labManager?.setViewingStorage?.(false);
     this.rootEl?.classList.add('hidden');
+    this.callbacks.onApplyStorageHighlight?.(null, false);
     this.callbacks.onOpenChange?.(false);
   }
 
@@ -195,85 +227,47 @@ export class StorageCabinetModal {
     if (!this.rootEl || !this.isOpen) return;
     const t = this.getTranslator();
     const langCode = this.getLang();
-    const entries = Array.isArray(this.labManager?.storageCabinet) ? this.labManager.storageCabinet : [];
-    const sim = this.labManager?.getActiveSim?.();
-    const selectedItem = sim?.getSelectedItem?.();
+    const pages = this.labManager?.storageLabs || [];
+    const totalPages = Math.max(1, pages.length);
+    const curIdx = Math.max(0, Math.min(totalPages - 1, this.labManager?.activeStorageIndex || 0));
+    const curPage = curIdx + 1;
+    const curSim = pages[curIdx]?.sim;
+    const curItemCount = curSim?.items?.length || 0;
+    const totalStored = this.labManager?.getTotalStorageItemCount?.() ?? 0;
 
-    const q = this.searchQuery.trim().toLowerCase();
-    const filtered = entries.filter((entry) => {
-      if (this.filterGroup !== 'all' && classifyEntryFilter(entry) !== this.filterGroup) {
-        return false;
-      }
-      if (!q) return true;
-      const spec = APPARATUS[entry.apparatusId] || {};
-      const appName = (spec.i18nKey ? t(spec.i18nKey) : entry.apparatusId).toLowerCase();
-      const sticky = (entry.stickyLabel?.text || '').toLowerCase();
-      const spText = (entry.speciesIds || [])
-        .map((id) => `${id} ${SPECIES[id]?.formula || ''} ${SPECIES[id]?.name || ''}`)
-        .join(' ')
-        .toLowerCase();
-      return appName.includes(q) || sticky.includes(q) || spText.includes(q);
-    });
-
-    const totalPages = Math.max(1, Math.ceil(filtered.length / CABINET_PAGE_SIZE));
-    this._lastTotalPages = totalPages;
-    if (this.currentPage > totalPages) this.currentPage = totalPages;
-    if (this.currentPage < 1) this.currentPage = 1;
-    const startIdx = (this.currentPage - 1) * CABINET_PAGE_SIZE;
-    const pageSlice = filtered.slice(startIdx, startIdx + CABINET_PAGE_SIZE);
+    const matchCountCur = curSim
+      ? (curSim.items || []).filter((it) => itemMatchesStorageSearch(it, this.searchQuery, this.filterGroup, t)).length
+      : 0;
+    const hasFilter = this.filterGroup !== 'all' || this.searchQuery.trim().length > 0;
 
     const filters = [
       { id: 'all', label: t('cabinetFilterAll') },
       { id: 'acid', label: t('cabinetFilterAcid') },
       { id: 'base', label: t('cabinetFilterBase') },
+      { id: 'oxide', label: t('cabinetFilterOxide') },
       { id: 'salt', label: t('cabinetFilterSalt') },
       { id: 'metal', label: t('cabinetFilterMetal') },
+      { id: 'organic', label: t('cabinetFilterOrganic') },
       { id: 'gas', label: t('cabinetFilterGas') },
       { id: 'apparatus', label: t('cabinetFilterApparatus') },
     ];
 
-    const slotsHtml = [];
-    for (let i = 0; i < CABINET_PAGE_SIZE; i++) {
-      const entry = pageSlice[i];
-      if (!entry) {
-        slotsHtml.push(`<div class="storage-cubby opacity-70"></div>`);
-        continue;
-      }
-      const spec = APPARATUS[entry.apparatusId] || {};
-      const appTitle = spec.i18nKey ? t(spec.i18nKey) : entry.apparatusId;
-      const tempC = kelvinToCelsius(entry.tempK ?? 298.15).toFixed(0);
-      const stickyTxt = entry.stickyLabel?.text ? ` · ${entry.stickyLabel.text}` : '';
-      const molesEntries = [
-        ...Object.entries(entry.snapshot?.moles || {}),
-        ...Object.entries(entry.snapshot?.gasMoles || {}),
-        ...Object.entries(entry.snapshot?.headspaceGasMoles || {}).filter(([g]) => g !== 'H2O_g'),
-      ]
-        .filter(([, n]) => Number(n) > 1e-10)
-        .sort((a, b) => Number(b[1]) - Number(a[1]))
-        .slice(0, 2);
-      const chemLine = molesEntries.map(([spId]) => SPECIES[spId]?.formula || spId).join(', ');
-      slotsHtml.push(`
-        <div class="storage-cubby" data-entry-id="${entry.id}" title="${appTitle}${stickyTxt} (${tempC}°C)">
-          <div class="storage-cubby-preview">
-            <canvas class="cab-thumb-canvas" width="124" height="92" data-entry-id="${entry.id}"></canvas>
-          </div>
-          <div class="storage-cubby-meta">${chemLine ? `${chemLine} · ` : ''}${appTitle}${stickyTxt}</div>
-          <div class="storage-cubby-actions">
-            <button type="button" data-cab-move="${entry.id}" class="storage-cubby-btn primary" title="${t('cabinetMoveToBench')}">${langCode === 'en' ? 'Take' : 'Lấy'}</button>
-            <button type="button" data-cab-clone="${entry.id}" class="storage-cubby-btn" title="${t('cabinetCloneToBench')}">+</button>
-            <button type="button" data-cab-del="${entry.id}" class="storage-cubby-btn danger" title="${t('cabinetDeleteEntry')}">×</button>
-          </div>
-        </div>
-      `);
-    }
-
     this.rootEl.innerHTML = `
       <div class="storage-locker-topbar">
         <div class="storage-page-badge" id="cab-page-badge">
-          <span>${langCode === 'en' ? 'page:' : 'trang:'}</span>
-          <input id="cab-page-input" type="number" min="1" max="${totalPages}" value="${this.currentPage}" />
+          <button type="button" id="btn-cab-prev-page" class="cab-mini-nav" ${curPage <= 1 ? 'disabled' : ''} title="${t('storagePrevShelfTip')}">◀</button>
+          <span>${t('storageShelfLabel')}</span>
+          <input id="cab-page-input" type="number" min="1" max="${totalPages}" value="${curPage}" />
           <span>/ ${totalPages}</span>
+          <button type="button" id="btn-cab-next-page" class="cab-mini-nav" ${curPage >= totalPages ? 'disabled' : ''} title="${t('storageNextShelfTip')}">▶</button>
+          <button type="button" id="btn-cab-add-page" class="cab-mini-add" title="${t('storageAddShelfBtn')}">+</button>
+          ${
+            totalPages > 1 && curItemCount === 0
+              ? `<button type="button" id="btn-cab-del-page" class="cab-mini-del" title="${t('storageDelEmptyShelfTip')}">×</button>`
+              : ''
+          }
         </div>
+        <span class="storage-frozen-pill" title="${t('storageFrozenHint')}">❄️ ${t('storageFrozenPill')} (${totalStored})</span>
         <div class="flex flex-wrap items-center gap-1">
           ${filters
             .map(
@@ -283,41 +277,32 @@ export class StorageCabinetModal {
             )
             .join('')}
         </div>
-        ${
-          selectedItem
-            ? `<button type="button" id="btn-cabinet-deposit-sel" class="ml-auto storage-btn storage-btn-amber text-xs py-1 px-2.5">📥 ${t('cabinetDepositSelected')}</button>`
-            : ''
-        }
+        <button type="button" id="btn-cab-back-lab" class="ml-auto storage-btn storage-btn-primary text-xs py-1 px-2.5 shrink-0">↩️ ${t('storageBackToLabBtn')}</button>
       </div>
 
-      <div class="storage-locker-grid">${slotsHtml.join('')}</div>
-
       <div class="storage-locker-bottombar">
-        <button type="button" id="btn-cab-prev-page" class="storage-nav-arrow" ${this.currentPage <= 1 ? 'disabled' : ''}>←</button>
         <div class="storage-locker-controls">
           <input id="cabinet-search-input" type="text" value="${this.searchQuery.replace(/"/g, '&quot;')}"
             placeholder="${t('cabinetSearchPlaceholder')}"
             class="storage-input" />
+          ${
+            hasFilter
+              ? `<span class="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 shrink-0">${matchCountCur}/${curItemCount}</span>`
+              : ''
+          }
           <button type="button" id="btn-cabinet-export" class="storage-btn storage-btn-primary text-xs shrink-0">📤 ${t('cabinetExportBtn')}</button>
           <button type="button" id="btn-cabinet-import" class="storage-btn text-xs shrink-0">📥 ${t('cabinetImportBtn')}</button>
           <input type="file" id="input-cabinet-import" accept=".vlab,.json,application/json" class="hidden" />
         </div>
-        <button type="button" id="btn-cab-next-page" class="storage-nav-arrow" ${this.currentPage >= totalPages ? 'disabled' : ''}>→</button>
       </div>
     `;
 
-    // Render crisp scaled thumbnails inside each cubby canvas
-    this.rootEl.querySelectorAll('.cab-thumb-canvas').forEach((cvs) => {
-      const entry = pageSlice.find((e) => e.id === cvs.dataset.entryId);
-      if (entry) drawCubbyThumbnail(cvs, entry);
-    });
-
-    this._bindEvents();
+    this._syncHighlight();
+    this._bindEvents(langCode);
   }
 
-  _bindEvents() {
+  _bindEvents(langCode) {
     const t = this.getTranslator();
-    const langCode = this.getLang();
 
     const pageInput = this.rootEl.querySelector('#cab-page-input');
     pageInput?.addEventListener('change', (e) => this.setPage(e.target.value));
@@ -325,14 +310,40 @@ export class StorageCabinetModal {
       e.stopPropagation();
       if (e.key === 'Enter') this.setPage(pageInput.value);
     });
-    this.rootEl.querySelector('#btn-cab-prev-page')?.addEventListener('click', () => this.setPage(this.currentPage - 1));
-    this.rootEl.querySelector('#btn-cab-next-page')?.addEventListener('click', () => this.setPage(this.currentPage + 1));
+    this.rootEl.querySelector('#btn-cab-prev-page')?.addEventListener('click', () => {
+      soundEngine.playUiClick();
+      this.setPage(this.currentPage - 1);
+    });
+    this.rootEl.querySelector('#btn-cab-next-page')?.addEventListener('click', () => {
+      soundEngine.playUiClick();
+      this.setPage(this.currentPage + 1);
+    });
+    this.rootEl.querySelector('#btn-cab-add-page')?.addEventListener('click', () => {
+      soundEngine.playUiClick();
+      this.labManager?.addStoragePage?.();
+      saveToLocalStorage(this.labManager);
+      this.callbacks.onRefresh?.();
+      this.render();
+      this.callbacks.onNotify?.(`🗄️ ${t('storageAddedShelfToast').replace('{n}', String(this.currentPage))}`);
+    });
+    this.rootEl.querySelector('#btn-cab-del-page')?.addEventListener('click', () => {
+      if (this.labManager?.removeEmptyStoragePage?.()) {
+        soundEngine.playTrashCrumple();
+        saveToLocalStorage(this.labManager);
+        this.callbacks.onRefresh?.();
+        this.render();
+      }
+    });
+    this.rootEl.querySelector('#btn-cab-back-lab')?.addEventListener('click', () => {
+      soundEngine.playUiClick();
+      this.close();
+    });
 
     const searchInput = this.rootEl.querySelector('#cabinet-search-input');
     searchInput?.addEventListener('input', (e) => {
       this.searchQuery = e.target.value || '';
-      this.currentPage = 1;
       const pos = e.target.selectionStart;
+      this._jumpToFirstMatchingPage();
       this.render();
       const nxt = this.rootEl?.querySelector('#cabinet-search-input');
       if (nxt) {
@@ -340,72 +351,20 @@ export class StorageCabinetModal {
         if (typeof pos === 'number') nxt.setSelectionRange(pos, pos);
       }
     });
-    searchInput?.addEventListener('keydown', (e) => e.stopPropagation());
+    searchInput?.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        this._jumpToFirstMatchingPage();
+        this.render();
+      }
+    });
 
     this.rootEl.querySelectorAll('[data-cab-filter]').forEach((btn) => {
       btn.addEventListener('click', () => {
+        soundEngine.playUiClick();
         this.filterGroup = btn.dataset.cabFilter || 'all';
-        this.currentPage = 1;
+        this._jumpToFirstMatchingPage();
         this.render();
-      });
-    });
-
-    this.rootEl.querySelector('#btn-cabinet-deposit-sel')?.addEventListener('click', () => {
-      const sim = this.labManager?.getActiveSim?.();
-      const sel = sim?.getSelectedItem?.();
-      if (!sel) return;
-      this.labManager.storeItemToCabinet(sel.id, sim);
-      saveToLocalStorage(this.labManager);
-      soundEngine.playUiClick();
-      this.render();
-      this.callbacks.onRefresh?.();
-      this.callbacks.onNotify?.(t('cabinetStoredToast'));
-    });
-
-    this.rootEl.querySelectorAll('[data-cab-move]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const item = this.labManager.withdrawFromCabinet(btn.dataset.cabMove, { mode: 'move' });
-        if (item) {
-          saveToLocalStorage(this.labManager);
-          soundEngine.playGlassClink(item.typeId, 0.8);
-          this.render();
-          this.callbacks.onRefresh?.();
-          this.callbacks.onNotify?.(t('cabinetWithdrawnToast'));
-        }
-      });
-    });
-
-    this.rootEl.querySelectorAll('[data-cab-clone]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const item = this.labManager.withdrawFromCabinet(btn.dataset.cabClone, { mode: 'clone' });
-        if (item) {
-          saveToLocalStorage(this.labManager);
-          soundEngine.playGlassClink(item.typeId, 0.8);
-          this.render();
-          this.callbacks.onRefresh?.();
-          this.callbacks.onNotify?.(t('cabinetWithdrawnToast'));
-        }
-      });
-    });
-
-    this.rootEl.querySelectorAll('[data-cab-del]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        this.labManager.removeFromCabinet(btn.dataset.cabDel);
-        saveToLocalStorage(this.labManager);
-        soundEngine.playTrashCrumple();
-        this.render();
-        this.callbacks.onRefresh?.();
-      });
-    });
-
-    this.rootEl.querySelectorAll('.storage-cubby[data-entry-id]').forEach((cubby) => {
-      cubby.addEventListener('contextmenu', (e) => {
-        if (!this.callbacks.onCubbyContextMenu) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const entries = Array.isArray(this.labManager?.storageCabinet) ? this.labManager.storageCabinet : [];
-        const entry = entries.find((item) => item.id === cubby.dataset.entryId);
-        if (entry) this.callbacks.onCubbyContextMenu(e.clientX, e.clientY, entry);
       });
     });
 

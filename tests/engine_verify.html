@@ -109,8 +109,10 @@
       selectNitrateReductionMix,
       solveMetalNitrateStep,
     } from '../src/engine/chemistry.js';
-    import { LabManager } from '../src/engine/labManager.js';
+    import { LabManager, collectConnectedAssemblyIds, isLabLockedFromExternalStorage } from '../src/engine/labManager.js';
     import { LabSimulation } from '../src/engine/simulation.js';
+    import { STORAGE_SHELF_Y_LEVELS } from '../src/engine/simSnapshot.js';
+    import { classifyStorageItemFilter, itemMatchesStorageSearch } from '../src/ui/storageCabinetModal.js';
     import { computeVesselRedoxAndCellMetrics, ELECTRODE_MATERIALS } from '../src/engine/electrochemistry.js';
     import { checkThermometerInteractions, computeWashBottleStreamArc, syncDockedToolPositions } from '../src/engine/apparatusTools.js';
     import { calcEvaporationRateMol, computeHeatCapacityJK, computeSteamOpacity, stepVesselThermodynamics } from '../src/engine/thermodynamics.js';
@@ -2494,7 +2496,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.31';
+      const expectedBuild = 'virlab_beta_v5+build.32';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -11524,6 +11526,119 @@
         'Build 31 invariants (Prompt 91): PDF zero undefined/•[] + label dedup, 10-step chemical Undo/Redo coalesced, Teacher 6 Archetypes + 8 Missions + blindDosing/initial_only, Organic sub-filters & skeletal bottles, Full Nickel (Ni) ecosystem',
         pdfReportOk && undoChemOk && studioOk && bottleUiOk && niChemOk,
         `pdf=${pdfReportOk}, undo=${undoChemOk}, studio=${studioOk}, ui=${bottleUiOk}, ni=${niChemOk}(pass=${niColdPassivOk},hot=${niHotNitricOk},alk=${niAlkaliInertOk},cplx=${niComplexOk},mond=${mondDecompOk},cat=${niCatOk})`
+      );
+    }
+
+    // TEST 229: Prompt 92 (virlab_beta_v5+build.32) — Interactive 3-Tier Physical Storage Shelf Lab, 100% Chemistry/Thermal/Fragility Freeze, Connected Assembly Store/Withdraw, Exam Lock Block, Legacy .vlab Migration & Classification
+    {
+      const lm92 = new LabManager();
+      lm92.labs[0].sim.setupPreset('clean');
+
+      // 1) 3-tier gravity in Storage Shelf + anti-shatter even on huge drops
+      const stPage = lm92.getActiveStorageLab();
+      const stSim = stPage.sim;
+      const bTop = stSim.createApparatus('beaker_250', 220, 120);
+      const bMid = stSim.createApparatus('beaker_250', 420, 260);
+      const bBot = stSim.createApparatus('beaker_250', 620, 390);
+      const bDrop = stSim.createApparatus('beaker_250', 780, 75);
+      bDrop.fallStartY = 60;
+      stepSeconds(stSim, 1.5, 0.05);
+      const h250 = (APPARATUS.beaker_250.height || 88) / 2 - 2;
+      const tiersOk =
+        Math.abs(bTop.y + h250 - STORAGE_SHELF_Y_LEVELS[0]) < 4 &&
+        Math.abs(bMid.y + h250 - STORAGE_SHELF_Y_LEVELS[1]) < 4 &&
+        Math.abs(bBot.y + h250 - STORAGE_SHELF_Y_LEVELS[2]) < 4 &&
+        !bDrop.isShattered;
+
+      // 2) Frozen Zn + HCl at 80 C in Storage: 0 mol loss, 0 cooling, 0 evaporation -> Move to Lab reacts cleanly!
+      const labSim = lm92.labs[0].sim;
+      const znBeak = labSim.createApparatus('beaker_250', 300, 420);
+      znBeak.moles = { H2O_l: 2.0, H_aq: 0.2, Cl_aq: 0.2, Zn_s: 0.04 };
+      znBeak.tempK = 353.15;
+      const cabZn = lm92.storeItemToCabinet(znBeak.id, labSim, { pageIndex: 0 });
+      stepSeconds(stSim, 5.0, 0.05);
+      const stZnItem = stSim.getItem(cabZn.id);
+      const chemFrozenOk =
+        Boolean(stZnItem) &&
+        Math.abs((stZnItem.moles.Zn_s || 0) - 0.04) < 1e-8 &&
+        Math.abs((stZnItem.moles.H_aq || 0) - 0.2) < 1e-8 &&
+        Math.abs((stZnItem.moles.H2O_l || 0) - 2.0) < 1e-8 &&
+        Math.abs(stZnItem.tempK - 353.15) < 1e-4 &&
+        (stZnItem.moles.Zn2_aq || 0) === 0;
+      const outZn = lm92.withdrawFromCabinet(stZnItem.id, { mode: 'move', targetLabIndex: 0 });
+      stepSeconds(labSim, 2.0, 0.05);
+      const thawedReactsOk = Boolean(outZn && (outZn.moles.Zn2_aq || 0) > 0.001 && (outZn.moles.Zn_s || 0) < 0.039);
+
+      // 3) Connected assembly Store & Withdraw preserves stand clamp & syringe tubing
+      lm92.addStoragePage({ keepActive: false }); // Page 2
+      const st2 = lm92.labs[0].sim.createApparatus('retort_stand', 260, 340);
+      const fl2 = lm92.labs[0].sim.createApparatus('round_flask_250', 260, 290);
+      fl2.clampedToId = st2.id;
+      const syr2 = lm92.labs[0].sim.createApparatus('gas_syringe', 470, 390);
+      fl2.connectedTargetId = syr2.id;
+      syr2.connectedFromId = fl2.id;
+      const asmIdsBefore = collectConnectedAssemblyIds(lm92.labs[0].sim, fl2.id);
+      const storedAsm = lm92.storeAssemblyToCabinet(fl2.id, lm92.labs[0].sim, { pageIndex: 1 });
+      const stPg2 = lm92.storageLabs[1].sim;
+      const flInSt = stPg2.items.find((i) => i.kind === 'vessel');
+      const syrInSt = stPg2.items.find((i) => i.kind === 'gas_syringe');
+      const stInSt = stPg2.items.find((i) => i.kind === 'stand');
+      const asmStoredOk =
+        asmIdsBefore.length === 3 &&
+        Boolean(storedAsm && flInSt && syrInSt && stInSt) &&
+        flInSt.clampedToId === stInSt.id &&
+        flInSt.connectedTargetId === syrInSt.id &&
+        syrInSt.connectedFromId === flInSt.id;
+
+      // 4) Exam & Scoped Mission lock blocks withdrawing into locked Lab
+      lm92.addLab('clean', { keepActive: true }); // Lab 2 unrestricted
+      lm92.labs[0].sim.startMission('mission_qualitative_4', 'exam', 99);
+      const blockedRes = lm92.withdrawFromCabinet(flInSt.id, { mode: 'move', targetLabIndex: 0, assembly: true });
+      const examLockOk = blockedRes === null && lm92._lastWithdrawError === 'exam_locked' && isLabLockedFromExternalStorage(lm92.labs[0]);
+      const allowedMove = lm92.withdrawFromCabinet(flInSt.id, { mode: 'move', targetLabIndex: 1, assembly: true });
+      const lab2Sim = lm92.labs[1].sim;
+      const flBack = lab2Sim.items.find((i) => i.kind === 'vessel');
+      const syrBack = lab2Sim.items.find((i) => i.kind === 'gas_syringe');
+      const stBack = lab2Sim.items.find((i) => i.kind === 'stand');
+      const asmRestoredOk =
+        Boolean(allowedMove && flBack && syrBack && stBack) &&
+        flBack.clampedToId === stBack.id &&
+        flBack.connectedTargetId === syrBack.id;
+
+      // 5) Legacy .vlab STORAGE_CABINET backward compatibility + Organic/Oxide/Metal classification & Search
+      const legacyEntries = [
+        {
+          id: 'legacy_etoh',
+          snapshot: { typeId: 'beaker_250', kind: 'vessel', moles: { C2H5OH_l: 0.5 }, tempK: 298.15, stickyLabel: { text: 'Ethanol khan 99%' } },
+        },
+        {
+          id: 'legacy_cuo',
+          snapshot: { typeId: 'beaker_250', kind: 'vessel', moles: { CuO_s: 0.05 }, tempK: 298.15 },
+        },
+        {
+          id: 'legacy_pt',
+          snapshot: { typeId: 'beaker_250', kind: 'vessel', moles: { Pt_s: 0.02, Ni_s: 0.02 }, tempK: 298.15 },
+        },
+      ];
+      lm92.storageLabs = [];
+      lm92.addStoragePage({ silent: true, keepActive: false });
+      const mergedCnt = lm92.mergeStorageCabinet(legacyEntries);
+      const pg0Items = lm92.storageLabs[0].sim.items;
+      const etohItem = pg0Items.find((i) => (i.moles?.C2H5OH_l || 0) > 0);
+      const cuoItem = pg0Items.find((i) => (i.moles?.CuO_s || 0) > 0);
+      const ptItem = pg0Items.find((i) => (i.moles?.Pt_s || 0) > 0);
+      const clsSearchOk =
+        mergedCnt === 3 &&
+        classifyStorageItemFilter(etohItem) === 'organic' &&
+        classifyStorageItemFilter(cuoItem) === 'oxide' &&
+        classifyStorageItemFilter(ptItem) === 'metal' &&
+        itemMatchesStorageSearch(etohItem, 'khan', 'organic') &&
+        !itemMatchesStorageSearch(cuoItem, 'khan', 'all');
+
+      assert(
+        'Build 32 invariants (Prompt 92): 3-tier gravity & anti-shatter Storage Shelf Lab, 100% chemistry/thermal freeze + thaw reactivity, assembly Store/Withdraw preserving links, Exam lock block, legacy .vlab migration & Organic/Oxide/Pt-Ni classification',
+        tiersOk && chemFrozenOk && thawedReactsOk && asmStoredOk && examLockOk && asmRestoredOk && clsSearchOk,
+        `tiers=${tiersOk}, frozen=${chemFrozenOk}, thaw=${thawedReactsOk}, asmSt=${asmStoredOk}, examLock=${examLockOk}, asmOut=${asmRestoredOk}, cls=${clsSearchOk}`
       );
     }
 
