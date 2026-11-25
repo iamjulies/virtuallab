@@ -2493,7 +2493,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.28';
+      const expectedBuild = 'virlab_beta_v5+build.29';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -11174,6 +11174,78 @@
         'Build 28 invariants (Prompt 88): 8 themes selector/i18n, isDark parity (guts=dark, hte=light), HTE rain downpour + GUTS star/spilled splash gimmicks & clean Canvas render across all 8 themes',
         i18nThemesOk && selectorOk && rainSpawnedOk && splashOrSteppedOk && gutsSpawnedOk && allThemesRenderOk,
         `i18n=${i18nThemesOk}, sel=${selectorOk}(${selOpts.length}), rain=${rainSpawnedOk}, guts=${gutsSpawnedOk}, render=${allThemesRenderOk}(${renderErr})`
+      );
+    }
+
+    // TEST 226: Prompt 89 (virlab_beta_v5+build.29) — All 10 Themes (incl. 'homogenic' & 'anti'), Selector, isDark Parity, Fire & Ice / Black Balloon Gimmicks & Full 10-Theme Render
+    {
+      const ALL_10_THEMES = ['dark', 'light', 'olivia', 'petal', 'ctrl', 'sos', 'hte', 'guts', 'homogenic', 'anti'];
+      const DARK_10_SET = new Set(['dark', 'petal', 'sos', 'guts', 'anti']);
+      const i18n10Ok = Boolean(
+        I18N.vi.themeHomogenic &&
+          I18N.en.themeHomogenic &&
+          I18N.vi.themeAnti &&
+          I18N.en.themeAnti
+      );
+
+      const sim10 = new LabSimulation();
+      const vCold = sim10.createApparatus('beaker_250', 220, 405);
+      sim10.addReagentToVessel(vCold.id, 'h2o', 80, { silentAnim: true });
+      vCold.tempK = 268.15;
+      vCold.isFrozenSolid = true;
+      vCold.isStoppered = true;
+
+      const vHot = sim10.createApparatus('round_flask_250', 420, 405);
+      sim10.addReagentToVessel(vHot.id, 'h2o', 120, { silentAnim: true });
+      vHot.tempK = 373.15;
+      vHot.isBoiling = true;
+      vHot.isStoppered = true;
+
+      const stand10 = sim10.createApparatus('retort_stand', 520, 320);
+      vHot.clampedToId = stand10.id;
+
+      const envDiv10 = document.createElement('div');
+      const envBar10 = new EnvironmentBar(envDiv10, sim10, { lang: 'en', theme: 'anti', deviceMode: 'desktop' }, {});
+      envBar10.render((k) => I18N.en[k] || k);
+      const sel10Opts = [...envDiv10.querySelectorAll('#theme-select option')].map((o) => o.value);
+      const selector10Ok = ALL_10_THEMES.every((th) => sel10Opts.includes(th));
+
+      const pSys10 = new ParticleSystem();
+      pSys10.emitHomogenicGeyserSpark(vHot.x, vHot.y + 70);
+      pSys10.emitAntiBalloons(vHot.x, vHot.y - 40, 2);
+      const geyserOk = pSys10.particles.some((p) => p.kind === 'homogenic_geyser');
+      const balloonOk = pSys10.particles.some((p) => p.kind === 'anti_balloon');
+      for (let i = 0; i < 20; i++) pSys10.update(0.02);
+
+      const box10 = document.createElement('div');
+      box10.style.width = '1000px';
+      box10.style.height = '560px';
+      const cvs10 = document.createElement('canvas');
+      cvs10.width = 1000;
+      cvs10.height = 560;
+      box10.appendChild(cvs10);
+      document.body.appendChild(box10);
+      const wb10 = new LabWorkbenchCanvas(cvs10, sim10, pSys10, {});
+      let all10RenderOk = true;
+      let render10Err = '';
+      for (const th of ALL_10_THEMES) {
+        try {
+          const isD = DARK_10_SET.has(th);
+          pSys10.setTheme(isD);
+          wb10.setTheme(isD, th);
+          wb10.renderWorldScene(cvs10.getContext('2d'), 1.5, { includeLabels: true });
+        } catch (err) {
+          all10RenderOk = false;
+          render10Err = `${th}: ${err?.message || err}`;
+          break;
+        }
+      }
+      document.body.removeChild(box10);
+
+      assert(
+        'Build 29 invariants (Prompt 89): 10 themes selector/i18n, isDark parity (anti=dark, homogenic=light), Homogenic Fire/Ice/Brass + ANTI Braille/Gold Crown/Black Balloon gimmicks across all 10 themes',
+        i18n10Ok && selector10Ok && geyserOk && balloonOk && all10RenderOk,
+        `i18n=${i18n10Ok}, sel=${selector10Ok}(${sel10Opts.length}), geyser=${geyserOk}, balloon=${balloonOk}, render10=${all10RenderOk}(${render10Err})`
       );
     }
 

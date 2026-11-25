@@ -101,6 +101,32 @@
   --shadow: 0 12px 28px rgba(9, 9, 11, 0.64);
 }
 
+/* Björk — "Homogenic" (1997 Cold Metallic Silver + McQueen Cobalt + Shaun Leane Brass) */
+[data-theme="homogenic"] {
+  --bg-app: #cfd9e6;
+  --bg-surface: #e8eef5;
+  --bg-surface-alt: #dce5f0;
+  --text-main: #0f172a;
+  --text-muted: #475569;
+  --border-color: #64748b;
+  --accent: #1d4ed8;
+  --accent-soft: rgba(29, 78, 216, 0.18);
+  --shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+}
+
+/* Rihanna — "ANTI" (2016 Stark Monochrome Oil + Roy Nachum Red + Gold Crown) */
+[data-theme="anti"] {
+  --bg-app: #0d0d0f;
+  --bg-surface: #18181b;
+  --bg-surface-alt: #121215;
+  --text-main: #f8fafc;
+  --text-muted: #a1a1aa;
+  --border-color: #3f3f46;
+  --accent: #dc2626;
+  --accent-soft: rgba(220, 38, 38, 0.22);
+  --shadow: 0 12px 32px rgba(0, 0, 0, 0.72);
+}
+
 *,
 *::before,
 *::after {
@@ -185,19 +211,59 @@ button:disabled {
 [data-theme="light"] .text-sky-400,
 [data-theme="olivia"] .text-sky-400,
 [data-theme="ctrl"] .text-sky-400,
-[data-theme="hte"] .text-sky-400 { color: #0284c7; }
+[data-theme="hte"] .text-sky-400,
+[data-theme="homogenic"] .text-sky-400 { color: #0284c7; }
 [data-theme="light"] .text-emerald-400,
 [data-theme="olivia"] .text-emerald-400,
 [data-theme="ctrl"] .text-emerald-400,
-[data-theme="hte"] .text-emerald-400 { color: #059669; }
+[data-theme="hte"] .text-emerald-400,
+[data-theme="homogenic"] .text-emerald-400 { color: #059669; }
 [data-theme="light"] .text-amber-400,
 [data-theme="olivia"] .text-amber-400,
 [data-theme="ctrl"] .text-amber-400,
-[data-theme="hte"] .text-amber-400 { color: #9a5b13; }
+[data-theme="hte"] .text-amber-400,
+[data-theme="homogenic"] .text-amber-400 { color: #9a5b13; }
 [data-theme="light"] .text-pink-400,
 [data-theme="olivia"] .text-pink-400,
 [data-theme="ctrl"] .text-pink-400,
-[data-theme="hte"] .text-pink-400 { color: #be185d; }
+[data-theme="hte"] .text-pink-400,
+[data-theme="homogenic"] .text-pink-400 { color: #be185d; }
+[data-theme="homogenic"] .text-amber-300 { color: #b45309; }
+[data-theme="homogenic"] .panel-card {
+  border-color: #64748b;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.56) 0%, rgba(207, 217, 230, 0.18) 100%);
+}
+[data-theme="homogenic"] .lab-persist-btn,
+[data-theme="homogenic"] .env-cabinet-btn,
+[data-theme="homogenic"] .env-storage-btn,
+[data-theme="homogenic"] #btn-sound-toggle {
+  color: #0f172a !important;
+  border-color: #64748b;
+}
+[data-theme="homogenic"] .lab-tab-btn.active,
+[data-theme="homogenic"] .lab-persist-btn.primary {
+  border-color: #d97706 !important;
+  box-shadow: 0 0 0 1px rgba(29, 78, 216, 0.32), 0 4px 12px rgba(217, 119, 6, 0.22);
+}
+
+/* Rihanna — "ANTI" (2016 Stark Monochrome Oil + Roy Nachum Red + Gold Crown) */
+[data-theme="anti"] .panel-card {
+  border-color: #3f3f46;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(234, 179, 8, 0.18);
+  background-image: linear-gradient(180deg, rgba(220, 38, 38, 0.09) 0%, rgba(18, 18, 21, 0.35) 100%);
+}
+[data-theme="anti"] header h1::after {
+  content: ' ♛';
+  color: #eab308;
+  font-size: 0.85em;
+}
+[data-theme="anti"] .lab-tab-btn.active,
+[data-theme="anti"] #btn-pause,
+[data-theme="anti"] .lab-persist-btn.primary {
+  border-color: #eab308 !important;
+  box-shadow: 0 0 14px rgba(220, 38, 38, 0.42);
+}
 [data-theme="hte"] .text-amber-300 { color: #8c5319; }
 [data-theme="hte"] .panel-card {
   border-color: #b89f7d;

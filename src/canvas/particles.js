@@ -1650,6 +1650,12 @@ export class ParticleSystem {
         p.angle = (p.angle || 0) + (p.spin || 2.8) * dt;
       } else if (p.kind === 'guts_splat') {
         // Stationary torn-paper ink blot that fades gently on bench surface
+      } else if (p.kind === 'homogenic_geyser') {
+        p.vy += 125 * dt;
+        p.vx *= 0.98;
+      } else if (p.kind === 'anti_balloon') {
+        p.vx = Math.sin(p.life * 2.4 + (p.phase || 0)) * 18;
+        p.vy = -(36 + Math.cos(p.life * 1.5 + (p.phase || 0)) * 6);
       } else if (p.kind === 'pipette_suck') {
         p.vx *= 0.98;
       } else if (p.kind === 'metaball_drop') {
@@ -1983,6 +1989,31 @@ export class ParticleSystem {
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+      } else if (p.kind === 'homogenic_geyser') {
+        ctx.fillStyle = p.color || 'rgba(249, 115, 22, 0.88)';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r || 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.kind === 'anti_balloon') {
+        ctx.translate(p.x, p.y);
+        const br = p.r || 7.2;
+        ctx.strokeStyle = 'rgba(220, 38, 38, 0.72)';
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(0, br * 1.15);
+        ctx.quadraticCurveTo(Math.sin(p.life * 4) * 3, br * 2.0, -1, br * 2.9);
+        ctx.stroke();
+        ctx.fillStyle = '#09090b';
+        ctx.strokeStyle = 'rgba(248, 250, 252, 0.35)';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, br * 0.86, br, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.beginPath();
+        ctx.ellipse(-br * 0.28, -br * 0.32, br * 0.18, br * 0.32, -0.35, 0, Math.PI * 2);
+        ctx.fill();
       }
 
       ctx.restore();
@@ -2144,5 +2175,43 @@ export class ParticleSystem {
       maxLife: 2.8,
       color: Math.random() < 0.65 ? 'rgba(225, 29, 72, 0.52)' : 'rgba(124, 58, 237, 0.48)',
     });
+  }
+
+  /**
+   * Homogenic Theme Signature Gimmick: Geothermal magma rift geyser embers rising around superheated vessels.
+   */
+  emitHomogenicGeyserSpark(x, y) {
+    for (let i = 0; i < 2; i++) {
+      this.particles.push({
+        kind: 'homogenic_geyser',
+        x: x + (Math.random() - 0.5) * 28,
+        y: y + (Math.random() - 0.5) * 4,
+        vx: (Math.random() - 0.5) * 26,
+        vy: -(52 + Math.random() * 48),
+        r: 1.5 + Math.random() * 1.2,
+        life: 0,
+        maxLife: 0.72 + Math.random() * 0.32,
+        color: i === 0 ? 'rgba(249, 115, 22, 0.92)' : 'rgba(254, 240, 138, 0.92)',
+      });
+    }
+  }
+
+  /**
+   * ANTI Theme Signature Gimmick: Sleek black balloons trailing thin red string drifting upward on gas evolution/pop.
+   */
+  emitAntiBalloons(x, y, count = 1) {
+    for (let i = 0; i < count; i++) {
+      this.particles.push({
+        kind: 'anti_balloon',
+        x: x + (Math.random() - 0.5) * 22,
+        y: y - Math.random() * 10,
+        vx: (Math.random() - 0.5) * 14,
+        vy: -(34 + Math.random() * 16),
+        r: 6.4 + Math.random() * 2.2,
+        phase: Math.random() * Math.PI * 2,
+        life: 0,
+        maxLife: 4.5 + Math.random() * 1.5,
+      });
+    }
   }
 }

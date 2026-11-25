@@ -1648,6 +1648,44 @@ export function renderVessel(ctx, vessel, opts) {
         ctx.fill();
       }
       ctx.restore();
+    } else if (themeName === 'homogenic') {
+      // Bjork "Homogenic" Shaun Leane stacked gold brass neck coils
+      ctx.save();
+      const coilW = Math.max(11, (spec.neckRadius || 16) * 0.72);
+      for (let c = 0; c < 4; c++) {
+        const cy = top - 1 + c * 2.8;
+        ctx.strokeStyle = c % 2 === 0 ? '#d97706' : '#fbbf24';
+        ctx.lineWidth = 2.0;
+        ctx.beginPath();
+        ctx.moveTo(x - coilW, cy);
+        ctx.lineTo(x + coilW, cy);
+        ctx.stroke();
+      }
+      ctx.restore();
+    } else if (themeName === 'anti') {
+      // Rihanna "ANTI" tilted gold crown over rubber stopper
+      ctx.save();
+      ctx.translate(x, top - 12);
+      ctx.rotate(-0.16);
+      ctx.fillStyle = '#eab308';
+      ctx.strokeStyle = '#854d0e';
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(-7, 4);
+      ctx.lineTo(-8.5, -5);
+      ctx.lineTo(-3.5, 0);
+      ctx.lineTo(0, -7);
+      ctx.lineTo(3.5, 0);
+      ctx.lineTo(8.5, -5);
+      ctx.lineTo(7, 4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath();
+      ctx.arc(0, 1.2, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
   } else if (vessel.hasPhenCotton && !vessel.isShattered && !spec.hasTwoEnds && !vessel._physCottonMain) {
     // Phenolphthalein-soaked cotton/indicator strip at mouth (turns bright rose-pink on NH3 gas!)
@@ -1713,6 +1751,54 @@ export function renderVessel(ctx, vessel, opts) {
     ctx.ellipse(x, bottom - 1, sootSpan, Math.max(8, h * 0.18), 0, Math.PI, Math.PI * 2);
     ctx.fill();
     ctx.restore();
+  }
+
+  // Homogenic Theme Signature Gimmick: Iceland Fire & Ice crystals + volcanic magma base rifts
+  if (themeName === 'homogenic' && !vessel.isShattered) {
+    const vTempK = vessel.tempK || 298.15;
+    if (vessel.isFrozenSolid || vTempK <= 283.15) {
+      ctx.save();
+      const frostAlpha = Math.min(0.88, 0.42 + Math.max(0, 283.15 - vTempK) / 35);
+      for (let k = -2; k <= 2; k++) {
+        const fx = x + k * (w * 0.19);
+        const fy = bottom - 3 - Math.abs(k) * 4;
+        const fh = 8 + (2 - Math.abs(k)) * 3.5;
+        ctx.fillStyle = `rgba(224, 242, 254, ${frostAlpha.toFixed(2)})`;
+        ctx.strokeStyle = 'rgba(29, 78, 216, 0.55)';
+        ctx.lineWidth = 0.85;
+        ctx.beginPath();
+        ctx.moveTo(fx - 3.5, fy);
+        ctx.lineTo(fx, fy - fh);
+        ctx.lineTo(fx + 3.5, fy);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    if (vessel.isBoiling || vTempK >= 358.15 || (vessel.lastExothermicJ || 0) > 25) {
+      ctx.save();
+      const pulse = 0.72 + Math.sin((timeNow || 0) * 6.5 + x) * 0.28;
+      const riftSpan = Math.max(22, w * 0.68);
+      const lavaGlow = ctx.createRadialGradient(x, bottom + 1, 2, x, bottom + 1, riftSpan);
+      lavaGlow.addColorStop(0, `rgba(254, 240, 138, ${(0.58 * pulse).toFixed(2)})`);
+      lavaGlow.addColorStop(0.45, `rgba(220, 38, 38, ${(0.46 * pulse).toFixed(2)})`);
+      lavaGlow.addColorStop(1, 'rgba(220, 38, 38, 0)');
+      ctx.fillStyle = lavaGlow;
+      ctx.beginPath();
+      ctx.ellipse(x, bottom + 1, riftSpan, 6.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(249, 115, 22, ${(0.88 * pulse).toFixed(2)})`;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x - riftSpan * 0.78, bottom + 2);
+      ctx.lineTo(x - riftSpan * 0.3, bottom);
+      ctx.lineTo(x, bottom + 2.5);
+      ctx.lineTo(x + riftSpan * 0.35, bottom + 0.5);
+      ctx.lineTo(x + riftSpan * 0.8, bottom + 2.5);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   ctx.restore();

@@ -1,6 +1,6 @@
 export const I18N_VI = {
   appTitle: 'ChemLab Studio',
-  appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.28',
+  appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.29',
   toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
   quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
   quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -78,6 +78,8 @@ export const I18N_VI = {
   themeSos: 'SOS — SZA (2022)',
   themeHte: 'Happier Than Ever — Billie Eilish (2021)',
   themeGuts: 'GUTS — Olivia Rodrigo (2023)',
+  themeHomogenic: 'Homogenic — Björk (1997)',
+  themeAnti: 'ANTI — Rihanna (2016)',
   opticsLabel: 'Kính đa phổ',
   opticsNormal: 'Chuẩn',
   opticsAero: 'Bá khí (Khí động lực)',

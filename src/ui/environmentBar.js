@@ -51,6 +51,10 @@ export class EnvironmentBar {
                     ? 'golden hour · rain'
                     : theme === 'guts'
                     ? 'guts · ✦ spilled'
+                    : theme === 'homogenic'
+                    ? 'ice · volcanic · 🌋'
+                    : theme === 'anti'
+                    ? 'gallery · ♛ anti'
                     : `⚗️ ${t('modeFreeSandbox')}`;
                 return `<div class="inline-flex items-center gap-1 rounded-full p-0.5 border border-theme bg-surface-alt">
                   <button type="button" id="btn-mode-free" title="${t('modeFreeSandbox')}"
@@ -198,7 +202,7 @@ export class EnvironmentBar {
             }
           </button>
 
-          <!-- Theme Selector (Dark, Light, Olivia, Petal, Ctrl, SOS, HTE, GUTS) -->
+          <!-- Theme Selector (10 themes: Dark, Light, Olivia, Petal, Ctrl, SOS, HTE, GUTS, Homogenic, ANTI) -->
           <select id="theme-select" style="max-width: 155px;" class="px-2 py-1.5 rounded-lg border border-theme bg-surface-alt text-main text-xs font-semibold truncate" title="Theme">
             <option value="dark" ${theme === 'dark' ? 'selected' : ''}>🌙 ${t('themeDark')}</option>
             <option value="light" ${theme === 'light' ? 'selected' : ''}>☀️ ${t('themeLight')}</option>
@@ -208,6 +212,8 @@ export class EnvironmentBar {
             <option value="sos" ${theme === 'sos' ? 'selected' : ''}>🌊 ${t('themeSos')}</option>
             <option value="hte" ${theme === 'hte' ? 'selected' : ''}>🕯️ ${t('themeHte')}</option>
             <option value="guts" ${theme === 'guts' ? 'selected' : ''}>✦ ${t('themeGuts')}</option>
+            <option value="homogenic" ${theme === 'homogenic' ? 'selected' : ''}>❄️ ${t('themeHomogenic')}</option>
+            <option value="anti" ${theme === 'anti' ? 'selected' : ''}>👑 ${t('themeAnti')}</option>
           </select>
 
           <!-- Language Toggle VI / EN -->

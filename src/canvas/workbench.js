@@ -989,6 +989,40 @@ export class LabWorkbenchCanvas {
         const gy = ((gi * 97 + 41) % (BENCH_FLOOR_Y - 20)) + 10;
         bCtx.fillRect(gx, gy, 2, 2);
       }
+    } else if (this.themeName === 'homogenic') {
+      // Cold Metallic Silver gradient + McQueen Cobalt upper glint
+      const homGrad = bCtx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
+      homGrad.addColorStop(0, '#D5DFEB');
+      homGrad.addColorStop(0.55, '#E4ECF5');
+      homGrad.addColorStop(1, '#EEF3F9');
+      bCtx.fillStyle = homGrad;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      const cobaltGlint = bCtx.createRadialGradient(BENCH_LOGICAL_W * 0.82, 26, 12, BENCH_LOGICAL_W * 0.78, 80, 420);
+      cobaltGlint.addColorStop(0, 'rgba(29, 78, 216, 0.14)');
+      cobaltGlint.addColorStop(0.6, 'rgba(217, 119, 6, 0.05)');
+      cobaltGlint.addColorStop(1, 'rgba(29, 78, 216, 0)');
+      bCtx.fillStyle = cobaltGlint;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+    } else if (this.themeName === 'anti') {
+      // Stark Monochrome Obsidian + Roy Nachum red oil paint slash at upper left
+      const antiGrad = bCtx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
+      antiGrad.addColorStop(0, '#0B0B0E');
+      antiGrad.addColorStop(0.6, '#121216');
+      antiGrad.addColorStop(1, '#16161B');
+      bCtx.fillStyle = antiGrad;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      const redSlash = bCtx.createLinearGradient(0, 0, 420, 260);
+      redSlash.addColorStop(0, 'rgba(220, 38, 38, 0.24)');
+      redSlash.addColorStop(0.6, 'rgba(220, 38, 38, 0.08)');
+      redSlash.addColorStop(1, 'rgba(220, 38, 38, 0)');
+      bCtx.fillStyle = redSlash;
+      bCtx.beginPath();
+      bCtx.moveTo(0, 0);
+      bCtx.lineTo(440, 0);
+      bCtx.lineTo(175, 290);
+      bCtx.lineTo(0, 240);
+      bCtx.closePath();
+      bCtx.fill();
     }
 
     if (uvOn) {
@@ -1006,6 +1040,10 @@ export class LabWorkbenchCanvas {
         ? 'rgba(79, 99, 88, 0.24)'
         : this.themeName === 'hte'
         ? 'rgba(120, 99, 80, 0.14)'
+        : this.themeName === 'homogenic'
+        ? 'rgba(71, 85, 105, 0.16)'
+        : this.themeName === 'anti'
+        ? 'rgba(248, 250, 252, 0.11)'
         : this.themeName === 'guts'
         ? 'rgba(196, 181, 253, 0.11)'
         : this.themeName === 'sos'
@@ -1016,9 +1054,26 @@ export class LabWorkbenchCanvas {
         ? 'rgba(148, 163, 184, 0.08)'
         : 'rgba(15, 23, 42, 0.06)';
     bCtx.fillStyle = bgGrid;
-    for (let gx = 40; gx < BENCH_LOGICAL_W; gx += 40) {
-      for (let gy = 40; gy < BENCH_FLOOR_Y; gy += 40) {
-        bCtx.fillRect(gx - 1, gy - 1, 2, 2);
+    if (this.themeName === 'anti') {
+      // Tactile 2x3 Braille dot cells across background canvas (ANTI album cover Braille poetry)
+      for (let cellIdx = 0, gx = 56; gx < BENCH_LOGICAL_W - 40; gx += 84) {
+        for (let gy = 52; gy < BENCH_FLOOR_Y - 40; gy += 64, cellIdx++) {
+          for (let r = 0; r < 3; r++) {
+            for (let c = 0; c < 2; c++) {
+              const bit = (cellIdx * 7 + r * 3 + c * 5) % 3 !== 0;
+              if (!bit) continue;
+              bCtx.beginPath();
+              bCtx.arc(gx + c * 5, gy + r * 5, 1.15, 0, Math.PI * 2);
+              bCtx.fill();
+            }
+          }
+        }
+      }
+    } else {
+      for (let gx = 40; gx < BENCH_LOGICAL_W; gx += 40) {
+        for (let gy = 40; gy < BENCH_FLOOR_Y; gy += 40) {
+          bCtx.fillRect(gx - 1, gy - 1, 2, 2);
+        }
       }
     }
 
@@ -1033,6 +1088,12 @@ export class LabWorkbenchCanvas {
     } else if (this.themeName === 'hte') {
       benchGrad.addColorStop(0, '#C9A679');
       benchGrad.addColorStop(1, '#A88255');
+    } else if (this.themeName === 'homogenic') {
+      benchGrad.addColorStop(0, '#475569');
+      benchGrad.addColorStop(1, '#1E293B');
+    } else if (this.themeName === 'anti') {
+      benchGrad.addColorStop(0, '#18181B');
+      benchGrad.addColorStop(1, '#09090B');
     } else if (this.themeName === 'guts') {
       benchGrad.addColorStop(0, '#170C29');
       benchGrad.addColorStop(1, '#0D0618');
@@ -1069,6 +1130,13 @@ export class LabWorkbenchCanvas {
       refGrad.addColorStop(1, 'rgba(124, 58, 237, 0.24)');
       bCtx.fillStyle = refGrad;
       bCtx.fillRect(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, 5);
+    } else if (this.themeName === 'homogenic') {
+      const sheen = bCtx.createLinearGradient(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      sheen.addColorStop(0, 'rgba(29, 78, 216, 0.16)');
+      sheen.addColorStop(0.5, 'rgba(226, 232, 240, 0.18)');
+      sheen.addColorStop(1, 'rgba(217, 119, 6, 0.16)');
+      bCtx.fillStyle = sheen;
+      bCtx.fillRect(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, 4);
     }
 
     bCtx.strokeStyle =
@@ -1078,6 +1146,10 @@ export class LabWorkbenchCanvas {
         ? '#4F6358'
         : this.themeName === 'hte'
         ? '#786350'
+        : this.themeName === 'homogenic'
+        ? '#64748B'
+        : this.themeName === 'anti'
+        ? '#F8FAFC'
         : this.themeName === 'guts'
         ? '#09090B'
         : this.themeName === 'sos'
@@ -1425,6 +1497,34 @@ export class LabWorkbenchCanvas {
         ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
         ctx.restore();
         this.particles?.emitHteDownpour?.(hteDt, this._hteStormLevel, this.sim.items, BENCH_FLOOR_Y);
+      }
+    } else if (this.themeName === 'homogenic') {
+      const geyserDt = Math.max(0.008, Math.min(0.05, timeNow - (this._prevHomTime ?? timeNow - 0.016)));
+      this._prevHomTime = timeNow;
+      for (const it of this.sim.items) {
+        if (it.kind !== 'vessel' || it.isShattered) continue;
+        if (it.isBoiling || (it.tempK || 298.15) >= 358.15 || (it.lastExothermicJ || 0) > 25) {
+          if (Math.random() < geyserDt * 4.5) {
+            const sp = APPARATUS[it.typeId] || { height: 90 };
+            this.particles?.emitHomogenicGeyserSpark?.(it.x, it.y + sp.height * 0.5 - 2);
+          }
+        }
+      }
+    } else if (this.themeName === 'anti') {
+      const antiDt = Math.max(0.008, Math.min(0.05, timeNow - (this._prevAntiTime ?? timeNow - 0.016)));
+      this._prevAntiTime = timeNow;
+      this._antiBalloonTimer = (this._antiBalloonTimer || 0) + antiDt;
+      if (this._antiBalloonTimer >= 1.15) {
+        for (const it of this.sim.items) {
+          if (it.kind !== 'vessel' || it.isShattered || it.isStoppered) continue;
+          const gasTotal = Object.values(it.lastGasRateMap || {}).reduce((s, v) => s + (v || 0), 0);
+          if (it.isBoiling || gasTotal > 0.002) {
+            this._antiBalloonTimer = 0;
+            const sp = APPARATUS[it.typeId] || { height: 90 };
+            this.particles?.emitAntiBalloons?.(it.x, it.y - sp.height * 0.45, 1);
+            break;
+          }
+        }
       }
     }
     this.particles.render(ctx);

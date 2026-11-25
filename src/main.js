@@ -173,7 +173,7 @@ ensureLabSubscribed(labManager.getActiveLab());
 
 let lastGutsSpillMs = 0;
 function isThemeDark(themeName) {
-  return themeName === 'dark' || themeName === 'petal' || themeName === 'sos' || themeName === 'guts';
+  return themeName === 'dark' || themeName === 'petal' || themeName === 'sos' || themeName === 'guts' || themeName === 'anti';
 }
 
 function handleVisualAlert(type, vessel, meta) {
@@ -192,6 +192,9 @@ function handleVisualAlert(type, vessel, meta) {
   }
   if ((burstType === 'shatter' || burstType === 'explosion') && appState.theme === 'hte') {
     workbench?.triggerHteStorm?.(1.0);
+  }
+  if (appState.theme === 'anti' && (burstType === 'stopper_pop' || burstType === 'h2_pop' || burstType === 'explosion')) {
+    particles.emitAntiBalloons?.(vessel.x, Math.max(40, vessel.y - 36), burstType === 'explosion' ? 4 : 2);
   }
   if (
     appState.theme === 'guts' &&
@@ -525,7 +528,7 @@ comparisonPanel = new ComparisonPanel(compareRootEl, sim, getTranslator, {
 });
 
 function applyThemeChoice(nextTheme = null) {
-  const order = ['dark', 'light', 'olivia', 'petal', 'ctrl', 'sos', 'hte', 'guts'];
+  const order = ['dark', 'light', 'olivia', 'petal', 'ctrl', 'sos', 'hte', 'guts', 'homogenic', 'anti'];
   const target = order.includes(nextTheme)
     ? nextTheme
     : order[(order.indexOf(appState.theme) + 1) % order.length];
@@ -549,6 +552,8 @@ const THEME_OPTIONS = [
   { id: 'sos', icon: '🌊', key: 'themeSos' },
   { id: 'hte', icon: '🕯️', key: 'themeHte' },
   { id: 'guts', icon: '✦', key: 'themeGuts' },
+  { id: 'homogenic', icon: '❄️', key: 'themeHomogenic' },
+  { id: 'anti', icon: '👑', key: 'themeAnti' },
 ];
 
 let quickHoldMode = null;

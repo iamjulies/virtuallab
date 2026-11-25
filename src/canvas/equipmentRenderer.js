@@ -140,6 +140,19 @@ export function getThemePalette(isDark) {
     base.badgeBorder = '#09090b';
     base.glassStroke = 'rgba(196, 181, 253, 0.78)';
     base.burnerMetal = '#7c3aed';
+  } else if (_currentCanvasTheme === 'homogenic' && !isDark) {
+    base.glassStroke = 'rgba(71, 85, 105, 0.84)';
+    base.glassHighlight = 'rgba(224, 242, 254, 0.72)';
+    base.glassFill = 'rgba(207, 217, 230, 0.24)';
+    base.badgeBg = 'rgba(232, 238, 245, 0.94)';
+    base.badgeBorder = 'rgba(100, 116, 139, 0.95)';
+    base.burnerMetal = '#475569';
+  } else if (_currentCanvasTheme === 'anti' && isDark) {
+    base.textPrimary = '#f8fafc';
+    base.textMuted = '#a1a1aa';
+    base.badgeBg = 'rgba(18, 18, 21, 0.94)';
+    base.badgeBorder = '#dc2626';
+    base.burnerMetal = '#52525b';
   }
   return base;
 }
@@ -1131,6 +1144,19 @@ export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
       ctx.beginPath();
       ctx.arc(cx - 5.5 + d * 3.6, cy + 7, 1.3, 0, Math.PI * 2);
       ctx.fill();
+    }
+  } else if (_currentCanvasTheme === 'homogenic') {
+    // 4 tiered Shaun Leane gold brass neck coils on clamp collar
+    const dirSign = rodX >= attachX ? -1 : 1;
+    for (let r = 0; r < 4; r++) {
+      const rx = rodX + dirSign * (3.5 + r * 3.2);
+      ctx.fillStyle = r % 2 === 0 ? '#d97706' : '#fbbf24';
+      ctx.strokeStyle = '#92400e';
+      ctx.lineWidth = 0.7;
+      ctx.beginPath();
+      ctx.roundRect(rx - 1.3, attachY - 4.8, 2.6, 9.6, 1.2);
+      ctx.fill();
+      ctx.stroke();
     }
   }
   ctx.restore();
