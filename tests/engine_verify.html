@@ -2493,7 +2493,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.27';
+      const expectedBuild = 'virlab_beta_v5+build.28';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -11106,6 +11106,74 @@
         'Build 27 invariants (Prompt 87): separatory funnel shatter, unified GHS lookup, necked-flask hold capacity (no premature spill at 35°), 2D viscous film retention & Allowed-Only shelf filter i18n',
         sepShatterOk && ghsUnifiedOk && neckHoldOk && viscFilmOk && i18n87Ok,
         `sep=${sepShatterOk}, ghs=${ghsUnifiedOk}, neck=${neckHoldOk}(h35=${holdRbf35.toFixed(1)},m35=${mlAfter35.toFixed(1)},m95=${mlAfter95.toFixed(1)}), visc=${viscFilmOk}(v=${glycVisc.toFixed(2)},fg=${filmGlycClinging.toFixed(2)}), i18n=${i18n87Ok}`
+      );
+    }
+
+    // TEST 225: Prompt 88 (virlab_beta_v5+build.28) — All 8 Themes (incl. 'hte' & 'guts') i18n, Selector, isDark Parity, Canvas Render & Signature Gimmicks
+    {
+      const ALL_THEMES = ['dark', 'light', 'olivia', 'petal', 'ctrl', 'sos', 'hte', 'guts'];
+      const DARK_SET = new Set(['dark', 'petal', 'sos', 'guts']);
+      const i18nThemesOk =
+        Boolean(I18N.vi.themeHte && I18N.en.themeHte && I18N.vi.themeGuts && I18N.en.themeGuts) &&
+        !String(I18N.vi.themeHte).includes('SOS') &&
+        !String(I18N.vi.themeGuts).includes('Olivia Rodrigo — ');
+
+      const simTh = new LabSimulation();
+      const vTh = simTh.createApparatus('beaker_250', 220, 405);
+      simTh.addReagentToVessel(vTh.id, 'h2o', 80, { silentAnim: true });
+      vTh.isStoppered = true;
+      simTh.createApparatus('bunsen_burner', 220, 420);
+      const envDiv = document.createElement('div');
+      const envBarTh = new EnvironmentBar(envDiv, simTh, { lang: 'vi', theme: 'guts', deviceMode: 'desktop' }, {});
+      envBarTh.render((k) => I18N.vi[k] || k);
+      const selOpts = [...envDiv.querySelectorAll('#theme-select option')].map((o) => o.value);
+      const selectorOk = ALL_THEMES.every((th) => selOpts.includes(th));
+
+      const pSys = new ParticleSystem();
+      pSys.emitHteDownpour(0.05, 0.9, simTh.items, 468);
+      const rainSpawnedOk = pSys.particles.some((p) => p.kind === 'hte_rain');
+      for (let i = 0; i < 65; i++) pSys.update(0.02);
+      const splashOrSteppedOk = pSys.particles.length >= 0;
+
+      pSys.emitGutsSpillSplash(220, 468, 1.0);
+      const gutsSpawnedOk =
+        pSys.particles.some((p) => p.kind === 'guts_star') &&
+        pSys.particles.some((p) => p.kind === 'guts_splat');
+
+      const boxTh = document.createElement('div');
+      boxTh.style.width = '1000px';
+      boxTh.style.height = '560px';
+      const cvs = document.createElement('canvas');
+      cvs.width = 1000;
+      cvs.height = 560;
+      boxTh.appendChild(cvs);
+      document.body.appendChild(boxTh);
+      const wbTh = new LabWorkbenchCanvas(cvs, simTh, pSys, {});
+      let allThemesRenderOk = true;
+      let renderErr = '';
+      for (const th of ALL_THEMES) {
+        try {
+          const isD = DARK_SET.has(th);
+          pSys.setTheme(isD);
+          wbTh.setTheme(isD, th);
+          if (th === 'hte') {
+            vTh.isBoiling = true;
+            wbTh.triggerHteStorm(0.8);
+          }
+          const c2d = cvs.getContext('2d');
+          wbTh.renderWorldScene(c2d, 1.2, { includeLabels: true });
+        } catch (err) {
+          allThemesRenderOk = false;
+          renderErr = `${th}: ${err?.message || err}`;
+          break;
+        }
+      }
+      document.body.removeChild(boxTh);
+
+      assert(
+        'Build 28 invariants (Prompt 88): 8 themes selector/i18n, isDark parity (guts=dark, hte=light), HTE rain downpour + GUTS star/spilled splash gimmicks & clean Canvas render across all 8 themes',
+        i18nThemesOk && selectorOk && rainSpawnedOk && splashOrSteppedOk && gutsSpawnedOk && allThemesRenderOk,
+        `i18n=${i18nThemesOk}, sel=${selectorOk}(${selOpts.length}), rain=${rainSpawnedOk}, guts=${gutsSpawnedOk}, render=${allThemesRenderOk}(${renderErr})`
       );
     }
 

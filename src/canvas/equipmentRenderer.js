@@ -81,7 +81,7 @@ export function cylinderFillHeightFraction(areaFrac) {
 }
 
 export function getThemePalette(isDark) {
-  return isDark
+  const base = isDark
     ? {
         glassStroke: 'rgba(148, 163, 184, 0.82)',
         glassHighlight: 'rgba(255, 255, 255, 0.24)',
@@ -124,6 +124,24 @@ export function getThemePalette(isDark) {
         tubeColor: '#334155',
         burnerMetal: '#475569',
       };
+  if (_currentCanvasTheme === 'hte' && !isDark) {
+    base.glassStroke = 'rgba(120, 99, 80, 0.78)';
+    base.tickStroke = 'rgba(44, 34, 26, 0.62)';
+    base.enamelText = 'rgba(44, 34, 26, 0.72)';
+    base.textPrimary = '#2c221a';
+    base.textMuted = '#786350';
+    base.badgeBg = 'rgba(245, 235, 217, 0.94)';
+    base.badgeBorder = 'rgba(184, 159, 125, 0.95)';
+    base.burnerMetal = '#786350';
+  } else if (_currentCanvasTheme === 'guts' && isDark) {
+    base.textPrimary = '#f8f5ff';
+    base.textMuted = '#c4b5fd';
+    base.badgeBg = 'rgba(23, 12, 41, 0.92)';
+    base.badgeBorder = '#09090b';
+    base.glassStroke = 'rgba(196, 181, 253, 0.78)';
+    base.burnerMetal = '#7c3aed';
+  }
+  return base;
 }
 
 /**
@@ -730,9 +748,25 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
           ctx.fill();
 
           // Highlight hottest oxidizing tip zone (~1500 °C) just above inner blue cone apex
-          ctx.fillStyle = 'rgba(224, 242, 254, 0.9)';
+          ctx.fillStyle = _currentCanvasTheme === 'guts' ? 'rgba(244, 63, 94, 0.88)' : 'rgba(224, 242, 254, 0.9)';
           ctx.beginPath();
           ctx.arc(x + wobble * 0.3, fBaseY - coneH - 2, 2.1, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (_currentCanvasTheme === 'guts' && !isBeilstein && !isFlameTest) {
+          const sx = x + wobble * 0.5;
+          const sy = fBaseY - fH * 0.78;
+          ctx.fillStyle = 'rgba(226, 232, 240, 0.9)';
+          ctx.beginPath();
+          for (let k = 0; k < 8; k++) {
+            const rad = k % 2 === 0 ? 4.2 : 1.1;
+            const a = (Math.PI / 4) * k + timeNow * 2.5;
+            const px = sx + Math.cos(a) * rad;
+            const py = sy + Math.sin(a) * rad;
+            if (k === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
           ctx.fill();
         }
       }
@@ -854,12 +888,20 @@ export function renderBurner(ctx, item, isSelected, isDark, timeNow) {
       ctx.fillStyle = outerGrad;
       ctx.fill();
 
-      // Inner blue/emerald cone
+      // Inner blue/emerald cone (or champagne/crimson-violet theme glow)
       ctx.beginPath();
       ctx.moveTo(x - fW * 0.5, fBaseY);
       ctx.quadraticCurveTo(x, fBaseY - fH * 0.55, x + fW * 0.5, fBaseY);
       ctx.closePath();
-      ctx.fillStyle = isBeilstein ? 'rgba(52, 211, 153, 0.92)' : isFlameTest ? item.flameTestColor : 'rgba(56, 189, 248, 0.88)';
+      ctx.fillStyle = isBeilstein
+        ? 'rgba(52, 211, 153, 0.92)'
+        : isFlameTest
+        ? item.flameTestColor
+        : _currentCanvasTheme === 'hte'
+        ? 'rgba(254, 243, 199, 0.94)'
+        : _currentCanvasTheme === 'guts'
+        ? 'rgba(244, 63, 94, 0.82)'
+        : 'rgba(56, 189, 248, 0.88)';
       ctx.fill();
     }
 
@@ -1065,6 +1107,31 @@ export function renderRetortClampJaw(ctx, stand, clampedItem, isDark) {
     ctx.beginPath();
     ctx.arc(attachX, attachY, jawRadius, Math.PI - 0.58, Math.PI + 0.58);
     ctx.stroke();
+  }
+  if (_currentCanvasTheme === 'guts') {
+    const cx = rodX;
+    const cy = attachY;
+    ctx.fillStyle = '#e2e8f0';
+    ctx.strokeStyle = '#09090b';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    for (let k = 0; k < 8; k++) {
+      const r = k % 2 === 0 ? 4.4 : 1.25;
+      const a = (Math.PI / 4) * k;
+      const sx = cx + Math.cos(a) * r;
+      const sy = cy + Math.sin(a) * r;
+      if (k === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    for (let d = 0; d < 4; d++) {
+      ctx.fillStyle = d % 2 === 0 ? '#f8fafc' : '#e11d48';
+      ctx.beginPath();
+      ctx.arc(cx - 5.5 + d * 3.6, cy + 7, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   ctx.restore();
 }

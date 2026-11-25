@@ -1624,6 +1624,32 @@ export class ParticleSystem {
         p.vx = Math.sin(p.life * 2.2 + p.phase) * 24;
         p.vy = 28 + Math.cos(p.life * 1.4 + p.phase) * 6;
         p.angle = (p.angle || 0) + (p.spin || 1.2) * dt;
+      } else if (p.kind === 'hte_rain') {
+        const hitY = p.targetY ?? BENCH_FLOOR_Y;
+        if (p.y >= hitY) {
+          p.life = p.maxLife;
+          for (let s = 0; s < 2; s++) {
+            this.particles.push({
+              kind: 'hte_splash',
+              x: p.x + (Math.random() - 0.5) * 4,
+              y: hitY - 1,
+              vx: (s === 0 ? -1 : 1) * (16 + Math.random() * 24),
+              vy: -(28 + Math.random() * 26),
+              r: 1.3 + Math.random() * 0.9,
+              life: 0,
+              maxLife: 0.28 + Math.random() * 0.14,
+              color: 'rgba(226, 232, 240, 0.78)',
+            });
+          }
+        }
+      } else if (p.kind === 'hte_splash') {
+        p.vy += 320 * dt;
+      } else if (p.kind === 'guts_star') {
+        p.vy += 240 * dt;
+        p.vx *= 0.985;
+        p.angle = (p.angle || 0) + (p.spin || 2.8) * dt;
+      } else if (p.kind === 'guts_splat') {
+        // Stationary torn-paper ink blot that fades gently on bench surface
       } else if (p.kind === 'pipette_suck') {
         p.vx *= 0.98;
       } else if (p.kind === 'metaball_drop') {
@@ -1911,6 +1937,52 @@ export class ParticleSystem {
         ctx.rotate(p.life * 7);
         ctx.fillStyle = p.color;
         ctx.fillRect(-p.r / 2, -p.r / 2, p.r, p.r * 0.6);
+      } else if (p.kind === 'hte_rain') {
+        ctx.strokeStyle = p.color || 'rgba(203, 213, 225, 0.62)';
+        ctx.lineWidth = p.w || 1.25;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x - (p.vx || -150) * 0.032, p.y - (p.vy || 680) * 0.032);
+        ctx.stroke();
+      } else if (p.kind === 'hte_splash') {
+        ctx.fillStyle = p.color || 'rgba(226, 232, 240, 0.78)';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r || 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.kind === 'guts_star') {
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle || 0);
+        const sr = p.r || 5.2;
+        ctx.fillStyle = p.color || '#f1f5f9';
+        ctx.strokeStyle = '#09090b';
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        for (let k = 0; k < 8; k++) {
+          const rad = k % 2 === 0 ? sr : sr * 0.28;
+          const ang = (Math.PI / 4) * k;
+          const sx = Math.cos(ang) * rad;
+          const sy = Math.sin(ang) * rad;
+          if (k === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      } else if (p.kind === 'guts_splat') {
+        ctx.translate(p.x, p.y);
+        ctx.fillStyle = p.color || 'rgba(225, 29, 72, 0.56)';
+        ctx.strokeStyle = 'rgba(9, 9, 11, 0.65)';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        const pts = p.poly || [];
+        for (let i = 0; i < pts.length; i++) {
+          if (i === 0) ctx.moveTo(pts[i].x, pts[i].y);
+          else ctx.lineTo(pts[i].x, pts[i].y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
       }
 
       ctx.restore();
@@ -1991,5 +2063,86 @@ export class ParticleSystem {
         color: '#F2F2F5',
       });
     }
+  }
+
+  /**
+   * HTE Theme Signature Gimmick: Slanted downpour rain streaks rebounding off bench/rims.
+   */
+  emitHteDownpour(dt, stormLevel, items = [], floorY = BENCH_FLOOR_Y) {
+    if (stormLevel <= 0.03) return;
+    const rate = 24 + stormLevel * 92;
+    const nDrops = Math.floor(rate * dt) + (Math.random() < (rate * dt) % 1 ? 1 : 0);
+    for (let i = 0; i < nDrops; i++) {
+      const spawnX = 20 + Math.random() * 1060;
+      let targetY = floorY;
+      for (const it of items) {
+        if (it.isShattered || it.isBroken) continue;
+        const hw = (APPARATUS[it.typeId]?.width || 56) * 0.45;
+        const topY = it.y - (APPARATUS[it.typeId]?.height || 72) * 0.48;
+        if (Math.abs(spawnX - 95 - it.x) < hw && topY > 40 && topY < targetY && Math.random() < 0.35) {
+          targetY = topY;
+        }
+      }
+      const vy = 580 + Math.random() * 210;
+      const vx = -(115 + stormLevel * 55 + Math.random() * 30);
+      this.particles.push({
+        kind: 'hte_rain',
+        x: spawnX,
+        y: -14 - Math.random() * 35,
+        vx,
+        vy,
+        w: 1.0 + Math.random() * 0.55,
+        targetY,
+        life: 0,
+        maxLife: 1.25,
+        color: `rgba(219, 234, 254, ${(0.34 + stormLevel * 0.38).toFixed(2)})`,
+      });
+    }
+  }
+
+  /**
+   * GUTS Theme Signature Gimmick: Silver Y2K 4-point chrome stars & jagged crimson/purple torn-paper splash.
+   */
+  emitGutsSpillSplash(x, y, intensity = 1.0) {
+    const sx = Math.max(20, Math.min(980, x));
+    const sy = Math.max(40, Math.min(BENCH_FLOOR_Y + 6, y));
+    const starCount = Math.round(9 * intensity);
+    for (let i = 0; i < starCount; i++) {
+      const ang = -Math.PI * 0.92 + Math.random() * Math.PI * 0.84;
+      const spd = (55 + Math.random() * 115) * Math.max(0.75, intensity);
+      this.particles.push({
+        kind: 'guts_star',
+        x: sx + (Math.random() - 0.5) * 14,
+        y: sy - 6,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd - 35,
+        r: 4.2 + Math.random() * 3.4,
+        angle: Math.random() * Math.PI,
+        spin: (Math.random() > 0.5 ? 1 : -1) * (2.2 + Math.random() * 3.2),
+        life: 0,
+        maxLife: 0.9 + Math.random() * 0.55,
+        color: i % 3 === 0 ? '#e11d48' : i % 3 === 1 ? '#e2e8f0' : '#c4b5fd',
+      });
+    }
+    const segs = 12;
+    const rx = (22 + Math.random() * 14) * Math.max(0.75, intensity);
+    const ry = 7.5 + Math.random() * 4;
+    const poly = [];
+    for (let k = 0; k < segs; k++) {
+      const a = (Math.PI * 2 * k) / segs;
+      const jag = k % 2 === 0 ? 1.0 + Math.random() * 0.32 : 0.62 + Math.random() * 0.22;
+      poly.push({ x: Math.cos(a) * rx * jag, y: Math.sin(a) * ry * jag });
+    }
+    this.particles.push({
+      kind: 'guts_splat',
+      x: sx,
+      y: Math.min(BENCH_FLOOR_Y + 2, sy),
+      vx: 0,
+      vy: 0,
+      poly,
+      life: 0,
+      maxLife: 2.8,
+      color: Math.random() < 0.65 ? 'rgba(225, 29, 72, 0.52)' : 'rgba(124, 58, 237, 0.48)',
+    });
   }
 }

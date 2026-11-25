@@ -75,6 +75,32 @@
   --shadow: 0 12px 32px rgba(4, 10, 20, 0.68);
 }
 
+/* Billie Eilish — "Happier Than Ever" (2021 Old Hollywood Beige Minimalism) */
+[data-theme="hte"] {
+  --bg-app: #e6d5b8;
+  --bg-surface: #f5ebd9;
+  --bg-surface-alt: #eadbc2;
+  --text-main: #2c221a;
+  --text-muted: #786350;
+  --border-color: #b89f7d;
+  --accent: #b8863b;
+  --accent-soft: rgba(184, 134, 59, 0.22);
+  --shadow: 0 8px 22px rgba(44, 34, 26, 0.14);
+}
+
+/* Olivia Rodrigo — "GUTS" & "GUTS (spilled)" (2023 Midnight Violet + Crimson Punk Y2K) */
+[data-theme="guts"] {
+  --bg-app: #1e1133;
+  --bg-surface: #2a1945;
+  --bg-surface-alt: #170c29;
+  --text-main: #f8f5ff;
+  --text-muted: #c4b5fd;
+  --border-color: #09090b;
+  --accent: #e11d48;
+  --accent-soft: rgba(225, 29, 72, 0.22);
+  --shadow: 0 12px 28px rgba(9, 9, 11, 0.64);
+}
+
 *,
 *::before,
 *::after {
@@ -158,16 +184,60 @@ button:disabled {
 .bg-slate-500\/10 { background-color: rgba(100, 116, 139, 0.12); }
 [data-theme="light"] .text-sky-400,
 [data-theme="olivia"] .text-sky-400,
-[data-theme="ctrl"] .text-sky-400 { color: #0284c7; }
+[data-theme="ctrl"] .text-sky-400,
+[data-theme="hte"] .text-sky-400 { color: #0284c7; }
 [data-theme="light"] .text-emerald-400,
 [data-theme="olivia"] .text-emerald-400,
-[data-theme="ctrl"] .text-emerald-400 { color: #059669; }
+[data-theme="ctrl"] .text-emerald-400,
+[data-theme="hte"] .text-emerald-400 { color: #059669; }
 [data-theme="light"] .text-amber-400,
 [data-theme="olivia"] .text-amber-400,
-[data-theme="ctrl"] .text-amber-400 { color: #b45309; }
+[data-theme="ctrl"] .text-amber-400,
+[data-theme="hte"] .text-amber-400 { color: #9a5b13; }
 [data-theme="light"] .text-pink-400,
 [data-theme="olivia"] .text-pink-400,
-[data-theme="ctrl"] .text-pink-400 { color: #be185d; }
+[data-theme="ctrl"] .text-pink-400,
+[data-theme="hte"] .text-pink-400 { color: #be185d; }
+[data-theme="hte"] .text-amber-300 { color: #8c5319; }
+[data-theme="hte"] .panel-card {
+  border-color: #b89f7d;
+  border-radius: 0.9rem;
+  box-shadow: 0 6px 18px rgba(44, 34, 26, 0.10), inset 0 1px 0 rgba(255, 250, 240, 0.72);
+  background-image: linear-gradient(180deg, rgba(255, 248, 234, 0.45) 0%, rgba(230, 213, 184, 0.12) 100%);
+}
+[data-theme="hte"] .lab-persist-btn,
+[data-theme="hte"] .env-cabinet-btn,
+[data-theme="hte"] .env-storage-btn,
+[data-theme="hte"] #btn-sound-toggle {
+  color: #2c221a !important;
+  border-color: #b89f7d;
+}
+[data-theme="hte"] .lab-tab-btn.active {
+  border-color: #b8863b !important;
+  box-shadow: 0 3px 10px rgba(184, 134, 59, 0.24);
+}
+
+/* Olivia Rodrigo — "GUTS" (90s Pop-Punk Ink Notebook + Crimson Spilled + Y2K Stars) */
+[data-theme="guts"] .panel-card {
+  border-width: 1.8px;
+  border-color: #09090b;
+  box-shadow: 3px 3px 0 #09090b, inset 0 1px 0 rgba(196, 181, 253, 0.22);
+  background-image: linear-gradient(180deg, rgba(124, 58, 237, 0.16) 0%, rgba(23, 12, 41, 0.22) 100%);
+}
+[data-theme="guts"] header h1::before {
+  content: '✦ ';
+  color: #e11d48;
+}
+[data-theme="guts"] .lab-tab-btn.active,
+[data-theme="guts"] #btn-pause,
+[data-theme="guts"] .lab-persist-btn.primary {
+  border-color: #e11d48 !important;
+  box-shadow: 2px 2px 0 #09090b, 0 0 12px rgba(225, 29, 72, 0.34);
+}
+[data-theme="guts"] button:not(.bg-accent):not(.bg-emerald-600):not(.bg-sky-600):not(.bg-amber-500),
+[data-theme="guts"] select {
+  border-color: #3f2863;
+}
 
 [data-theme="ctrl"] .panel-card {
   border-width: 1.5px;

@@ -1,6 +1,6 @@
 export const I18N_EN = {
   appTitle: 'ChemLab Studio',
-  appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.27',
+  appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.28',
   toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
   quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
   quickPresetsHoldTitle: 'Guided Experiments (Hold F · Release to close)',
@@ -76,6 +76,8 @@ export const I18N_EN = {
   themePetal: 'petal — Ariana Grande',
   themeCtrl: 'Ctrl — SZA (2017)',
   themeSos: 'SOS — SZA (2022)',
+  themeHte: 'Happier Than Ever — Billie Eilish (2021)',
+  themeGuts: 'GUTS — Olivia Rodrigo (2023)',
   opticsLabel: 'Multi-Spectral Optics',
   opticsNormal: 'Standard',
   opticsAero: 'Aerodynamics (Gas Plumes)',

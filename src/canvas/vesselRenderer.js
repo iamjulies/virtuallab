@@ -1621,6 +1621,33 @@ export function renderVessel(ctx, vessel, opts) {
       ctx.fill();
       ctx.stroke();
       ctx.restore();
+    } else if (themeName === 'guts') {
+      // Olivia Rodrigo "GUTS" chrome 4-point Y2K star & 4 silver ring beads on sealed stopper
+      ctx.save();
+      const lx = x;
+      const ly = top - 16;
+      ctx.fillStyle = '#e2e8f0';
+      ctx.strokeStyle = '#09090b';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      for (let k = 0; k < 8; k++) {
+        const rad = k % 2 === 0 ? 5.6 : 1.65;
+        const ang = (Math.PI / 4) * k;
+        const sx = lx + Math.cos(ang) * rad;
+        const sy = ly + Math.sin(ang) * rad;
+        if (k === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      for (let r = 0; r < 4; r++) {
+        ctx.fillStyle = r % 2 === 0 ? '#f8fafc' : '#e11d48';
+        ctx.beginPath();
+        ctx.arc(lx - 7.5 + r * 5.0, ly + 7.5, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
     }
   } else if (vessel.hasPhenCotton && !vessel.isShattered && !spec.hasTwoEnds && !vessel._physCottonMain) {
     // Phenolphthalein-soaked cotton/indicator strip at mouth (turns bright rose-pink on NH3 gas!)

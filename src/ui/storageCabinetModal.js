@@ -81,7 +81,7 @@ function drawCubbyThumbnail(canvas, entry) {
   const spec = APPARATUS[clone.typeId] || { width: 72, height: 96 };
   const scale = Math.min((cw - 14) / Math.max(30, spec.width || 72), (ch - 10) / Math.max(30, spec.height || 96), 1.0);
   const themeName = document.documentElement.getAttribute('data-theme') || 'dark';
-  const isDark = themeName !== 'light' && themeName !== 'olivia' && themeName !== 'ctrl';
+  const isDark = themeName === 'dark' || themeName === 'petal' || themeName === 'sos' || themeName === 'guts';
 
   ctx.save();
   ctx.translate(cw * 0.5, ch * 0.52);

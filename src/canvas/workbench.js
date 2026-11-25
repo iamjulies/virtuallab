@@ -142,9 +142,17 @@ export class LabWorkbenchCanvas {
     this.shakeTimer = Math.max(this.shakeTimer, duration);
   }
 
+  triggerHteStorm(strength = 1.0) {
+    this._hteStormSurge = Math.max(this._hteStormSurge || 0, Math.min(1.0, strength));
+  }
+
   setTheme(isDark, themeName = isDark ? 'dark' : 'light') {
     this.isDark = isDark;
     this.themeName = themeName || (isDark ? 'dark' : 'light');
+    if (this.themeName !== 'hte') {
+      this._hteStormLevel = 0;
+      this._hteStormSurge = 0;
+    }
     this._bgCacheKey = '';
   }
 
@@ -904,6 +912,50 @@ export class LabWorkbenchCanvas {
       bCtx.moveTo(52, 0);
       bCtx.lineTo(52, BENCH_FLOOR_Y);
       bCtx.stroke();
+    } else if (this.themeName === 'hte') {
+      // Old Hollywood golden room gradient + warm amber overhead lamp glow
+      const hteGrad = bCtx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
+      hteGrad.addColorStop(0, '#E8D7BC');
+      hteGrad.addColorStop(0.55, '#EFE1C8');
+      hteGrad.addColorStop(1, '#F6ECDA');
+      bCtx.fillStyle = hteGrad;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      const lampGrad = bCtx.createRadialGradient(BENCH_LOGICAL_W * 0.5, 24, 18, BENCH_LOGICAL_W * 0.5, 110, 460);
+      lampGrad.addColorStop(0, 'rgba(253, 230, 138, 0.42)');
+      lampGrad.addColorStop(0.5, 'rgba(217, 160, 72, 0.16)');
+      lampGrad.addColorStop(1, 'rgba(217, 160, 72, 0)');
+      bCtx.fillStyle = lampGrad;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+    } else if (this.themeName === 'guts') {
+      // Midnight Violet Pop-Punk backdrop + scattered faint silver 4-point Y2K stars
+      const gutsGrad = bCtx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
+      gutsGrad.addColorStop(0, '#150A26');
+      gutsGrad.addColorStop(0.58, '#261442');
+      gutsGrad.addColorStop(1, '#1E1133');
+      bCtx.fillStyle = gutsGrad;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      const crimsonGlow = bCtx.createRadialGradient(BENCH_LOGICAL_W * 0.52, BENCH_FLOOR_Y - 12, 20, BENCH_LOGICAL_W * 0.52, BENCH_FLOOR_Y - 30, 420);
+      crimsonGlow.addColorStop(0, 'rgba(225, 29, 72, 0.16)');
+      crimsonGlow.addColorStop(1, 'rgba(225, 29, 72, 0)');
+      bCtx.fillStyle = crimsonGlow;
+      bCtx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      for (let si = 0; si < 18; si++) {
+        const sx = ((si * 197 + 43) % 940) + 30;
+        const sy = ((si * 83 + 22) % (BENCH_FLOOR_Y - 70)) + 20;
+        const sr = 2.6 + (si % 3) * 1.1;
+        bCtx.fillStyle = si % 4 === 0 ? 'rgba(225, 29, 72, 0.28)' : 'rgba(226, 232, 240, 0.26)';
+        bCtx.beginPath();
+        for (let k = 0; k < 8; k++) {
+          const rad = k % 2 === 0 ? sr : sr * 0.25;
+          const a = (Math.PI / 4) * k;
+          const px = sx + Math.cos(a) * rad;
+          const py = sy + Math.sin(a) * rad;
+          if (k === 0) bCtx.moveTo(px, py);
+          else bCtx.lineTo(px, py);
+        }
+        bCtx.closePath();
+        bCtx.fill();
+      }
     } else if (this.themeName === 'sos') {
       const sosGrad = bCtx.createLinearGradient(0, 0, 0, BENCH_FLOOR_Y);
       sosGrad.addColorStop(0, '#071728');
@@ -952,6 +1004,10 @@ export class LabWorkbenchCanvas {
         ? 'rgba(250, 243, 227, 0.72)'
         : this.themeName === 'ctrl'
         ? 'rgba(79, 99, 88, 0.24)'
+        : this.themeName === 'hte'
+        ? 'rgba(120, 99, 80, 0.14)'
+        : this.themeName === 'guts'
+        ? 'rgba(196, 181, 253, 0.11)'
         : this.themeName === 'sos'
         ? 'rgba(91, 181, 201, 0.14)'
         : this.themeName === 'petal'
@@ -974,6 +1030,12 @@ export class LabWorkbenchCanvas {
     } else if (this.themeName === 'ctrl') {
       benchGrad.addColorStop(0, '#EAF5FC');
       benchGrad.addColorStop(1, '#B9DEF2');
+    } else if (this.themeName === 'hte') {
+      benchGrad.addColorStop(0, '#C9A679');
+      benchGrad.addColorStop(1, '#A88255');
+    } else if (this.themeName === 'guts') {
+      benchGrad.addColorStop(0, '#170C29');
+      benchGrad.addColorStop(1, '#0D0618');
     } else if (this.themeName === 'sos') {
       benchGrad.addColorStop(0, '#13293D');
       benchGrad.addColorStop(1, '#0B131E');
@@ -990,11 +1052,34 @@ export class LabWorkbenchCanvas {
     bCtx.fillStyle = benchGrad;
     bCtx.fillRect(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, BENCH_LOGICAL_H - BENCH_FLOOR_Y);
 
+    if (this.themeName === 'hte') {
+      bCtx.strokeStyle = 'rgba(120, 99, 80, 0.22)';
+      bCtx.lineWidth = 1;
+      for (let wi = 0; wi < 6; wi++) {
+        const wy = BENCH_FLOOR_Y + 9 + wi * 11;
+        bCtx.beginPath();
+        bCtx.moveTo(0, wy);
+        bCtx.bezierCurveTo(280, wy - 2, 680, wy + 2, BENCH_LOGICAL_W, wy);
+        bCtx.stroke();
+      }
+    } else if (this.themeName === 'guts') {
+      const refGrad = bCtx.createLinearGradient(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+      refGrad.addColorStop(0, 'rgba(124, 58, 237, 0.24)');
+      refGrad.addColorStop(0.5, 'rgba(225, 29, 72, 0.26)');
+      refGrad.addColorStop(1, 'rgba(124, 58, 237, 0.24)');
+      bCtx.fillStyle = refGrad;
+      bCtx.fillRect(0, BENCH_FLOOR_Y, BENCH_LOGICAL_W, 5);
+    }
+
     bCtx.strokeStyle =
       this.themeName === 'olivia'
         ? '#221F20'
         : this.themeName === 'ctrl'
         ? '#4F6358'
+        : this.themeName === 'hte'
+        ? '#786350'
+        : this.themeName === 'guts'
+        ? '#09090B'
         : this.themeName === 'sos'
         ? '#5BB5C9'
         : this.themeName === 'petal'
@@ -1002,7 +1087,7 @@ export class LabWorkbenchCanvas {
         : this.isDark
         ? '#334155'
         : '#64748b';
-    bCtx.lineWidth = this.themeName === 'olivia' || this.themeName === 'ctrl' ? 1.6 : 2;
+    bCtx.lineWidth = this.themeName === 'olivia' || this.themeName === 'ctrl' || this.themeName === 'guts' ? 2.0 : 2;
     bCtx.beginPath();
     bCtx.moveTo(0, BENCH_FLOOR_Y);
     bCtx.lineTo(BENCH_LOGICAL_W, BENCH_FLOOR_Y);
@@ -1313,6 +1398,33 @@ export class LabWorkbenchCanvas {
         ctx.save();
         ctx.drawImage(this.fluidGasOverlay.canvas, 0, 0, BENCH_LOGICAL_W, BENCH_LOGICAL_H);
         ctx.restore();
+      }
+    }
+    if (this.themeName === 'hte') {
+      let targetStorm = this._hteStormSurge || 0;
+      for (const it of this.sim.items) {
+        if (it.kind !== 'vessel' || it.isShattered) continue;
+        if (it.isBoiling || (it.tempK || 298.15) >= 368) {
+          targetStorm = Math.max(targetStorm, 0.88);
+        } else if ((it.lastExothermicJ || 0) > 25) {
+          targetStorm = Math.max(targetStorm, Math.min(0.95, 0.35 + (it.lastExothermicJ || 0) / 380));
+        } else {
+          const gasTotal = Object.values(it.lastGasRateMap || {}).reduce((s, v) => s + (v || 0), 0);
+          if (gasTotal > 0.002) targetStorm = Math.max(targetStorm, Math.min(0.8, 0.28 + gasTotal * 35));
+        }
+      }
+      const hteDt = Math.max(0.008, Math.min(0.05, timeNow - (this._prevHteTime ?? timeNow - 0.016)));
+      this._prevHteTime = timeNow;
+      this._hteStormSurge = Math.max(0, (this._hteStormSurge || 0) - hteDt * 0.28);
+      const curStorm = this._hteStormLevel || 0;
+      const rampRate = targetStorm > curStorm ? 1.65 : 0.38;
+      this._hteStormLevel = Math.max(0, Math.min(1, curStorm + (targetStorm - curStorm) * Math.min(1, rampRate * hteDt)));
+      if (this._hteStormLevel > 0.02) {
+        ctx.save();
+        ctx.fillStyle = `rgba(15, 23, 42, ${(0.34 * this._hteStormLevel).toFixed(3)})`;
+        ctx.fillRect(0, 0, BENCH_LOGICAL_W, BENCH_FLOOR_Y);
+        ctx.restore();
+        this.particles?.emitHteDownpour?.(hteDt, this._hteStormLevel, this.sim.items, BENCH_FLOOR_Y);
       }
     }
     this.particles.render(ctx);

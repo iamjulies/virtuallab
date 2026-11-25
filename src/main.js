@@ -171,6 +171,11 @@ function ensureLabSubscribed(lab) {
 }
 ensureLabSubscribed(labManager.getActiveLab());
 
+let lastGutsSpillMs = 0;
+function isThemeDark(themeName) {
+  return themeName === 'dark' || themeName === 'petal' || themeName === 'sos' || themeName === 'guts';
+}
+
 function handleVisualAlert(type, vessel, meta) {
   const t = getTranslator();
   const burstType =
@@ -184,6 +189,27 @@ function handleVisualAlert(type, vessel, meta) {
   particles.emitBurst(burstType, vessel.x, vessel.y, meta);
   if ((burstType === 'shatter' || burstType === 'explosion') && appState.theme === 'sos') {
     particles.emitSosShatterWave(vessel.x, Math.min(BENCH_FLOOR_Y, vessel.y));
+  }
+  if ((burstType === 'shatter' || burstType === 'explosion') && appState.theme === 'hte') {
+    workbench?.triggerHteStorm?.(1.0);
+  }
+  if (
+    appState.theme === 'guts' &&
+    (burstType === 'shatter' ||
+      burstType === 'explosion' ||
+      burstType === 'drop_spill' ||
+      burstType === 'overflow' ||
+      burstType === 'tilt_spill' ||
+      burstType === 'syringe_overflow')
+  ) {
+    const nowGuts = Date.now();
+    const isCont = burstType === 'tilt_spill' || burstType === 'overflow' || burstType === 'syringe_overflow';
+    if (!isCont || nowGuts - lastGutsSpillMs > 190) {
+      lastGutsSpillMs = nowGuts;
+      const sx = meta?.fromX ?? vessel.x;
+      const sy = Math.min(BENCH_FLOOR_Y, meta?.toY ?? vessel.y);
+      particles.emitGutsSpillSplash?.(sx, sy, isCont ? 0.65 : 1.15);
+    }
   }
   soundEngine.playAlertSound(type);
   if (type === 'explosion') {
@@ -499,7 +525,7 @@ comparisonPanel = new ComparisonPanel(compareRootEl, sim, getTranslator, {
 });
 
 function applyThemeChoice(nextTheme = null) {
-  const order = ['dark', 'light', 'olivia', 'petal', 'ctrl', 'sos'];
+  const order = ['dark', 'light', 'olivia', 'petal', 'ctrl', 'sos', 'hte', 'guts'];
   const target = order.includes(nextTheme)
     ? nextTheme
     : order[(order.indexOf(appState.theme) + 1) % order.length];
@@ -521,6 +547,8 @@ const THEME_OPTIONS = [
   { id: 'petal', icon: '🥀', key: 'themePetal' },
   { id: 'ctrl', icon: '📓', key: 'themeCtrl' },
   { id: 'sos', icon: '🌊', key: 'themeSos' },
+  { id: 'hte', icon: '🕯️', key: 'themeHte' },
+  { id: 'guts', icon: '✦', key: 'themeGuts' },
 ];
 
 let quickHoldMode = null;
@@ -1056,7 +1084,7 @@ function syncActiveLabRefs() {
   ensureLabSubscribed(activeLab);
   sim = activeLab.sim;
   particles = activeLab.particles;
-  const isDark = appState.theme === 'dark' || appState.theme === 'petal' || appState.theme === 'sos';
+  const isDark = isThemeDark(appState.theme);
   particles.setTheme(isDark);
   workbench.setTheme?.(isDark, appState.theme);
   workbench.setSim(sim, particles);
@@ -1719,7 +1747,7 @@ function setMobileTab(tab) {
 }
 
 function applyThemeAndDevice() {
-  const isDark = appState.theme === 'dark' || appState.theme === 'petal' || appState.theme === 'sos';
+  const isDark = isThemeDark(appState.theme);
   document.documentElement.setAttribute('data-theme', appState.theme);
   rootWrap.setAttribute('data-device', appState.deviceMode);
   workbench.setTheme(isDark, appState.theme);
