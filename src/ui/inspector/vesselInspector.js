@@ -38,6 +38,7 @@ import { renderExportActionsBarHtml } from '../../storage/reportExport.js';
 import {
   renderFlipButtonHtml,
   renderActionGridHtml,
+  renderXlsxSectionBtnHtml,
   formatGasSummaryHtml,
   computeVesselPressureMetrics,
   hasDisplayableSpeciesAmount,
@@ -105,7 +106,10 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
               ${spec.isoStandard ? `<div class="text-[11px] text-muted">${spec.materialSpec} · ${spec.isoStandard}</div>` : ''}
               <div class="text-xs text-muted" id="live-state-label">${stateLabel}</div>
             </div>
-            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+            </div>
           </div>
           ${item.isSupersaturated && !item.isShattered ? `<div class="p-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs"><div class="font-semibold">${t('badgeSupersaturated')} (S=${(item.supersatRatio || 1).toFixed(2)}×)</div><div class="text-[11px] opacity-85">${t('supersatHint')}</div></div>` : ''}
           ${(item.znPassivationFrac || 0) > 0.35 && !item.isShattered ? `<div class="p-1.5 px-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-400 text-xs font-medium">${t('badgeZnPassivated')} (${Math.round((item.znPassivationFrac || 0) * 100)}%)</div>` : ''}
@@ -408,7 +412,10 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
               <div id="live-escaped-gas">${buildEscapedGasVerticalHtml(item, panel.sim.environment, t)}</div>
             </div>
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
-              <h4 class="text-xs font-semibold text-muted mb-1.5">${t('gasTableTitle')}</h4>
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <h4 class="text-xs font-semibold text-muted">${t('gasTableTitle')}</h4>
+                ${renderXlsxSectionBtnHtml('gas', t, 'exportXlsxGasTip')}
+              </div>
               <div id="gas-comp-box">${buildVesselGasCompositionHtml(item, spec, panel.sim.environment, liqL, t)}</div>
             </div>
 
@@ -416,7 +423,7 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
               <div class="flex items-center justify-between gap-2 mb-1.5">
                 <h4 class="text-xs font-semibold text-muted">${t('liquidTableTitle')}</h4>
-                <button type="button" id="btn-export-xlsx" title="${t('exportXlsxBtn')}" class="px-2 py-0.5 rounded border border-theme bg-surface-alt text-[10.5px] font-semibold hover:border-accent shrink-0">📥 ${t('exportXlsxBtn')}</button>
+                ${renderXlsxSectionBtnHtml('liquid', t, 'exportXlsxLiquidTip')}
               </div>
               <div id="sp-liq-box">
                 ${
@@ -442,7 +449,10 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
 
             <!-- Separate Solid & Precipitate Table -->
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
-              <h4 class="text-xs font-semibold text-muted mb-1.5">${t('solidTableTitle')}</h4>
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <h4 class="text-xs font-semibold text-muted">${t('solidTableTitle')}</h4>
+                ${renderXlsxSectionBtnHtml('solid', t, 'exportXlsxSolidTip')}
+              </div>
               <div id="sp-sol-box">
                 ${
                   !solidRowsStr
@@ -534,7 +544,10 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
               ${renderExportActionsBarHtml({ idPrefix: 'mole', label: t('exportImageCsvLabel') })}
             </div>
             <div class="p-2.5 rounded-lg border border-theme bg-surface">
-              <h4 class="text-xs font-semibold text-muted mb-1.5">${t('activeReactionsTitle')}</h4>
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <h4 class="text-xs font-semibold text-muted">${t('activeReactionsTitle')}</h4>
+                ${renderXlsxSectionBtnHtml('thermo_rxn', t, 'exportXlsxThermoTip')}
+              </div>
               <div id="active-rxn-box" class="space-y-1.5">
                 ${
                   item.activeReactions.length === 0

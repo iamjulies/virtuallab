@@ -42,6 +42,7 @@ import { StorageCabinetModal } from './ui/storageCabinetModal.js';
 import { MissionDockPanel, openMissionSelectorModal, openMissionResultModal } from './ui/missionPanel.js';
 import { TeacherBuilderModal } from './ui/teacherBuilderModal.js';
 import { exportWorkbenchSnapshotAsset, openPrintableLabReport, openLabReportPreviewModal } from './storage/reportExport.js';
+import { buildBenchMultiSheetWorkbook, downloadXlsxWorkbook, isQuantitativeExportBlocked, sanitizeLabFilenameSlug } from './storage/xlsxExport.js';
 import {
   ShortcutsModal,
   loadCustomShortcuts,
@@ -92,6 +93,7 @@ const redoBenchBtnEl = document.getElementById('btn-redo-bench');
 const snapBtnEl = document.getElementById('btn-bench-snapshot');
 const snapMenuEl = document.getElementById('bench-snapshot-menu');
 const printReportBtnEl = document.getElementById('btn-print-report');
+const exportXlsxBenchBtnEl = document.getElementById('btn-export-xlsx-bench');
 const printReportRootEl = document.getElementById('print-lab-report');
 const reportPreviewRootEl = document.getElementById('report-preview-modal-root');
 const zoomLoupeBtnEl = document.getElementById('btn-zoom-loupe');
@@ -880,6 +882,36 @@ const teacherModal = new TeacherBuilderModal(missionModalEl, labManager, getTran
       refreshChrome(true);
       showToast(`🔍 ${getTranslator()('teacherInspectLoadedToast')}`);
     }
+  },
+  onTestRunAssignment: (publicDoc) => {
+    if (!publicDoc?.benchTemplate) return;
+    const t = getTranslator();
+    const examCode = publicDoc.examCode || 'TEST_RUN';
+    const resTab = labManager.openIsolatedExamTab?.({
+      examCode,
+      customName: `▶ ${publicDoc.title || examCode}`,
+    }) || labManager.addLab('clean', { customName: `▶ ${publicDoc.title || examCode}` });
+    if (!resTab?.ok || !resTab.lab) {
+      showToast(`⚠️ ${t('examMaxTabsBlocked')}`);
+      return;
+    }
+    syncActiveLabRefs();
+    particles.clear();
+    comparisonPanel?.setOpen(false);
+    proctor.stopSession();
+    const previewDoc = {
+      ...publicDoc,
+      mode: 'practice',
+      proctorConfig: { ...(publicDoc.proctorConfig || {}), requireFullscreen: false },
+    };
+    sim.startCustomAssignment(previewDoc, {
+      seed: 1337,
+      startedAtMs: Date.now(),
+      draftAnswers: {},
+    });
+    refreshChrome(true);
+    setTimeout(() => workbench?.resize?.(), 25);
+    showToast(`▶ ${t('teacherTestRunToast')}`);
   },
 });
 
@@ -1899,6 +1931,12 @@ function refreshChrome(forceInspector = false) {
   if (resetBtnEl) resetBtnEl.textContent = `↺ ${t('resetBench')}`;
   if (snapBtnEl) snapBtnEl.textContent = t('btnBenchSnapshot');
   if (printReportBtnEl) printReportBtnEl.textContent = t('btnPrintReport');
+  if (exportXlsxBenchBtnEl) {
+    const hideQuantBench = Boolean(labManager?.viewingStorage) || isQuantitativeExportBlocked(sim);
+    exportXlsxBenchBtnEl.classList.toggle('hidden', hideQuantBench);
+    exportXlsxBenchBtnEl.textContent = `📥 ${t('exportXlsxBtn')}`;
+    exportXlsxBenchBtnEl.title = t('exportXlsxBenchTip');
+  }
   if (undoBenchBtnEl) {
     const uCount = Array.isArray(sim.undoStack) ? sim.undoStack.length : 0;
     undoBenchBtnEl.disabled = uCount === 0;
@@ -2020,6 +2058,23 @@ function openReportFlow(missionResult = null) {
 
 printReportBtnEl?.addEventListener('click', () => {
   openReportFlow(null);
+});
+
+exportXlsxBenchBtnEl?.addEventListener('click', () => {
+  const t = getTranslator();
+  if (isQuantitativeExportBlocked(sim) || labManager?.viewingStorage) {
+    showToast(`🔒 ${t('blindUnknownHint')}`);
+    return;
+  }
+  const activeLab = labManager.getActiveLab();
+  const labName = activeLab?.customName || `Lab ${activeLab?.number || 1}`;
+  const sheets = buildBenchMultiSheetWorkbook(sim, t, labName);
+  const dateStr = new Date().toISOString().slice(0, 10);
+  downloadXlsxWorkbook({
+    filename: `${sanitizeLabFilenameSlug(labName)}-bench-workbook-${dateStr}.xlsx`,
+    sheets,
+  });
+  showToast(`📥 ${t('exportXlsxDoneToast')}`);
 });
 
 // Customizable Keyboard Shortcuts Registry & Modal

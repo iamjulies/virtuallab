@@ -9,7 +9,17 @@ import { computeLiquidVolumeL, computePH, computeVesselAroma } from '../engine/e
 import { COLORIMETER_WAVELENGTHS, stepAnalyticalInstruments } from '../engine/analyticalTools.js';
 import { computeCaOOptimizationScore } from '../engine/chemistry.js';
 import { soundEngine } from '../audio/soundEngine.js';
-import { downloadCompositionXlsx } from '../storage/xlsxExport.js';
+import {
+  buildItemMultiSheetWorkbook,
+  downloadXlsxWorkbook,
+  extractGasSheetRows,
+  extractInstrumentSheetData,
+  extractLiquidSheetRows,
+  extractSolidSheetRows,
+  extractThermoElectroRxnRows,
+  isQuantitativeExportBlocked,
+  sanitizeLabFilenameSlug,
+} from '../storage/xlsxExport.js';
 import {
   exportSpectrometerAsset,
   exportAnalyticalProbeAsset,
@@ -309,6 +319,45 @@ export class InspectorPanel {
     return buildTelemetryCsvForItem(this.sim, item);
   }
 
+  _handleXlsxExport(item, section, t) {
+    if (!item || isQuantitativeExportBlocked(this.sim, item)) {
+      this.callbacks.onNotify?.(`🔒 ${t('blindUnknownBadge')}`);
+      return;
+    }
+    const labsMeta = this.callbacks.getLabsMeta?.();
+    const activeLab = labsMeta?.labs?.[labsMeta.activeIndex];
+    const labTitle = activeLab?.customName || `Lab ${activeLab?.number || 1}`;
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const slug = `${sanitizeLabFilenameSlug(labTitle)}-${sanitizeLabFilenameSlug(item.label || item.kind || 'item')}`;
+    const T = item.tempK ?? this.sim?.environment?.tempK ?? CONSTANTS.T_STD_K;
+
+    let sheets = [];
+    let secTag = section;
+    if (section === 'all') {
+      sheets = buildItemMultiSheetWorkbook(item, this.sim, t, labTitle);
+      secTag = 'workbook';
+    } else if (section === 'liquid') {
+      sheets = [{ name: 'Liquid', rows: extractLiquidSheetRows(item, T, t) }];
+    } else if (section === 'solid') {
+      sheets = [{ name: 'Solid', rows: extractSolidSheetRows(item, T, t) }];
+    } else if (section === 'gas') {
+      sheets = [{ name: 'Gas', rows: extractGasSheetRows(item, this.sim?.environment) }];
+    } else if (section === 'thermo_rxn') {
+      sheets = [{ name: 'Thermo_Electro_Rxns', rows: extractThermoElectroRxnRows(item, this.sim) }];
+    } else {
+      const inst = extractInstrumentSheetData(item, this.sim);
+      sheets = [{ name: inst.sheetName, rows: inst.rows }];
+      secTag = sanitizeLabFilenameSlug(inst.sheetName);
+    }
+
+    const res = downloadXlsxWorkbook({
+      filename: `${slug}-${secTag}-${dateStr}.xlsx`,
+      sheets,
+    });
+    soundEngine.playUiClick();
+    this.callbacks.onNotify?.(t('exportXlsxSuccess').replace('{filename}', res.filename));
+  }
+
   bindInspectorEvents(item, t) {
     this.container.querySelectorAll('details[data-ins-sec]').forEach((det) => {
       det.addEventListener('toggle', () => {
@@ -376,6 +425,15 @@ export class InspectorPanel {
         this.callbacks.onStoreAssemblyToCabinet?.(item.id);
       });
     }
+
+    this.container.querySelector('#btn-export-xlsx-item')?.addEventListener('click', () => {
+      this._handleXlsxExport(item, 'all', t);
+    });
+    this.container.querySelectorAll('[data-xlsx-sec]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this._handleXlsxExport(item, btn.dataset.xlsxSec || 'liquid', t);
+      });
+    });
 
     this.container.querySelectorAll('.exp-act-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -603,45 +661,6 @@ export class InspectorPanel {
       });
       this.container.querySelector('#ins-tube-depth-slider')?.addEventListener('input', (e) => {
         this.sim.setTubeSubmersionRatio(item.id, Number(e.target.value) / 100);
-      });
-      this.container.querySelector('#btn-export-xlsx')?.addEventListener('click', () => {
-        const liqL = computeLiquidVolumeL(item.moles, item.tempK);
-        const ph = item.isFrozenSolid ? null : computePH(item.moles, liqL, item.tempK);
-        const labsMeta = this.callbacks.getLabsMeta?.();
-        const activeLab = labsMeta?.labs?.[labsMeta.activeIndex];
-        const labTitle = activeLab?.customName || `Lab ${activeLab?.number || 1}`;
-        const rowsData = Object.entries(item.moles || {})
-          .filter(([spId, n]) => hasDisplayableSpeciesAmount(spId, n))
-          .sort((a, b) => b[1] - a[1])
-          .map(([spId, n]) => {
-            const sp = SPECIES[spId];
-            const isMolten = isSolidMoltenAtTemp(sp, item.tempK, item.moles);
-            const isFrozenSolidSp = spId === 'H2O_s' || (Boolean(item.isFrozenSolid) && sp.phase === 's');
-            const concLabel = isMolten
-              ? t('moltenStateTag')
-              : isFrozenSolidSp
-              ? t('frozenSolidTag')
-              : sp.phase === 'aq' && liqL > 1e-6
-              ? `${(n / liqL).toFixed(3)} M`
-              : sp.phase;
-            return {
-              id: spId,
-              formula: sp?.formula || spId,
-              phase: sp?.phase || '',
-              mol: n,
-              massG: n * (sp?.molarMass || 0),
-              concLabel,
-            };
-          });
-        const res = downloadCompositionXlsx({
-          labName: labTitle,
-          vesselLabel: item.label,
-          tempK: item.tempK,
-          ph,
-          pressureBar: item.internalPressureBar,
-          rowsData,
-        });
-        this.callbacks.onNotify?.(t('exportXlsxSuccess').replace('{filename}', res.filename));
       });
       this.container.querySelectorAll('.rxn-card-item').forEach((card) => {
         card.addEventListener('contextmenu', (e) => {

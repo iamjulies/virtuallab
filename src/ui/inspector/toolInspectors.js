@@ -41,9 +41,11 @@ import {
 } from '../../engine/analyticalTools.js';
 import { computeCaOOptimizationScore } from '../../engine/chemistry.js';
 import { renderExportActionsBarHtml } from '../../storage/reportExport.js';
+import { isQuantitativeExportBlocked } from '../../storage/xlsxExport.js';
 import {
   renderFlipButtonHtml,
   renderActionGridHtml,
+  renderXlsxSectionBtnHtml,
   buildSyringeGasCompositionHtml,
   sumAllGasMoles,
   formatGasSummaryHtml,
@@ -61,6 +63,7 @@ import {
 
 export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.lastLangCode || 'vi') {
   let topSection = '';
+  const hideQuant = Boolean(item && isQuantitativeExportBlocked(panel.sim, item));
     if (!item) {
       const bt = computeBenchTelemetry(panel.sim);
       const atm = computeAtmospherePartialPressures(panel.sim.environment);
@@ -210,9 +213,12 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
     } else if (item.kind === 'scale') {
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
-          <div class="flex items-center justify-between">
+          <div class="flex items-center justify-between gap-2">
             <span class="text-sm font-bold">${t('eq_scale')} ${item.label}</span>
-            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? renderXlsxSectionBtnHtml('instrument', t, 'exportXlsxInstrumentTip') : ''}
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+            </div>
           </div>
           <div class="p-3 rounded-lg bg-slate-950 text-emerald-400 font-mono text-2xl font-bold text-right" id="live-scale-readout">
             ${(item.measuredG || 0).toFixed(2)} g
@@ -323,7 +329,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             unitLabel: 'mL',
           })}
           <p class="text-[11px] text-muted leading-relaxed">${t('pipetteBenchHint')}</p>
-          ${item.isBroken ? '' : buildContainerLiquidTableCardHtml(item, t, item.tempK ?? panel.sim.environment.tempK)}
+          ${item.isBroken ? '' : buildContainerLiquidTableCardHtml(item, t, item.tempK ?? panel.sim.environment.tempK, hideQuant)}
           <button type="button" id="ins-clear-pipette" class="py-1.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${t('pipetteClear')}</button>
         </div>
       `;
@@ -340,6 +346,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-[11px] text-muted">${stSpec.materialSpec} · ${stSpec.isoStandard}</div>
             </div>
             <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
               ${renderFlipButtonHtml(item, t)}
               <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
@@ -393,6 +400,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-[11px] text-muted">${syrSpec.materialSpec} · ${syrSpec.isoStandard}</div>
             </div>
             <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
               ${renderFlipButtonHtml(item, t)}
               <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
@@ -422,8 +430,16 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
           <div class="px-2.5 py-1.5 rounded-lg border border-sky-500/35 bg-sky-500/10 text-xs font-medium" id="live-syr-cond-state">
             ${condInfo.condenseState}
           </div>
-          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs" id="live-syr-breakdown">
-            ${buildSyringeGasCompositionHtml(item, syrSpec, panel.sim.environment, t, condInfo)}
+          <div class="p-2.5 rounded-lg border border-theme bg-surface text-xs" id="live-syr-breakdown-wrap">
+            ${
+              !hideQuant
+                ? `<div class="flex items-center justify-between gap-2 mb-1.5">
+                     <span class="text-xs font-semibold text-muted">${t('gasTableTitle')}</span>
+                     ${renderXlsxSectionBtnHtml('gas', t, 'exportXlsxGasTip')}
+                   </div>`
+                : ''
+            }
+            <div id="live-syr-breakdown">${buildSyringeGasCompositionHtml(item, syrSpec, panel.sim.environment, t, condInfo)}</div>
           </div>
           ${
             item.isBroken
@@ -500,6 +516,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t('eq_wash_bottle')} ${item.label}</div>
             <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
               ${renderFlipButtonHtml(item, t)}
               <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
@@ -531,6 +548,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t('eq_liebig_condenser')} ${item.label}${item.isBroken ? ' · 💥' : ''}</div>
             <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
               ${renderFlipButtonHtml(item, t)}
               <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
@@ -632,7 +650,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
                   })}
                   <button type="button" id="ins-bur-drop" class="py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500">${t('buretteAddDrop')}</button>
                 </div>
-                ${buildContainerLiquidTableCardHtml(item, t, item.tempK ?? panel.sim.environment.tempK)}
+                ${buildContainerLiquidTableCardHtml(item, t, item.tempK ?? panel.sim.environment.tempK, hideQuant)}
                 ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
               `
           }
@@ -724,7 +742,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
                     ${mountedV ? `<button type="button" id="ins-sep-unmount" class="px-2 py-1 rounded border border-red-500/40 bg-red-500/10 text-red-400 text-xs">${t('sepMountUnmount')}</button>` : ''}
                   </div>
                 </div>
-                ${buildContainerLiquidTableCardHtml(item, t, item.tempK ?? panel.sim.environment.tempK)}
+                ${buildContainerLiquidTableCardHtml(item, t, item.tempK ?? panel.sim.environment.tempK, hideQuant)}
                 ${stands.length > 0 ? `<button type="button" id="ins-toggle-clamp" class="py-1.5 px-2.5 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent">${item.clampedToId ? t('actionUnclampStand') : t('actionClampStand')}</button>` : ''}
                 <p class="text-[11px] text-muted leading-snug">${t('sepDropHint')}</p>`
           }
@@ -736,6 +754,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t('eq_splint')} ${item.label}</div>
             <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
               ${renderFlipButtonHtml(item, t)}
               <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
@@ -762,6 +781,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t('eq_flame_loop')} ${item.label}</div>
             <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
               ${renderFlipButtonHtml(item, t)}
               <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
@@ -787,6 +807,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
           <div class="flex items-center justify-between gap-2">
             <div class="text-sm font-bold">${t(isLitmus ? 'eq_litmus_paper' : 'eq_ph_strip')} ${item.label}</div>
             <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
               ${renderFlipButtonHtml(item, t)}
               <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
@@ -812,16 +833,22 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t('eq_ph_conductometer')} ${item.label}</div>
               <div class="text-[11px] text-muted">${APPARATUS.ph_conductometer.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+            </div>
           </div>
           <div class="grid grid-cols-2 gap-2 p-2.5 rounded-lg border border-theme bg-slate-950 font-mono text-center">
             <div><div class="text-[10px] text-slate-400">pH</div><div class="text-lg font-bold text-emerald-400" id="live-phc-ph">${phTxt}</div></div>
             <div><div class="text-[10px] text-slate-400">${langCode === 'en' ? 'Conductivity' : 'Độ dẫn σ'}</div><div class="text-sm font-bold text-sky-400 mt-1" id="live-phc-ec">${ecTxt}</div></div>
           </div>
           <div class="p-2 rounded-lg border border-theme bg-surface">
-            <div class="text-[11px] text-muted mb-1 flex justify-between">
+            <div class="text-[11px] text-muted mb-1 flex justify-between items-center gap-1">
               <span>${langCode === 'en' ? 'Titration / Time Curve' : 'Đường chuẩn độ pH / σ'}</span>
-              <span class="font-mono" id="live-phc-pts">${(item.history || []).length} pts</span>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span class="font-mono" id="live-phc-pts">${(item.history || []).length} pts</span>
+                ${!hideQuant ? renderXlsxSectionBtnHtml('instrument', t, 'exportXlsxInstrumentTip') : ''}
+              </div>
             </div>
             <canvas id="analytical-chart" width="270" height="104" class="w-full h-24 rounded border border-theme/50"></canvas>
             ${renderExportActionsBarHtml({ idPrefix: 'probe', label: t('exportImageCsvLabel') })}
@@ -890,7 +917,10 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t('eq_colorimeter')} ${item.label}</div>
               <div class="text-[11px] text-muted">${APPARATUS.colorimeter.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+            </div>
           </div>
           <div class="grid grid-cols-3 gap-1 p-1 rounded-lg border border-theme bg-surface text-[11px]">
             ${[
@@ -913,7 +943,10 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
           <div class="p-2 rounded-lg border border-theme bg-surface flex flex-col gap-1.5">
             <div class="text-[11px] text-muted flex justify-between items-center gap-1">
               <span>${chartTitle}</span>
-              <span class="font-mono text-[10px]" id="live-col-wl">${chartRight}</span>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span class="font-mono text-[10px]" id="live-col-wl">${chartRight}</span>
+                ${!hideQuant ? renderXlsxSectionBtnHtml('instrument', t, 'exportXlsxInstrumentTip') : ''}
+              </div>
             </div>
             <canvas id="analytical-chart" width="290" height="${chartH}" class="w-full rounded border border-theme/50 cursor-crosshair" style="height:${chartH}px"></canvas>
             ${
@@ -945,7 +978,10 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-sm font-bold">${t('eq_tlc_plate')} ${item.label}</div>
               <div class="text-[11px] text-muted">${APPARATUS.tlc_plate.isoStandard}</div>
             </div>
-            <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? renderXlsxSectionBtnHtml('instrument', t, 'exportXlsxInstrumentTip') : ''}
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+            </div>
           </div>
           <div class="p-2.5 rounded-lg border border-theme bg-surface flex items-center justify-between">
             <span class="text-xs font-semibold text-muted">${langCode === 'en' ? 'Solvent front' : 'Mặt dung môi'}</span>
@@ -1302,6 +1338,7 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
               <div class="text-[11px] text-muted">${spSpec.materialSpec} · ${spSpec.isoStandard}</div>
             </div>
             <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
               ${renderFlipButtonHtml(item, t)}
               <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
@@ -1317,7 +1354,10 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
             </div>
           </div>
           <div class="rounded-lg border border-theme bg-surface p-2.5">
-            <div class="text-xs font-semibold text-muted mb-1.5">${t('spoonContentsLabel')}</div>
+            <div class="flex items-center justify-between gap-2 mb-1.5">
+              <div class="text-xs font-semibold text-muted">${t('spoonContentsLabel')}</div>
+              ${!hideQuant ? renderXlsxSectionBtnHtml('solid', t, 'exportXlsxSolidTip') : ''}
+            </div>
             ${
               entries.length === 0
                 ? `<p class="text-xs text-muted">${t('spoonEmpty')}</p>`

@@ -492,8 +492,141 @@ header button.bg-amber-500 {
 .w-\[58px\] { width: 58px; }
 .h-\[115px\] { height: 115px; }
 .max-w-md { max-width: 28rem; }
+.max-w-xl { max-width: 36rem; }
+.max-w-3xl { max-width: 48rem; }
+.max-w-4xl { max-width: 56rem; }
+.max-w-6xl { max-width: 72rem; }
+.max-h-28 { max-height: 7rem; }
+.max-h-36 { max-height: 9rem; }
 .max-h-44 { max-height: 11rem; }
 .max-h-48 { max-height: 12rem; }
+.max-h-\[88vh\] { max-height: 88vh; }
+.max-h-\[90vh\] { max-height: 90vh; }
+.col-span-2 { grid-column: span 2 / span 2; }
+.col-span-3 { grid-column: span 3 / span 3; }
+.bg-black\/60 { background-color: rgba(0, 0, 0, 0.6); }
+.backdrop-blur-sm { -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.45); }
+@media (min-width: 640px) {
+  .sm\:p-5 { padding: 1.25rem; }
+}
+@media (min-width: 768px) {
+  .md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Teacher Studio Interactive Split-Authoring Shell (Fix scroll + 2-pane authoring bench) */
+.tb-studio-shell {
+  width: min(1240px, 95vw);
+  max-height: 92vh;
+  height: min(860px, 92vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 1rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  box-shadow: 0 25px 55px -12px rgba(0, 0, 0, 0.55);
+}
+.tb-studio-header {
+  flex-shrink: 0;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.tb-studio-body {
+  flex: 1 1 0%;
+  min-height: 0;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.tb-studio-split {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.tb-studio-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-height: 0;
+}
+.tb-studio-right {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+}
+@media (min-width: 960px) {
+  .tb-studio-body.tb-mode-design {
+    overflow: hidden;
+  }
+  .tb-studio-split {
+    flex: 1 1 0%;
+    min-height: 0;
+    height: 100%;
+    display: grid;
+    grid-template-columns: minmax(340px, 44%) minmax(0, 56%);
+    align-items: stretch;
+  }
+  .tb-studio-left,
+  .tb-studio-right {
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 0.35rem;
+  }
+}
+.tb-studio-canvas-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1000 / 540;
+  min-height: 270px;
+  max-height: 430px;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  background-color: var(--bg-surface-alt);
+}
+.tb-studio-canvas-wrap canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.tb-section-card {
+  border-radius: 0.75rem;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface-alt);
+  padding: 0.55rem 0.65rem;
+}
+.tb-section-card > summary {
+  cursor: pointer;
+  user-select: none;
+  font-weight: 700;
+  font-size: 0.76rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+.tb-studio-footer {
+  flex-shrink: 0;
+  padding: 0.65rem 1rem;
+  border-top: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
 .mr-auto { margin-right: auto; }
 
 .p-1 { padding: 0.25rem; }

@@ -431,8 +431,12 @@ export function buildBlindObservationCardHtml(item, t) {
   `;
 }
 
-export function buildContainerLiquidTableCardHtml(item, t, tempK) {
-  if (item.hideComposition) {
+export function renderXlsxSectionBtnHtml(section, t, tipKey = 'exportXlsxBtn') {
+  return `<button type="button" data-xlsx-sec="${section}" title="${t(tipKey)}" class="px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-[10px] font-semibold hover:border-accent shrink-0 whitespace-nowrap">📥 ${t('exportXlsxBtn')}</button>`;
+}
+
+export function buildContainerLiquidTableCardHtml(item, t, tempK, hideQuant = false) {
+  if (item.hideComposition || hideQuant) {
     return buildBlindObservationCardHtml(item, t);
   }
   const liqTabData = computeLiquidSpeciesTableData(item.moles || {}, tempK);
@@ -441,7 +445,10 @@ export function buildContainerLiquidTableCardHtml(item, t, tempK) {
     <div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-1.5">
       <div class="flex items-center justify-between gap-2">
         <h4 class="text-xs font-semibold text-muted">${t('liquidTableTitle')}</h4>
-        <span class="text-[11px] font-mono text-sky-400 shrink-0 whitespace-nowrap" id="live-mix-density">${rhoTxt ? rhoTxt.replace('ρ=', 'ρ = ') : ''}</span>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <span class="text-[11px] font-mono text-sky-400 shrink-0 whitespace-nowrap" id="live-mix-density">${rhoTxt ? rhoTxt.replace('ρ=', 'ρ = ') : ''}</span>
+          ${renderXlsxSectionBtnHtml('liquid', t, 'exportXlsxLiquidTip')}
+        </div>
       </div>
       <div id="sp-liq-box">
         ${

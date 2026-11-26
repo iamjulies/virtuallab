@@ -18,7 +18,7 @@ import {
   computePH,
   computeContentsMassG,
 } from '../engine/equilibrium.js';
-import { sanitizeLabFilenameSlug } from './xlsxExport.js';
+import { buildBenchMultiSheetWorkbook, downloadXlsxWorkbook, isQuantitativeExportBlocked, sanitizeLabFilenameSlug } from './xlsxExport.js';
 
 const CHART_SERIES_COLORS = ['#0284c7', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0d9488'];
 
@@ -1336,6 +1336,7 @@ export function openLabReportPreviewModal({
             <button type="button" id="btn-report-dl-html" class="report-action-btn">🌐 ${escPrintHtml(translate('reportDlHtmlBtn'))}</button>
             <button type="button" id="btn-report-dl-png" class="report-action-btn">🖼️ ${escPrintHtml(translate('reportDlPngBtn'))}</button>
             <button type="button" id="btn-report-dl-pdf" class="report-action-btn">📄 ${escPrintHtml(translate('reportDlPdfBtn'))}</button>
+            ${!isQuantitativeExportBlocked(sim) ? `<button type="button" id="btn-report-dl-xlsx" class="report-action-btn" title="${escPrintHtml(translate('exportXlsxBenchTip'))}">📥 ${escPrintHtml(translate('exportXlsxBtn'))}</button>` : ''}
             <button type="button" id="btn-report-print-browser" class="report-action-btn report-action-primary">🖨️ ${escPrintHtml(translate('reportPrintBtn'))}</button>
             <button type="button" id="btn-report-close-x" class="report-action-close" title="${escPrintHtml(closeLabel)}" aria-label="${escPrintHtml(closeLabel)}">×</button>
           </div>
@@ -1378,6 +1379,14 @@ export function openLabReportPreviewModal({
         const pdfCvs = composeDirectReportPdfCanvas({ benchCanvas: bundle.benchCanvas, sim, labName, lang, missionResult });
         exportCanvasInFormat(pdfCvs, 'pdf', buildExportFilename(labName, 'lab-report', 'pdf'));
         onNotify?.(`📄 PDF (${labName})`);
+      } catch {}
+    });
+    modalRootEl.querySelector('#btn-report-dl-xlsx')?.addEventListener('click', () => {
+      try {
+        if (isQuantitativeExportBlocked(sim)) return;
+        const sheets = buildBenchMultiSheetWorkbook(sim, translate, labName);
+        const res = downloadXlsxWorkbook({ filename: buildExportFilename(labName, 'bench-workbook', 'xlsx'), sheets });
+        onNotify?.(translate('exportXlsxSuccess').replace('{filename}', res.filename));
       } catch {}
     });
     modalRootEl.querySelector('#btn-report-print-browser')?.addEventListener('click', () => {

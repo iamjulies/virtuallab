@@ -60,6 +60,18 @@
     import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod, renderTlcPlate } from '../src/canvas/toolRenderer.js';
     import { resolveTlcUvActive, computeBeerLambertReading, computeUvVisSpectrum, computeIrSpectrum } from '../src/engine/analyticalTools.js';
     import { buildLabReportBundle, buildPdfBytesFromCanvas, composeWorkbenchSnapshotCanvas, openPrintableLabReport, openLabReportPreviewModal } from '../src/storage/reportExport.js';
+    import {
+      sanitizeSheetName,
+      buildXlsxBytes,
+      isQuantitativeExportBlocked,
+      extractLiquidSheetRows,
+      extractSolidSheetRows,
+      extractGasSheetRows,
+      extractThermoElectroRxnRows,
+      extractInstrumentSheetData,
+      buildItemMultiSheetWorkbook,
+      buildBenchMultiSheetWorkbook,
+    } from '../src/storage/xlsxExport.js';
     import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
     import { DosingModal } from '../src/ui/dosingModal.js';
     import { ComparisonPanel } from '../src/ui/comparisonPanel.js';
@@ -2496,7 +2508,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.32';
+      const expectedBuild = 'virlab_beta_v5+build.33';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -6567,7 +6579,7 @@
       });
       panel.renderFull((k) => I18N.vi[k] || k, 'vi');
 
-      const hasXlsxBtn = Boolean(insDiv.querySelector('#btn-export-xlsx'));
+      const hasXlsxBtn = Boolean(insDiv.querySelector('#btn-export-xlsx-item')) && insDiv.querySelectorAll('[data-xlsx-sec]').length >= 3;
       const moltenTagOk = insDiv.querySelector('#sp-conc-FeCl2_s')?.textContent?.trim() === '🔥l';
       const splitMassPressOk = Boolean(insDiv.querySelector('#live-mass')) && Boolean(insDiv.querySelector('#live-press-local')) && Boolean(insDiv.querySelector('#live-press-limit')) && Boolean(insDiv.querySelector('#live-press-bar'));
       const escRows = insDiv.querySelectorAll('#live-escaped-gas tbody tr');
@@ -11639,6 +11651,120 @@
         'Build 32 invariants (Prompt 92): 3-tier gravity & anti-shatter Storage Shelf Lab, 100% chemistry/thermal freeze + thaw reactivity, assembly Store/Withdraw preserving links, Exam lock block, legacy .vlab migration & Organic/Oxide/Pt-Ni classification',
         tiersOk && chemFrozenOk && thawedReactsOk && asmStoredOk && examLockOk && asmRestoredOk && clsSearchOk,
         `tiers=${tiersOk}, frozen=${chemFrozenOk}, thaw=${thawedReactsOk}, asmSt=${asmStoredOk}, examLock=${examLockOk}, asmOut=${asmRestoredOk}, cls=${clsSearchOk}`
+      );
+    }
+
+    // TEST 230: Prompt 93 (virlab_beta_v5+build.33) Multi-Sheet OOXML .xlsx, Section/Item/Bench Extractors & Exam Blind Export Lock
+    {
+      const dec = new TextDecoder();
+      function parseZipEntryNames(bytes) {
+        const names = [];
+        let p = 0;
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        while (p + 30 <= bytes.length && dv.getUint32(p, true) === 0x04034b50) {
+          const nameLen = dv.getUint16(p + 26, true);
+          const extraLen = dv.getUint16(p + 28, true);
+          const compSize = dv.getUint32(p + 18, true);
+          const name = dec.decode(bytes.subarray(p + 30, p + 30 + nameLen));
+          names.push(name);
+          p += 30 + nameLen + extraLen + compSize;
+        }
+        return names;
+      }
+
+      // 1) Multi-sheet OOXML package generation + sheet name sanitization & deduplication + backward compat
+      const longBadName = 'VeryLong/Sheet:Name*With?Forbidden[Chars]123456';
+      const san1 = sanitizeSheetName(longBadName);
+      const multiBytes = buildXlsxBytes([
+        { name: longBadName, rows: [['H1', 'Val & <Tag>'], ['A', 12.345]] },
+        { name: longBadName, rows: [['Duplicate', 99]] },
+        { name: 'Summary', rows: [['OK', true]] },
+      ]);
+      const zipEntries = parseZipEntryNames(multiBytes);
+      const multiText = dec.decode(multiBytes);
+      const singleCompat = buildXlsxBytes([['Legacy', 42]], 'CompatTab');
+      const compatOk =
+        singleCompat[0] === 0x50 &&
+        singleCompat[1] === 0x4b &&
+        dec.decode(singleCompat).includes('CompatTab') &&
+        san1.length <= 31 &&
+        !/[\\/*?:[\]]/.test(san1) &&
+        zipEntries.includes('xl/worksheets/sheet1.xml') &&
+        zipEntries.includes('xl/worksheets/sheet2.xml') &&
+        zipEntries.includes('xl/worksheets/sheet3.xml') &&
+        multiText.includes('Val &amp; &lt;Tag&gt;');
+
+      // 2) Vessel & Instrument extractors + Multi-sheet Item & Bench Workbooks + Scale measuredG regression check
+      const sim93 = new LabSimulation();
+      sim93.setupPreset('clean');
+      const v93 = sim93.createApparatus('beaker_250', 220, 420);
+      v93.moles = { H2O_l: 2.5, H_aq: 0.1, Cl_aq: 0.1, Cu_s: 0.05 };
+      v93.headspaceGasMoles = { H2_g: 0.01 };
+      v93.escapedGasMoles = { H2_g: 0.004 };
+      v93.lastGasRates = { H2_g: 0.0005 };
+      v93.activeReactions = [{ id: 'rxn_test', equation: 'Zn + 2HCl -> ZnCl2 + H2', rateMolS: 0.0005 }];
+
+      const syr93 = sim93.createApparatus('gas_syringe', 400, 400);
+      syr93.gasMoles = { CO2_g: 0.008 };
+
+      const ph93 = sim93.createApparatus('ph_conductometer', 520, 420);
+      ph93.measuredPH = 1.68;
+      ph93.measuredConductivity = 34.5;
+      ph93.history = [{ t: 1.0, ph: 1.68, ec: 34.5, tempC: 25 }];
+
+      const col93 = sim93.createApparatus('colorimeter', 620, 420);
+      col93.wavelengthNm = 635;
+      col93.measuredAbsorbance = 0.412;
+      col93.history = [{ t: 2.0, wl: 635, abs: 0.412 }];
+
+      const tlc93 = sim93.createApparatus('tlc_plate', 720, 420);
+      tlc93.solventFront = 0.78;
+      tlc93.spots = [{ id: 'benzene', rf: 0.64, xOffsetNorm: 0 }];
+
+      const scale93 = sim93.createApparatus('scale', 820, 420);
+      scale93.measuredG = 14.25;
+
+      const liqRows = extractLiquidSheetRows(v93, sim93.environment);
+      const solRows = extractSolidSheetRows(v93, sim93.environment);
+      const gasRowsV = extractGasSheetRows(v93, sim93.environment);
+      const gasRowsSyr = extractGasSheetRows(syr93, sim93.environment);
+      const thermoRows = extractThermoElectroRxnRows(v93, sim93);
+      const phInst = extractInstrumentSheetData(ph93, sim93);
+      const colInst = extractInstrumentSheetData(col93, sim93);
+      const tlcInst = extractInstrumentSheetData(tlc93, sim93);
+      const scInst = extractInstrumentSheetData(scale93, sim93);
+      const vSheets = buildItemMultiSheetWorkbook(v93, sim93);
+      const benchSheets = buildBenchMultiSheetWorkbook(sim93, null, 'Lab 93');
+      const benchBytes = buildXlsxBytes(benchSheets);
+
+      const extractorsOk =
+        liqRows.some((r) => r[0] === 'H2O_l') &&
+        solRows.some((r) => r[0] === 'Cu_s') &&
+        gasRowsV.some((r) => r[0] === 'Headspace' && r[1] === 'H2_g') &&
+        gasRowsSyr.some((r) => r[0] === 'CO2_g') &&
+        thermoRows.some((r) => String(r[0] || '').includes('rxn_test')) &&
+        phInst.rows.some((r) => r[0] === 1 && Math.abs(r[1] - 1.68) < 0.01) &&
+        colInst.rows.some((r) => r[0] === 2 && Math.abs(r[2] - 0.412) < 0.001) &&
+        tlcInst.rows.some((r) => r[0] === 'benzene') &&
+        scInst.rows.some((r) => r[0] === 'Net Mass (Displayed)' && Math.abs(r[1] - 14.25) < 0.001) &&
+        vSheets.length >= 4 &&
+        benchSheets.length === 6 &&
+        benchBytes[0] === 0x50 &&
+        benchBytes[1] === 0x4b;
+
+      // 3) Exam security lock: block quantitative export on ?A/?B blind vessels, blindDosingMode, & blind exam bench
+      const openCleanAllowed = !isQuantitativeExportBlocked(sim93, v93) && !isQuantitativeExportBlocked(sim93);
+      v93.hideComposition = true;
+      const blindItemBlocked = isQuantitativeExportBlocked(sim93, v93) && isQuantitativeExportBlocked(sim93);
+      v93.hideComposition = false;
+      sim93.missionState = { active: true, examMode: true, blindDosingMode: true };
+      const blindDoseBlocked = isQuantitativeExportBlocked(sim93, v93) && isQuantitativeExportBlocked(sim93);
+      sim93.missionState = null;
+
+      assert(
+        'Build 33 invariants (Prompt 93): Multi-sheet OOXML .xlsx engine, sheet-name sanitization/dedup, Liquid/Solid/Gas/Syringe/Thermo/pH/Colorimeter/TLC/Scale extractors, Item & Bench multi-sheet workbooks, and blind exam export security lock',
+        compatOk && extractorsOk && openCleanAllowed && blindItemBlocked && blindDoseBlocked,
+        `compat=${compatOk}, extract=${extractorsOk}, open=${openCleanAllowed}, blindItem=${blindItemBlocked}, blindDose=${blindDoseBlocked}`
       );
     }
 
