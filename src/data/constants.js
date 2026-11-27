@@ -1,7 +1,7 @@
 /**
  * Physical & chemical constants (SI / IUPAC standard units).
  */
-export const APP_VERSION_TAG = 'virlab_beta_v5+build.33';
+export const APP_VERSION_TAG = 'virlab_beta_v5+build.34';
 
 /**
  * Single source of truth for all 10 workbench visual themes.
@@ -261,6 +261,7 @@ export const VOLATILE_LIQUID_PROPS = {
   C6H12_l: { group: 'organic_light', boilTempK: 353.88, dHVapJ: 33010, vaporSpeciesId: 'C6H12_g' },
   C6H5OH_l: { group: 'organic_heavy', boilTempK: 454.95, dHVapJ: 57800, vaporSpeciesId: 'C6H5OH_g' },
   C2H4OH_2_l: { group: 'aqueous', boilTempK: 470.45, dHVapJ: 65600, vaporSpeciesId: 'C2H4OH_2_g' },
+  C3H5OH_3_l: { group: 'aqueous', boilTempK: 563.15, dHVapJ: 91700, vaporSpeciesId: 'C3H5OH_3_g' },
   CH2CHCHO_l: { group: 'aqueous', boilTempK: 325.65, dHVapJ: 28300, vaporSpeciesId: 'CH2CHCHO_g' },
   CH2CHCH2OH_l: { group: 'aqueous', boilTempK: 370.25, dHVapJ: 40000, vaporSpeciesId: 'CH2CHCH2OH_g' },
   C4H9OH_l: { group: 'organic_light', boilTempK: 390.85, dHVapJ: 52350, vaporSpeciesId: 'C4H9OH_g' },
@@ -308,7 +309,7 @@ export function computeUniversalRaoultVLE(moles, tempK, speciesMap = null) {
     if (!Number.isFinite(n) || n <= 1e-11) continue;
     const sp = speciesMap?.[id] || VOLATILE_LIQUID_PROPS[id];
     const vpInfo = VOLATILE_LIQUID_PROPS[id];
-    const isVolLiq = (sp && sp.phase === 'l' && sp.vaporSpeciesId && sp.boilTempK) || Boolean(vpInfo);
+    const isVolLiq = (sp && sp.phase === 'l' && !sp.noBoil && sp.vaporSpeciesId && sp.boilTempK) || (!sp?.noBoil && Boolean(vpInfo));
     if (!isVolLiq) continue;
     const group = sp?.liquidGroup || sp?.group || vpInfo?.group || 'aqueous';
     const entry = {

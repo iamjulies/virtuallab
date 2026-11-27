@@ -848,25 +848,7 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
       }
     }
   }
-  if ((moles.Glycine_s || 0) > 2e-8 && T >= 453.15) {
-    const dCond = (moles.Glycine_s / 2) * (1 - Math.exp(-0.55 * dt));
-    if (dCond > 1e-11) {
-      moles.Glycine_s = Math.max(0, moles.Glycine_s - 2 * dCond);
-      if (moles.Glycine_s < 1e-13) delete moles.Glycine_s;
-      moles.Peptide_s = (moles.Peptide_s || 0) + dCond;
-      moles.H2O_l = (moles.H2O_l || 0) + dCond;
-      activeReactions.push({
-        id: 'glycine_polycondense',
-        equation: 'n H₂N–CH₂–COOH —(t°)→ Polypeptide + n H₂O',
-        nameVi: 'Trùng ngưng Glycine tạo liên kết peptide',
-        nameEn: 'Thermal peptide condensation of Glycine',
-        descVi: 'Đun nóng amino acid tách nước hình thành liên kết peptide –CO–NH–.',
-        descEn: 'Dehydration condensation builds peptide bonds between amino acids.',
-        rateMolS: dCond / dt,
-        dXi: dCond,
-      });
-    }
-  }
+  // Glycine polycondensation/decomposition starts at >= 233 °C (506.15 K) via stepThermalPyrolysis (crystalline below 220 °C).
   if (hasWater && (moles.Peptide_aq || 0) > 1e-8 && ((moles.H_aq || 0) > 1e-4 || (moles.OH_aq || 0) > 1e-4) && T >= 343.15) {
     const isAlkPep = (moles.OH_aq || 0) > (moles.H_aq || 0);
     const dPepHyd = Math.min(moles.Peptide_aq, moles.H2O_l) * (1 - Math.exp(-0.48 * dt));
@@ -1145,11 +1127,423 @@ function stepNickelHydrogenation(vessel, dt, activeReactions, gasProduced) {
   return heatJ;
 }
 
+const THERMAL_PYROLYSIS_SPECS = [
+  {
+    id: 'glycerol_acrolein_dehyd',
+    equation: 'C₃H₅(OH)₃ —(270–310 °C)→ CH₂=CH–CHO(g)↑ + 2H₂O(g)↑',
+    nameVi: 'Tách nước Glycerol gần nhiệt độ sôi tạo hơi Acrolein cay mắt',
+    nameEn: 'High-temperature Glycerol dehydration yielding acrid Acrolein vapor',
+    descVi: 'Ở vùng 270–310 °C sát nhiệt độ sôi, một phần Glycerol mất nước tạo khí Acrolein có mùi khét cay mắt.',
+    descEn: 'Near its 290 °C boiling point, Glycerol partially dehydrates into pungent Acrolein vapor and steam.',
+    reactantId: 'C3H5OH_3_l',
+    reactantStoich: 1,
+    products: { CH2CHCHO_g: 1, H2O_g: 2 },
+    minTempK: 543.15,
+    kBase: 0.14,
+  },
+  {
+    id: 'triolein_smoke_acrolein',
+    equation: '(C₁₇H₃₃COO)₃C₃H₅ —(240–350 °C)→ Acrolein↑ + 2 C₁₇H₃₃COOH + Khí hidrocacbon',
+    nameVi: 'Phân hủy điểm khói Triolein (240–350 °C) tạo Acrolein & Oleic acid',
+    nameEn: 'Triolein smoke-point breakdown (240–350 °C) yielding Acrolein & Oleic acid',
+    descVi: 'Trên 240 °C trước khi sôi, khung glycerol của Triolein đứt gãy tạo khói cay Acrolein và acid béo tự do.',
+    descEn: 'Above its 240 °C smoke point, Triolein cleaves into acrid Acrolein fumes, free Oleic acid, and light alkenes.',
+    reactantId: 'C57H104O6_l',
+    reactantStoich: 1,
+    products: { CH2CHCHO_g: 1, C17H33COOH_l: 2, H2O_g: 1, C2H4_g: 6, C6H6_g: 1 },
+    minTempK: 513.15,
+    maxTempK: 623.15,
+    kBase: 0.52,
+  },
+  {
+    id: 'triolein_cracking',
+    equation: 'Triolein —(>350 °C)→ C(muội) + CH₄↑ + C₂H₄↑ + CO↑ + CO₂↑ + H₂O↑',
+    nameVi: 'Cracking bẻ mạch Triolein (>350 °C) sinh khí cháy & muội than đen',
+    nameEn: 'Thermal cracking of Triolein (>350 °C) into flammable gases & carbon soot',
+    descVi: 'Trên 350 °C mạch hidrocacbon dài của Triolein gãy hoàn toàn thành khí dễ cháy và cặn carbon đen.',
+    descEn: 'Above 350 °C Triolein chains crack completely into light hydrocarbons, CO/CO₂, and black carbon soot.',
+    reactantId: 'C57H104O6_l',
+    reactantStoich: 1,
+    products: { C_s: 21, CO2_g: 2, CO_g: 1, H2O_g: 1, C2H4_g: 9, CH4_g: 15, H2_g: 3 },
+    minTempK: 623.15,
+    kBase: 1.05,
+  },
+  {
+    id: 'oleic_cracking',
+    equation: '2 C₁₇H₃₃COOH —(>350 °C)→ 12 C(muội) + C₂H₄↑ + CH₄↑ + CO/CO₂↑ + H₂O↑',
+    nameVi: 'Cracking nhiệt Oleic acid (>350 °C) tạo khí cháy & muội than C',
+    nameEn: 'Thermal cracking of Oleic acid (>350 °C) yielding light gases & carbon soot',
+    descVi: 'Acid béo mạch dài bẻ mạch trên 350 °C tạo hỗn hợp khí CH₄, C₂H₄, CO, CO₂ và cặn than C.',
+    descEn: 'Above 350 °C Oleic acid undergoes C–C cracking to light combustible gases and soot.',
+    reactantId: 'C17H33COOH_l',
+    reactantStoich: 2,
+    products: { C_s: 12, CO2_g: 1, CO_g: 1, H2O_g: 1, C2H4_g: 6, CH4_g: 10, H2_g: 1 },
+    minTempK: 623.15,
+    kBase: 1.05,
+  },
+  {
+    id: 'fructose_caramelize',
+    equation: '2 C₆H₁₂O₆ (Fructose) —(≥110 °C)→ C₁₂H₁₈O₉ (Caramel) + 3H₂O(g)↑',
+    nameVi: 'Caramen hóa Fructose sớm (≥110 °C) tách nước hóa vàng nâu',
+    nameEn: 'Early Fructose caramelization (≥110 °C) with dehydration',
+    descVi: 'Fructose nóng chảy (~103 °C) và caramen hóa sớm nhất ở ≥110 °C, ngả vàng nâu và tách hơi nước.',
+    descEn: 'Fructose melts (~103 °C) and caramelizes earliest above 110 °C, browning and releasing steam.',
+    reactantId: 'Fructose_s',
+    reactantStoich: 2,
+    products: { Caramel_s: 1, H2O_g: 3 },
+    minTempK: 383.15,
+    kBase: 0.75,
+  },
+  {
+    id: 'glucose_caramelize',
+    equation: '2 C₆H₁₂O₆ (Glucose) —(≥160 °C)→ C₁₂H₁₈O₉ (Caramel) + 3H₂O(g)↑',
+    nameVi: 'Caramen hóa Glucose (≥160 °C) hóa hổ phách nâu & tách nước',
+    nameEn: 'Glucose caramelization (≥160 °C) yielding amber Caramel + H₂O↑',
+    descVi: 'Sau khi nóng chảy quanh 146 °C, Glucose caramen hóa mạnh từ 160 °C thành hỗn hợp caramel nâu thơm.',
+    descEn: 'After melting near 146 °C, Glucose dehydrates cleanly at ≥160 °C into amber caramel.',
+    reactantId: 'Glucose_s',
+    reactantStoich: 2,
+    products: { Caramel_s: 1, H2O_g: 3 },
+    minTempK: 433.15,
+    kBase: 0.78,
+  },
+  {
+    id: 'sucrose_invert_caramel',
+    equation: '2 C₁₂H₂₂O₁₁ (Sucrose) —(160–170 °C)→ Caramel + Glucose + Fructose + H₂O↑',
+    nameVi: 'Nóng chảy & nghịch đảo Sucrose (160–170 °C) trước caramen hóa',
+    nameEn: 'Sucrose thermal inversion & early caramelization (160–170 °C)',
+    descVi: 'Quanh 160–186 °C Sucrose tách thành Glucose + Fructose và bắt đầu chuyển thành Caramel nâu.',
+    descEn: 'Around 160–186 °C Sucrose splits into Glucose/Fructose mixtures as caramelization begins.',
+    reactantId: 'Sucrose_s',
+    reactantStoich: 2,
+    products: { Caramel_s: 1, Glucose_s: 1, Fructose_s: 1, H2O_g: 1 },
+    minTempK: 433.15,
+    maxTempK: 443.15,
+    kBase: 0.55,
+  },
+  {
+    id: 'sucrose_caramelize',
+    equation: 'C₁₂H₂₂O₁₁ (Sucrose) —(≥170 °C)→ C₁₂H₁₈O₉ (Caramel) + 2H₂O(g)↑',
+    nameVi: 'Caramen hóa mạnh Sucrose (≥170 °C) tạo Caramel nâu & H₂O↑',
+    nameEn: 'Rapid Sucrose caramelization (≥170 °C) forming brown Caramel + steam',
+    descVi: 'Ở 170–200 °C Sucrose tách nước mạnh thành siro/khối Caramel màu hổ phách đậm.',
+    descEn: 'Above 170 °C Sucrose caramelizes rapidly with vigorous dehydration to dark amber Caramel.',
+    reactantId: 'Sucrose_s',
+    reactantStoich: 1,
+    products: { Caramel_s: 1, H2O_g: 2 },
+    minTempK: 443.15,
+    kBase: 0.88,
+  },
+  {
+    id: 'starch_dextrinize',
+    equation: '(C₆H₁₀O₅)ₙ (Tinh bột) —(≥220 °C)→ Dextrin (vàng nâu)',
+    nameVi: 'Dextrin hóa Tinh bột không nóng chảy (≥220 °C) hóa vàng nâu',
+    nameEn: 'Solid-state Starch dextrinization (≥220 °C) turning yellow-brown',
+    descVi: 'Tinh bột không nóng chảy mà đứt mạch glycoside ở 220–250 °C thành Dextrin màu vàng nâu.',
+    descEn: 'Without melting, Starch cleaves glycosidic bonds at 220–250 °C forming golden-brown Dextrin.',
+    reactantId: 'Starch_s',
+    reactantStoich: 1,
+    products: { Dextrin_s: 1 },
+    minTempK: 493.15,
+    kBase: 0.85,
+  },
+  {
+    id: 'caramel_pyrolysis',
+    equation: 'C₁₂H₁₈O₉ (Caramel) —(≥250 °C)→ 7C(s) + 4H₂O↑ + CO₂↑ + CO↑ + CH₃COOH↑ + CH₄↑ + H₂↑',
+    nameVi: 'Nhiệt phân & than hóa Caramel (≥250 °C) tạo bọt than C đen & khí',
+    nameEn: 'Caramel pyrolysis & charring (≥250 °C) yielding porous C_s + volatiles',
+    descVi: 'Trên 250 °C đường caramen sủi bọt phồng xốp thành than đen C và giải phóng H₂O, CO₂, CO, CH₃COOH, CH₄.',
+    descEn: 'Above 250 °C caramelized sugar foams vigorously into black char and CO/CO₂/AcOH/CH₄ gases.',
+    reactantId: 'Caramel_s',
+    reactantStoich: 1,
+    products: { C_s: 7, CH3COOH_g: 1, CO2_g: 1, CO_g: 1, H2O_g: 4, CH4_g: 1, H2_g: 1 },
+    minTempK: 523.15,
+    kBase: 0.95,
+  },
+  {
+    id: 'dextrin_pyrolysis',
+    equation: '2 Dextrin —(≥250 °C)→ 7C(s) + 5H₂O↑ + CO₂↑ + CO↑ + CH₃COOH↑ + CH₄↑ + H₂↑',
+    nameVi: 'Than hóa Dextrin / Tinh bột (≥250 °C) tạo cặn carbon C đen & khí',
+    nameEn: 'Dextrin / Starch carbonization (≥250 °C) yielding carbon char + volatiles',
+    descVi: 'Dextrin từ Tinh bột nhiệt phân mạnh ở 250–350 °C tạo bọt than xốp C và hơi acid acetic, CO, CO₂.',
+    descEn: 'Dextrin pyrolyzes above 250 °C into black carbon char plus steam, acetic acid vapor, CO, and CO₂.',
+    reactantId: 'Dextrin_s',
+    reactantStoich: 2,
+    products: { C_s: 7, CH3COOH_g: 1, CO2_g: 1, CO_g: 1, H2O_g: 5, CH4_g: 1, H2_g: 1 },
+    minTempK: 523.15,
+    kBase: 0.95,
+  },
+  {
+    id: 'cellulose_pyrolysis',
+    equation: '2 (C₆H₁₀O₅)ₙ (Cellulose) —(≥280–350 °C)→ 8C(s) + CO₂↑ + 2CO↑ + 6H₂O↑ + CH₄↑ + 2H₂↑',
+    nameVi: 'Nhiệt phân sợi Cellulose (≥280–350 °C) tạo than xốp C & khí cháy',
+    nameEn: 'Cellulose fiber pyrolysis (≥280–350 °C) yielding porous char & syngas',
+    descVi: 'Cellulose bền nhất trong 5 carbohydrate (ổn định tới ~270 °C), chỉ đứt mạch mạnh từ 280–350 °C thành than C và CO, CH₄, H₂, CO₂, H₂O.',
+    descEn: 'Cellulose stays intact until ~270–280 °C, then thermally depolymerizes around 350 °C into char and CO/CH₄/H₂.',
+    reactantId: 'Cellulose_s',
+    reactantStoich: 2,
+    products: { C_s: 8, CO2_g: 1, CO_g: 2, H2O_g: 6, CH4_g: 1, H2_g: 2 },
+    minTempK: 553.15,
+    kBase: 0.32,
+    hotBoostTempK: 613.15,
+    hotBoostMult: 3.2,
+  },
+  {
+    id: 'glycine_polycondense',
+    equation: '2 H₂N–CH₂–COOH —(≥233 °C)→ Polypeptide(s) + H₂O(g)↑',
+    nameVi: 'Ngưng tụ nhiệt Glycine (233–260 °C) tách nước tạo vòng/chuỗi DKP–Peptide',
+    nameEn: 'Glycine melt polycondensation (233–260 °C) to Peptide/DKP + steam',
+    descVi: 'Glycine bền tinh thể dưới 220 °C; ở 233–260 °C vừa nóng chảy vừa trùng ngưng sủi bọt tạo vòng DKP/peptide và hơi nước.',
+    descEn: 'Crystalline below 220 °C, Glycine decomposes upon melting (233–260 °C) forming DKP/peptide condensates and steam.',
+    reactantId: 'Glycine_s',
+    reactantStoich: 2,
+    products: { Peptide_s: 1, H2O_g: 1 },
+    minTempK: 506.15,
+    kBase: 0.65,
+  },
+  {
+    id: 'glycine_decarboxylation',
+    equation: 'H₂N–CH₂–COOH —(≥233 °C)→ CH₃NH₂(g)↑ + CO₂(g)↑',
+    nameVi: 'Decarboxyl hóa Glycine (233–260 °C) giải phóng Methylamine & CO₂↑',
+    nameEn: 'Glycine thermal decarboxylation (233–260 °C) into CH₃NH₂↑ + CO₂↑',
+    descVi: 'Nhóm –COOH của Glycine tách thành CO₂ giải phóng khí Methylamine và gây sủi bọt mạnh.',
+    descEn: 'Thermal decarboxylation cleaves Glycine cleanly into Methylamine and Carbon dioxide gas.',
+    reactantId: 'Glycine_s',
+    reactantStoich: 1,
+    products: { CH3NH2_g: 1, CO2_g: 1 },
+    minTempK: 506.15,
+    kBase: 0.60,
+  },
+  {
+    id: 'glycine_deaminate',
+    equation: '2 H₂N–CH₂–COOH —(≥233 °C)→ 2NH₃(g)↑ + 2CO₂(g)↑ + C₂H₄(g)↑',
+    nameVi: 'Khử amin nhiệt Glycine giải phóng NH₃↑ & CO₂↑',
+    nameEn: 'Thermal deamination of Glycine releasing NH₃↑ and CO₂↑',
+    descVi: 'Quá trình phân hủy nóng chảy đồng thời giải phóng mạnh khí NH₃ khai hăng cùng CO₂.',
+    descEn: 'Concurrent deamination releases pungent Ammonia gas alongside Carbon dioxide.',
+    reactantId: 'Glycine_s',
+    reactantStoich: 2,
+    products: { NH3_g: 2, CO2_g: 2, C2H4_g: 1 },
+    minTempK: 506.15,
+    kBase: 0.45,
+  },
+  {
+    id: 'peptide_char_decomp',
+    equation: '2 Peptide(s) —(260–500 °C)→ 2 C₃N (Than N) + HCN↑ + NH₃↑ + CO↑ + 5H₂O↑ + H₂↑',
+    nameVi: 'Phân hủy vòng ngưng tụ Peptide (260–500 °C) sinh HCN↑, NH₃↑, CO↑ & nhựa than đen',
+    nameEn: 'DKP / Peptide pyrolysis (260–500 °C) releasing HCN↑, NH₃↑, CO↑ & N-char',
+    descVi: 'Từ 260–500 °C các vòng DKP và mạch peptide đứt gãy tạo bọt than giàu nitơ và giải phóng khí CO, NH₃, HCN độc.',
+    descEn: 'From 260–500 °C DKP rings and peptides decompose into porous N-doped black char plus toxic HCN, NH₃, and CO.',
+    reactantId: 'Peptide_s',
+    reactantStoich: 2,
+    products: { CharN_s: 2, HCN_g: 1, NH3_g: 1, CO_g: 1, H2O_g: 5, H2_g: 1 },
+    minTempK: 533.15,
+    kBase: 0.85,
+  },
+  {
+    id: 'char_n_denitro',
+    equation: '2 C₃N (Than N) —(900–1,500 °C, khí trơ)→ 6C(s) + N₂(g)↑',
+    nameVi: 'Khử nitơ than hóa sâu (900–1,500 °C, khí trơ) tạo khung Carbon xốp C',
+    nameEn: 'High-T N-doped char denitrogenation (900–1,500 °C, inert) → C_s + N₂↑',
+    descVi: 'Trong khí trơ ở 900–1,500 °C, nguyên tử N thoát dần dạng N₂↑ để lại khung vật liệu carbon xốp tinh khiết.',
+    descEn: 'Between 900 and 1,500 °C in inert gas, residual nitrogen evolves as N₂ leaving conductive porous carbon.',
+    reactantId: 'CharN_s',
+    reactantStoich: 2,
+    products: { C_s: 6, N2_g: 1 },
+    minTempK: 1173.15,
+    requiresNoO2: true,
+    kBase: 0.92,
+  },
+  {
+    id: 'char_n_combust',
+    equation: '2 C₃N (Than N) + 7O₂(g) —(≥450 °C)→ 6CO₂(g)↑ + 2NO(g)↑',
+    nameVi: 'Đốt cháy hoàn toàn bọt than chứa Nitơ (≥450 °C trong không khí)',
+    nameEn: 'Complete air combustion of N-doped char (≥450 °C) → CO₂↑ + NO↑',
+    descVi: 'Trong không khí có O₂ từ 450–650 °C, than pha tạp nitơ cháy hết thành khí CO₂ và N₂/NO không còn cặn.',
+    descEn: 'In air above 450 °C, nitrogenous char oxidizes completely to CO₂ and nitrogen oxides leaving zero ash.',
+    reactantId: 'CharN_s',
+    reactantStoich: 2,
+    products: { CO2_g: 6, NO_g: 2 },
+    o2Stoich: 7,
+    heatPerXi: 2450000,
+    minTempK: 723.15,
+    kBase: 1.05,
+  },
+  {
+    id: 'albumin_s_browning',
+    equation: 'Albumin(s) —(150–220 °C)→ Albumin (vàng nâu) + H₂S(g)↑ + NH₃(g)↑ + H₂O(g)↑',
+    nameVi: 'Biến màu vàng nâu Albumin khô (150–220 °C) đứt cầu disulfide tách H₂S↑, NH₃↑',
+    nameEn: 'Albumin thermal browning & disulfide scission (150–220 °C) releasing H₂S↑, NH₃↑',
+    descVi: 'Ở 150–220 °C khối protein khô cứng ngả vàng nâu, tách nước liên kết và bắt đầu thoát vết H₂S mùi trứng thối + NH₃.',
+    descEn: 'At 150–220 °C dry Albumin browns and loses bound water while releasing trace rotten-egg H₂S and NH₃.',
+    reactantId: 'Albumin_s',
+    reactantStoich: 1,
+    products: { AlbuminBrown_s: 1, H2S_g: 1, NH3_g: 1, H2O_g: 1 },
+    minTempK: 423.15,
+    kBase: 0.72,
+  },
+  {
+    id: 'albumin_coag_browning',
+    equation: 'Albumin↓ —(150–220 °C)→ Albumin (vàng nâu) + H₂S(g)↑ + NH₃(g)↑ + H₂O(g)↑',
+    nameVi: 'Biến màu vàng nâu Albumin đông tụ (150–220 °C) tách H₂S↑, NH₃↑',
+    nameEn: 'Coagulated Albumin thermal browning (150–220 °C) releasing H₂S↑, NH₃↑',
+    descVi: 'Protein đông tụ mất nước ngả vàng nâu từ 150 °C kèm đứt cầu nối –S–S– giải phóng H₂S và NH₃.',
+    descEn: 'Coagulated protein dehydrates to golden-brown at 150–220 °C releasing H₂S and NH₃.',
+    reactantId: 'AlbuminCoagulated_s',
+    reactantStoich: 1,
+    products: { AlbuminBrown_s: 1, H2S_g: 1, NH3_g: 1, H2O_g: 1 },
+    minTempK: 423.15,
+    kBase: 0.72,
+  },
+  {
+    id: 'albumin_brown_pyrolysis',
+    equation: '2 Albumin (vàng nâu) —(220–450 °C)→ Than N,S + 8C(s) + NH₃↑ + H₂S↑ + HCN↑ + CO₂/CO↑ + CH₄↑',
+    nameVi: 'Đứt gãy mạch polypeptide Albumin (220–450 °C) mùi khét sừng cháy & bọt than đen',
+    nameEn: 'Albumin polypeptide pyrolysis (220–450 °C) yielding burnt-hair volatiles & black char',
+    descVi: 'Nhiệt phân chính quanh 300–350 °C bẻ gãy hàng loạt liên kết peptide giải phóng NH₃, CO₂, CO, H₂S, HCN, CH₄ và tạo cặn than bọt.',
+    descEn: 'Peaking at 300–350 °C, peptide backbone cleavage releases NH₃, H₂S, HCN, CO, CO₂, CH₄ leaving carbonaceous char.',
+    reactantId: 'AlbuminBrown_s',
+    reactantStoich: 2,
+    products: { CharNS_s: 1, C_s: 8, H2S_g: 1, HCN_g: 2, NH3_g: 2, CO2_g: 2, CO_g: 2, H2O_g: 4, CH4_g: 4, H2_g: 2 },
+    minTempK: 493.15,
+    kBase: 0.48,
+    hotBoostTempK: 573.15,
+    hotBoostMult: 2.3,
+  },
+  {
+    id: 'char_ns_desulfur_denitro',
+    equation: 'C₆N₂S (Than N,S) —(1,000–1,500 °C, khí trơ)→ 6C(s) + N₂(g)↑ + S(g)↑',
+    nameVi: 'Thoát hết S và N ở 1,000–1,500 °C (khí trơ) giữ lại khung Carbon bán graphit',
+    nameEn: 'High-T N,S-char graphitization (1,000–1,500 °C, inert) → C_s + N₂↑ + S↑',
+    descVi: 'Trong khí trơ ở 1,000–1,500 °C, lưu huỳnh và nitơ thoát hết để lại khung carbon bán graphit xốp bền nhiệt.',
+    descEn: 'At 1,000–1,500 °C in inert gas, sulfur and nitrogen strip completely leaving a pure porous carbon skeleton.',
+    reactantId: 'CharNS_s',
+    reactantStoich: 1,
+    products: { C_s: 6, N2_g: 1, S_g: 1 },
+    minTempK: 1273.15,
+    requiresNoO2: true,
+    kBase: 0.92,
+  },
+  {
+    id: 'char_ns_combust',
+    equation: 'C₆N₂S (Than N,S) + 8O₂(g) —(≥500 °C)→ 6CO₂(g)↑ + 2NO(g)↑ + SO₂(g)↑',
+    nameVi: 'Đốt cháy sạch bọt than Albumin (≥500 °C trong không khí) → CO₂ + NO + SO₂',
+    nameEn: 'Air combustion of N,S-doped protein char (≥500 °C) → CO₂↑ + NO↑ + SO₂↑',
+    descVi: 'Trong không khí có O₂ từ 500–700 °C, toàn bộ phần hữu cơ/than protein cháy sạch thành CO₂, NO và SO₂.',
+    descEn: 'In air above 500 °C, N,S-doped protein char burns completely into CO₂, NO, and SO₂ gases.',
+    reactantId: 'CharNS_s',
+    reactantStoich: 1,
+    products: { CO2_g: 6, NO_g: 2, SO2_g: 1 },
+    o2Stoich: 8,
+    heatPerXi: 2800000,
+    minTempK: 773.15,
+    kBase: 1.05,
+  },
+];
+
+function stepThermalPyrolysis(vessel, dt, activeReactions, gasProduced, getMolFn, options = {}) {
+  if (!vessel || vessel.isFrozenSolid || dt <= 0) return 0;
+  const moles = vessel.moles;
+  const T = vessel.tempK || CONSTANTS.T_STD_K;
+  const gasOut = gasProduced || vessel.headspaceGasMoles;
+  let o2Avail = getMolFn('O2_g') || 0;
+  let heatJ = 0;
+
+  for (const spc of THERMAL_PYROLYSIS_SPECS) {
+    if (T < spc.minTempK || (spc.maxTempK && T >= spc.maxTempK)) continue;
+    const avail = moles[spc.reactantId] || 0;
+    if (avail <= 1e-10) continue;
+    if (spc.requiresNoO2 && o2Avail > 1e-8) continue;
+    if (spc.o2Stoich > 0 && o2Avail <= 1e-9) continue;
+
+    let effK = spc.kBase;
+    if (spc.hotBoostTempK && T >= spc.hotBoostTempK) {
+      effK *= spc.hotBoostMult || 2.0;
+    }
+    const maxXiReact = avail / spc.reactantStoich;
+    let dXi = maxXiReact * (1 - Math.exp(-effK * dt));
+    if (spc.o2Stoich > 0) {
+      dXi = Math.min(dXi, o2Avail / spc.o2Stoich);
+    }
+    if (dXi <= 1e-12) continue;
+
+    const usedR = spc.reactantStoich * dXi;
+    moles[spc.reactantId] = Math.max(0, avail - usedR);
+    if (moles[spc.reactantId] < 1e-13) delete moles[spc.reactantId];
+
+    if (spc.o2Stoich > 0) {
+      const o2Used = spc.o2Stoich * dXi;
+      consumeO2Pool(vessel, o2Used, options.environment);
+      o2Avail = Math.max(0, o2Avail - o2Used);
+    }
+
+    for (const [pId, pSt] of Object.entries(spc.products)) {
+      const addM = pSt * dXi;
+      if (addM <= 0) continue;
+      if (SPECIES[pId]?.phase === 'g') {
+        gasOut[pId] = (gasOut[pId] || 0) + addM;
+      } else {
+        moles[pId] = (moles[pId] || 0) + addM;
+        if (pId === 'C_s' || pId === 'CharN_s' || pId === 'CharNS_s') {
+          if (!vessel.particleCounts) vessel.particleCounts = {};
+          vessel.particleCounts[pId] = Math.max(vessel.particleCounts[pId] || 0, 260);
+        }
+      }
+    }
+
+    if (spc.heatPerXi) heatJ += spc.heatPerXi * dXi;
+    const emitsGas = Object.keys(spc.products).some((pId) => SPECIES[pId]?.phase === 'g');
+    activeReactions.push({
+      id: spc.id,
+      equation: spc.equation,
+      nameVi: spc.nameVi,
+      nameEn: spc.nameEn,
+      descVi: spc.descVi,
+      descEn: spc.descEn,
+      rateMolS: dXi / dt,
+      vigorousGas: emitsGas,
+      dXi,
+    });
+  }
+
+  // Amorphous Carbon soot / charcoal glowing combustion in O2 (>= 400 °C)
+  const nCarbon = moles.C_s || 0;
+  if (nCarbon > 1e-10 && T >= 673.15 && o2Avail > 1e-9) {
+    const sufficientO2 = o2Avail >= nCarbon * 0.65;
+    const o2Stoich = sufficientO2 ? 1 : 0.5;
+    const dBurn = Math.min(nCarbon, o2Avail / o2Stoich, nCarbon * (1 - Math.exp(-1.12 * dt)));
+    if (dBurn > 1e-12) {
+      moles.C_s = Math.max(0, nCarbon - dBurn);
+      if (moles.C_s < 1e-13) delete moles.C_s;
+      const o2Used = dBurn * o2Stoich;
+      consumeO2Pool(vessel, o2Used, options.environment);
+      o2Avail = Math.max(0, o2Avail - o2Used);
+      const gasKey = sufficientO2 ? 'CO2_g' : 'CO_g';
+      gasOut[gasKey] = (gasOut[gasKey] || 0) + dBurn;
+      heatJ += dBurn * (sufficientO2 ? 393500 : 110500);
+      activeReactions.push({
+        id: sufficientO2 ? 'carbon_char_combust_co2' : 'carbon_char_combust_co',
+        equation: sufficientO2 ? 'C(r) + O₂(g) —(≥400 °C)→ CO₂(g)↑' : '2C(r) + O₂(g) —(thiếu O₂)→ 2CO(g)↑',
+        nameVi: sufficientO2 ? 'Đốt cháy hoàn toàn than C rực đỏ (≥400 °C) → CO₂↑' : 'Đốt cháy thiếu O₂ muội than C → CO↑',
+        nameEn: sufficientO2 ? 'Glowing combustion of Carbon char (≥400 °C) → CO₂↑' : 'O₂-limited Carbon char combustion → CO↑',
+        descVi: sufficientO2 ? 'Lớp muội than đen bốc cháy rực trong O₂ tạo khí CO₂ không để lại cặn.' : 'Trong môi trường thiếu Oxygen, than cháy tạo khí CO.',
+        descEn: sufficientO2 ? 'Incandescent carbon char oxidizes completely in air leaving zero solid ash.' : 'Oxygen-starved char oxidation produces Carbon monoxide.',
+        rateMolS: dBurn / dt,
+        vigorousGas: true,
+        dXi: dBurn,
+      });
+    }
+  }
+
+  return heatJ;
+}
+
 /**
  * Combined entry point for property-driven organic chemistry inside stepVesselChemistry.
  */
 export function stepPropertyDrivenOrganic(vessel, strat, liquidVolL, dt, activeReactions, gasProduced, getMolFn, options = {}) {
   let heatJ = 0;
+  heatJ += stepThermalPyrolysis(vessel, dt, activeReactions, gasProduced, getMolFn, options);
   heatJ += stepGeneralOrganicCombustion(vessel, dt, activeReactions, gasProduced, getMolFn, options);
   heatJ += stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeReactions, { ...options, gasProduced });
   heatJ += stepNickelHydrogenation(vessel, dt, activeReactions, gasProduced);

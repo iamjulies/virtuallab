@@ -422,6 +422,7 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     if (T < effMinTempK) return 0;
     if (rxn.maxTempK && T >= rxn.maxTempK) return 0;
     if (rxn.requiresInertOrVacuum && env?.atmosphereMode !== 'inert' && !isVacuum && getVesselEffectiveO2Bar(vessel, env) > 0.03) return 0;
+    if (rxn.requiresAirO2 && getVesselEffectiveO2Bar(vessel, env) <= 0.02) return 0;
     if (rxn.id === 'na2o_inert_disprop' && env?.atmosphereMode !== 'inert' && !isVacuum) return 0;
     let minExtent = Infinity;
     for (const [spId, stoich] of Object.entries(rxn.reactants)) {
@@ -1298,6 +1299,41 @@ function computeReactionRate(rxn, vessel, liquidVolL, options = {}) {
     const o2Drive = Math.min(3.5, pO2 / CONSTANTS.AIR_O2_FRAC);
     const k = rxn.k298 * arrheniusFactor(rxn.eaJ || 22000, T);
     return (nFeOH2 / 4) * k * o2Drive * (vessel.stirTimer > 0 ? 2.4 : 1.0) * iceMob;
+  }
+
+  if (rxn.type === 'thermal_gas_decomp') {
+    const gasId = rxn.gasId || Object.keys(rxn.reactants)[0];
+    const stoich = rxn.reactants[gasId] || 1;
+    const nGas = vessel.headspaceGasMoles?.[gasId] || 0;
+    if (nGas <= 1e-10) return 0;
+    const minT = rxn.minTempK || 973.15;
+    if (T < minT) return 0;
+    if (rxn.maxTempK && T >= rxn.maxTempK) return 0;
+    const k = (rxn.kAtThreshold || 0.75) * arrheniusFactor(rxn.eaJ || 42000, T - minT + CONSTANTS.T_STD_K);
+    return (nGas / stoich) * k;
+  }
+
+  if (rxn.type === 'dry_gas_solid') {
+    if (rxn.requiresDry && ((hasWater && (moles.H2O_l || 0) > 1e-4) || (moles.H2O_s || 0) > 1e-4)) return 0;
+    const solidId = rxn.solidId;
+    const gasId = rxn.gasId;
+    const nS = moles[solidId] || 0;
+    const nG = vessel.headspaceGasMoles?.[gasId] || 0;
+    if (nS <= 1e-10 || nG <= 1e-10) return 0;
+    const minT = rxn.minTempK || 273.15;
+    if (T < minT) return 0;
+    if (rxn.maxTempK && T >= rxn.maxTempK) return 0;
+    const k = (rxn.k298 || 0.5) * arrheniusFactor(rxn.eaJ || 18000, T);
+    return Math.min(nS / (rxn.reactants[solidId] || 1), nG / (rxn.reactants[gasId] || 1)) * k;
+  }
+
+  if (rxn.type === 'gas_headspace_ox') {
+    if (rxn.maxTempK && T >= rxn.maxTempK) return 0;
+    const nNO = vessel.headspaceGasMoles?.NO_g || 0;
+    const o2Avail = getReactantAvailableMol(vessel, 'O2_g', env);
+    if (nNO <= 1e-10 || o2Avail <= 1e-10) return 0;
+    const k = (rxn.k298 || 2.5) * arrheniusFactor(rxn.eaJ || 0, T);
+    return Math.min(nNO / 2, o2Avail) * k;
   }
 
   return 0;
@@ -3501,8 +3537,8 @@ export function stepVesselChemistry(vessel, dt, options = {}) {
   } else if (vessel.calcinationStats && (vessel.lidState === 'closed' || atmMode === 'inert')) {
     vessel.calcinationStats.cooledProtected = true;
   }
-  const hasDryNa = (vessel.moles.Na_s || 0) > 1e-7 && (vessel.moles.H2O_l || 0) < 1e-4;
-  const hasDryK = (vessel.moles.K_s || 0) > 1e-7 && (vessel.moles.H2O_l || 0) < 1e-4;
+  const hasDryNa = (vessel.moles.Na_s || 0) > 1e-7 && (vessel.moles.H2O_l || 0) < 1e-4 && (vessel.tempK || 298) < 1156.15;
+  const hasDryK = (vessel.moles.K_s || 0) > 1e-7 && (vessel.moles.H2O_l || 0) < 1e-4 && (vessel.tempK || 298) < 1032.15;
   const isOiled = strat.hasLightCover || (strat.lightOrganicMl || 0) > 0.05;
   if (atmMode === 'air' && !vessel.isStoppered && hasDryNa && !isOiled) {
     vessel.naTarnishFrac = Math.min(1.0, (vessel.naTarnishFrac || 0) + 0.14 * dt);

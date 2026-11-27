@@ -42,7 +42,26 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
     const poolTop = bottom - meltH;
     let baseCol = moltenPrimary.sp.moltenColor || moltenPrimary.sp.color || '#f1f5f9';
     let botCol = moltenPrimary.sp.highlightColor || baseCol;
-    if (moltenPrimary.sp.id === 'S_s') {
+    if (
+      moltenPrimary.sp.id === 'Caramel_s' ||
+      moltenPrimary.sp.id === 'Fructose_s' ||
+      moltenPrimary.sp.id === 'Glucose_s' ||
+      moltenPrimary.sp.id === 'Sucrose_s'
+    ) {
+      if (vessel.tempK >= 493.15) {
+        baseCol = '#451a03';
+        botCol = '#1c1917';
+      } else if (vessel.tempK >= 433.15 || moltenPrimary.sp.id === 'Caramel_s') {
+        baseCol = '#92400e';
+        botCol = '#78350f';
+      } else if (vessel.tempK >= 383.15) {
+        baseCol = '#d97706';
+        botCol = '#b45309';
+      } else {
+        baseCol = '#fef3c7';
+        botCol = '#fde68a';
+      }
+    } else if (moltenPrimary.sp.id === 'S_s') {
       // Sulfur melt thermochromism + polymerization viscosity shift (~160-200 C darkens & thickens dramatically)
       if (vessel.tempK >= 493.15) {
         baseCol = '#7c2d12';

@@ -1517,13 +1517,15 @@ export function stepOpenGasBuoyancy(vessel, env, dt) {
     const flushMol = (vessel.gasFlushInMol || 0) + (vessel._stepGasOutMol || 0);
     vessel.gasFlushInMol = 0;
     vessel._stepGasOutMol = 0;
+    const isOpenWideDish = (vSpecB?.shape === 'crucible' || vSpecB?.shape === 'evap_dish') && !vessel.isStoppered && !isClosedLid;
+    const minAirFloor = isOpenWideDish ? 0.30 : 0;
     if (flushMol > 1e-8) {
       const purgeK = Math.min(3.5, (flushMol / Math.max(1e-4, dt)) * 1150);
-      vessel.airO2PurgeFrac = Math.max(0, (vessel.airO2PurgeFrac ?? 1.0) * Math.exp(-purgeK * dt));
+      vessel.airO2PurgeFrac = Math.max(minAirFloor, (vessel.airO2PurgeFrac ?? 1.0) * Math.exp(-purgeK * dt));
     } else if (!vessel.isStoppered && !isClosedLid) {
       // Passive air diffusion gently restores ~21% O2 when gas flow ceases in open air
       const prevF = vessel.airO2PurgeFrac ?? 1.0;
-      vessel.airO2PurgeFrac = Math.min(1.0, prevF + (1.0 - prevF) * (1 - Math.exp(-0.12 * dt)));
+      vessel.airO2PurgeFrac = Math.min(1.0, Math.max(minAirFloor, prevF + (1.0 - prevF) * (1 - Math.exp(-0.12 * dt))));
     }
   }
 

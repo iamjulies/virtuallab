@@ -2508,7 +2508,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.33';
+      const expectedBuild = 'virlab_beta_v5+build.34';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -11765,6 +11765,162 @@
         'Build 33 invariants (Prompt 93): Multi-sheet OOXML .xlsx engine, sheet-name sanitization/dedup, Liquid/Solid/Gas/Syringe/Thermo/pH/Colorimeter/TLC/Scale extractors, Item & Bench multi-sheet workbooks, and blind exam export security lock',
         compatOk && extractorsOk && openCleanAllowed && blindItemBlocked && blindDoseBlocked,
         `compat=${compatOk}, extract=${extractorsOk}, open=${openCleanAllowed}, blindItem=${blindItemBlocked}, blindDose=${blindDoseBlocked}`
+      );
+    }
+
+    // TEST 231: Prompt 94 (virlab_beta_v5+build.34) — 25–1500 °C Thermal & Pyrolysis Chains (Air vs Inert) for All 10 Substances
+    {
+      function countVesselElements(v, extraGas = {}) {
+        const tot = { C: 0, H: 0, N: 0, O: 0, S: 0, Na: 0 };
+        const addMap = (m) => {
+          for (const [id, n] of Object.entries(m || {})) {
+            if (!Number.isFinite(n) || n <= 0) continue;
+            const a = SPECIES[id]?.atoms;
+            if (!a) continue;
+            for (const el of Object.keys(tot)) {
+              if (a[el]) tot[el] += n * a[el];
+            }
+          }
+        };
+        addMap(v.moles);
+        addMap(v.headspaceGasMoles);
+        addMap(extraGas);
+        return tot;
+      }
+
+      function stepAtTemp(speciesId, initMol, tempC, atmMode, steps = 36, dt = 0.25) {
+        const simT = new LabSimulation();
+        simT.setupPreset('clean');
+        simT.environment.atmosphereMode = atmMode;
+        const v = simT.createApparatus('crucible_porcelain', 250, 420);
+        v.moles = { [speciesId]: initMol };
+        const initElems = countVesselElements(v);
+        for (let s = 0; s < steps; s++) {
+          v.tempK = 273.15 + tempC;
+          simT.step(dt);
+        }
+        const totGas = {};
+        for (const src of [v.headspaceGasMoles, v.escapedGasMoles]) {
+          for (const [gId, gn] of Object.entries(src || {})) {
+            totGas[gId] = (totGas[gId] || 0) + gn;
+          }
+        }
+        const solidMolLeft = Object.entries(v.moles || {}).reduce((acc, [id, n]) => acc + (SPECIES[id]?.phase === 's' ? n : 0), 0);
+        const nanFree = Object.values(v.moles || {}).every(Number.isFinite) && Object.values(totGas).every(Number.isFinite) && Number.isFinite(v.tempK);
+        return { v, totGas, solidMolLeft, initElems, finElems: countVesselElements(v, v.escapedGasMoles), nanFree };
+      }
+
+      // 1) NaNO2: pale melt @ 285 °C (stable), 380 °C NO+NO2, 550 °C inert NaNO3+Na2O+N2, 850 °C Na2O+N2+O2, 1500 °C 0 solid + Na(g) in BOTH air & inert, dry Na2O+CO2/H2O
+      const naMelt = stepAtTemp('NaNO2_s', 0.2, 285, 'inert', 12);
+      const na380 = stepAtTemp('NaNO2_s', 0.2, 380, 'inert', 25);
+      const na550Inert = stepAtTemp('NaNO2_s', 0.2, 550, 'inert', 35);
+      const na850Air = stepAtTemp('NaNO2_s', 0.2, 850, 'air', 40);
+      const na1500Inert = stepAtTemp('NaNO2_s', 0.2, 1500, 'inert', 50);
+      const na1500Air = stepAtTemp('NaNO2_s', 0.2, 1500, 'air', 50);
+
+      // Verify dry Na2O + CO2 / H2O gas-solid trapping into Na2CO3 / NaOH
+      const simDry = new LabSimulation();
+      simDry.setupPreset('clean');
+      const vDry = simDry.createApparatus('crucible_porcelain', 250, 420);
+      vDry.moles = { Na2O_s: 0.1 };
+      vDry.headspaceGasMoles = { CO2_g: 0.05, H2O_g: 0.05 };
+      vDry.tempK = 450;
+      for (let i = 0; i < 15; i++) stepVesselChemistry(vDry, 0.4, { environment: simDry.environment });
+
+      const naNo2Ok =
+        isSolidMoltenAtTemp(SPECIES.NaNO2_s, 273.15 + 285, { NaNO2_s: 0.2 }) &&
+        Math.abs((naMelt.v.moles.NaNO2_s || 0) - 0.2) < 1e-6 &&
+        naMelt.initElems.Na === 0.2 &&
+        Math.abs(na1500Inert.initElems.Na - na1500Inert.finElems.Na) < 1e-4 &&
+        (na380.totGas.NO_g || 0) > 1e-4 &&
+        (na380.totGas.NO2_g || 0) > 1e-4 &&
+        (na550Inert.v.moles.NaNO3_s || 0) > 0.01 &&
+        (na550Inert.totGas.N2_g || 0) > 0.005 &&
+        (na850Air.v.moles.Na2O_s || 0) > 0.05 &&
+        na1500Inert.solidMolLeft < 1e-4 &&
+        na1500Air.solidMolLeft < 1e-4 &&
+        (na1500Inert.totGas.Na_g || 0) > 0.15 &&
+        (vDry.moles.Na2CO3_s || 0) > 0.03 &&
+        (vDry.moles.NaOH_s || 0) > 0.05;
+
+      // 2) Glycerol & Triolein
+      const gly285 = stepAtTemp('C3H5OH_3_l', 0.1, 285, 'inert', 18);
+      const gly1500Air = stepAtTemp('C3H5OH_3_l', 0.1, 1500, 'air', 40);
+      const gly1500Inert = stepAtTemp('C3H5OH_3_l', 0.1, 1500, 'inert', 40);
+      const tri260 = stepAtTemp('C57H104O6_l', 0.05, 260, 'inert', 20);
+      const tri420Inert = stepAtTemp('C57H104O6_l', 0.05, 420, 'inert', 30);
+      const tri1500Inert = stepAtTemp('C57H104O6_l', 0.05, 1500, 'inert', 45);
+      const tri1500Air = stepAtTemp('C57H104O6_l', 0.05, 1500, 'air', 65);
+
+      const lipidOk =
+        Boolean(SPECIES.C3H5OH_3_l.atoms?.C === 3 && SPECIES.C57H104O6_l.noBoil && !SPECIES.C57H104O6_l.vaporSpeciesId) &&
+        (gly285.totGas.CH2CHCHO_g || 0) > 1e-3 &&
+        gly1500Air.solidMolLeft < 1e-6 &&
+        gly1500Inert.solidMolLeft < 1e-6 &&
+        (tri260.totGas.CH2CHCHO_g || 0) > 0.005 &&
+        (tri260.v.moles.C17H33COOH_l || 0) > 0.01 &&
+        (tri420Inert.v.moles.C_s || 0) > 0.5 &&
+        (tri420Inert.totGas.CH4_g || 0) > 0.2 &&
+        (tri1500Inert.v.moles.C_s || 0) > 0.8 &&
+        tri1500Air.solidMolLeft < 1e-4;
+
+      // 3) 5 Carbohydrates (Fructose, Glucose, Sucrose, Starch, Cellulose)
+      const frc120 = stepAtTemp('Fructose_s', 0.1, 120, 'inert', 18);
+      const glc120 = stepAtTemp('Glucose_s', 0.1, 120, 'inert', 18);
+      const st225 = stepAtTemp('Starch_s', 0.1, 225, 'inert', 18);
+      const cel225 = stepAtTemp('Cellulose_s', 0.1, 225, 'inert', 18);
+      const cel360 = stepAtTemp('Cellulose_s', 0.1, 360, 'inert', 35);
+      const carb1500Checks = ['Fructose_s', 'Glucose_s', 'Sucrose_s', 'Starch_s', 'Cellulose_s'].every((id) => {
+        const resI = stepAtTemp(id, 0.1, 1500, 'inert', 45);
+        const resA = stepAtTemp(id, 0.1, 1500, 'air', 65);
+        const cPreservedInert = id === 'Fructose_s' ? Math.abs(resI.initElems.C - resI.finElems.C) < 1e-4 : true;
+        return (resI.v.moles.C_s || 0) > 0.2 && resA.solidMolLeft < 1e-4 && resI.nanFree && resA.nanFree && cPreservedInert;
+      });
+      const carbsOk =
+        (frc120.v.moles.Caramel_s || 0) > 0.01 &&
+        Math.abs((glc120.v.moles.Glucose_s || 0) - 0.1) < 1e-6 &&
+        (st225.v.moles.Dextrin_s || 0) > 0.05 &&
+        Math.abs((cel225.v.moles.Cellulose_s || 0) - 0.1) < 1e-6 &&
+        (cel360.v.moles.C_s || 0) > 0.15 &&
+        (cel360.totGas.CO_g || 0) > 0.05 &&
+        (cel360.totGas.CH4_g || 0) > 0.02 &&
+        carb1500Checks;
+
+      // 4) Glycine & Albumin + HCN_g metadata
+      const gly200 = stepAtTemp('Glycine_s', 0.1, 200, 'inert', 15);
+      const gly245 = stepAtTemp('Glycine_s', 0.1, 245, 'inert', 18);
+      const gly400 = stepAtTemp('Glycine_s', 0.1, 400, 'inert', 35);
+      const gly1500I = stepAtTemp('Glycine_s', 0.1, 1500, 'inert', 55);
+      const gly1500A = stepAtTemp('Glycine_s', 0.1, 1500, 'air', 60);
+
+      const alb180 = stepAtTemp('Albumin_s', 0.05, 180, 'inert', 18);
+      const alb330 = stepAtTemp('Albumin_s', 0.05, 330, 'inert', 35);
+      const alb1500I = stepAtTemp('Albumin_s', 0.05, 1500, 'inert', 55);
+      const alb1500A = stepAtTemp('Albumin_s', 0.05, 1500, 'air', 60);
+
+      const bioOk =
+        Boolean(SPECIES.HCN_g && SPECIES.HCN_g.atoms?.N === 1 && SPECIES.Albumin_s.atoms?.S > 0) &&
+        Math.abs((gly200.v.moles.Glycine_s || 0) - 0.1) < 1e-6 &&
+        (gly245.totGas.CH3NH2_g || 0) > 0.005 &&
+        (gly245.totGas.CO2_g || 0) > 0.005 &&
+        (gly400.totGas.HCN_g || 0) > 0.001 &&
+        (gly1500I.v.moles.C_s || 0) > 0.01 &&
+        (gly1500I.totGas.N2_g || 0) > 0.001 &&
+        gly1500A.solidMolLeft < 1e-4 &&
+        (alb180.v.moles.AlbuminBrown_s || 0) > 0.02 &&
+        (alb180.totGas.H2S_g || 0) > 0.01 &&
+        (alb330.totGas.HCN_g || 0) > 0.005 &&
+        (alb330.totGas.NH3_g || 0) > 0.01 &&
+        (alb1500I.v.moles.C_s || 0) > 0.2 &&
+        (alb1500I.totGas.S_g || 0) > 0.01 &&
+        alb1500A.solidMolLeft < 1e-4 &&
+        gly1500I.nanFree &&
+        alb1500I.nanFree;
+
+      assert(
+        'Build 34 invariants (Prompt 94): Complete 25–1500 °C thermal & pyrolysis chains (air vs inert) for NaNO2, Glycerol, Triolein, 5 Carbohydrates (Fructose/Glucose/Sucrose/Starch/Cellulose), Glycine & Albumin + HCN_g + atom conservation',
+        naNo2Ok && lipidOk && carbsOk && bioOk,
+        `naNo2=${naNo2Ok}, lipid=${lipidOk}, carbs=${carbsOk}, bio=${bioOk}`
       );
     }
 

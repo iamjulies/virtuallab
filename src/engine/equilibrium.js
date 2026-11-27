@@ -1226,7 +1226,7 @@ export function computeVesselAroma(vessel) {
   let nSoapTot = 0;
   let customAroma = null;
 
-  for (const [id, n] of Object.entries(m)) {
+  for (const [id, n] of [...Object.entries(m), ...Object.entries(h)]) {
     if (!Number.isFinite(n) || n <= 1e-10) continue;
     const sp = SPECIES[id];
     if (!sp) continue;

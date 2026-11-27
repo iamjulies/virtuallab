@@ -233,7 +233,7 @@ export function stepOrganicHydrocarbonsPolymers(ctx) {
         }
       }
     }
-    if (getG('CO2_g') > 1e-8 && getG('NH3_g') > 1e-8 && T >= 433.15) {
+    if ((vessel.isStoppered || (vessel.internalPressureBar || 1) >= 2.0) && getG('CO2_g') > 1e-8 && getG('NH3_g') > 1e-8 && T >= 433.15 && T <= 513.15) {
       const dUrea = Math.min(getG('CO2_g'), getG('NH3_g') / 2) * (1 - Math.exp(-0.65 * dt));
       if (dUrea > 1e-11) {
         takeG('CO2_g', dUrea); takeG('NH3_g', 2 * dUrea);
