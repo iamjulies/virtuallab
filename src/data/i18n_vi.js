@@ -1,6 +1,6 @@
 export const I18N_VI = {
   appTitle: 'ChemLab Studio',
-  appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.35',
+  appSubtitle: 'Phòng thí nghiệm Hóa học Tự do — virlab_beta_v5+build.36',
   toastEmptiedApparatus: 'Đã làm sạch hóa chất & khí trong {label}',
   quickThemesTitle: 'Chọn Giao diện (Nhấn giữ Z · Nhả để đóng)',
   quickPresetsHoldTitle: 'Chọn Thí nghiệm mẫu (Nhấn giữ F · Nhả để đóng)',
@@ -270,6 +270,12 @@ export const I18N_VI = {
   reg_glutamic_desc: 'Amino acid tính acid (2 nhóm –COOH, pI = 3.22 · làm đỏ quỳ tím) · Điện di về cực dương (+) ở pH 6.0',
   reg_albumin: 'Albumin (Protein)',
   reg_albumin_desc: 'Protein lòng trắng trứng tan trong nước · Đông tụ khi đun >65 °C/acid/muối nặng, cho màu tím Biuret & vàng Xanthoproteic với HNO₃',
+  reg_keratin: 'Keratin (Protein sợi)',
+  reg_keratin_desc: 'Protein dạng sợi (lông vũ/sừng) chứa cầu disulfua –S–S– · Không tan trong nước; vàng Xanthoproteic với HNO₃, đun kiềm giải phóng NH₃/H₂S/S²⁻ & cháy mùi khét tóc',
+  reg_amylase: 'Enzyme α-Amylase (aq)',
+  reg_amylase_desc: 'Enzyme thủy phân Tinh bột → Maltose tối ưu ở ~37 °C, pH 7 (làm mất màu xanh tím [Tinh bột·I₂]) · Biến tính mất hoàn toàn hoạt tính khi đun > 75 °C',
+  reg_catalase: 'Enzyme Catalase (aq)',
+  reg_catalase_desc: 'Enzyme xúc tác phân hủy cực nhanh 2H₂O₂ → 2H₂O + O₂↑ tối ưu ở ~37 °C, pH 7 · Biến tính bất hoạt vĩnh viễn ở > 75 °C hoặc pH khắc nghiệt',
 
   // Workbench & Actions
   noSelection: 'Chưa chọn dụng cụ',

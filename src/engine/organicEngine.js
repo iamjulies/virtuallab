@@ -878,7 +878,7 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
     }
   }
 
-  // 9. Protein (Albumin) Coagulation (>65 °C, acid/base, heavy metals) & Xanthoproteic HNO3 yellow
+  // 9. Protein (Albumin & Keratin) Tests & Thermal/Alkali Hydrolysis
   const hasConcHno3X = (moles.HNO3_l || 0) > 1e-7 || ((moles.NO3_aq || 0) > 0.01 && cHCur >= 0.8);
   if (hasConcHno3X && ((moles.Albumin_aq || 0) > 1e-9 || (moles.AlbuminCoagulated_s || 0) > 1e-9)) {
     const srcAlb = (moles.Albumin_aq || 0) > 1e-9 ? 'Albumin_aq' : 'AlbuminCoagulated_s';
@@ -932,18 +932,108 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
     }
   }
 
+  // 9b. Keratin (insoluble fibrous disulfide protein): Xanthoproteic HNO3, hot alkali/acid disulfide scission, hot Biuret
+  if ((moles.Keratin_s || 0) > 1e-9) {
+    if (hasConcHno3X) {
+      const nNitK = (moles.HNO3_l || 0) > 1e-7 ? moles.HNO3_l : Math.min(moles.NO3_aq || 0, moles.H_aq || 0);
+      const dKx = Math.min(moles.Keratin_s, nNitK) * (1 - Math.exp(-0.95 * dt));
+      if (dKx > 1e-11) {
+        moles.Keratin_s = Math.max(0, moles.Keratin_s - dKx);
+        if (moles.Keratin_s < 1e-13) delete moles.Keratin_s;
+        if ((moles.HNO3_l || 0) >= dKx) moles.HNO3_l = Math.max(0, moles.HNO3_l - dKx);
+        else {
+          moles.NO3_aq = Math.max(0, moles.NO3_aq - dKx);
+          moles.H_aq = Math.max(0, moles.H_aq - dKx);
+        }
+        moles.KeratinXantho_s = (moles.KeratinXantho_s || 0) + dKx;
+        moles.H2O_l = (moles.H2O_l || 0) + dKx;
+        heatJ += dKx * 38000;
+        activeReactions.push({
+          id: 'keratin_xanthoproteic',
+          equation: 'Keratin(s) + HNO₃ → Keratin–NO₂↓ (vàng Xanthoproteic)',
+          nameVi: 'Phản ứng Xanthoproteic: Sợi Keratin + HNO₃ → hóa vàng',
+          nameEn: 'Xanthoproteic test: Insoluble Keratin fiber + conc. HNO₃ → yellow↓',
+          descVi: 'Sợi Keratin không tan bị nitro hóa trên nhân thơm bởi HNO₃ tạo màu vàng cam đặc trưng.',
+          descEn: 'Nitration of aromatic amino-acid side chains stains insoluble Keratin fibers yellow.',
+          rateMolS: dKx / dt,
+          dXi: dKx,
+        });
+      }
+    } else if (hasWater && T >= 343.15 && (moles.OH_aq || 0) > 1e-3) {
+      // Hot alkaline hydrolysis cuts peptide + disulfide (-S-S-) crosslinks -> Peptide(aq) + Amino acid + S2- + NH3 + H2S
+      const dKerAlk = Math.min(moles.Keratin_s, (moles.OH_aq || 0) / 4) * (1 - Math.exp(-0.38 * dt));
+      if (dKerAlk > 1e-11) {
+        moles.Keratin_s = Math.max(0, moles.Keratin_s - dKerAlk);
+        if (moles.Keratin_s < 1e-13) delete moles.Keratin_s;
+        moles.OH_aq = Math.max(0, moles.OH_aq - 4 * dKerAlk);
+        moles.Peptide_aq = (moles.Peptide_aq || 0) + dKerAlk;
+        moles.Glycine_aq = (moles.Glycine_aq || 0) + dKerAlk;
+        moles.CH3COO_aq = (moles.CH3COO_aq || 0) + 2 * dKerAlk;
+        moles.S2_aq = (moles.S2_aq || 0) + dKerAlk;
+        moles.H2O_l = (moles.H2O_l || 0) + dKerAlk;
+        if (options?.gasProduced) {
+          options.gasProduced.NH3_g = (options.gasProduced.NH3_g || 0) + dKerAlk;
+          options.gasProduced.H2S_g = (options.gasProduced.H2S_g || 0) + dKerAlk;
+        } else {
+          moles.NH3_g = (moles.NH3_g || 0) + dKerAlk;
+          moles.H2S_g = (moles.H2S_g || 0) + dKerAlk;
+        }
+        activeReactions.push({
+          id: 'keratin_alkali_hydrolysis',
+          equation: 'Keratin(s) + 4OH⁻ —(t° ≥ 70 °C)→ Polypeptide + Glycine + S²⁻(aq) + NH₃↑ + H₂S↑',
+          nameVi: 'Thủy phân kiềm nóng Keratin cắt cầu –S–S– giải phóng S²⁻, NH₃↑, H₂S↑',
+          nameEn: 'Hot alkaline Keratin hydrolysis cleaving –S–S– bonds → Peptide + S²⁻ + NH₃↑ + H₂S↑',
+          descVi: 'Đun nóng Keratin trong kiềm phá hủy cầu disulfua sinh ion S²⁻ (tạo CuS↓ đen với Cu²⁺), khí NH₃↑ và Polypeptide cho phản ứng tím Biuret.',
+          descEn: 'Boiling Keratin in alkali ruptures disulfide crosslinks forming sulfide ions (black CuS↓ with Cu²⁺), Ammonia, and Biuret-active Peptides.',
+          rateMolS: dKerAlk / dt,
+          vigorousGas: true,
+          dXi: dKerAlk,
+        });
+      }
+    } else if (hasWater && T >= 343.15 && (moles.H_aq || 0) > 1e-3 && (moles.H2O_l || 0) > 1e-3) {
+      const dKerAc = Math.min(moles.Keratin_s, (moles.H_aq || 0) / 4, (moles.H2O_l || 0) / 2) * (1 - Math.exp(-0.32 * dt));
+      if (dKerAc > 1e-11) {
+        moles.Keratin_s = Math.max(0, moles.Keratin_s - dKerAc);
+        if (moles.Keratin_s < 1e-13) delete moles.Keratin_s;
+        moles.H_aq = Math.max(0, moles.H_aq - 4 * dKerAc);
+        moles.H2O_l = Math.max(0, moles.H2O_l - 2 * dKerAc);
+        moles.Alaninium_aq = (moles.Alaninium_aq || 0) + 2 * dKerAc;
+        moles.Glycinium_aq = (moles.Glycinium_aq || 0) + 2 * dKerAc;
+        moles.S_s = (moles.S_s || 0) + dKerAc;
+        if (options?.gasProduced) {
+          options.gasProduced.H2S_g = (options.gasProduced.H2S_g || 0) + dKerAc;
+        } else {
+          moles.H2S_g = (moles.H2S_g || 0) + dKerAc;
+        }
+        activeReactions.push({
+          id: 'keratin_acid_hydrolysis',
+          equation: 'Keratin(s) + 4H⁺ + 2H₂O —(t° ≥ 70 °C)→ 2 Alaninium⁺ + 2 Glycinium⁺ + H₂S↑ + S↓',
+          nameVi: 'Thủy phân acid nóng sợi Keratin thu hỗn hợp Amino acid & H₂S↑',
+          nameEn: 'Hot acid hydrolysis of insoluble Keratin fiber yielding Amino acids + H₂S↑',
+          descVi: 'Đun nóng lâu trong acid mạnh thủy phân hoàn toàn protein sợi Keratin thành α-amino acid hòa tan và H₂S.',
+          descEn: 'Prolonged hot acid hydrolyzes Keratin fibers into soluble amino acid cations and H₂S gas.',
+          rateMolS: dKerAc / dt,
+          vigorousGas: true,
+          dXi: dKerAc,
+        });
+      }
+    }
+  }
+
   // 10. Enzyme Bell-Shaped Activity Curve (Optimum ~35–42 °C, pH 6–8; Irreversible Denaturation >75 °C or extreme pH)
   const enzymeActFactor = Math.exp(-Math.pow((T - 311.15) / 14.0, 2)) * Math.exp(-Math.pow((phCur - 7.0) / 1.9, 2));
   const isEnzymeDenature = T > 348.15 || phCur < 2.2 || phCur > 11.4;
+  const denatureK = T > 348.15 ? 4.5 + Math.max(0, T - 348.15) * 0.25 : 3.2;
   for (const [enzAq, enzDen, enzName] of [
     ['Amylase_aq', 'AmylaseDenatured_s', 'Amylase'],
     ['Catalase_aq', 'CatalaseDenatured_s', 'Catalase'],
   ]) {
-    if ((moles[enzAq] || 0) > 1e-10 && isEnzymeDenature) {
-      const dDen = moles[enzAq] * (1 - Math.exp(-2.2 * dt));
+    if ((moles[enzAq] || 0) > 1e-12 && isEnzymeDenature) {
+      let dDen = moles[enzAq] * (1 - Math.exp(-denatureK * dt));
+      if (moles[enzAq] - dDen < 1e-8) dDen = moles[enzAq];
       if (dDen > 1e-12) {
         moles[enzAq] = Math.max(0, moles[enzAq] - dDen);
-        if (moles[enzAq] < 1e-13) delete moles[enzAq];
+        if (moles[enzAq] < 1e-12) delete moles[enzAq];
         moles[enzDen] = (moles[enzDen] || 0) + dDen;
         activeReactions.push({
           id: `denature_${enzAq}`,
@@ -960,23 +1050,32 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
   }
 
   if (hasWater && !isEnzymeDenature && enzymeActFactor > 0.03) {
-    if ((moles.Amylase_aq || 0) > 1e-9 && (moles.Starch_aq || 0) > 1e-8) {
+    if ((moles.Amylase_aq || 0) > 1e-9 && ((moles.Starch_aq || 0) > 1e-8 || (moles.StarchI2_aq || 0) > 1e-8)) {
       const kEnzSt = 2.8 * enzymeActFactor;
-      const dEnzM = Math.min(moles.Starch_aq / 2, moles.H2O_l) * (1 - Math.exp(-kEnzSt * dt));
-      if (dEnzM > 1e-11) {
-        moles.Starch_aq = Math.max(0, moles.Starch_aq - 2 * dEnzM);
-        moles.H2O_l = Math.max(0, moles.H2O_l - dEnzM);
-        if (moles.Starch_aq < 1e-13) delete moles.Starch_aq;
-        moles.Maltose_aq = (moles.Maltose_aq || 0) + dEnzM;
+      const dEnzM = Math.min((moles.Starch_aq || 0) / 2, moles.H2O_l) * (1 - Math.exp(-kEnzSt * dt));
+      const dEnzI2 = Math.min((moles.StarchI2_aq || 0) / 2, moles.H2O_l) * (1 - Math.exp(-kEnzSt * dt));
+      if (dEnzM > 1e-11 || dEnzI2 > 1e-11) {
+        if (dEnzM > 1e-11) {
+          moles.Starch_aq = Math.max(0, moles.Starch_aq - 2 * dEnzM);
+          if (moles.Starch_aq < 1e-13) delete moles.Starch_aq;
+        }
+        if (dEnzI2 > 1e-11) {
+          moles.StarchI2_aq = Math.max(0, moles.StarchI2_aq - 2 * dEnzI2);
+          if (moles.StarchI2_aq < 1e-13) delete moles.StarchI2_aq;
+          moles.I2_aq = (moles.I2_aq || 0) + 2 * dEnzI2;
+        }
+        const totMal = dEnzM + dEnzI2;
+        moles.H2O_l = Math.max(0, moles.H2O_l - totMal);
+        moles.Maltose_aq = (moles.Maltose_aq || 0) + totMal;
         activeReactions.push({
           id: 'amylase_starch_maltose',
           equation: 'Tinh bột + H₂O —(Amylase, ~37 °C)→ Maltose',
           nameVi: 'Enzyme Amylase thủy phân Tinh bột thành Maltose',
           nameEn: 'Amylase-catalyzed hydrolysis of Starch into Maltose',
-          descVi: `Hoạt tính Amylase hiện tại ${(enzymeActFactor * 100).toFixed(0)}% (tối ưu quanh 37–40 °C, pH 7).`,
-          descEn: `Amylase catalytic activity at ${(enzymeActFactor * 100).toFixed(0)}% (bell optimum ~38 °C, pH 7).`,
-          rateMolS: dEnzM / dt,
-          dXi: dEnzM,
+          descVi: `Hoạt tính Amylase hiện tại ${(enzymeActFactor * 100).toFixed(0)}% (tối ưu quanh 37–40 °C, pH 7), làm mất màu xanh tím phức [Tinh bột · I₂].`,
+          descEn: `Amylase catalytic activity at ${(enzymeActFactor * 100).toFixed(0)}% (bell optimum ~38 °C, pH 7), decolorizing blue [Starch · I₂].`,
+          rateMolS: totMal / dt,
+          dXi: totMal,
         });
       }
     }
@@ -1440,6 +1539,212 @@ const THERMAL_PYROLYSIS_SPECS = [
     heatPerXi: 2800000,
     minTempK: 773.15,
     kBase: 1.05,
+  },
+  // Prompt 96: Glutamic acid (180 °C), Lysine (210 °C), Alanine (250 °C), Valine (260 °C sublimation + 290 °C), Keratin (180 °C)
+  {
+    id: 'glutamic_lactonize_pyroglutamic',
+    equation: 'Glutamic acid(s) —(180–205 °C)→ Pyroglutamic acid(s) + H₂O(g)↑',
+    nameVi: 'Đóng vòng tách nước Glutamic acid (180–205 °C) tạo Pyroglutamic acid',
+    nameEn: 'Glutamic acid cyclodehydration (180–205 °C) → Pyroglutamic acid + steam',
+    descVi: 'Glutamic acid kém bền nhiệt nhất trong các amino acid thường gặp, nóng chảy đóng vòng lactam từ ~180 °C tách hơi nước.',
+    descEn: 'Earliest decomposing amino acid: Glutamic acid cyclizes into Pyroglutamic lactam releasing steam at 180–205 °C.',
+    reactantId: 'Glutamic_s',
+    reactantStoich: 1,
+    products: { Pyroglutamic_s: 1, H2O_g: 1 },
+    minTempK: 453.15,
+    kBase: 0.78,
+    hotBoostTempK: 573.15,
+    hotBoostMult: 3.2,
+  },
+  {
+    id: 'pyroglutamic_decarboxyl_pyrrolidone',
+    equation: 'Pyroglutamic(s) —(250–350 °C)→ 2-Pyrrolidone(g)↑ + CO₂(g)↑',
+    nameVi: 'Decarboxyl hóa Pyroglutamic (250–350 °C) sinh hơi 2-Pyrrolidone & CO₂↑',
+    nameEn: 'Pyroglutamic decarboxylation (250–350 °C) yielding 2-Pyrrolidone(g) + CO₂↑',
+    descVi: 'Vòng lactam tiếp tục tách CO₂(g) tạo một phần hơi 2-Pyrrolidone mùi hắc nhẹ.',
+    descEn: 'Thermal decarboxylation eliminates CO₂ producing volatile 2-Pyrrolidone vapor.',
+    reactantId: 'Pyroglutamic_s',
+    reactantStoich: 1,
+    products: { C4H7NO_g: 1, CO2_g: 1 },
+    minTempK: 523.15,
+    kBase: 0.28,
+    hotBoostTempK: 623.15,
+    hotBoostMult: 2.5,
+  },
+  {
+    id: 'pyroglutamic_condense_char',
+    equation: '2 Pyroglutamic(s) —(250–380 °C)→ Polypeptide(s) + 3C(s) + CO₂↑ + CO↑ + CH₄↑ + H₂↑',
+    nameVi: 'Ngưng tụ than hóa Pyroglutamic (250–380 °C) tạo bọt nhựa đen giàu Nitơ',
+    nameEn: 'Pyroglutamic carbonization & resin condensation (250–380 °C) → N-rich char',
+    descVi: 'Nhánh chủ đạo của Pyroglutamic ngưng tụ thành nhựa polyme và bọt than xốp (~22–28% khối lượng ban đầu).',
+    descEn: 'Dominant carbonization pathway condenses Pyroglutamic acid into dense N-rich char residue (~22–28%).',
+    reactantId: 'Pyroglutamic_s',
+    reactantStoich: 2,
+    products: { Peptide_s: 1, C_s: 3, CO2_g: 1, CO_g: 1, CH4_g: 1, H2_g: 1 },
+    minTempK: 523.15,
+    kBase: 0.85,
+    hotBoostTempK: 623.15,
+    hotBoostMult: 2.6,
+  },
+  {
+    id: 'lysine_cyclize_caprolactam',
+    equation: '2 Lysine(s) —(210–250 °C)→ ε-Caprolactam(s) + C₂H₅NH₂↑ + 2NH₃↑ + CO₂↑ + CO↑ + C₂H₄↑',
+    nameVi: 'Khử amin đóng vòng Lysine (210–230 °C) tạo ε-Caprolactam & NH₃(g)↑',
+    nameEn: 'Lysine thermal deamination & cyclization (210–230 °C) → ε-Caprolactam + NH₃↑',
+    descVi: 'Lysine nóng chảy quanh 215 °C đồng thời tách mạnh NH₃↑ và đóng vòng thành ε-Caprolactam.',
+    descEn: 'Around 215 °C, Lysine deaminates vigorously releasing Ammonia and ε-Caprolactam.',
+    reactantId: 'Lysine_s',
+    reactantStoich: 2,
+    products: { Caprolactam_s: 1, C2H5NH2_g: 1, NH3_g: 2, CO2_g: 1, CO_g: 1, C2H4_g: 1 },
+    minTempK: 483.15,
+    kBase: 0.56,
+  },
+  {
+    id: 'lysine_crosslink_nchar',
+    equation: '2 Lysine(s) —(220–350 °C)→ 2 C₃N + 3C(s) + 2NH₃↑ + CO₂↑ + 2H₂O↑ + 2CH₄↑ + 5H₂↑',
+    nameVi: 'Trùng ngưng khâu mạch Lysine tạo nhựa than xốp giàu N (~22% cặn)',
+    nameEn: 'Lysine crosslinking carbonization → porous N-doped char & NH₃↑',
+    descVi: 'Hai nhóm –NH₂ giúp Lysine khâu mạch mạnh tạo cặn than xốp giàu N ổn định tới 1,500 °C trong khí trơ.',
+    descEn: 'Dual amine groups drive extensive crosslinking of Lysine into high-yield porous N-char.',
+    reactantId: 'Lysine_s',
+    reactantStoich: 2,
+    products: { CharN_s: 2, C_s: 3, NH3_g: 2, CO2_g: 1, H2O_g: 2, CH4_g: 2, H2_g: 5 },
+    minTempK: 493.15,
+    kBase: 0.44,
+  },
+  {
+    id: 'caprolactam_ring_open_pyro',
+    equation: 'ε-Caprolactam(s) —(250–380 °C)→ Nylon-6(s)',
+    nameVi: 'Mở vòng nhiệt ε-Caprolactam (250–380 °C) trùng hợp thành Nylon-6',
+    nameEn: 'Ring-opening polymerization of ε-Caprolactam (250–380 °C) → Nylon-6',
+    descVi: 'Vòng lactam 7 cạnh mở vòng trùng hợp nhanh thành chuỗi polyamide Nylon-6 nóng chảy.',
+    descEn: 'Seven-membered Caprolactam ring opens thermally into Nylon-6 polyamide chains.',
+    reactantId: 'Caprolactam_s',
+    reactantStoich: 1,
+    products: { Nylon6_s: 1 },
+    minTempK: 523.15,
+    kBase: 0.92,
+  },
+  {
+    id: 'nylon6_secondary_pyrolysis',
+    equation: '3 Nylon-6(s) —(350–500 °C)→ 2 C₃N + 2C(s) + HCN↑ + CO↑ + 2H₂O↑ + 2C₃H₆↑ + 2CH₄↑ + 4H₂↑',
+    nameVi: 'Nhiệt phân thứ cấp chuỗi Nylon-6 (350–500 °C) giải phóng HCN↑, C₃H₆↑ & bọt than',
+    nameEn: 'Nylon-6 secondary pyrolysis (350–500 °C) releasing HCN↑, propene & N-char',
+    descVi: 'Mạch polyamide đứt gãy ở 350–500 °C sinh hydrocarbon nhẹ, HCN(g), CO và để lại bọt than C₃N + C.',
+    descEn: 'High-temperature polyamide backbone scission yields volatiles and carbon char.',
+    reactantId: 'Nylon6_s',
+    reactantStoich: 3,
+    products: { CharN_s: 2, C_s: 2, HCN_g: 1, CO_g: 1, H2O_g: 2, C3H6_g: 2, CH4_g: 2, H2_g: 4 },
+    minTempK: 623.15,
+    kBase: 0.98,
+  },
+  {
+    id: 'alanine_decarboxyl',
+    equation: 'CH₃CH(NH₂)COOH(s) —(250–320 °C)→ C₂H₅NH₂(g)↑ + CO₂(g)↑',
+    nameVi: 'Decarboxyl hóa Alanine (250–320 °C) giải phóng Ethylamine & CO₂↑',
+    nameEn: 'Alanine thermal decarboxylation (250–320 °C) → Ethylamine↑ + CO₂↑',
+    descVi: 'Alanine bền nhiệt hơn Glycine và Lysine; từ 250 °C tách CO₂(g) giải phóng Ethylamine bay hơi.',
+    descEn: 'More thermally stable than Gly/Lys, Alanine decarboxylates above 250 °C into volatile Ethylamine and CO₂.',
+    reactantId: 'Alanine_s',
+    reactantStoich: 1,
+    products: { C2H5NH2_g: 1, CO2_g: 1 },
+    minTempK: 523.15,
+    kBase: 0.52,
+  },
+  {
+    id: 'alanine_dkp_condense',
+    equation: '2 Alanine(s) —(250–330 °C)→ Polypeptide(s) + C₂H₄(g)↑ + H₂O(g)↑',
+    nameVi: 'Ngưng tụ DKP Alanine (250–330 °C) tạo trung gian vòng – peptide',
+    nameEn: 'Alanine DKP/peptide condensation (250–330 °C)',
+    descVi: 'Nhánh song song ngưng tụ tạo vòng diketopiperazine / peptide trước khi than hóa tiếp ở 350–500 °C.',
+    descEn: 'Concurrent condensation forms DKP/peptide intermediates that subsequently carbonize.',
+    reactantId: 'Alanine_s',
+    reactantStoich: 2,
+    products: { Peptide_s: 1, C2H4_g: 1, H2O_g: 1 },
+    minTempK: 523.15,
+    kBase: 0.48,
+  },
+  {
+    id: 'valine_sublimation',
+    equation: 'Valine(s) —(260–320 °C)→ Valine(g)↑ (thăng hoa mạnh)',
+    nameVi: 'Thăng hoa Valine tinh thể (260–320 °C) bay hơi mạnh (< 10% cặn)',
+    nameEn: 'Strong sublimation of Valine (260–320 °C) leaving minimal residue (< 10%)',
+    descVi: 'Valine có nhánh isopropyl kỵ nước nên thăng hoa mạnh nhất trong nhóm amino acid, bay hơi nhanh làm cặn rắn < 5–10%.',
+    descEn: 'Hydrophobic isopropyl sidechain gives Valine high volatility; vigorous sublimation leaves minimal char.',
+    reactantId: 'Valine_s',
+    reactantStoich: 1,
+    products: { Valine_g: 1 },
+    minTempK: 533.15,
+    kBase: 1.48,
+  },
+  {
+    id: 'valine_decarboxyl',
+    equation: 'Valine(s) —(290–340 °C)→ i-C₄H₉NH₂(g)↑ + CO₂(g)↑',
+    nameVi: 'Decarboxyl hóa Valine (290–340 °C) sinh Isobutylamine & CO₂↑',
+    nameEn: 'Valine decarboxylation (290–340 °C) → Isobutylamine↑ + CO₂↑',
+    descVi: 'Phần Valine chưa kịp thăng hoa bị decarboxyl hóa sinh Isobutylamine và khí CO₂.',
+    descEn: 'Portion not lost to sublimation decarboxylates cleanly to Isobutylamine and CO₂.',
+    reactantId: 'Valine_s',
+    reactantStoich: 1,
+    products: { iC4H9NH2_g: 1, CO2_g: 1 },
+    minTempK: 563.15,
+    kBase: 0.22,
+  },
+  {
+    id: 'valine_crack_isobutene',
+    equation: 'Valine(s) —(290–350 °C)→ C₄H₈(g)↑ + NH₃(g)↑ + CO₂(g)↑',
+    nameVi: 'Bẻ mạch khử amin Valine (290–350 °C) sinh Isobutene, NH₃↑ & CO₂↑',
+    nameEn: 'Valine deamination cracking → Isobutene↑ + NH₃↑ + CO₂↑',
+    descVi: 'Tách đồng thời nhóm –NH₂ và –COOH sinh isobutene (C₄H₈), NH₃ và CO₂.',
+    descEn: 'Thermal elimination releases Isobutene, Ammonia, and CO₂.',
+    reactantId: 'Valine_s',
+    reactantStoich: 1,
+    products: { C4H8_g: 1, NH3_g: 1, CO2_g: 1 },
+    minTempK: 563.15,
+    kBase: 0.14,
+  },
+  {
+    id: 'valine_dkp_trace',
+    equation: '2 Valine(s) —(295–360 °C)→ Polypeptide(s) + C₄H₈↑ + C₂H₄↑ + H₂O↑',
+    nameVi: 'Ngưng tụ vết vòng DKP từ Valine tạo lượng nhỏ nhựa than',
+    nameEn: 'Minor Valine DKP condensation yielding trace char',
+    descVi: 'Một tỷ lệ rất nhỏ Valine tạo trung gian peptide rồi than hóa.',
+    descEn: 'Minor DKP condensation converts a small fraction into residual char.',
+    reactantId: 'Valine_s',
+    reactantStoich: 2,
+    products: { Peptide_s: 1, C4H8_g: 1, C2H4_g: 1, H2O_g: 1 },
+    minTempK: 568.15,
+    kBase: 0.08,
+  },
+  {
+    id: 'keratin_browning',
+    equation: 'Keratin(s) —(180–260 °C)→ Keratin (sém nâu) + H₂S(g)↑ + NH₃(g)↑ + H₂O(g)↑',
+    nameVi: 'Sém vàng nâu sợi Keratin (180–260 °C) tỏa mùi khét tóc/lông cháy (H₂S↑ + NH₃↑)',
+    nameEn: 'Keratin thermal scorching (180–260 °C) emitting burnt-hair H₂S↑ & NH₃↑ odor',
+    descVi: 'Từ 180 °C, sợi Keratin sém nâu, đứt cầu disulfua –S–S– giải phóng khí H₂S & NH₃ đặc trưng mùi sừng/lông vũ cháy.',
+    descEn: 'Above 180 °C, Keratin fibers scorch brown and cleave disulfide crosslinks emitting signature burnt-feather H₂S and NH₃.',
+    reactantId: 'Keratin_s',
+    reactantStoich: 1,
+    products: { KeratinBrown_s: 1, H2S_g: 1, NH3_g: 1, H2O_g: 1 },
+    minTempK: 453.15,
+    kBase: 0.72,
+    hotBoostTempK: 573.15,
+    hotBoostMult: 3.0,
+  },
+  {
+    id: 'keratin_brown_pyrolysis',
+    equation: '2 Keratin (sém nâu) —(260–450 °C)→ Than N,S + 5C(s) + H₂S↑ + 2HCN↑ + 2NH₃↑ + 2CO₂/2CO↑ + 3CH₄↑',
+    nameVi: 'Bẻ mạch hoàn toàn Keratin sém nâu (260–450 °C) sinh NH₃↑, H₂S↑, HCN↑ & bọt than đen',
+    nameEn: 'Scorched Keratin pyrolysis (260–450 °C) → burnt-protein volatiles & N,S-char',
+    descVi: 'Nhiệt phân mạnh 260–450 °C giải phóng NH₃, H₂S, HCN, CO₂, CO, CH₄, H₂O và tạo khối bọt than đen C₆N₂S + C.',
+    descEn: 'Between 260 and 450 °C, peptide backbone cleavage releases NH₃, H₂S, HCN, CO₂, CO, CH₄ leaving N,S-char.',
+    reactantId: 'KeratinBrown_s',
+    reactantStoich: 2,
+    products: { CharNS_s: 1, C_s: 5, H2S_g: 1, HCN_g: 2, NH3_g: 2, CO2_g: 2, CO_g: 2, H2O_g: 4, CH4_g: 3 },
+    minTempK: 533.15,
+    kBase: 0.56,
+    hotBoostTempK: 593.15,
+    hotBoostMult: 2.2,
   },
 ];
 

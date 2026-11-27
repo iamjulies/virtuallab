@@ -368,6 +368,7 @@ export const HYDROCARBON_SPECIES = {
     visualType: 'white_powder',
     renderLayer: 'precipitate',
     renderOrder: 186,
+    atoms: { C: 6, H: 11, N: 1, O: 1 },
     functionalGroups: { hasPeptideBond: true },
   },
   AdipicAcid_s: {

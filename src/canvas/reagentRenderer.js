@@ -620,6 +620,146 @@ function drawEggCanvas(ctx, style, labelAlpha) {
   ctx.restore();
 }
 
+function drawChickenRoosterCanvas(ctx, style, labelAlpha = 1, anim = {}) {
+  const { flap = 0, mouthOpen = 0, bodyTilt = 0 } = anim;
+  ctx.save();
+  ctx.rotate(bodyTilt);
+
+  // Legs & feet
+  ctx.strokeStyle = '#ea580c';
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = 'round';
+  const legKick = flap * 4;
+  ctx.beginPath();
+  ctx.moveTo(-5, 18);
+  ctx.lineTo(-7 - legKick * 0.5, 34);
+  ctx.lineTo(-13 - legKick * 0.5, 36);
+  ctx.moveTo(-7 - legKick * 0.5, 34);
+  ctx.lineTo(-2 - legKick * 0.5, 37);
+  ctx.moveTo(8, 18);
+  ctx.lineTo(10 + legKick * 0.5, 34);
+  ctx.lineTo(4 + legKick * 0.5, 37);
+  ctx.moveTo(10 + legKick * 0.5, 34);
+  ctx.lineTo(15 + legKick * 0.5, 36);
+  ctx.stroke();
+
+  // Fluffy arched tail feathers (right side)
+  const tailPlume = [
+    { dx: 18, dy: -6, rot: -0.45, col: '#fef3c7' },
+    { dx: 22, dy: -2, rot: -0.15, col: '#fde68a' },
+    { dx: 20, dy: 4, rot: 0.22, col: '#fbbf24' },
+  ];
+  for (const tp of tailPlume) {
+    ctx.save();
+    ctx.translate(tp.dx, tp.dy);
+    ctx.rotate(tp.rot + flap * 0.14);
+    ctx.fillStyle = tp.col;
+    ctx.strokeStyle = '#b45309';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.ellipse(8, 0, 12, 4.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Plump rooster body
+  const bodyGrad = ctx.createRadialGradient(-4, 0, 3, 2, 6, 26);
+  bodyGrad.addColorStop(0, '#ffffff');
+  bodyGrad.addColorStop(0.6, '#fef9c3');
+  bodyGrad.addColorStop(1, '#fcd34d');
+  ctx.fillStyle = bodyGrad;
+  ctx.strokeStyle = '#b45309';
+  ctx.lineWidth = 1.7;
+  ctx.beginPath();
+  ctx.ellipse(2, 8, 20, 15.5, -0.08, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Head & neck (facing left toward target vessel)
+  ctx.fillStyle = '#fffbeb';
+  ctx.beginPath();
+  ctx.arc(-13, -10, 11.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Red scalloped comb on top
+  ctx.fillStyle = '#ef4444';
+  ctx.strokeStyle = '#991b1b';
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(-21, -18);
+  ctx.quadraticCurveTo(-19, -29, -14, -22);
+  ctx.quadraticCurveTo(-11, -30, -7, -21);
+  ctx.quadraticCurveTo(-2, -26, -3, -17);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Red wattle under chin
+  ctx.beginPath();
+  ctx.ellipse(-19, -1, 3.2, 4.8, 0.15, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Yellow beak (opens wide in comedic shock when plucked)
+  ctx.fillStyle = '#f59e0b';
+  ctx.strokeStyle = '#92400e';
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(-23, -12);
+  ctx.lineTo(-33, -9 - mouthOpen * 3.5);
+  ctx.lineTo(-22, -7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  if (mouthOpen > 0.15) {
+    ctx.beginPath();
+    ctx.moveTo(-22, -7);
+    ctx.lineTo(-31, -3 + mouthOpen * 3.5);
+    ctx.lineTo(-21, -4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Expressive eye
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(-16, -12, 2.7 + mouthOpen * 1.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath();
+  ctx.arc(-16.5, -12, mouthOpen > 0.3 ? 1.2 : 1.7, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Animated flapping wing
+  ctx.save();
+  ctx.translate(2, 5);
+  ctx.rotate(-0.12 + flap * 0.55);
+  ctx.fillStyle = '#fde68a';
+  ctx.strokeStyle = '#b45309';
+  ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  ctx.ellipse(2, 4, 11.5, 6.2, -0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  if (labelAlpha > 0.05) {
+    ctx.fillStyle = 'rgba(255, 251, 235, 0.88)';
+    ctx.beginPath();
+    ctx.roundRect(-14, 24, 30, 15, 4);
+    ctx.fill();
+    ctx.fillStyle = '#78350f';
+    ctx.font = 'bold 9.5px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(style.shortLabel || 'Ker', 1, 31.5);
+  }
+  ctx.restore();
+}
+
 /**
  * Draw detailed, realistically sized, color-accurate stock chemical bottle/jar centered at (cx, cy).
  * Base dimensions at scale=1 match ISO 70-85mm bench vessels (~78x126 px).
@@ -648,6 +788,11 @@ export function drawReagentBottle(ctx, reg, cx, cy, scale = 1.0, opts = {}) {
   }
   if (vesselForm === 'chicken_egg') {
     drawEggCanvas(ctx, style, labelAlpha);
+    ctx.restore();
+    return;
+  }
+  if (vesselForm === 'chicken_rooster') {
+    drawChickenRoosterCanvas(ctx, style, labelAlpha);
     ctx.restore();
     return;
   }
@@ -1213,6 +1358,97 @@ export function renderActiveReagentTransfer(ctx, anim, targetVessel, spec, botto
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.82)';
       ctx.lineWidth = 1.6;
       ctx.stroke();
+    }
+    ctx.restore();
+  } else if (reg.bottleStyle?.vesselForm === 'chicken_rooster') {
+    // KERATIN: "Nhổ lông gà nhảy tung tóe" — tweezers pluck 4 feathers, rooster leaps parabolically + flaps wings + open beak!
+    const fadeAlpha = progress < 0.08 ? progress / 0.08 : progress > 0.90 ? (1 - progress) / 0.10 : 1;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, fadeAlpha));
+
+    const baseRoostX = targetVessel.x + Math.max(88, spec.width * 0.78);
+    const baseRoostY = rimY - 12;
+    const pluckT = 0.30;
+    const jumped = progress >= pluckT;
+    const jumpP = jumped ? Math.min(1, (progress - pluckT) / 0.64) : 0;
+
+    // Parabolic startled leap + frantic recoil hop + frantic wing flapping!
+    const leapArcY = jumped ? -Math.sin(jumpP * Math.PI) * 66 : 0;
+    const hopBounce = jumped ? Math.abs(Math.sin(jumpP * Math.PI * 3.5)) * 10 : 0;
+    const recoilX = jumped ? jumpP * 28 : 0;
+    const roostX = baseRoostX + recoilX;
+    const roostY = baseRoostY + leapArcY - hopBounce;
+    const flap = jumped ? Math.sin(timeNow * 42) : Math.sin(timeNow * 4) * 0.08;
+    const mouthOpen = jumped ? Math.max(0.25, Math.abs(Math.sin(timeNow * 24))) : 0;
+    const bodyTilt = jumped ? Math.sin(jumpP * Math.PI) * 0.22 : 0;
+
+    // 1. Draw the rooster (leaping when plucked!)
+    ctx.save();
+    ctx.translate(roostX, roostY);
+    ctx.scale(0.86, 0.86);
+    drawChickenRoosterCanvas(ctx, reg.bottleStyle, 0, { flap, mouthOpen, bodyTilt });
+    if (jumped && jumpP < 0.65) {
+      ctx.fillStyle = '#ef4444';
+      ctx.font = 'bold 14px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('!!', -30, -28 - jumpP * 14);
+    }
+    ctx.restore();
+
+    // 2. Plucking steel tweezers carrying 4 feathers into the vessel
+    let bundleX = baseRoostX + 12;
+    let bundleY = baseRoostY - 8;
+    if (progress < pluckT) {
+      const p = progress / pluckT;
+      bundleX = targetVessel.x + (baseRoostX + 12 - targetVessel.x) * p;
+      bundleY = (rimY - 56) + ((baseRoostY - 8) - (rimY - 56)) * p;
+      // Draw tweezers pinching in
+      ctx.strokeStyle = isDark ? '#cbd5e1' : '#334155';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(bundleX + 18, bundleY - 28);
+      ctx.lineTo(bundleX, bundleY);
+      ctx.moveTo(bundleX + 24, bundleY - 25);
+      ctx.lineTo(bundleX + 2, bundleY);
+      ctx.stroke();
+    } else {
+      const p = Math.min(1, (progress - pluckT) / 0.66);
+      // 4 plucked feathers flutter lazily into targetVessel
+      for (let f = 0; f < 4; f++) {
+        const delay = f * 0.06;
+        const fp = Math.max(0, Math.min(1, (p - delay) / 0.85));
+        const fx = (baseRoostX + 12) + (targetVessel.x + (f - 1.5) * 6 - (baseRoostX + 12)) * fp + Math.sin(fp * 7 + f) * 5;
+        const fy = fp < 0.45
+          ? (baseRoostY - 8) + ((rimY - 24) - (baseRoostY - 8)) * (fp / 0.45) - Math.sin((fp / 0.45) * Math.PI) * 26
+          : (rimY - 24) + (bottomY - rimY + 12) * ((fp - 0.45) / 0.55);
+        ctx.save();
+        ctx.translate(fx, fy);
+        ctx.rotate(Math.sin(fp * 9 + f * 1.4) * 0.55 + 0.3);
+        ctx.fillStyle = f % 2 === 0 ? '#ffffff' : '#fef3c7';
+        ctx.strokeStyle = '#d97706';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 7.5, 2.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+      // Stray down-feathers puffing outward from the startled jump!
+      for (let d = 0; d < 4; d++) {
+        const dp = Math.min(1, p * 1.25);
+        const angle = -0.9 + d * 0.65;
+        const dx = baseRoostX + 10 + Math.cos(angle) * dp * 38;
+        const dy = baseRoostY - 12 + Math.sin(angle) * dp * 28 - Math.sin(dp * Math.PI) * 14;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, (1 - dp) * 0.9);
+        ctx.translate(dx, dy);
+        ctx.rotate(dp * 4 + d);
+        ctx.fillStyle = '#fffbeb';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 4.2, 1.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
     }
     ctx.restore();
   } else {

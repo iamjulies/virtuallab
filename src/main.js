@@ -132,7 +132,9 @@ const labManager = new LabManager({
     handleVisualAlert(type, vessel, meta);
   },
   onReagentDispense: (_v, reg, amt) => {
-    if (reg?.kind === 'solid') {
+    if (reg?.bottleStyle?.vesselForm === 'chicken_rooster') {
+      soundEngine.playChickenSquawk();
+    } else if (reg?.kind === 'solid') {
       soundEngine.playGranuleCascade(Math.min(12, Math.max(4, Math.round(amt * 3))));
     } else if (amt <= 0.25) {
       soundEngine.playDropPlink();

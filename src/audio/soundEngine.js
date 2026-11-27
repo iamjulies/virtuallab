@@ -625,6 +625,34 @@ export class LabSoundEngine {
     this.playGlassClink('beaker_250', 0.65);
   }
 
+  /**
+   * Short comedic chicken cluck/squawk when plucking Keratin feathers!
+   */
+  playChickenSquawk() {
+    if (this.isMuted || !this.ctx) return;
+    this.unlock();
+    const now = this.ctx.currentTime;
+    const notes = [
+      { t: 0.0, f0: 540, f1: 790, dur: 0.09 },
+      { t: 0.11, f0: 660, f1: 980, dur: 0.14 },
+    ];
+    for (const n of notes) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(n.f0, now + n.t);
+      osc.frequency.exponentialRampToValueAtTime(n.f1, now + n.t + n.dur * 0.65);
+      osc.frequency.exponentialRampToValueAtTime(n.f0 * 0.78, now + n.t + n.dur);
+      gain.gain.setValueAtTime(0.0001, now + n.t);
+      gain.gain.linearRampToValueAtTime(0.16, now + n.t + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + n.t + n.dur);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now + n.t);
+      osc.stop(now + n.t + n.dur + 0.02);
+    }
+  }
+
   _playFilteredNoiseBurst(durationSec, freqStart, freqEnd, qVal, peakGain) {
     if (!this.ctx || !this.noiseBuffer) return;
     const now = this.ctx.currentTime;

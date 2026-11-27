@@ -1,6 +1,6 @@
 export const I18N_EN = {
   appTitle: 'ChemLab Studio',
-  appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.35',
+  appSubtitle: 'Freeform Virtual Chemistry Lab — virlab_beta_v5+build.36',
   toastEmptiedApparatus: 'Emptied chemicals & gases in {label}',
   quickThemesTitle: 'Select Theme (Hold Z · Release to close)',
   quickPresetsHoldTitle: 'Guided Experiments (Hold F · Release to close)',
@@ -264,6 +264,12 @@ export const I18N_EN = {
   reg_glutamic_desc: 'Acidic amino acid (two –COOH groups, pI = 3.22 · turns litmus red) · Migrates to (+) Anode at pH 6.0',
   reg_albumin: 'Albumin (Protein)',
   reg_albumin_desc: 'Soluble egg white globular protein · Irreversibly coagulates >65 °C or with acid/heavy metals; positive Biuret (violet) & Xanthoproteic (yellow)',
+  reg_keratin: 'Keratin (Fibrous protein)',
+  reg_keratin_desc: 'Insoluble fibrous disulfide protein (feather/horn) · Positive Xanthoproteic yellow test with HNO₃; hot alkali releases NH₃/S²⁻ and pyrolysis emits burnt-feather H₂S odor',
+  reg_amylase: 'Enzyme α-Amylase (aq)',
+  reg_amylase_desc: 'Bell-curve active Starch hydrolase peaking near 37 °C, pH 7 (decolorizes [Starch·I₂] to Maltose) · Irreversibly denatures & loses activity above 75 °C',
+  reg_catalase: 'Enzyme Catalase (aq)',
+  reg_catalase_desc: 'Rapid peroxide hydrolase (2H₂O₂ → 2H₂O + O₂↑) peaking near 37 °C, pH 7 · Permanently denatures above 75 °C or at extreme pH',
 
   noSelection: 'No apparatus selected',
   selectVesselTip: 'Click any vessel on the bench, or drag apparatus & reagents directly onto the workbench.',

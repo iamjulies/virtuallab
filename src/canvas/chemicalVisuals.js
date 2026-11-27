@@ -777,6 +777,37 @@ export function renderVesselSolids(ctx, vessel, bounds, hasWater, surfaceY) {
         ctx.moveTo(-cr * 0.7, -cr * 0.1);
         ctx.quadraticCurveTo(0, -cr * 0.75, cr * 0.72, cr * 0.15);
         ctx.stroke();
+      } else if (vType === 'feather_fiber') {
+        // Fibrous Keratin feather barbs with fine rachis quill & lateral barbules
+        const fr = r * 1.45;
+        const baseCol = sp.color || '#fefce8';
+        const edgeCol = sp.highlightColor === '#fef08a' ? '#ca8a04' : '#cbd5e1';
+        ctx.save();
+        ctx.fillStyle = baseCol;
+        ctx.strokeStyle = edgeCol;
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        ctx.moveTo(-fr, 0.8);
+        ctx.quadraticCurveTo(0, -fr * 0.42, fr, -0.6);
+        ctx.quadraticCurveTo(0, fr * 0.36, -fr, 0.8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        // Central quill + diagonal barbs
+        ctx.strokeStyle = sp.highlightColor === '#fef08a' ? '#eab308' : '#e2e8f0';
+        ctx.lineWidth = 0.85;
+        ctx.beginPath();
+        ctx.moveTo(-fr * 1.05, 1.0);
+        ctx.quadraticCurveTo(0, -0.4, fr * 0.92, -0.5);
+        for (let b = -2; b <= 2; b++) {
+          const bx = (b / 3) * fr;
+          ctx.moveTo(bx, 0);
+          ctx.lineTo(bx - 1.8, -fr * 0.24);
+          ctx.moveTo(bx, 0);
+          ctx.lineTo(bx - 1.6, fr * 0.2);
+        }
+        ctx.stroke();
+        ctx.restore();
       } else if (vType === 'egg_white') {
         // Viscous translucent-cream egg white (albumen) gel globules
         const rx = r * 1.45;

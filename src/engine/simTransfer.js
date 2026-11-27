@@ -843,7 +843,7 @@ export function addReagentToVesselImpl(sim, vesselId, reagentId, amount, options
 
     if (!options.silentAnim) {
       const isSolid = reg.kind === 'solid';
-      const dur = isSolid ? 1050 : amt <= 0.25 ? 650 : 1100;
+      const dur = reg.bottleStyle?.vesselForm === 'chicken_rooster' ? 1280 : isSolid ? 1050 : amt <= 0.25 ? 650 : 1100;
       sim.activeReagentTransfer = {
         reagentId,
         vesselId: v.id,

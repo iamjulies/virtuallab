@@ -80,7 +80,7 @@
       buildItemMultiSheetWorkbook,
       buildBenchMultiSheetWorkbook,
     } from '../src/storage/xlsxExport.js';
-    import { getReagentDragCanvas } from '../src/canvas/reagentRenderer.js';
+    import { getReagentDragCanvas, renderActiveReagentTransfer } from '../src/canvas/reagentRenderer.js';
     import { DosingModal } from '../src/ui/dosingModal.js';
     import { ComparisonPanel } from '../src/ui/comparisonPanel.js';
     import { MISSION_ARCHETYPES, MISSION_ORDER, MISSION_REGISTRY, isReagentAllowedInMission } from '../src/data/missions.js';
@@ -2518,7 +2518,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.35';
+      const expectedBuild = 'virlab_beta_v5+build.36';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -12029,6 +12029,184 @@
         'Build 35 invariants (Prompt 95): 5 THPTQG Amino Acids (Gly/Ala/Val/Lys/Glu), N-protic computePH, q_eff(pH) migration, Ninhydrin stain, skeletal bottles & Electrophoresis XLSX export',
         phOk && chargeOk && adoptedAcidPh && migrate6Ok && flipOk && migrate1Ok && bottlesOk && xlsOk,
         `phOk=${phOk}(Glu=${pHGlu.toFixed(2)},Lys=${pHLys.toFixed(2)},Val=${pHVal.toFixed(2)}), q=${chargeOk}, acidPh=${adoptedAcidPh}, m6=${migrate6Ok}, flip=${flipOk}, m1=${migrate1Ok}, bot=${bottlesOk}, xls=${xlsOk}`
+      );
+    }
+
+    // TEST 233: Prompt 96 (virlab_beta_v5+build.36) — 25–1500 °C Pyrolysis (Ala/Val/Lys/Glu), Keratin + Rooster Feather-Pluck, & Shelf Amylase/Catalase Starch Hydrolysis
+    {
+      function stepPyro(spId, mol, tempC, atm, steps = 40, dt = 0.25) {
+        const simP = new LabSimulation();
+        simP.setupPreset('clean');
+        simP.environment.atmosphereMode = atm;
+        const v = simP.createApparatus('crucible_porcelain', 200, 420);
+        v.moles = { [spId]: mol };
+        for (let i = 0; i < steps; i++) {
+          v.tempK = 273.15 + tempC;
+          simP.step(dt);
+        }
+        const totGas = {};
+        for (const src of [v.headspaceGasMoles, v.escapedGasMoles]) {
+          for (const [gk, gm] of Object.entries(src || {})) {
+            totGas[gk] = (totGas[gk] || 0) + gm;
+          }
+        }
+        const solidG = Object.entries(v.moles)
+          .filter(([id, n]) => SPECIES[id]?.phase === 's' && n > 1e-8)
+          .reduce((acc, [id, n]) => acc + n * (SPECIES[id]?.molarMass || 0), 0);
+        return { v, totGas, solidG };
+      }
+
+      // 1a. Atom conservation helper over reaction specs + closed pyrolysis steps
+      function sumAtoms(molesObj, extraGas = {}) {
+        const tot = { C: 0, H: 0, N: 0, O: 0, S: 0 };
+        for (const src of [molesObj, extraGas]) {
+          for (const [id, n] of Object.entries(src || {})) {
+            if (!n || !SPECIES[id]?.atoms) continue;
+            for (const el of ['C', 'H', 'N', 'O', 'S']) {
+              tot[el] += n * (SPECIES[id].atoms[el] || 0);
+            }
+          }
+        }
+        return tot;
+      }
+
+      const initGlu = sumAtoms({ Glutamic_s: 0.1 });
+      const glu200 = stepPyro('Glutamic_s', 0.1, 195, 'inert', 30);
+      const glu300 = stepPyro('Glutamic_s', 0.1, 320, 'inert', 40);
+      const glu1500I = stepPyro('Glutamic_s', 0.1, 1500, 'inert', 65);
+      const glu1500A = stepPyro('Glutamic_s', 0.1, 1500, 'air', 65);
+      const gluEndAtoms = sumAtoms(glu1500I.v.moles, glu1500I.totGas);
+      const gluConsOk = ['C', 'H', 'N', 'O'].every((el) => Math.abs((initGlu[el] || 0) - (gluEndAtoms[el] || 0)) < 1e-4);
+      const gluOk =
+        (glu200.v.moles.Pyroglutamic_s || 0) > 0.05 &&
+        (glu200.totGas.H2O_g || 0) > 0.05 &&
+        (glu300.totGas.C4H7NO_g || 0) > 0.005 &&
+        (glu1500I.v.moles.C_s || 0) > 0.1 &&
+        glu1500A.solidG < 1e-4 &&
+        gluConsOk;
+
+      const lys225 = stepPyro('Lysine_s', 0.1, 225, 'inert', 20);
+      const lys420 = stepPyro('Lysine_s', 0.1, 420, 'inert', 35);
+      const lys1500I = stepPyro('Lysine_s', 0.1, 1500, 'inert', 65);
+      const lys1500A = stepPyro('Lysine_s', 0.1, 1500, 'air', 65);
+      const lysInitMass = 0.1 * SPECIES.Lysine_s.molarMass;
+      const lysCharPct = (lys1500I.solidG / lysInitMass) * 100;
+      const lysOk =
+        ((lys225.v.moles.Caprolactam_s || 0) + (lys225.v.moles.Nylon6_s || 0)) > 0.005 &&
+        (lys225.totGas.NH3_g || 0) > 0.05 &&
+        (lys420.totGas.HCN_g || 0) > 0.002 &&
+        lysCharPct >= 14 && lysCharPct <= 35 &&
+        lys1500A.solidG < 1e-4;
+
+      const ala275 = stepPyro('Alanine_s', 0.1, 275, 'inert', 25);
+      const ala1500I = stepPyro('Alanine_s', 0.1, 1500, 'inert', 65);
+      const ala1500A = stepPyro('Alanine_s', 0.1, 1500, 'air', 65);
+      const alaOk =
+        (ala275.totGas.C2H5NH2_g || 0) > 0.01 &&
+        (ala275.totGas.CO2_g || 0) > 0.01 &&
+        (ala1500I.v.moles.C_s || 0) > 0.03 &&
+        ala1500A.solidG < 1e-4;
+
+      const val285 = stepPyro('Valine_s', 0.1, 285, 'inert', 20);
+      const val315 = stepPyro('Valine_s', 0.1, 315, 'inert', 35);
+      const val1500I = stepPyro('Valine_s', 0.1, 1500, 'inert', 65);
+      const val1500A = stepPyro('Valine_s', 0.1, 1500, 'air', 65);
+      const valInitMass = 0.1 * SPECIES.Valine_s.molarMass;
+      const valCharPct = (val1500I.solidG / valInitMass) * 100;
+      const valOk =
+        (val285.totGas.Valine_g || 0) > 0.05 &&
+        (val315.totGas.iC4H9NH2_g || 0) > 0.004 &&
+        valCharPct < 10.0 &&
+        val1500A.solidG < 1e-4;
+
+      // 2. Keratin chemistry + Rooster feather-pluck animation smoke
+      const simK = new LabSimulation();
+      const bKWater = simK.createApparatus('beaker_250', 220, 400);
+      bKWater.moles = { H2O_l: 2.0, Keratin_s: 0.05 };
+      for (let i = 0; i < 15; i++) stepVesselChemistry(bKWater, 0.3, { environment: simK.environment });
+      const kerInsolubleOk = Math.abs((bKWater.moles.Keratin_s || 0) - 0.05) < 1e-9;
+
+      const bKXan = simK.createApparatus('beaker_250', 320, 400);
+      bKXan.moles = { H2O_l: 1.0, HNO3_l: 0.2, Keratin_s: 0.05 };
+      for (let i = 0; i < 20; i++) stepVesselChemistry(bKXan, 0.3, { environment: simK.environment });
+      const kerXanOk = (bKXan.moles.KeratinXantho_s || 0) > 0.02;
+
+      const bKAlk = simK.createApparatus('beaker_250', 420, 400);
+      bKAlk.tempK = 273.15 + 80;
+      bKAlk.moles = { H2O_l: 2.0, Na_aq: 0.4, OH_aq: 0.4, Keratin_s: 0.05, Cu2_aq: 0.05 };
+      let kNh3 = 0;
+      for (let i = 0; i < 25; i++) {
+        bKAlk.tempK = 273.15 + 80;
+        const resK = stepVesselChemistry(bKAlk, 0.3, { environment: simK.environment });
+        kNh3 += resK.gasProduced?.NH3_g || 0;
+      }
+      const kerSulfurBiuretOk = kNh3 > 0.01 && ((bKAlk.moles.CuS_s || 0) > 0.005 || (bKAlk.moles.S2_aq || 0) > 0.005);
+
+      const ker195 = stepPyro('Keratin_s', 0.05, 195, 'inert', 25);
+      const ker1500I = stepPyro('Keratin_s', 0.05, 1500, 'inert', 65);
+      const ker1500A = stepPyro('Keratin_s', 0.05, 1500, 'air', 65);
+      const kerPyroOk =
+        (ker195.v.moles.KeratinBrown_s || 0) > 0.02 &&
+        (ker195.totGas.H2S_g || 0) > 0.02 &&
+        (ker1500I.v.moles.C_s || 0) > 0.1 &&
+        ker1500A.solidG < 1e-4;
+
+      // Render smoke test for feather_fiber & chicken_rooster animation
+      const cvKer = getReagentDragCanvas('keratin');
+      const dCtx = document.createElement('canvas').getContext('2d');
+      renderActiveReagentTransfer(
+        dCtx,
+        {
+          reagentId: 'keratin',
+          vesselId: bKWater.id,
+          isSolid: true,
+          startMs: 0,
+          durationMs: 1280,
+          dose: 1.0,
+        },
+        bKWater,
+        640,
+        true,
+        false
+      );
+      renderVesselSolids(dCtx, bKWater, { left: 196, right: 244, bottom: 440, width: 48 }, true, 410);
+      soundEngine.playChickenSquawk();
+      const kerVisOk = Boolean(cvKer && cvKer.width > 0);
+
+      // 3. Shelf Amylase & Catalase + [Starch·I2] decolorization at 37 °C vs >75 °C denaturation
+      const cvAmy = getReagentDragCanvas('amylase');
+      const cvCat = getReagentDragCanvas('catalase');
+      const simE = new LabSimulation();
+      const bSt37 = simE.createApparatus('beaker_250', 240, 400);
+      bSt37.tempK = 310.15; // 37 °C
+      bSt37.moles = { H2O_l: 3.0, StarchI2_aq: 0.02, Amylase_aq: 0.002 };
+      for (let i = 0; i < 20; i++) {
+        bSt37.tempK = 310.15;
+        stepVesselChemistry(bSt37, 0.25, { environment: simE.environment });
+      }
+      const amyActiveOk = (bSt37.moles.StarchI2_aq || 0) < 0.002 && (bSt37.moles.Maltose_aq || 0) > 0.005;
+
+      const bStBoil = simE.createApparatus('beaker_250', 340, 400);
+      bStBoil.tempK = 363.15; // Boil Amylase at 90 °C first
+      bStBoil.moles = { H2O_l: 2.0, Amylase_aq: 0.002 };
+      for (let i = 0; i < 12; i++) {
+        bStBoil.tempK = 363.15;
+        stepVesselChemistry(bStBoil, 0.25, { environment: simE.environment });
+      }
+      const denaturedFirst = (bStBoil.moles.AmylaseDenatured_s || 0) > 0.001 && (bStBoil.moles.Amylase_aq || 0) < 1e-6;
+      bStBoil.tempK = 310.15; // cool back to 37 °C & add StarchI2_aq
+      bStBoil.moles.StarchI2_aq = 0.02;
+      for (let i = 0; i < 15; i++) {
+        bStBoil.tempK = 310.15;
+        stepVesselChemistry(bStBoil, 0.25, { environment: simE.environment });
+      }
+      const amyBoiledBlockedOk = denaturedFirst && (bStBoil.moles.Maltose_aq || 0) < 1e-5;
+      const enzOk = Boolean(cvAmy && cvAmy.width > 0 && cvCat && cvCat.width > 0 && amyActiveOk && amyBoiledBlockedOk);
+
+      assert(
+        'Build 36 invariants (Prompt 96): 25–1500 °C pyrolysis (Glu/Lys/Ala/Val + Nylon6/sublimation), Keratin chemistry + rooster animation, & Shelf Amylase/Catalase starch hydrolysis vs denaturation',
+        gluOk && lysOk && alaOk && valOk && kerInsolubleOk && kerXanOk && kerSulfurBiuretOk && kerPyroOk && kerVisOk && enzOk,
+        `glu=${gluOk}, lys=${lysOk}(${lysCharPct.toFixed(1)}%), ala=${alaOk}, val=${valOk}(${valCharPct.toFixed(1)}%), ker=${kerInsolubleOk}/${kerXanOk}/${kerSulfurBiuretOk}/${kerPyroOk}/${kerVisOk}, enz=${enzOk}`
       );
     }
 

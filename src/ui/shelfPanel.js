@@ -238,6 +238,21 @@ function reagentIconSvg(reg) {
     </svg>`;
   }
 
+  if (style.vesselForm === 'chicken_rooster') {
+    return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0 pointer-events-none">
+      <path d="M13 27v5M21 27v5M11 32h3M19 32h3" stroke="#ea580c" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M23 18c4-6 8-6 9-1-1 3-3 5-6 6" fill="#fef3c7" stroke="#d97706" stroke-width="1.2"/>
+      <path d="M25 16c4-3 7-1 6 3" fill="#fbbf24" stroke="#b45309" stroke-width="1"/>
+      <ellipse cx="17" cy="21" rx="8.2" ry="6.6" fill="#fffbeb" stroke="#d97706" stroke-width="1.3"/>
+      <circle cx="11.5" cy="13.5" r="4.8" fill="#fffbeb" stroke="#d97706" stroke-width="1.3"/>
+      <path d="M9 9c.5-2.8 2.5-3.2 3.2-1.2 1.2-2.2 3.4-1.6 3.1.8" fill="#ef4444" stroke="#b91c1c" stroke-width="0.9"/>
+      <path d="M7 13.5l-3.5 1.1 3.5 1.2z" fill="#f59e0b" stroke="#b45309" stroke-width="0.8"/>
+      <path d="M8.5 16c-.6 1.8.8 2.6 1.8 1.5" fill="#ef4444"/>
+      <circle cx="10.2" cy="12.6" r="1" fill="#0f172a"/>
+      <path d="M14 19.5c3-1.2 5.5.5 4.8 3.2-2 1-4.5.3-4.8-3.2z" fill="#fde68a" stroke="#d97706" stroke-width="1"/>
+    </svg>`;
+  }
+
   if (style.vesselForm === 'dropper') {
     return `<svg viewBox="0 0 36 36" class="w-8 h-8 shrink-0 pointer-events-none">
       <rect x="10.5" y="13" width="15" height="18" rx="3" fill="${fillCol}" stroke="${strokeCol}" stroke-width="1.5"/>
