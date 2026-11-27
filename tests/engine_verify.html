@@ -41,6 +41,7 @@
       SORTED_PRECIPITATE_SPECIES,
       SPECIES,
       STARTER_REAGENTS,
+      formatSpeciesDisplayFormula,
       getGasRelativeAirDensity,
       getReagentGhsHazards,
       getSpeciesFusionHeatJ,
@@ -57,7 +58,7 @@
     } from '../src/canvas/vesselRenderer.js';
     import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
     import { ParticleSystem } from '../src/canvas/particles.js';
-    import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod, renderTlcPlate, renderElectrophoresisCell } from '../src/canvas/toolRenderer.js';
+    import { renderDiffusionTube, renderDcPowerAndWires, renderElectrodeCollectorTubes, renderElectrodeRod, renderTlcPlate, renderElectrophoresisCell } from '../src/canvas/toolRenderer.js';
     import {
       resolveTlcUvActive,
       computeBeerLambertReading,
@@ -133,7 +134,7 @@
     import { LabSimulation } from '../src/engine/simulation.js';
     import { STORAGE_SHELF_Y_LEVELS } from '../src/engine/simSnapshot.js';
     import { classifyStorageItemFilter, itemMatchesStorageSearch } from '../src/ui/storageCabinetModal.js';
-    import { computeVesselRedoxAndCellMetrics, ELECTRODE_MATERIALS } from '../src/engine/electrochemistry.js';
+    import { computeVesselRedoxAndCellMetrics, ELECTRODE_MATERIALS, stepElectrochemistry } from '../src/engine/electrochemistry.js';
     import { checkThermometerInteractions, computeWashBottleStreamArc, syncDockedToolPositions } from '../src/engine/apparatusTools.js';
     import { calcEvaporationRateMol, computeHeatCapacityJK, computeSteamOpacity, stepVesselThermodynamics } from '../src/engine/thermodynamics.js';
     import {
@@ -161,7 +162,8 @@
       solutionFreezingPointK,
     } from '../src/engine/equilibrium.js';
     import { EnvironmentBar } from '../src/ui/environmentBar.js';
-    import { ShelfPanel } from '../src/ui/shelfPanel.js';
+    import { ShelfPanel, apparatusSvg, shelfMotifSvg } from '../src/ui/shelfPanel.js';
+    import { buildLiquidBoxHtml, buildSolidBoxHtml, countDisplayableSolidSpecies, formatGasSummaryHtml } from '../src/ui/inspector/inspectorUtils.js';
     import { InspectorPanel } from '../src/ui/inspectorPanel.js';
     import { LabWorkbenchCanvas } from '../src/canvas/workbench.js';
     import { I18N, getApparatusUsageGuide } from '../src/data/i18n.js';
@@ -2236,6 +2238,7 @@
         onExternalDrop: (cx, cy, kind, id) => wb.dropFromShelf(cx, cy, kind, id),
       });
       shelf.render((k) => I18N.vi[k] || k);
+      shelfHost.querySelector('[data-shelf-tab="apparatus"]')?.click();
 
       const hasNativeBrokenBtns = shelfHost.querySelectorAll('button[draggable="true"]').length;
       const appCard = shelfHost.querySelector('.apparatus-card[data-apparatus-id="beaker_250"]');
@@ -2248,6 +2251,7 @@
       const targetClientX = rect.left + (droppedBeaker ? droppedBeaker.x * wb.viewScale + wb.viewOffsetX : 300);
       const targetClientY = rect.top + (droppedBeaker ? droppedBeaker.y * wb.viewScale + wb.viewOffsetY : 260);
 
+      shelfHost.querySelector('[data-shelf-tab="reagents"]')?.click();
       const regCard = shelfHost.querySelector('.reagent-card[data-reagent-id="cuso4_5h2o"]');
       regCard.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 120, button: 0, pointerType: 'mouse' }));
       window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: targetClientX, clientY: targetClientY, pointerType: 'mouse' }));
@@ -2518,7 +2522,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.36';
+      const expectedBuild = 'virlab_beta_v5+build.37';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2832,9 +2836,11 @@
       const shelfDiv = document.createElement('div');
       const shelf = new ShelfPanel(shelfDiv, sim, () => (k) => I18N.vi[k] || k, {});
       shelf.render((k) => I18N.vi[k] || k, true);
+      shelfDiv.querySelector('[data-shelf-tab="reagents"]')?.click();
       const acidBtn = shelfDiv.querySelector('.reg-cat-btn[data-reg-cat="acid"]');
       acidBtn?.click();
       const acidCount = shelfDiv.querySelectorAll('.reagent-card').length;
+      localStorage.removeItem('virlab_shelf_tab');
 
       sim.setupPreset('clean');
       const cleanCount = sim.items.length;
@@ -4076,14 +4082,14 @@
       );
     }
 
-    // TEST 86: Multi-Lab Workspace (up to 10 Concurrent Active Labs) + Background Step + Atomic Cross-Lab Move
+    // TEST 86: Multi-Lab Workspace (up to 20 Concurrent Active Labs) + Background Step + Atomic Cross-Lab Move
     {
       const mgr = new LabManager();
-      for (let i = 0; i < 9; i++) {
+      for (let i = 0; i < 19; i++) {
         mgr.addLab(i === 1 ? 'clean' : 'starter');
       }
-      const cap10 = mgr.labs.length === 10;
-      const blocked11 = mgr.addLab('starter');
+      const cap20 = mgr.labs.length === 20;
+      const blocked21 = mgr.addLab('starter');
 
       // Start H2 reaction in Lab 1 (index 0) while active lab is switched to Lab 6 (index 5)
       const sim1 = mgr.labs[0].sim;
@@ -4111,17 +4117,17 @@
       const cannotRemoveLast = !mgr.removeLab(0);
 
       assert(
-        'LabManager supports 10 concurrent labs, steps background labs live (~15Hz), atomically relocates vessels between labs preserving moles, & protects last lab',
-        cap10 &&
-          !blocked11.ok &&
-          blocked11.reason === 'max_labs' &&
+        'LabManager supports 20 concurrent labs, steps background labs live (~15Hz), atomically relocates vessels between labs preserving moles, & protects last lab',
+        cap20 &&
+          !blocked21.ok &&
+          blocked21.reason === 'max_labs' &&
           bgH2Evolved > 0.002 &&
           !stillInLab1 &&
           inLab3 &&
           sim3.items.length === sim3CountBefore + 1 &&
           cuPreserved &&
           cannotRemoveLast,
-        `max10=${cap10}, blk11=${!blocked11.ok}, bgH2=${(bgH2Evolved * 1000).toFixed(2)}mmol, moved=${inLab3}, cuOK=${cuPreserved}`
+        `max20=${cap20}, blk21=${!blocked21.ok}, bgH2=${(bgH2Evolved * 1000).toFixed(2)}mmol, moved=${inLab3}, cuOK=${cuPreserved}`
       );
     }
 
@@ -6591,7 +6597,10 @@
       panel.renderFull((k) => I18N.vi[k] || k, 'vi');
 
       const hasXlsxBtn = Boolean(insDiv.querySelector('#btn-export-xlsx-item')) && insDiv.querySelectorAll('[data-xlsx-sec]').length >= 3;
-      const moltenTagOk = insDiv.querySelector('#sp-conc-FeCl2_s')?.textContent?.trim() === '🔥l';
+      const moltenTagOk =
+        Boolean(insDiv.querySelector('#sp-liq-row-FeCl2_s')) &&
+        insDiv.querySelector('#sp-molten-FeCl2_s')?.textContent?.trim() === '🔥' &&
+        !insDiv.querySelector('#sp-sol-row-FeCl2_s');
       const splitMassPressOk = Boolean(insDiv.querySelector('#live-mass')) && Boolean(insDiv.querySelector('#live-press-local')) && Boolean(insDiv.querySelector('#live-press-limit')) && Boolean(insDiv.querySelector('#live-press-bar'));
       const escRows = insDiv.querySelectorAll('#live-escaped-gas tbody tr');
       const escOnlyPositiveOk = escRows.length === 1 && escRows[0].textContent.includes('CO₂') && escRows[0].textContent.includes('mL') && !insDiv.querySelector('#live-escaped-gas').textContent.includes('H₂:');
@@ -6607,11 +6616,11 @@
       bx.tempK = 263.15;
       bx.isFrozenSolid = true;
       panel.renderFull((k) => I18N.vi[k] || k, 'vi');
-      const frozenTagOk = insDiv.querySelector('#sp-conc-H2O_s')?.textContent?.trim() === '🧊s';
+      const frozenTagOk = insDiv.querySelector('#sp-conc-H2O_s')?.textContent?.trim() === '🧊';
       insDiv.remove();
 
       assert(
-        'Excel .xlsx composition export uses standard ZIP OOXML + filename, inspector shows 🔥l/🧊s tags, split Net Mass & Pressure bar, vertical V>0mL escaped gases, and concise reaction cards with Info contextmenu',
+        'Excel .xlsx composition export uses standard ZIP OOXML + filename, inspector shows 🔥/🧊 tags, split Net Mass & Pressure bar, vertical V>0mL escaped gases, and concise reaction cards with Info contextmenu',
         validZipMagic && expectedNameOk && hasXlsxBtn && moltenTagOk && frozenTagOk && splitMassPressOk && escOnlyPositiveOk && rxnCompactOk && ctxInfoOk,
         `zip=${validZipMagic}, fname=${xRes.filename}, tags=${moltenTagOk}/${frozenTagOk}, split=${splitMassPressOk}, escRows=${escRows.length}, rxnCompact=${rxnCompactOk}, ctx=${ctxInfoOk}`
       );
@@ -11979,11 +11988,11 @@
       stepElectrophoresisCell(simEp, ep, 0.05);
       const adoptedAcidPh = Math.abs(ep.bufferPH - 1.0) < 0.15;
 
-      // Move off acid beaker, spot all 5 classic amino acids & run at pH = 6.0, 12 V for 8 s
+      // Move off acid beaker, wire dc_power supply, spot all 5 classic amino acids & run at pH = 6.0, 12 V for 8 s
       bAcid.x = 650;
       ep.bufferPH = 6.0;
-      ep.voltageV = 12;
-      ep.powerOn = true;
+      const dcEp = simEp.spawnAndConnectDcForElectrophoresis(ep.id);
+      simEp.setDcPowerState(dcEp.id, { voltageV: 12, powerOn: true });
       spotElectrophoresisAnalytes(ep, CLASSIC_AMINO_ACID_IDS, 6.0);
       for (let i = 0; i < 80; i++) stepElectrophoresisCell(simEp, ep, 0.1);
       const byId = Object.fromEntries(ep.lanes.map((l) => [l.id, l]));
@@ -11994,14 +12003,14 @@
         Math.abs(byId.Valine_aq.posMm) < 1.5 &&
         byId.Lysine_aq.posMm > 18;
 
-      // Flip polarity and verify Lysine moves backward toward left (-)
+      // Flip DC polarity and verify Lysine moves backward toward left (-)
       const lysBeforeFlip = byId.Lysine_aq.posMm;
-      ep.polarityReversed = true;
+      simEp.swapDcPolarity(dcEp.id);
       for (let i = 0; i < 20; i++) stepElectrophoresisCell(simEp, ep, 0.1);
-      const flipOk = byId.Lysine_aq.posMm < lysBeforeFlip - 3.0;
+      const flipOk = Boolean(ep.polarityReversed) && byId.Lysine_aq.posMm < lysBeforeFlip - 3.0;
 
       // Reset to 0 mm and run at pH = 1.0 -> all cationic, Lysine farthest
-      ep.polarityReversed = false;
+      simEp.swapDcPolarity(dcEp.id);
       ep.bufferPH = 1.0;
       ep.lanes.forEach((l) => { l.posMm = 0; });
       for (let i = 0; i < 40; i++) stepElectrophoresisCell(simEp, ep, 0.1);
@@ -12207,6 +12216,135 @@
         'Build 36 invariants (Prompt 96): 25–1500 °C pyrolysis (Glu/Lys/Ala/Val + Nylon6/sublimation), Keratin chemistry + rooster animation, & Shelf Amylase/Catalase starch hydrolysis vs denaturation',
         gluOk && lysOk && alaOk && valOk && kerInsolubleOk && kerXanOk && kerSulfurBiuretOk && kerPyroOk && kerVisOk && enzOk,
         `glu=${gluOk}, lys=${lysOk}(${lysCharPct.toFixed(1)}%), ala=${alaOk}, val=${valOk}(${valCharPct.toFixed(1)}%), ker=${kerInsolubleOk}/${kerXanOk}/${kerSulfurBiuretOk}/${kerPyroOk}/${kerVisOk}, enz=${enzOk}`
+      );
+    }
+
+    // TEST 234: Prompt 97 (virlab_beta_v5+build.37) — Unified Clean Formulas, Molten/Frozen Split, Apparatus & AA Motifs SVG, Dipeptide vs Tripeptide Biuret >= 2, Physical DC Electrophoresis, & MAX_LABS = 20
+    {
+      const tMock = (k) => I18N.vi[k] || k;
+      // 1. Display formula formatting rules (table/solid vs gas/vapor + frost)
+      const fmtOk =
+        formatSpeciesDisplayFormula(SPECIES.NaCl_s, 'solid') === 'NaCl' &&
+        formatSpeciesDisplayFormula(SPECIES.Na_aq, 'table') === 'Na⁺' &&
+        formatSpeciesDisplayFormula(SPECIES.Cl_aq, 'table') === 'Cl⁻' &&
+        formatSpeciesDisplayFormula(SPECIES.AgCl_s, 'solid') === 'AgCl' &&
+        formatSpeciesDisplayFormula(SPECIES.CuOH2_s, 'solid') === 'Cu(OH)₂' &&
+        formatSpeciesDisplayFormula(SPECIES.S_plastic_s, 'solid') === 'S(dẻo)' &&
+        formatSpeciesDisplayFormula(SPECIES.P_red_s, 'solid') === 'P(đỏ)' &&
+        formatSpeciesDisplayFormula(SPECIES.P_white_s, 'solid') === 'P(trắng)' &&
+        formatSpeciesDisplayFormula(SPECIES.C_s, 'solid') === 'C' &&
+        formatSpeciesDisplayFormula(SPECIES.Starch_aq, 'table') === 'Starch' &&
+        formatSpeciesDisplayFormula(SPECIES.Cellulose_s, 'solid') === 'Cellulose' &&
+        formatSpeciesDisplayFormula(SPECIES.Glucose_aq, 'table') === 'C₆H₁₂O₆ (Glc)' &&
+        formatSpeciesDisplayFormula(SPECIES.Fructose_aq, 'table') === 'C₆H₁₂O₆ (Frc)' &&
+        formatSpeciesDisplayFormula(SPECIES.Sucrose_aq, 'table') === 'C₁₂H₂₂O₁₁ (Suc)' &&
+        formatSpeciesDisplayFormula(SPECIES.Maltose_aq, 'table') === 'C₁₂H₂₂O₁₁ (Mal)' &&
+        formatSpeciesDisplayFormula(SPECIES.CO2_g, 'gas') === 'CO₂' &&
+        formatSpeciesDisplayFormula(SPECIES.HCl_g, 'gas') === 'HCl' &&
+        formatSpeciesDisplayFormula(SPECIES.H2O_g, 'gas') === 'H₂O 💨' &&
+        formatSpeciesDisplayFormula(SPECIES.I2_g, 'gas') === 'I₂ 💨' &&
+        formatSpeciesDisplayFormula(SPECIES.Valine_g, 'gas') === 'Valine 💨' &&
+        !formatGasSummaryHtml({ CO2_g: 0.05, H2O_g: 0.02 }, false).includes('(g)');
+
+      // 2. Molten solid moves to Liquid table & disappears from Solid table; frozen vessel moves liquids to Solid table
+      const simPh = new LabSimulation();
+      const bHot = simPh.createApparatus('beaker_250', 220, 400);
+      bHot.moles = { NaCl_s: 0.5 };
+      bHot.tempK = 1150; // > NaCl meltTempK (1074 K)
+      const hotLiq = computeLiquidSpeciesTableData(bHot.moles, bHot.tempK, null, false);
+      const hotSolHtml = buildSolidBoxHtml(bHot, tMock);
+      const moltenOk =
+        hotLiq.rows.some((r) => r.spId === 'NaCl_s' && r.isMolten && r.volMl > 0) &&
+        buildLiquidBoxHtml(bHot, hotLiq, tMock).includes('🔥') &&
+        countDisplayableSolidSpecies(bHot) === 0 &&
+        !hotSolHtml.includes('NaCl');
+
+      const bCold = simPh.createApparatus('beaker_250', 420, 400);
+      bCold.moles = { H2O_l: 5.0, Na_aq: 0.2, Cl_aq: 0.2 };
+      bCold.tempK = 258.15;
+      bCold.isFrozenSolid = true;
+      const coldLiq = computeLiquidSpeciesTableData(bCold.moles, bCold.tempK, null, true);
+      const coldSolHtml = buildSolidBoxHtml(bCold, tMock);
+      const frozenOk =
+        coldLiq.rows.length === 0 &&
+        countDisplayableSolidSpecies(bCold) === 3 &&
+        coldSolHtml.includes('🧊') &&
+        !coldSolHtml.includes('(l)') &&
+        !coldSolHtml.includes('(aq)');
+
+      // 3. Shelf apparatus SVG & AA skeletal motif coverage
+      const allAppSvgOk = APPARATUS_ORDER.every((id) => {
+        const svg = apparatusSvg(id);
+        return typeof svg === 'string' && svg.includes('<svg') && !svg.includes('>?</text>');
+      });
+      const epSvg = apparatusSvg('electrophoresis_cell');
+      const motifsOk = ['skeletal_alanine', 'skeletal_valine', 'skeletal_lysine', 'skeletal_glutamic'].every((m) => {
+        const g = shelfMotifSvg(m);
+        return typeof g === 'string' && (g.includes('<g') || g.includes('<path'));
+      });
+      const shelfSvgOk = allAppSvgOk && epSvg.includes('svg') && motifsOk;
+
+      // 4. Dipeptide (peptideBondCount=1 -> Biuret negative) vs Tripeptide (peptideBondCount=2 -> Biuret violet) + stepwise condensation & hydrolysis
+      const simPep = new LabSimulation();
+      const bDi = simPep.createApparatus('beaker_250', 220, 400);
+      bDi.tempK = 298.15;
+      bDi.moles = { H2O_l: 2.0, Gly2_aq: 0.05, CuOH2_s: 0.02, OH_aq: 0.05, Na_aq: 0.05 };
+      for (let i = 0; i < 12; i++) stepVesselChemistry(bDi, 0.2, { environment: simPep.environment });
+      const bTri = simPep.createApparatus('beaker_250', 360, 400);
+      bTri.tempK = 298.15;
+      bTri.moles = { H2O_l: 2.0, Gly3_aq: 0.05, CuOH2_s: 0.02, OH_aq: 0.05, Na_aq: 0.05 };
+      for (let i = 0; i < 12; i++) stepVesselChemistry(bTri, 0.2, { environment: simPep.environment });
+      const biuretRuleOk =
+        SPECIES.Gly2_aq?.functionalGroups?.peptideBondCount === 1 &&
+        SPECIES.Gly3_aq?.functionalGroups?.peptideBondCount === 2 &&
+        SPECIES.Ala3_aq?.functionalGroups?.peptideBondCount === 2 &&
+        SPECIES.Val3_aq?.functionalGroups?.peptideBondCount === 2 &&
+        (bDi.moles.CuPeptide_aq || 0) === 0 &&
+        (bTri.moles.CuPeptide_aq || 0) > 0.005;
+
+      const bStep = simPep.createApparatus('beaker_250', 500, 400);
+      bStep.moles = { H2O_l: 2.0, Gly3_aq: 0.05, H_aq: 0.2, Cl_aq: 0.2 };
+      bStep.tempK = 358.15; // 85 °C hot acid hydrolysis
+      for (let i = 0; i < 10; i++) {
+        bStep.tempK = 358.15;
+        stepVesselChemistry(bStep, 0.2, { environment: simPep.environment });
+      }
+      const stepHydOk = (bStep.moles.Gly2_aq || 0) > 0.002 && (bStep.moles.Glycine_aq || 0) > 0.002;
+
+      const bCond = simPep.createApparatus('beaker_250', 640, 400);
+      bCond.moles = { Glycine_s: 0.1 };
+      bCond.tempK = 515.15; // ~242 °C melt condensation
+      for (let i = 0; i < 8; i++) {
+        bCond.tempK = 515.15;
+        stepVesselChemistry(bCond, 0.15, { environment: simPep.environment });
+      }
+      const stepCondOk = (bCond.moles.Gly2_s || 0) > 0.002 || (bCond.moles.Gly3_s || 0) > 1e-4;
+
+      // 5. Physical dc_power wiring for electrophoresis_cell + removal + MAX_LABS=20
+      const simWire = new LabSimulation();
+      const epW = simWire.createApparatus('electrophoresis_cell', 320, 320);
+      spotElectrophoresisAnalytes(epW, ['Lysine_aq'], 6.0);
+      for (let i = 0; i < 20; i++) stepElectrophoresisCell(simWire, epW, 0.1);
+      const noDcStays = Math.abs(epW.lanes[0].posMm) < 1e-6;
+      const dcW = simWire.spawnAndConnectDcForElectrophoresis(epW.id);
+      for (let i = 0; i < 20; i++) stepElectrophoresisCell(simWire, epW, 0.1);
+      const standbyStays = Boolean(dcW) && !dcW.powerOn && Math.abs(epW.lanes[0].posMm) < 1e-6;
+      simWire.setDcPowerState(dcW.id, { voltageV: 12, powerOn: true });
+      stepElectrochemistry(simWire, 0.05);
+      for (let i = 0; i < 20; i++) stepElectrophoresisCell(simWire, epW, 0.1);
+      const wCtx = document.createElement('canvas').getContext('2d');
+      renderDcPowerAndWires(wCtx, simWire.items, dcW.id, true);
+      const activeMigrated = epW.lanes[0].posMm > 3.0 && dcW.circuitMode === 'electrophoresis' && dcW.measuredV > 5;
+      simWire.swapDcPolarity(dcW.id);
+      const polarityLinkedOk = Boolean(epW.polarityReversed);
+      simWire.removeApparatus(dcW.id);
+      const unlinkOnDeleteOk = epW.connectedPowerId === null && !epW.powerOn && epW.voltageV === 0;
+      const epDcOk = noDcStays && standbyStays && activeMigrated && polarityLinkedOk && unlinkOnDeleteOk && CONSTANTS.MAX_LABS === 20;
+
+      assert(
+        'Build 37 invariants (Prompt 97): Clean Formulas, Molten/Frozen Split, 100% Apparatus & AA Motif SVGs, Dipeptide/Tripeptide Biuret >= 2 Rule, Physical DC Electrophoresis & MAX_LABS=20',
+        fmtOk && moltenOk && frozenOk && shelfSvgOk && biuretRuleOk && stepHydOk && stepCondOk && epDcOk,
+        `fmt=${fmtOk}, molten=${moltenOk}, frozen=${frozenOk}, svg=${shelfSvgOk}, biuret=${biuretRuleOk}, hyd=${stepHydOk}, cond=${stepCondOk}, epDc=${epDcOk}`
       );
     }
 

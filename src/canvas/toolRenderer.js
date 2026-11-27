@@ -1477,6 +1477,36 @@ export function renderDcPowerAndWires(ctx, items, selectedId, isDark) {
   const pal = getThemePalette(isDark);
   const supplies = items.filter((i) => i.kind === 'dc_power');
   const electrodes = items.filter((i) => i.kind === 'electrode');
+  const epCells = items.filter((i) => i.kind === 'electrophoresis');
+
+  const drawLeadCurve = (from, to, color, energized = false) => {
+    if (!from || !to) return;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = energized ? 3.0 : 2.6;
+    ctx.lineCap = 'round';
+    if (energized) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 5;
+    }
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.bezierCurveTo(from.x, Math.max(from.y, to.y) + 32, to.x, to.y - 44, to.x, to.y);
+    ctx.stroke();
+    if (energized) {
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.lineWidth = 1.1;
+      ctx.setLineDash([5, 7]);
+      ctx.lineDashOffset = -((typeof performance !== 'undefined' ? performance.now() : 0) * 0.025);
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.bezierCurveTo(from.x, Math.max(from.y, to.y) + 32, to.x, to.y - 44, to.x, to.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  };
 
   for (const sup of supplies) {
     const { x, y } = sup;
@@ -1486,28 +1516,35 @@ export function renderDcPowerAndWires(ctx, items, selectedId, isDark) {
     const isSelected = sup.id === selectedId;
 
     // 1. Render flexible Red (+) & Black (-) alligator wire leads first
+    const linkedEp = epCells.find((ep) => ep.connectedPowerId === sup.id);
     const posEl = electrodes.find((e) => e.id === sup.posElectrodeId);
     const negEl = electrodes.find((e) => e.id === sup.negElectrodeId);
     const postPos = { x: x - 26, y: y + 22 };
     const postNeg = { x: x + 26, y: y + 22 };
+    const negColor = isDark ? '#94a3b8' : '#1e293b';
+    const energized = Boolean(sup.powerOn && (sup.voltageV || 0) > 0.05);
 
-    const drawWire = (from, el, color) => {
-      if (!el) return;
+    if (linkedEp) {
+      const epSpec = APPARATUS.electrophoresis_cell || { width: 210, height: 82 };
+      const epLeft = linkedEp.x - epSpec.width / 2;
+      const epTop = linkedEp.y - epSpec.height / 2;
+      const leftTerm = { x: epLeft + 17, y: epTop + 9 };
+      const rightTerm = { x: epLeft + epSpec.width - 17, y: epTop + 9 };
+      const posTerm = linkedEp.polarityReversed ? rightTerm : leftTerm;
+      const negTerm = linkedEp.polarityReversed ? leftTerm : rightTerm;
+      drawLeadCurve(postPos, posTerm, '#ef4444', energized);
+      drawLeadCurve(postNeg, negTerm, negColor, energized);
+    } else {
       const eSpec = APPARATUS.electrode_rod;
-      const eH = el.renderHeight || eSpec.height;
-      const to = { x: el.x, y: el.y - eH / 2 + 5 };
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2.6;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(from.x, from.y);
-      ctx.bezierCurveTo(from.x, Math.max(from.y, to.y) + 32, to.x, to.y - 44, to.x, to.y);
-      ctx.stroke();
-      ctx.restore();
-    };
-    drawWire(postPos, posEl, '#ef4444');
-    drawWire(postNeg, negEl, isDark ? '#94a3b8' : '#1e293b');
+      if (posEl) {
+        const eH = posEl.renderHeight || eSpec.height;
+        drawLeadCurve(postPos, { x: posEl.x, y: posEl.y - eH / 2 + 5 }, '#ef4444', energized);
+      }
+      if (negEl) {
+        const eH = negEl.renderHeight || eSpec.height;
+        drawLeadCurve(postNeg, { x: negEl.x, y: negEl.y - eH / 2 + 5 }, negColor, energized);
+      }
+    }
 
     // 2. Render DC Supply Chassis & Dual LCD Readout
     ctx.save();
@@ -1536,6 +1573,10 @@ export function renderDcPowerAndWires(ctx, items, selectedId, isDark) {
     const modeTag =
       sup.circuitMode === 'galvanic'
         ? 'BATTERY EMF'
+        : sup.circuitMode === 'electrophoresis'
+        ? sup.powerOn
+          ? 'ELECTROPHORESIS'
+          : 'EP STANDBY'
         : sup.circuitMode === 'electrolysis'
         ? sup.powerOn
           ? 'ELECTROLYSIS ON'
@@ -2419,7 +2460,7 @@ export function renderElectrophoresisCell(ctx, item, isSelected, isDark, langCod
     });
   }
 
-  const statusTxt = powerOn ? `${vVal.toFixed(0)}V` : 'OFF';
+  const statusTxt = item.connectedPowerId ? (powerOn ? `${vVal.toFixed(0)}V ON` : 'STANDBY') : 'NO DC';
   drawLabelPill(ctx, x, topY - 10, `${item.label} · pH ${pH.toFixed(1)} · ${statusTxt}${nin ? ' · Ninhydrin' : ''}`, {
     pal,
     borderColor: isSelected ? '#3b82f6' : nin ? '#8b5cf6' : pal.badgeBorder,

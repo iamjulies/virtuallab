@@ -4,7 +4,7 @@
  */
 import { APPARATUS } from '../data/apparatus.js';
 import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
-import { isSolidMoltenAtTemp, SPECIES } from '../data/species.js';
+import { formatSpeciesDisplayFormula, isSolidMoltenAtTemp, SPECIES } from '../data/species.js';
 import {
   computeContentsMassG,
   computeLiquidSpeciesTableData,
@@ -333,7 +333,7 @@ export function extractLiquidSheetRows(item, tempKOrEnv = CONSTANTS.T_STD_K, t =
   const tr = getTranslateFn(t);
   const argTemp = typeof tempKOrEnv === 'object' && tempKOrEnv !== null ? tempKOrEnv.tempK : tempKOrEnv;
   const T = Number(item?.tempK ?? argTemp ?? CONSTANTS.T_STD_K);
-  const data = computeLiquidSpeciesTableData(item?.moles || {}, T);
+  const data = computeLiquidSpeciesTableData(item?.moles || {}, T, null, Boolean(item?.isFrozenSolid));
   const totalMl = Number(data?.totalLiqMl ?? 0);
   const mixDensity = Number(data?.mixDensity ?? 0);
   const header = ['Species ID', 'Name', 'Formula', 'Moles (mol)', 'Mass (g)', 'Volume (mL)', 'Conc. (M) / % / State'];
@@ -348,10 +348,11 @@ export function extractLiquidSheetRows(item, tempKOrEnv = CONSTANTS.T_STD_K, t =
     ...(data?.rows || []).map((r) => {
       const id = r.spId || r.id || '';
       const sp = r.sp || SPECIES[id] || {};
+      const fDisplay = formatSpeciesDisplayFormula(sp || id, 'liquid');
       const stateTag =
         id === 'H2O_l'
           ? 'Solvent'
-          : isSolidMoltenAtTemp(sp, T, item?.moles)
+          : r.isMolten
           ? tr('moltenStateTag')
           : r.cM > 0
           ? `${r.cM.toFixed(4)} M (${(r.cPct || 0).toFixed(2)}%)`
@@ -359,7 +360,7 @@ export function extractLiquidSheetRows(item, tempKOrEnv = CONSTANTS.T_STD_K, t =
       return [
         id,
         sp.name || id,
-        sp.formula || id,
+        r.isMolten ? `${fDisplay} ${tr('moltenStateTag')}` : fDisplay,
         Number((r.mol || 0).toFixed(6)),
         Number((r.massG || 0).toFixed(4)),
         r.volMl != null ? Number(r.volMl.toFixed(4)) : '',
@@ -374,8 +375,14 @@ export function extractSolidSheetRows(item, tempKOrEnv = CONSTANTS.T_STD_K, t = 
   const tr = getTranslateFn(t);
   const argTemp = typeof tempKOrEnv === 'object' && tempKOrEnv !== null ? tempKOrEnv.tempK : tempKOrEnv;
   const T = Number(item?.tempK ?? argTemp ?? CONSTANTS.T_STD_K);
+  const isVesselFrozen = Boolean(item?.isFrozenSolid);
   const entries = Object.entries(item?.moles || {})
-    .filter(([id, n]) => n > 1e-10 && (SPECIES[id]?.phase === 's' || item?.kind === 'spoon'))
+    .filter(([id, n]) => {
+      const sp = SPECIES[id];
+      if (!(n > 1e-10) || !sp) return false;
+      if (isVesselFrozen) return sp.phase === 's' || sp.phase === 'l' || sp.phase === 'aq';
+      return (sp.phase === 's' && !isSolidMoltenAtTemp(sp, T, item?.moles)) || item?.kind === 'spoon';
+    })
     .sort((a, b) => b[1] - a[1]);
 
   const rows = [
@@ -384,12 +391,13 @@ export function extractSolidSheetRows(item, tempKOrEnv = CONSTANTS.T_STD_K, t = 
     ...entries.map(([id, n]) => {
       const sp = SPECIES[id] || {};
       const massG = n * (sp.molarMass || 0);
-      const molten = isSolidMoltenAtTemp(sp, T, item?.moles);
-      const st = molten ? tr('moltenStateTag') || 'Molten' : id === 'H2O_s' ? 'Ice (Solid)' : 'Solid / Precipitate';
+      const isFrozen = isVesselFrozen || id === 'H2O_s' || id === 'CH3COOH_s' || id === 'Br2_s' || id === 'C6H6_s';
+      const fDisplay = formatSpeciesDisplayFormula(sp || id, 'solid');
+      const st = isFrozen ? tr('frozenSolidTag') : 'Solid / Precipitate';
       return [
         id,
         sp.name || id,
-        sp.formula || id,
+        isFrozen ? `${fDisplay} ${tr('frozenSolidTag')}` : fDisplay,
         Number(n.toFixed(6)),
         Number(massG.toFixed(4)),
         st,
@@ -712,26 +720,30 @@ export function buildBenchMultiSheetWorkbook(sim, t = null, labName = 'Lab 1') {
     ]);
 
     if (it.kind === 'vessel' || it.kind === 'pipette' || it.kind === 'burette' || it.kind === 'separatory_funnel') {
-      const liqData = computeLiquidSpeciesTableData(it.moles || {}, T);
+      const liqData = computeLiquidSpeciesTableData(it.moles || {}, T, null, Boolean(it.isFrozenSolid));
       for (const r of liqData.rows) {
         const spId = r.spId || r.id || '';
         const sp = r.sp || SPECIES[spId] || {};
         liquidRows.push([
           it.label || it.id,
           spId,
-          sp.formula || spId,
+          formatSpeciesDisplayFormula(sp || spId, 'liquid') + (r.isMolten ? ' 🔥' : ''),
           Number((r.mol || 0).toFixed(6)),
           Number((r.massG || 0).toFixed(4)),
           r.volMl != null ? Number(r.volMl.toFixed(4)) : '',
-          r.cM > 0 ? `${r.cM.toFixed(3)} M` : spId === 'H2O_l' ? 'Solvent' : '',
+          r.isMolten ? '🔥' : r.cM > 0 ? `${r.cM.toFixed(3)} M` : spId === 'H2O_l' ? 'Solvent' : '',
         ]);
       }
     }
     if (it.kind === 'vessel' || it.kind === 'spoon') {
+      const isFroz = Boolean(it.isFrozenSolid);
       for (const [id, n] of Object.entries(it.moles || {})) {
-        if (n > 1e-10 && (SPECIES[id]?.phase === 's' || it.kind === 'spoon')) {
-          const sp = SPECIES[id] || {};
-          solidRows.push([it.label || it.id, id, sp.formula || id, Number(n.toFixed(6)), Number((n * (sp.molarMass || 0)).toFixed(4)), isSolidMoltenAtTemp(sp, T, it.moles) ? 'Molten' : 'Solid']);
+        const sp = SPECIES[id];
+        if (!(n > 1e-10) || !sp) continue;
+        const showSolid = isFroz ? (sp.phase === 's' || sp.phase === 'l' || sp.phase === 'aq') : (sp.phase === 's' && !isSolidMoltenAtTemp(sp, T, it.moles)) || it.kind === 'spoon';
+        if (showSolid) {
+          const isFrzItem = isFroz || id === 'H2O_s' || id === 'CH3COOH_s' || id === 'Br2_s' || id === 'C6H6_s';
+          solidRows.push([it.label || it.id, id, formatSpeciesDisplayFormula(sp || id, 'solid') + (isFrzItem ? ' 🧊' : ''), Number(n.toFixed(6)), Number((n * (sp.molarMass || 0)).toFixed(4)), isFrzItem ? '🧊' : 'Solid']);
         }
       }
     }

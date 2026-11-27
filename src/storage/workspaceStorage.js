@@ -711,7 +711,7 @@ export function importBenchIntoNewTab(target, rawData, opts = {}) {
   }
 
   if (Array.isArray(target.labs)) {
-    if (target.labs.length >= (target.maxLabs || 10)) {
+    if (target.labs.length >= (target.maxLabs || 20)) {
       if (opts.allowOverwriteChooser) {
         return { ok: false, needsOverwriteChoice: true, scope: VLAB_SCOPES.SINGLE_BENCH, benchPayload };
       }

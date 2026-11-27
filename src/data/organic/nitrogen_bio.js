@@ -21,11 +21,230 @@ const M_SUCROSE = 12 * AW.C + 22 * AW.H + 11 * AW.O;
 const M_STARCH_UNIT = 6 * AW.C + 10 * AW.H + 5 * AW.O;
 const M_CARAMEL = 12 * AW.C + 18 * AW.H + 9 * AW.O;
 const M_GLYCINE = 2 * AW.C + 5 * AW.H + AW.N + 2 * AW.O;
+const M_ALANINE = 3 * AW.C + 7 * AW.H + AW.N + 2 * AW.O;
 const M_VALINE = 5 * AW.C + 11 * AW.H + AW.N + 2 * AW.O;
+const M_H2O = 2 * AW.H + AW.O;
 const M_PEPTIDE = 4 * AW.C + 8 * AW.H + 2 * AW.N + 3 * AW.O;
 const M_ALBUMIN_UNIT = 12 * AW.C + 26 * AW.H + 4 * AW.N + 6 * AW.O + 2 * AW.S;
 const M_KERATIN_UNIT = 10 * AW.C + 22 * AW.H + 4 * AW.N + 6 * AW.O + 2 * AW.S;
 const M_CU_OH_2 = AW.Cu + 2 * (AW.O + AW.H);
+
+function buildOligoPeptideEntries(specs) {
+  const out = {};
+  for (const s of specs) {
+    const {
+      prefix,
+      formula,
+      name,
+      molarMass,
+      atoms,
+      peptideBondCount,
+      density,
+      cp,
+      meltTempK,
+      dHFusJ,
+      partialMolarVolMl,
+      viscosityRel298,
+      pKaList,
+      isoelectricPoint,
+      tlcPolarity,
+      tlcColor,
+      electrophoresisColor,
+    } = s;
+    const commonBio = {
+      atoms,
+      functionalGroups: { hasPeptideBond: true, peptideBondCount, isAminoAcid: true },
+      tlcPolarity,
+      tlcColor,
+      uvActive: false,
+      isoelectricPoint,
+      electrophoresisMaxCharge: 1,
+      electrophoresisPkaList: pKaList,
+      electrophoresisColor,
+      irBands: [
+        { wn: 3290, width: 70, intensity: 0.72, label: 'ν(N–H amide)' },
+        { wn: 1655, width: 32, intensity: 0.94, label: 'Amide I ν(C=O)' },
+        { wn: 1550, width: 35, intensity: 0.78, label: 'Amide II δ(N–H)' },
+      ],
+      ghsHazards: [],
+    };
+    out[`${prefix}_s`] = {
+      id: `${prefix}_s`,
+      formula,
+      name,
+      phase: 's',
+      molarMass,
+      density,
+      cp,
+      meltTempK,
+      dHFusJ,
+      color: '#ffffff',
+      highlightColor: '#f8fafc',
+      visualType: 'white_crystal',
+      renderLayer: 'bottom',
+      renderOrder: 184,
+      ...commonBio,
+    };
+    out[`${prefix}_aq`] = {
+      id: `${prefix}_aq`,
+      formula,
+      name: `${name} (aq)`,
+      phase: 'aq',
+      charge: 0,
+      molarMass,
+      partialMolarVolMl,
+      viscosityRel298,
+      color: '#f8fafc',
+      pKaList,
+      boundProtons: 1,
+      ...commonBio,
+    };
+  }
+  return out;
+}
+
+const OLIGOPEPTIDE_SPECS = [
+  {
+    prefix: 'Gly2',
+    formula: 'Gly–Gly (Gly₂)',
+    name: 'Glycylglycine (Dipeptide)',
+    molarMass: 2 * M_GLYCINE - M_H2O,
+    atoms: { C: 4, H: 8, N: 2, O: 3 },
+    peptideBondCount: 1,
+    density: 1.53,
+    cp: 163.0,
+    meltTempK: 535.15,
+    dHFusJ: 24000,
+    partialMolarVolMl: 76.2,
+    viscosityRel298: 1.04,
+    pKaList: [3.14, 8.25],
+    isoelectricPoint: 5.7,
+    tlcPolarity: 0.89,
+    tlcColor: '#6366f1',
+    electrophoresisColor: '#818cf8',
+    solubilityMolPerKg298: 1.67,
+  },
+  {
+    prefix: 'Gly3',
+    formula: 'Gly–Gly–Gly (Gly₃)',
+    name: 'Triglycine (Tripeptide)',
+    molarMass: 3 * M_GLYCINE - 2 * M_H2O,
+    atoms: { C: 6, H: 11, N: 3, O: 4 },
+    peptideBondCount: 2,
+    density: 1.5,
+    cp: 222.0,
+    meltTempK: 519.15,
+    dHFusJ: 28000,
+    partialMolarVolMl: 111.8,
+    viscosityRel298: 1.06,
+    pKaList: [3.23, 8.09],
+    isoelectricPoint: 5.66,
+    tlcPolarity: 0.91,
+    tlcColor: '#4f46e5',
+    electrophoresisColor: '#6366f1',
+    solubilityMolPerKg298: 0.34,
+  },
+  {
+    prefix: 'Ala2',
+    formula: 'Ala–Ala (Ala₂)',
+    name: 'Alanylalanine (Dipeptide)',
+    molarMass: 2 * M_ALANINE - M_H2O,
+    atoms: { C: 6, H: 12, N: 2, O: 3 },
+    peptideBondCount: 1,
+    density: 1.34,
+    cp: 204.0,
+    meltTempK: 571.15,
+    dHFusJ: 25000,
+    partialMolarVolMl: 110.3,
+    viscosityRel298: 1.04,
+    pKaList: [3.17, 8.42],
+    isoelectricPoint: 5.8,
+    tlcPolarity: 0.8,
+    tlcColor: '#8b5cf6',
+    electrophoresisColor: '#a78bfa',
+    solubilityMolPerKg298: 1.45,
+  },
+  {
+    prefix: 'Ala3',
+    formula: 'Ala–Ala–Ala (Ala₃)',
+    name: 'Trialanine (Tripeptide)',
+    molarMass: 3 * M_ALANINE - 2 * M_H2O,
+    atoms: { C: 9, H: 17, N: 3, O: 4 },
+    peptideBondCount: 2,
+    density: 1.32,
+    cp: 280.0,
+    meltTempK: 529.15,
+    dHFusJ: 29000,
+    partialMolarVolMl: 162.4,
+    viscosityRel298: 1.06,
+    pKaList: [3.39, 8.03],
+    isoelectricPoint: 5.71,
+    tlcPolarity: 0.83,
+    tlcColor: '#7c3aed',
+    electrophoresisColor: '#8b5cf6',
+    solubilityMolPerKg298: 0.42,
+  },
+  {
+    prefix: 'Val2',
+    formula: 'Val–Val (Val₂)',
+    name: 'Valylvaline (Dipeptide)',
+    molarMass: 2 * M_VALINE - M_H2O,
+    atoms: { C: 10, H: 20, N: 2, O: 3 },
+    peptideBondCount: 1,
+    density: 1.19,
+    cp: 288.0,
+    meltTempK: 547.15,
+    dHFusJ: 27000,
+    partialMolarVolMl: 166.5,
+    viscosityRel298: 1.05,
+    pKaList: [3.2, 8.4],
+    isoelectricPoint: 5.8,
+    tlcPolarity: 0.64,
+    tlcColor: '#a855f7',
+    electrophoresisColor: '#c084fc',
+    solubilityMolPerKg298: 0.35,
+  },
+  {
+    prefix: 'Val3',
+    formula: 'Val–Val–Val (Val₃)',
+    name: 'Trivaline (Tripeptide)',
+    molarMass: 3 * M_VALINE - 2 * M_H2O,
+    atoms: { C: 15, H: 29, N: 3, O: 4 },
+    peptideBondCount: 2,
+    density: 1.17,
+    cp: 390.0,
+    meltTempK: 535.15,
+    dHFusJ: 31000,
+    partialMolarVolMl: 245.0,
+    viscosityRel298: 1.07,
+    pKaList: [3.35, 8.15],
+    isoelectricPoint: 5.75,
+    tlcPolarity: 0.67,
+    tlcColor: '#9333ea',
+    electrophoresisColor: '#a855f7',
+    solubilityMolPerKg298: 0.14,
+  },
+];
+
+const OLIGOPEPTIDE_SPECIES = buildOligoPeptideEntries(OLIGOPEPTIDE_SPECS);
+const OLIGOPEPTIDE_DISSOLUTION_REACTIONS = OLIGOPEPTIDE_SPECS.map((s) => ({
+  id: `dissolve_${s.prefix.toLowerCase()}`,
+  equation: `${s.formula}(s) → ${s.formula}(aq)`,
+  type: 'dissolution',
+  solidId: `${s.prefix}_s`,
+  ionCheckId: `${s.prefix}_aq`,
+  nameVi: `Hòa tan ${s.name} vào nước`,
+  nameEn: `Dissolution of ${s.name} in water`,
+  descVi: `${s.formula} (${s.peptideBondCount} liên kết peptide) tan thành dung dịch lưỡng cực trung tính.`,
+  descEn: `${s.formula} (${s.peptideBondCount} peptide bond${s.peptideBondCount > 1 ? 's' : ''}) dissolves cleanly as a zwitterionic solute.`,
+  reactants: { [`${s.prefix}_s`]: 1 },
+  products: { [`${s.prefix}_aq`]: 1 },
+  solubilityMolPerKg298: s.solubilityMolPerKg298,
+  solubilityTempCoeff: 0.004,
+  k298: 0.09,
+  eaJ: 12500,
+  deltaHJ: 8000,
+}));
 
 export const NITROGEN_BIO_SPECIES = {
   // --- 1. Amines & Salts ---
@@ -201,7 +420,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   Peptide_s: {
     id: 'Peptide_s',
-    formula: 'Polypeptide(s)',
+    formula: 'Polypeptide',
     name: 'Polypeptide (Peptide chain)',
     phase: 's',
     molarMass: M_PEPTIDE,
@@ -214,19 +433,19 @@ export const NITROGEN_BIO_SPECIES = {
     renderLayer: 'bottom',
     renderOrder: 184,
     atoms: { C: 4, H: 8, N: 2, O: 3 },
-    functionalGroups: { hasPeptideBond: true },
+    functionalGroups: { hasPeptideBond: true, peptideBondCount: 4 },
     tlcPolarity: 0.92,
     uvActive: false,
   },
   Peptide_aq: {
     id: 'Peptide_aq',
-    formula: 'Polypeptide(aq)',
+    formula: 'Polypeptide',
     name: 'Polypeptide (aqueous)',
     phase: 'aq',
     molarMass: M_PEPTIDE,
     color: '#f8fafc',
     atoms: { C: 4, H: 8, N: 2, O: 3 },
-    functionalGroups: { hasPeptideBond: true },
+    functionalGroups: { hasPeptideBond: true, peptideBondCount: 4 },
     tlcPolarity: 0.92,
     uvActive: false,
   },
@@ -240,11 +459,12 @@ export const NITROGEN_BIO_SPECIES = {
     extinctionRGB: { r: 0.72, g: 2.35, b: 0.25 },
     opticalCoeff: 0.28,
   },
+  ...OLIGOPEPTIDE_SPECIES,
 
   // --- 3. Carbohydrates & Chelates / Iodine Complex ---
   Glucose_s: {
     id: 'Glucose_s',
-    formula: 'C₆H₁₂O₆(s)',
+    formula: 'C₆H₁₂O₆ (Glc)',
     name: 'Glucose',
     phase: 's',
     molarMass: M_GLUCOSE,
@@ -268,7 +488,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   Glucose_aq: {
     id: 'Glucose_aq',
-    formula: 'C₆H₁₂O₆(aq)',
+    formula: 'C₆H₁₂O₆ (Glc)',
     name: 'Glucose (aqueous)',
     phase: 'aq',
     molarMass: M_GLUCOSE,
@@ -299,7 +519,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   Sucrose_s: {
     id: 'Sucrose_s',
-    formula: 'C₁₂H₂₂O₁₁(s)',
+    formula: 'C₁₂H₂₂O₁₁ (Suc)',
     name: 'Sucrose',
     phase: 's',
     molarMass: M_SUCROSE,
@@ -323,7 +543,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   Sucrose_aq: {
     id: 'Sucrose_aq',
-    formula: 'C₁₂H₂₂O₁₁(aq)',
+    formula: 'C₁₂H₂₂O₁₁ (Suc)',
     name: 'Sucrose (aqueous)',
     phase: 'aq',
     molarMass: M_SUCROSE,
@@ -346,7 +566,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   Starch_s: {
     id: 'Starch_s',
-    formula: '(C₆H₁₀O₅)ₙ(s)',
+    formula: 'Starch',
     name: 'Starch',
     phase: 's',
     isPolymer: true,
@@ -368,7 +588,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   Starch_aq: {
     id: 'Starch_aq',
-    formula: 'Starch(aq)',
+    formula: 'Starch',
     name: 'Starch (aqueous dispersion)',
     phase: 'aq',
     isPolymer: true,
@@ -392,7 +612,7 @@ export const NITROGEN_BIO_SPECIES = {
   // --- 4. Fructose, Maltose, Cellulose & Schweizer/Nitrocellulose ---
   Fructose_s: {
     id: 'Fructose_s',
-    formula: 'C₆H₁₂O₆ (Fructose)',
+    formula: 'C₆H₁₂O₆ (Frc)',
     name: 'D-Fructose',
     phase: 's',
     molarMass: M_GLUCOSE,
@@ -416,7 +636,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   Fructose_aq: {
     id: 'Fructose_aq',
-    formula: 'C₆H₁₂O₆ (Fructose, aq)',
+    formula: 'C₆H₁₂O₆ (Frc)',
     name: 'D-Fructose (aqueous)',
     phase: 'aq',
     molarMass: M_GLUCOSE,
@@ -439,7 +659,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   Maltose_s: {
     id: 'Maltose_s',
-    formula: 'C₁₂H₂₂O₁₁ (Maltose)',
+    formula: 'C₁₂H₂₂O₁₁ (Mal)',
     name: 'Maltose',
     phase: 's',
     molarMass: M_SUCROSE,
@@ -460,7 +680,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   Maltose_aq: {
     id: 'Maltose_aq',
-    formula: 'C₁₂H₂₂O₁₁ (Maltose, aq)',
+    formula: 'C₁₂H₂₂O₁₁ (Mal)',
     name: 'Maltose (aqueous)',
     phase: 'aq',
     molarMass: M_SUCROSE,
@@ -483,7 +703,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   Cellulose_s: {
     id: 'Cellulose_s',
-    formula: '(C₆H₁₀O₅)ₙ (Cellulose)',
+    formula: 'Cellulose',
     name: 'Cellulose (cotton fiber)',
     phase: 's',
     isPolymer: true,
@@ -1105,7 +1325,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   AlbuminCoagulated_s: {
     id: 'AlbuminCoagulated_s',
-    formula: 'Albumin↓ (đông tụ)',
+    formula: 'Albumin (Coagulated)',
     name: 'Coagulated Albumin (denatured)',
     phase: 's',
     isPrecipitate: true,
@@ -1126,7 +1346,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   AlbuminBrown_s: {
     id: 'AlbuminBrown_s',
-    formula: 'Albumin (biến tính vàng nâu)',
+    formula: 'Albumin (Denatured)',
     name: 'Thermally browned dehydrated Albumin',
     phase: 's',
     isPrecipitate: true,
@@ -1201,7 +1421,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   AlbuminXantho_s: {
     id: 'AlbuminXantho_s',
-    formula: 'Albumin–NO₂↓ (vàng)',
+    formula: 'Albumin–NO₂',
     name: 'Xanthoproteic nitrated protein',
     phase: 's',
     isPrecipitate: true,
@@ -1228,7 +1448,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   AmylaseDenatured_s: {
     id: 'AmylaseDenatured_s',
-    formula: 'Amylase↓ (biến tính)',
+    formula: 'Amylase (Denatured)',
     name: 'Denatured Amylase',
     phase: 's',
     isPrecipitate: true,
@@ -1253,7 +1473,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   CatalaseDenatured_s: {
     id: 'CatalaseDenatured_s',
-    formula: 'Catalase↓ (biến tính)',
+    formula: 'Catalase (Denatured)',
     name: 'Denatured Catalase',
     phase: 's',
     isPrecipitate: true,
@@ -1287,7 +1507,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   Keratin_s: {
     id: 'Keratin_s',
-    formula: 'Keratin (Protein sợi)',
+    formula: 'Keratin',
     name: 'Keratin (feather/wool fiber)',
     phase: 's',
     isPolymer: true,
@@ -1313,7 +1533,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   KeratinBrown_s: {
     id: 'KeratinBrown_s',
-    formula: 'Keratin (sém nâu)',
+    formula: 'Keratin (Scorched)',
     name: 'Thermally scorched Keratin fiber',
     phase: 's',
     isPrecipitate: true,
@@ -1339,7 +1559,7 @@ export const NITROGEN_BIO_SPECIES = {
   },
   KeratinXantho_s: {
     id: 'KeratinXantho_s',
-    formula: 'Keratin–NO₂↓ (vàng)',
+    formula: 'Keratin–NO₂',
     name: 'Xanthoproteic nitrated Keratin fiber',
     phase: 's',
     isPrecipitate: true,
@@ -1359,6 +1579,7 @@ export const NITROGEN_BIO_SPECIES = {
 };
 
 export const NITROGEN_BIO_REACTIONS = [
+  ...OLIGOPEPTIDE_DISSOLUTION_REACTIONS,
   {
     id: 'dissolve_peptide',
     equation: 'Polypeptide(s) → Polypeptide(aq)',

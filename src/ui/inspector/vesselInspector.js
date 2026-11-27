@@ -45,8 +45,9 @@ import {
   formatChemEquation,
   buildVesselGasCompositionHtml,
   buildEscapedGasVerticalHtml,
-  buildLiquidRowsHtml,
-  buildSolidRowsHtml,
+  buildLiquidBoxHtml,
+  buildSolidBoxHtml,
+  countDisplayableSolidSpecies,
   buildBlindObservationCardHtml,
   getSyringeCondenseInfo,
 } from './inspectorUtils.js';
@@ -108,7 +109,7 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
             </div>
             <div class="flex items-center gap-1.5 shrink-0">
               ${!hideQuant ? `<button type="button" id="btn-export-xlsx-item" title="${t('exportXlsxItemTip')}" class="px-1.5 py-0.5 rounded border border-theme bg-surface text-[10px] font-semibold hover:border-accent whitespace-nowrap shrink-0">📥 ${t('exportXlsxBtn')}</button>` : ''}
-              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-red-500/40 bg-red-500/10 hover:bg-red-500/20 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
             </div>
           </div>
           ${item.isSupersaturated && !item.isShattered ? `<div class="p-2 rounded-lg border border-sky-500/40 bg-sky-500/10 text-sky-400 text-xs"><div class="font-semibold">${t('badgeSupersaturated')} (S=${(item.supersatRatio || 1).toFixed(2)}×)</div><div class="text-[11px] opacity-85">${t('supersatHint')}</div></div>` : ''}
@@ -267,8 +268,8 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
           const dSign = pm.deltaPBar >= 0 ? '+' : '';
           const themeCur = typeof document !== 'undefined' ? document.documentElement.getAttribute('data-theme') : 'dark';
           const warnPrefix = themeCur === 'petal' ? `${t('themeWarningSignsTitle')} · ` : '';
-          const liqTabData = computeLiquidSpeciesTableData(item.moles, item.tempK);
-          const solidRowsStr = buildSolidRowsHtml(item, t);
+          const liqTabData = computeLiquidSpeciesTableData(item.moles, item.tempK, null, Boolean(item.isFrozenSolid));
+          const solidCount = countDisplayableSolidSpecies(item);
           const electroMetrics = computeVesselElectrochemicalMetrics(item, ph, liqL);
           const redoxMetrics = computeVesselRedoxAndCellMetrics(item, panel.sim.items, liqL, ph);
           const qRelKJ = (item.cumulativeReactionHeatJ || 0) / 1000;
@@ -394,7 +395,7 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
         <details class="rounded-xl border border-theme bg-surface-alt group" data-ins-sec="phases" ${open2}>
           <summary class="px-3 py-2.5 cursor-pointer select-none flex items-center justify-between gap-2 text-[13px] font-bold uppercase tracking-wide text-muted hover:text-main">
             <span>⚗️ ${t('groupPhaseComposition')}</span>
-            <span class="text-[11px] font-mono text-muted shrink-0 whitespace-nowrap">${hideQuant ? `🔒 ${t('blindUnknownBadge')}` : `${liqTabData.rows.length}L · ${Object.keys(item.moles || {}).filter((k) => SPECIES[k]?.phase === 's' && hasDisplayableSpeciesAmount(k, item.moles[k])).length}S`}</span>
+            <span id="live-sum-phases" class="text-[11px] font-mono text-muted shrink-0 whitespace-nowrap">${hideQuant ? `🔒 ${t('blindUnknownBadge')}` : `${liqTabData.rows.length}L · ${solidCount}S`}</span>
           </summary>
           <div class="px-3 pb-3 flex flex-col gap-2.5 border-t border-theme/40 pt-2">
             ${
@@ -425,26 +426,7 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
                 <h4 class="text-xs font-semibold text-muted">${t('liquidTableTitle')}</h4>
                 ${renderXlsxSectionBtnHtml('liquid', t, 'exportXlsxLiquidTip')}
               </div>
-              <div id="sp-liq-box">
-                ${
-                  liqTabData.rows.length === 0
-                    ? `<p class="text-[11px] text-muted">${item.isShattered ? t('shatteredEmptyMsg') : t('emptyLiquidMsg')}</p>`
-                    : `<div class="overflow-x-auto max-h-44 overflow-y-auto">
-                        <table class="w-full text-[11px]">
-                          <thead>
-                            <tr class="text-[11px] text-muted border-b border-theme text-left">
-                              <th class="pb-1 font-medium">${t('colSpecies')}</th>
-                              <th class="pb-1 font-medium text-right">${t('colMoles')}</th>
-                              <th class="pb-1 font-medium text-right">${t('colMass')}</th>
-                              <th class="pb-1 font-medium text-right">${t('colVolumeMl')}</th>
-                              <th class="pb-1 font-medium text-right">${t('colConc')}</th>
-                            </tr>
-                          </thead>
-                          <tbody id="sp-liq-body">${buildLiquidRowsHtml(liqTabData)}</tbody>
-                        </table>
-                      </div>`
-                }
-              </div>
+              <div id="sp-liq-box">${buildLiquidBoxHtml(item, liqTabData, t)}</div>
             </div>
 
             <!-- Separate Solid & Precipitate Table -->
@@ -453,24 +435,7 @@ export function renderVesselInspectorHtml(panel, item, t, langCode = panel.lastL
                 <h4 class="text-xs font-semibold text-muted">${t('solidTableTitle')}</h4>
                 ${renderXlsxSectionBtnHtml('solid', t, 'exportXlsxSolidTip')}
               </div>
-              <div id="sp-sol-box">
-                ${
-                  !solidRowsStr
-                    ? `<p class="text-[11px] text-muted">${t('emptySolidMsg')}</p>`
-                    : `<div class="overflow-x-auto max-h-40 overflow-y-auto">
-                        <table class="w-full text-xs">
-                          <thead>
-                            <tr class="text-[11px] text-muted border-b border-theme text-left">
-                              <th class="pb-1 font-medium">${t('colSpecies')}</th>
-                              <th class="pb-1 font-medium text-right">${t('colMoles')}</th>
-                              <th class="pb-1 font-medium text-right">${t('colMass')}</th>
-                            </tr>
-                          </thead>
-                          <tbody id="sp-sol-body">${solidRowsStr}</tbody>
-                        </table>
-                      </div>`
-                }
-              </div>
+              <div id="sp-sol-box">${buildSolidBoxHtml(item, t)}</div>
             </div>`
             }
           </div>
@@ -643,7 +608,7 @@ export function updateVesselLiveNumbers(panel, item, t) {
     }
     if (dhEl) dhEl.innerHTML = `ΔH<sub>rxn</sub> ≈ ${(-qRelKJ).toFixed(2)} kJ`;
 
-    const liqTabData = computeLiquidSpeciesTableData(item.moles, item.tempK);
+    const liqTabData = computeLiquidSpeciesTableData(item.moles, item.tempK, null, Boolean(item.isFrozenSolid));
     const rhoEl = panel.container.querySelector('#live-mix-density');
     if (rhoEl && !item.hideComposition) rhoEl.textContent = `ρ = ${liqTabData.mixDensity > 0 ? liqTabData.mixDensity.toFixed(3) : '—'} g/mL`;
 
@@ -744,12 +709,16 @@ export function updateVesselLiveNumbers(panel, item, t) {
       gasCompEl.innerHTML = buildVesselGasCompositionHtml(item, spec, panel.sim.environment, liqL, t);
     }
 
-    const liqBodyEl = panel.container.querySelector('#sp-liq-body');
-    if (liqBodyEl) {
-      liqBodyEl.innerHTML = buildLiquidRowsHtml(liqTabData);
+    const phasesSumEl = panel.container.querySelector('#live-sum-phases');
+    if (phasesSumEl && !item.hideComposition && !panel.sim?.missionState?.blindDosingMode) {
+      phasesSumEl.textContent = `${liqTabData.rows.length}L · ${countDisplayableSolidSpecies(item)}S`;
     }
-    const solBodyEl = panel.container.querySelector('#sp-sol-body');
-    if (solBodyEl) {
-      solBodyEl.innerHTML = buildSolidRowsHtml(item, t);
+    const liqBoxEl = panel.container.querySelector('#sp-liq-box');
+    if (liqBoxEl) {
+      liqBoxEl.innerHTML = buildLiquidBoxHtml(item, liqTabData, t);
+    }
+    const solBoxEl = panel.container.querySelector('#sp-sol-box');
+    if (solBoxEl) {
+      solBoxEl.innerHTML = buildSolidBoxHtml(item, t);
     }
 }

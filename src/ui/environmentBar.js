@@ -45,16 +45,16 @@ export class EnvironmentBar {
                 return `<div class="inline-flex items-center gap-1 rounded-full p-0.5 border border-theme bg-surface-alt">
                   <button type="button" id="btn-mode-free" title="${t('modeFreeSandbox')}"
                     class="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap transition cursor-pointer ${
-                      !activeMission ? 'bg-accent text-white font-bold' : 'text-muted hover:text-main'
+                      !activeMission ? 'bg-accent text-white font-bold' : 'bg-transparent text-muted hover:text-main'
                     }">${freeLbl}</button>
                   <button type="button" id="btn-mode-switch" title="${t('modeSwitchTip')}"
                     class="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap transition cursor-pointer ${
-                      activeMission ? 'bg-accent text-white font-bold' : 'text-muted hover:text-main'
+                      activeMission ? 'bg-accent text-white font-bold' : 'bg-transparent text-muted hover:text-main'
                     }">${missionLbl}</button>
                   ${
                     this.appState.isTeacher
                       ? `<button type="button" id="btn-mode-teacher" title="${t('teacherStudioTip')}"
-                          class="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap transition cursor-pointer text-amber-300 hover:bg-amber-500/15 font-semibold">🎓 ${t('modeTeacherStudio')}</button>`
+                          class="text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap transition cursor-pointer bg-amber-500/15 border border-amber-500/35 text-amber-300 hover:bg-amber-500/20 font-semibold">🎓 ${t('modeTeacherStudio')}</button>`
                       : ''
                   }
                 </div>`;

@@ -1000,11 +1000,10 @@ export function stepElectrophoresisCell(sim, cell, dt = 0.05) {
   if (!sim || !cell) return;
   cell.lanes = Array.isArray(cell.lanes) ? cell.lanes : [];
   if (cell.bufferPH == null || !Number.isFinite(cell.bufferPH)) cell.bufferPH = 6.0;
-  if (cell.voltageV == null || !Number.isFinite(cell.voltageV)) cell.voltageV = 12;
 
-  // 1. Optional link to a dc_power supply
-  let effPowerOn = Boolean(cell.powerOn);
-  let effVoltageV = Math.max(0, Math.min(24, Number(cell.voltageV) || 0));
+  // 1. Physical external DC Power Supply linkage (no built-in power source)
+  let effPowerOn = false;
+  let effVoltageV = 0;
   if (cell.connectedPowerId) {
     const pwr = sim.getItem?.(cell.connectedPowerId) || sim.items.find((i) => i.id === cell.connectedPowerId);
     if (pwr && pwr.kind === 'dc_power') {
@@ -1012,9 +1011,17 @@ export function stepElectrophoresisCell(sim, cell, dt = 0.05) {
       effVoltageV = Math.max(0, Math.min(24, Number(pwr.voltageV) || 0));
       cell.voltageV = effVoltageV;
       cell.powerOn = effPowerOn;
+      if (pwr.polarityFlipped !== undefined) {
+        cell.polarityReversed = Boolean(pwr.polarityFlipped);
+      }
     } else {
       cell.connectedPowerId = null;
+      cell.voltageV = 0;
+      cell.powerOn = false;
     }
+  } else {
+    cell.voltageV = 0;
+    cell.powerOn = false;
   }
 
   // 2. Contact / dip into a beaker or test tube: spot amino acids OR adopt buffer pH

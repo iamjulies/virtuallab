@@ -519,6 +519,26 @@ export function stepElectrochemistry(sim, dt) {
   }
 
   for (const sup of supplies) {
+    const linkedEp = items.find((i) => i.kind === 'electrophoresis' && i.connectedPowerId === sup.id);
+    if (linkedEp) {
+      const vSet = Math.max(0, Math.min(12, sup.voltageV ?? 6.0));
+      const rheoOhm = Math.max(0.2, Math.min(25, sup.rheostatOhm ?? 2.0));
+      sup.circuitMode = 'electrophoresis';
+      if (!sup.powerOn || vSet < 0.05) {
+        sup.measuredV = 0;
+        sup.measuredCurrentA = 0;
+        sup.currentDensityADm2 = 0;
+      } else {
+        const phExtremity = Math.abs((linkedEp.bufferPH ?? 6.0) - 7.0) / 7.0;
+        const rCellOhm = Math.max(40, 180 - phExtremity * 110) + rheoOhm;
+        const iAmp = vSet / rCellOhm;
+        sup.measuredV = +(vSet * (1 - rheoOhm / rCellOhm)).toFixed(2);
+        sup.measuredCurrentA = +iAmp.toFixed(3);
+        sup.currentDensityADm2 = +(iAmp / 0.015).toFixed(1);
+      }
+      continue;
+    }
+
     const { elPos, elNeg } = resolveMeterElectrodes(sup, electrodes);
     const infoPos = getElectrodeLiquidInfo(items, elPos);
     const infoNeg = getElectrodeLiquidInfo(items, elNeg);

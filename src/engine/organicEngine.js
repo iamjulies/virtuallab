@@ -383,8 +383,10 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
     const nSp = moles[spId] || 0;
     if (!fg || nSp <= 1e-9) continue;
 
-    // 1. Biuret peptide-bond test: Polypeptide(aq) + Cu(OH)2(s) / [Cu2+ + 2 OH-] -> deep violet CuPeptide_aq
-    if (fg.hasPeptideBond && sp.phase === 'aq' && hasWater && (moles.OH_aq || 0) > 1e-5) {
+    // 1. Biuret peptide-bond test (>= 2 peptide bonds: tripeptides, polypeptides, proteins; dipeptides have 1 and stay negative)
+    const peptideBondCount = fg.peptideBondCount ?? (fg.isProtein ? 10 : 0);
+    if (fg.hasPeptideBond && peptideBondCount >= 2 && sp.phase === 'aq' && hasWater && (moles.OH_aq || 0) > 1e-5) {
+      const dispName = sp.formula || spId;
       if ((moles.CuOH2_s || 0) > 1e-8) {
         const dBiu = Math.min(moles.CuOH2_s, nSp / 2) * (1 - Math.exp(-1.8 * dt));
         if (dBiu > 1e-11) {
@@ -396,11 +398,11 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
           heatJ += dBiu * 28000;
           activeReactions.push({
             id: `biuret_${spId}`,
-            equation: '2 Polypeptide + Cu(OH)₂ —(OH⁻)→ [Cu(Peptide)₂] (tím biuret)',
-            nameVi: 'Phản ứng màu Biuret tạo phức tím với Cu(OH)₂/OH⁻',
-            nameEn: 'Biuret reaction of peptide bonds forming violet Cu²⁺–peptide complex',
-            descVi: 'Các liên kết peptide (–CO–NH–) hòa tan Cu(OH)₂ trong kiềm tạo phức màu tím đặc trưng.',
-            descEn: 'Peptide bonds coordinate Cu(OH)₂ in alkaline solution producing deep violet Biuret color.',
+            equation: `2 ${dispName} + Cu(OH)₂ —(OH⁻)→ [Cu(Peptide)₂] (Biuret violet)`,
+            nameVi: 'Phản ứng màu Biuret tạo phức tím với Cu(OH)₂/OH⁻ (≥ 2 liên kết peptide)',
+            nameEn: 'Biuret reaction of peptide bonds (≥ 2) forming violet Cu²⁺–peptide complex',
+            descVi: 'Các phân tử có từ 2 liên kết peptide trở lên (tripeptide, polypeptide, protein) hòa tan Cu(OH)₂ trong kiềm tạo phức màu tím đặc trưng; dipeptide không phản ứng.',
+            descEn: 'Compounds with ≥ 2 peptide bonds (tripeptides, polypeptides, proteins) coordinate Cu(OH)₂ in alkali to form deep violet Biuret complex; dipeptides do not react.',
             rateMolS: dBiu / dt,
             dXi: dBiu,
           });
@@ -418,11 +420,11 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
           heatJ += dBiu2 * 32000;
           activeReactions.push({
             id: `biuret_cu2_${spId}`,
-            equation: '2 Polypeptide + Cu²⁺ + 2OH⁻ → [Cu(Peptide)₂] (tím biuret)',
-            nameVi: 'Phản ứng màu Biuret trong dung dịch Cu²⁺/OH⁻',
-            nameEn: 'Alkaline Biuret complexation of Cu²⁺ with peptide bonds',
-            descVi: 'Phản ứng nhận biết từ 2 liên kết peptide trở lên qua phức màu tím đặc trưng.',
-            descEn: 'Characteristic violet complex identifying peptide bonds.',
+            equation: `2 ${dispName} + Cu²⁺ + 2OH⁻ → [Cu(Peptide)₂] (Biuret violet)`,
+            nameVi: 'Phản ứng màu Biuret trong dung dịch Cu²⁺/OH⁻ (≥ 2 liên kết peptide)',
+            nameEn: 'Alkaline Biuret complexation of Cu²⁺ with ≥ 2 peptide bonds',
+            descVi: 'Phản ứng nhận biết từ 2 liên kết peptide trở lên qua phức màu tím đặc trưng; dipeptide (1 liên kết) không tạo phức tím.',
+            descEn: 'Characteristic violet complex identifying ≥ 2 peptide bonds.',
             rateMolS: dBiu2 / dt,
             dXi: dBiu2,
           });
@@ -850,7 +852,7 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
       }
     }
   }
-  // Glycine polycondensation/decomposition starts at >= 233 °C (506.15 K) via stepThermalPyrolysis (crystalline below 220 °C).
+  // Stepwise Peptide Hydrolysis (Polypeptide / Tripeptide -> Dipeptide + AA -> 2 AA) & Thermal Condensation (AA + AA2 -> AA3)
   if (hasWater && (moles.Peptide_aq || 0) > 1e-8 && ((moles.H_aq || 0) > 1e-4 || (moles.OH_aq || 0) > 1e-4) && T >= 343.15) {
     const isAlkPep = (moles.OH_aq || 0) > (moles.H_aq || 0);
     const dPepHyd = Math.min(moles.Peptide_aq, moles.H2O_l) * (1 - Math.exp(-0.48 * dt));
@@ -867,14 +869,89 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
       }
       activeReactions.push({
         id: 'peptide_hydrolysis',
-        equation: 'Polypeptide + H₂O —(H⁺/OH⁻, t°)→ Amino acid tự do',
-        nameVi: 'Thủy phân Peptide thu lại Amino acid tự do',
+        equation: 'Polypeptide + H₂O —(H⁺/OH⁻, t°)→ 2 Amino acid',
+        nameVi: 'Thủy phân Polypeptide thu lại Amino acid tự do',
         nameEn: 'Acid/alkaline hydrolysis of Polypeptide to free Amino acids',
         descVi: 'Cắt đứt liên kết peptide –CO–NH– trong acid/kiềm đun nóng.',
         descEn: 'Hot acid or alkali hydrolyzes peptide bonds cleanly.',
         rateMolS: dPepHyd / dt,
         dXi: dPepHyd,
       });
+    }
+  }
+  const PEPTIDE_CHAINS = [
+    { key: 'gly', label: 'Gly', mono: 'Glycine_aq', anion: 'Glycinate_aq', di: 'Gly2_aq', tri: 'Gly3_aq', monoS: 'Glycine_s', diS: 'Gly2_s', triS: 'Gly3_s', condT: 506.15 },
+    { key: 'ala', label: 'Ala', mono: 'Alanine_aq', anion: 'Alaninate_aq', di: 'Ala2_aq', tri: 'Ala3_aq', monoS: 'Alanine_s', diS: 'Ala2_s', triS: 'Ala3_s', condT: 523.15 },
+    { key: 'val', label: 'Val', mono: 'Valine_aq', anion: 'Valinate_aq', di: 'Val2_aq', tri: 'Val3_aq', monoS: 'Valine_s', diS: 'Val2_s', triS: 'Val3_s', condT: 533.15 },
+  ];
+  for (const ch of PEPTIDE_CHAINS) {
+    if (hasWater && ((moles.H_aq || 0) > 1e-4 || (moles.OH_aq || 0) > 1e-4) && T >= 343.15) {
+      const isAlkPep = (moles.OH_aq || 0) > (moles.H_aq || 0);
+      const targetMono = isAlkPep ? ch.anion : ch.mono;
+      if ((moles[ch.tri] || 0) > 1e-9 && (moles.H2O_l || 0) > 1e-9) {
+        const d3 = Math.min(moles[ch.tri], moles.H2O_l) * (1 - Math.exp(-0.45 * dt));
+        if (d3 > 1e-11) {
+          moles[ch.tri] = Math.max(0, moles[ch.tri] - d3);
+          moles.H2O_l = Math.max(0, moles.H2O_l - d3);
+          if (moles[ch.tri] < 1e-13) delete moles[ch.tri];
+          moles[ch.di] = (moles[ch.di] || 0) + d3;
+          if (isAlkPep) moles.OH_aq = Math.max(0, (moles.OH_aq || 0) - Math.min(moles.OH_aq || 0, d3));
+          moles[targetMono] = (moles[targetMono] || 0) + d3;
+          activeReactions.push({
+            id: `${ch.key}3_hydrolysis`,
+            equation: `${ch.label}₃ + H₂O —(H⁺/OH⁻, t°)→ ${ch.label}₂ + ${ch.label}`,
+            nameVi: `Thủy phân từng nấc tripeptide ${ch.label}₃ → ${ch.label}₂ + ${ch.label}`,
+            nameEn: `Stepwise hydrolysis of tripeptide ${ch.label}₃ → ${ch.label}₂ + ${ch.label}`,
+            descVi: `Cắt 1 liên kết peptide đầu mạch của ${ch.label}₃ tạo dipeptide ${ch.label}₂ và amino acid tự do.`,
+            descEn: `Cleaves one peptide bond of ${ch.label}₃ to release dipeptide ${ch.label}₂ and free amino acid.`,
+            rateMolS: d3 / dt,
+            dXi: d3,
+          });
+        }
+      }
+      if ((moles[ch.di] || 0) > 1e-9 && (moles.H2O_l || 0) > 1e-9) {
+        const d2 = Math.min(moles[ch.di], moles.H2O_l) * (1 - Math.exp(-0.52 * dt));
+        if (d2 > 1e-11) {
+          moles[ch.di] = Math.max(0, moles[ch.di] - d2);
+          moles.H2O_l = Math.max(0, moles.H2O_l - d2);
+          if (moles[ch.di] < 1e-13) delete moles[ch.di];
+          if (isAlkPep) moles.OH_aq = Math.max(0, (moles.OH_aq || 0) - Math.min(moles.OH_aq || 0, 2 * d2));
+          moles[targetMono] = (moles[targetMono] || 0) + 2 * d2;
+          activeReactions.push({
+            id: `${ch.key}2_hydrolysis`,
+            equation: `${ch.label}₂ + H₂O —(H⁺/OH⁻, t°)→ 2 ${ch.label}`,
+            nameVi: `Thủy phân dipeptide ${ch.label}₂ → 2 ${ch.label}`,
+            nameEn: `Hydrolysis of dipeptide ${ch.label}₂ → 2 ${ch.label}`,
+            descVi: `Thủy phân hoàn toàn dipeptide ${ch.label}₂ tạo hai phân tử amino acid tự do.`,
+            descEn: `Cleaves dipeptide ${ch.label}₂ completely into two free amino acid molecules.`,
+            rateMolS: d2 / dt,
+            dXi: d2,
+          });
+        }
+      }
+    }
+    if (!vessel.isFrozenSolid && T >= ch.condT && (moles[ch.monoS] || 0) > 1e-8 && (moles[ch.diS] || 0) > 1e-8) {
+      const dCond3 = Math.min(moles[ch.monoS], moles[ch.diS]) * (1 - Math.exp(-0.52 * dt));
+      if (dCond3 > 1e-11) {
+        moles[ch.monoS] = Math.max(0, moles[ch.monoS] - dCond3);
+        moles[ch.diS] = Math.max(0, moles[ch.diS] - dCond3);
+        if (moles[ch.monoS] < 1e-13) delete moles[ch.monoS];
+        if (moles[ch.diS] < 1e-13) delete moles[ch.diS];
+        moles[ch.triS] = (moles[ch.triS] || 0) + dCond3;
+        if (gasProduced) gasProduced.H2O_g = (gasProduced.H2O_g || 0) + dCond3;
+        else vessel.headspaceGasMoles.H2O_g = (vessel.headspaceGasMoles.H2O_g || 0) + dCond3;
+        activeReactions.push({
+          id: `${ch.key}_tripeptide_condense`,
+          equation: `${ch.label}₂ + ${ch.label} —(t°)→ ${ch.label}₃ + H₂O↑`,
+          nameVi: `Trùng ngưng nối mạch ${ch.label}₂ + ${ch.label} → ${ch.label}₃ + H₂O↑`,
+          nameEn: `Stepwise peptide elongation ${ch.label}₂ + ${ch.label} → ${ch.label}₃ + H₂O↑`,
+          descVi: `Dipeptide tiếp tục ngưng tụ tách H₂O tạo tripeptide ${ch.label}₃ (2 liên kết peptide, dương tính với Biuret).`,
+          descEn: `Dipeptide condenses with a third amino acid releasing steam to form Biuret-positive tripeptide ${ch.label}₃.`,
+          rateMolS: dCond3 / dt,
+          vigorousGas: true,
+          dXi: dCond3,
+        });
+      }
     }
   }
 
@@ -1391,14 +1468,14 @@ const THERMAL_PYROLYSIS_SPECS = [
   },
   {
     id: 'glycine_polycondense',
-    equation: '2 H₂N–CH₂–COOH —(≥233 °C)→ Polypeptide(s) + H₂O(g)↑',
-    nameVi: 'Ngưng tụ nhiệt Glycine (233–260 °C) tách nước tạo vòng/chuỗi DKP–Peptide',
-    nameEn: 'Glycine melt polycondensation (233–260 °C) to Peptide/DKP + steam',
-    descVi: 'Glycine bền tinh thể dưới 220 °C; ở 233–260 °C vừa nóng chảy vừa trùng ngưng sủi bọt tạo vòng DKP/peptide và hơi nước.',
-    descEn: 'Crystalline below 220 °C, Glycine decomposes upon melting (233–260 °C) forming DKP/peptide condensates and steam.',
+    equation: '2 H₂N–CH₂–COOH —(≥233 °C)→ Gly–Gly (Gly₂) + H₂O↑',
+    nameVi: 'Ngưng tụ nhiệt Glycine (233–260 °C) tách nước tạo dipeptide Gly–Gly',
+    nameEn: 'Glycine melt condensation (233–260 °C) yielding dipeptide Gly–Gly + steam',
+    descVi: 'Glycine bền tinh thể dưới 220 °C; ở 233–260 °C ngưng tụ bước đầu tạo dipeptide Gly–Gly (1 liên kết peptide) và hơi nước.',
+    descEn: 'Crystalline below 220 °C, Glycine condenses upon melting (233–260 °C) to form dipeptide Gly–Gly and steam.',
     reactantId: 'Glycine_s',
     reactantStoich: 2,
-    products: { Peptide_s: 1, H2O_g: 1 },
+    products: { Gly2_s: 1, H2O_g: 1 },
     minTempK: 506.15,
     kBase: 0.65,
   },
@@ -1430,16 +1507,106 @@ const THERMAL_PYROLYSIS_SPECS = [
   },
   {
     id: 'peptide_char_decomp',
-    equation: '2 Peptide(s) —(260–500 °C)→ 2 C₃N (Than N) + HCN↑ + NH₃↑ + CO↑ + 5H₂O↑ + H₂↑',
-    nameVi: 'Phân hủy vòng ngưng tụ Peptide (260–500 °C) sinh HCN↑, NH₃↑, CO↑ & nhựa than đen',
-    nameEn: 'DKP / Peptide pyrolysis (260–500 °C) releasing HCN↑, NH₃↑, CO↑ & N-char',
-    descVi: 'Từ 260–500 °C các vòng DKP và mạch peptide đứt gãy tạo bọt than giàu nitơ và giải phóng khí CO, NH₃, HCN độc.',
-    descEn: 'From 260–500 °C DKP rings and peptides decompose into porous N-doped black char plus toxic HCN, NH₃, and CO.',
+    equation: '2 Polypeptide —(260–500 °C)→ 2 C₃N + HCN↑ + NH₃↑ + CO↑ + 5H₂O↑ + H₂↑',
+    nameVi: 'Phân hủy nhiệt Polypeptide (260–500 °C) sinh HCN↑, NH₃↑, CO↑ & nhựa than đen',
+    nameEn: 'Polypeptide pyrolysis (260–500 °C) releasing HCN↑, NH₃↑, CO↑ & N-char',
+    descVi: 'Từ 260–500 °C mạch peptide đứt gãy tạo bọt than giàu nitơ và giải phóng khí CO, NH₃, HCN độc.',
+    descEn: 'From 260–500 °C polypeptide chains decompose into porous N-doped black char plus toxic HCN, NH₃, and CO.',
     reactantId: 'Peptide_s',
     reactantStoich: 2,
     products: { CharN_s: 2, HCN_g: 1, NH3_g: 1, CO_g: 1, H2O_g: 5, H2_g: 1 },
     minTempK: 533.15,
     kBase: 0.85,
+  },
+  {
+    id: 'gly2_char_decomp',
+    equation: '2 Gly–Gly —(260–500 °C)→ 2 C₃N + HCN↑ + NH₃↑ + CO↑ + 5H₂O↑ + H₂↑',
+    nameVi: 'Nhiệt phân dipeptide Gly₂ (260–500 °C) sinh HCN↑, NH₃↑, CO↑ & than N',
+    nameEn: 'Gly–Gly pyrolysis (260–500 °C) releasing HCN↑, NH₃↑, CO↑ & N-char',
+    descVi: 'Dipeptide Gly₂ nhiệt phân ở 260–500 °C tạo than giàu nitơ và khí HCN, NH₃, CO.',
+    descEn: 'Gly–Gly decomposes thermally into N-doped char and volatiles.',
+    reactantId: 'Gly2_s',
+    reactantStoich: 2,
+    products: { CharN_s: 2, HCN_g: 1, NH3_g: 1, CO_g: 1, H2O_g: 5, H2_g: 1 },
+    minTempK: 533.15,
+    kBase: 0.90,
+    hotBoostTempK: 773.15,
+    hotBoostMult: 2.5,
+  },
+  {
+    id: 'gly3_char_decomp',
+    equation: '2 Gly₃ —(260–500 °C)→ 2 C₃N + 2C + 2HCN↑ + 2NH₃↑ + 2CO↑ + 6H₂O↑ + H₂↑',
+    nameVi: 'Nhiệt phân tripeptide Gly₃ (260–500 °C) sinh HCN↑, NH₃↑, CO↑ & than N',
+    nameEn: 'Gly₃ pyrolysis (260–500 °C) yielding N-char and HCN/NH₃/CO volatiles',
+    descVi: 'Tripeptide Gly₃ đứt mạch nhiệt phân trên 260 °C giải phóng HCN, NH₃, CO và để lại bọt than đen.',
+    descEn: 'Tripeptide Gly₃ thermally cracks above 260 °C into N-char and HCN/NH₃/CO.',
+    reactantId: 'Gly3_s',
+    reactantStoich: 2,
+    products: { CharN_s: 2, C_s: 2, HCN_g: 2, NH3_g: 2, CO_g: 2, H2O_g: 6, H2_g: 1 },
+    minTempK: 533.15,
+    kBase: 0.88,
+    hotBoostTempK: 773.15,
+    hotBoostMult: 2.5,
+  },
+  {
+    id: 'ala2_char_decomp',
+    equation: '2 Ala₂ —(298–500 °C)→ 2 C₃N + HCN↑ + NH₃↑ + 2CO↑ + CH₄↑ + C₂H₄↑ + 4H₂O↑ + 2H₂↑',
+    nameVi: 'Nhiệt phân dipeptide Ala₂ (298–500 °C) sinh C₂H₄↑, HCN↑, NH₃↑ & than N',
+    nameEn: 'Ala–Ala pyrolysis (298–500 °C) releasing alkenes, HCN, NH₃ & N-char',
+    descVi: 'Dipeptide Ala₂ nhiệt phân tạo ethene, methane, HCN, NH₃ và than giàu nitơ.',
+    descEn: 'Ala–Ala decomposes thermally yielding C₂H₄, CH₄, HCN, NH₃, and N-char.',
+    reactantId: 'Ala2_s',
+    reactantStoich: 2,
+    products: { CharN_s: 2, HCN_g: 1, NH3_g: 1, CO_g: 2, CH4_g: 1, C2H4_g: 1, H2O_g: 4, H2_g: 2 },
+    minTempK: 571.15,
+    kBase: 0.90,
+    hotBoostTempK: 773.15,
+    hotBoostMult: 2.5,
+  },
+  {
+    id: 'ala3_char_decomp',
+    equation: '2 Ala₃ —(260–500 °C)→ 2 C₃N + 2C + 2HCN↑ + 2NH₃↑ + 2CO↑ + 3C₂H₄↑ + 6H₂O↑ + H₂↑',
+    nameVi: 'Nhiệt phân tripeptide Ala₃ (260–500 °C) sinh C₂H₄↑, HCN↑, NH₃↑ & than N',
+    nameEn: 'Ala₃ pyrolysis (260–500 °C) yielding N-char and C₂H₄/HCN/NH₃ volatiles',
+    descVi: 'Tripeptide Ala₃ đứt mạch nhiệt phân sinh ethene, HCN, NH₃ và than C/C₃N.',
+    descEn: 'Tripeptide Ala₃ decomposes cleanly into N-char and ethene/HCN/NH₃.',
+    reactantId: 'Ala3_s',
+    reactantStoich: 2,
+    products: { CharN_s: 2, C_s: 2, HCN_g: 2, NH3_g: 2, CO_g: 2, C2H4_g: 3, H2O_g: 6, H2_g: 1 },
+    minTempK: 533.15,
+    kBase: 0.88,
+    hotBoostTempK: 773.15,
+    hotBoostMult: 2.5,
+  },
+  {
+    id: 'val2_char_decomp',
+    equation: '2 Val₂ —(274–500 °C)→ 2 C₃N + HCN↑ + NH₃↑ + 2CO↑ + 2C₄H₈↑ + 3CH₄↑ + 4H₂O↑',
+    nameVi: 'Nhiệt phân dipeptide Val₂ (274–500 °C) sinh Isobutene, CH₄, HCN & than N',
+    nameEn: 'Val–Val pyrolysis (274–500 °C) releasing isobutene, CH₄, HCN & N-char',
+    descVi: 'Dipeptide Val₂ nhiệt phân mạch nhánh isopropyl sinh isobutene, methane và than N.',
+    descEn: 'Val–Val decomposes into isobutene, methane, HCN, NH₃, and N-char.',
+    reactantId: 'Val2_s',
+    reactantStoich: 2,
+    products: { CharN_s: 2, HCN_g: 1, NH3_g: 1, CO_g: 2, C4H8_g: 2, CH4_g: 3, H2O_g: 4 },
+    minTempK: 547.15,
+    kBase: 0.88,
+    hotBoostTempK: 773.15,
+    hotBoostMult: 2.5,
+  },
+  {
+    id: 'val3_char_decomp',
+    equation: '2 Val₃ —(262–500 °C)→ 2 C₃N + 2C + 2HCN↑ + 2NH₃↑ + 2CO↑ + 4C₄H₈↑ + C₂H₄↑ + 6H₂O↑ + H₂↑',
+    nameVi: 'Nhiệt phân tripeptide Val₃ (262–500 °C) sinh C₄H₈↑, HCN↑, NH₃↑ & than N',
+    nameEn: 'Val₃ pyrolysis (262–500 °C) yielding N-char and isobutene/HCN volatiles',
+    descVi: 'Tripeptide Val₃ nhiệt phân tạo khí hydrocarbon C₄H₈/C₂H₄, HCN, NH₃ và bọt than đen.',
+    descEn: 'Tripeptide Val₃ decomposes thermally into N-char and C₄H₈/C₂H₄/HCN/NH₃.',
+    reactantId: 'Val3_s',
+    reactantStoich: 2,
+    products: { CharN_s: 2, C_s: 2, HCN_g: 2, NH3_g: 2, CO_g: 2, C4H8_g: 4, C2H4_g: 1, H2O_g: 6, H2_g: 1 },
+    minTempK: 535.15,
+    kBase: 0.86,
+    hotBoostTempK: 773.15,
+    hotBoostMult: 2.5,
   },
   {
     id: 'char_n_denitro',
@@ -1653,14 +1820,14 @@ const THERMAL_PYROLYSIS_SPECS = [
   },
   {
     id: 'alanine_dkp_condense',
-    equation: '2 Alanine(s) —(250–330 °C)→ Polypeptide(s) + C₂H₄(g)↑ + H₂O(g)↑',
-    nameVi: 'Ngưng tụ DKP Alanine (250–330 °C) tạo trung gian vòng – peptide',
-    nameEn: 'Alanine DKP/peptide condensation (250–330 °C)',
-    descVi: 'Nhánh song song ngưng tụ tạo vòng diketopiperazine / peptide trước khi than hóa tiếp ở 350–500 °C.',
-    descEn: 'Concurrent condensation forms DKP/peptide intermediates that subsequently carbonize.',
+    equation: '2 Alanine —(250–330 °C)→ Ala–Ala (Ala₂) + H₂O↑',
+    nameVi: 'Ngưng tụ nhiệt Alanine (250–330 °C) tạo dipeptide Ala–Ala + H₂O↑',
+    nameEn: 'Alanine condensation (250–330 °C) forming dipeptide Ala–Ala + steam',
+    descVi: 'Nhánh song song ngưng tụ tạo dipeptide Ala₂ (sau đó có thể nối tiếp thành Ala₃ hoặc than hóa).',
+    descEn: 'Concurrent condensation yields dipeptide Ala₂ before further elongation or carbonization.',
     reactantId: 'Alanine_s',
     reactantStoich: 2,
-    products: { Peptide_s: 1, C2H4_g: 1, H2O_g: 1 },
+    products: { Ala2_s: 1, H2O_g: 1 },
     minTempK: 523.15,
     kBase: 0.48,
   },
@@ -1705,14 +1872,14 @@ const THERMAL_PYROLYSIS_SPECS = [
   },
   {
     id: 'valine_dkp_trace',
-    equation: '2 Valine(s) —(295–360 °C)→ Polypeptide(s) + C₄H₈↑ + C₂H₄↑ + H₂O↑',
-    nameVi: 'Ngưng tụ vết vòng DKP từ Valine tạo lượng nhỏ nhựa than',
-    nameEn: 'Minor Valine DKP condensation yielding trace char',
-    descVi: 'Một tỷ lệ rất nhỏ Valine tạo trung gian peptide rồi than hóa.',
-    descEn: 'Minor DKP condensation converts a small fraction into residual char.',
+    equation: '2 Valine —(295–360 °C)→ Val–Val (Val₂) + H₂O↑',
+    nameVi: 'Ngưng tụ vết tạo dipeptide Val₂ từ Valine',
+    nameEn: 'Minor Valine condensation yielding trace dipeptide Val₂',
+    descVi: 'Một tỷ lệ nhỏ Valine tạo trung gian dipeptide Val₂ rồi than hóa.',
+    descEn: 'Minor condensation converts a small fraction into Val₂ and residual char.',
     reactantId: 'Valine_s',
     reactantStoich: 2,
-    products: { Peptide_s: 1, C4H8_g: 1, C2H4_g: 1, H2O_g: 1 },
+    products: { Val2_s: 1, H2O_g: 1 },
     minTempK: 568.15,
     kBase: 0.08,
   },

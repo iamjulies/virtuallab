@@ -4,7 +4,7 @@
  * and vector @media print Laboratory Reports.
  */
 
-import { SPECIES, GAS_DISPLAY_META } from '../data/species.js';
+import { formatSpeciesDisplayFormula, isSolidMoltenAtTemp, SPECIES, GAS_DISPLAY_META } from '../data/species.js';
 import { APPARATUS } from '../data/apparatus.js';
 import { CONSTANTS, kelvinToCelsius } from '../data/constants.js';
 import {
@@ -1260,13 +1260,20 @@ export function buildLabReportBundle({ sim, workbenchCanvas, isDark, labName, t,
       const ph = v.isFrozenSolid || isBlind ? null : computePH(v.moles, liqL, v.tempK);
       const localPBar = v.internalPressureBar ?? env.pressureBar ?? CONSTANTS.P_STD_BAR;
       const massG = computeContentsMassG(v.moles);
-      const liqData = computeLiquidSpeciesTableData(v.moles, v.tempK);
+      const liqData = computeLiquidSpeciesTableData(v.moles, v.tempK, null, Boolean(v.isFrozenSolid));
+      const isFroz = Boolean(v.isFrozenSolid);
       const solids = isBlind
         ? []
         : Object.entries(v.moles || {})
-            .filter(([id, n]) => n > 1e-8 && SPECIES[id]?.phase === 's')
+            .filter(([id, n]) => {
+              const sp = SPECIES[id];
+              if (!(n > 1e-8) || !sp) return false;
+              if (isFroz) return sp.phase === 's' || sp.phase === 'l' || sp.phase === 'aq';
+              return sp.phase === 's' && !isSolidMoltenAtTemp(sp, v.tempK, v.moles);
+            })
             .map(([id, n]) => {
-              const fStr = SPECIES[id]?.formula || id;
+              const isFrzItem = isFroz || id === 'H2O_s' || id === 'CH3COOH_s' || id === 'Br2_s' || id === 'C6H6_s';
+              const fStr = formatSpeciesDisplayFormula(SPECIES[id] || id, 'solid') + (isFrzItem ? ' 🧊' : '');
               const mm = SPECIES[id]?.molarMass || 0;
               return `${fStr}: ${n.toFixed(4)} mol (${(n * mm).toFixed(2)} g)`;
             });
@@ -1275,7 +1282,7 @@ export function buildLabReportBundle({ sim, workbenchCanvas, isDark, labName, t,
         : GAS_DISPLAY_META.map((g) => {
             const tot = (v.headspaceGasMoles?.[g.id] || 0) + (v.escapedGasMoles?.[g.id] || 0);
             if (!(tot > 1e-6)) return '';
-            const formula = g.label || SPECIES[g.id]?.formula || g.id;
+            const formula = formatSpeciesDisplayFormula(SPECIES[g.id] || g.id, 'gas');
             return `${formula}: ${(tot * 1000).toFixed(2)} mmol`;
           }).filter(Boolean);
 
@@ -1296,7 +1303,7 @@ export function buildLabReportBundle({ sim, workbenchCanvas, isDark, labName, t,
               : liqData.rows.length > 0
               ? `<table><thead><tr><th>${escPrintHtml(translate('colSpecies'))}</th><th>mol</th><th>g</th><th>M</th></tr></thead><tbody>
                   ${liqData.rows.map((r) => {
-                    const fStr = r.sp?.formula || r.formula || r.spId || '—';
+                    const fStr = formatSpeciesDisplayFormula(r.sp || r.spId, 'liquid') + (r.isMolten ? ' 🔥' : '');
                     const cVal = Number.isFinite(r.cM) && r.cM > 0 ? r.cM.toFixed(3) : r.molarityM != null ? r.molarityM.toFixed(3) : '—';
                     return `<tr><td>${escPrintHtml(fStr)}</td><td>${r.mol.toFixed(4)}</td><td>${r.massG.toFixed(3)}</td><td>${cVal}</td></tr>`;
                   }).join('')}

@@ -3,7 +3,13 @@
  */
 import { APPARATUS, getStandGeometry } from '../../data/apparatus.js';
 import { CONSTANTS, formatNumber, kelvinToCelsius } from '../../data/constants.js';
-import { GAS_DISPLAY_META, isSolidMoltenAtTemp, SPECIES, STARTER_REAGENTS } from '../../data/species.js';
+import {
+  formatSpeciesDisplayFormula,
+  GAS_DISPLAY_META,
+  isSolidMoltenAtTemp,
+  SPECIES,
+  STARTER_REAGENTS,
+} from '../../data/species.js';
 import { ELECTRODE_MATERIALS, computeVesselRedoxAndCellMetrics } from '../../engine/electrochemistry.js';
 import {
   computeAtmospherePartialPressures,
@@ -72,7 +78,7 @@ export function formatGasSummaryHtml(gasMap = {}, escapedFrostMol = 0, t = null)
   }
   if (escapedFrostMol > 1e-6) {
     const frostLabel = t ? t('frostEscapedTag') : 'Frost';
-    parts.push(`<span class="whitespace-nowrap text-sky-400">❄️ ${frostLabel}: ${(escapedFrostMol * 1000).toFixed(2)} mmol H₂O(s)</span>`);
+    parts.push(`<span class="whitespace-nowrap text-sky-400">❄️ ${frostLabel}: ${(escapedFrostMol * 1000).toFixed(2)} mmol H₂O 🧊</span>`);
   }
   return parts.join('<span class="text-muted px-1">·</span>');
 }
@@ -156,7 +162,7 @@ export function buildVesselGasCompositionHtml(item, spec, env, liqL, t) {
       const dAir = getGasRelAirDensity(gId);
       return `
         <tr class="border-b border-theme/50 last:border-0">
-          <td class="py-1 font-semibold">${sp?.formula || gId}</td>
+          <td class="py-1 font-semibold">${formatSpeciesDisplayFormula(sp || gId, 'gas')}</td>
           <td class="py-1 text-right font-mono">${formatNumber(mmol, 3)}</td>
           <td class="py-1 text-right font-mono text-sky-400">${formatNumber(volMl, 2)}</td>
           <td class="py-1 text-right font-mono text-muted">${dAir.toFixed(2)}</td>
@@ -207,7 +213,7 @@ export function buildSyringeGasCompositionHtml(syr, syrSpec, env, t, condInfo = 
   const pushCond = (spId, nMol, phaseTag, customVolMl = null) => {
     if (!(nMol > 1e-9)) return;
     const sp = SPECIES[spId];
-    const formula = sp?.formula || spId;
+    const formula = formatSpeciesDisplayFormula(sp || spId, phaseTag === 'g' ? 'gas' : 'table');
     const volMl =
       customVolMl != null
         ? customVolMl
@@ -254,7 +260,7 @@ export function buildSyringeGasCompositionHtml(syr, syrSpec, env, t, condInfo = 
       const dAir = getGasRelAirDensity(gId);
       return `
         <tr class="border-b border-theme/50 last:border-0">
-          <td class="py-1 pr-1 font-semibold">${sp?.formula || gId}</td>
+          <td class="py-1 pr-1 font-semibold">${formatSpeciesDisplayFormula(sp || gId, 'gas')}</td>
           <td class="py-1 px-1 text-right font-mono">${formatNumber(mmol, 2)}</td>
           <td class="py-1 px-1 text-right font-mono text-sky-400">${formatNumber(volMl, 2)}</td>
           <td class="py-1 px-1 text-right font-mono text-emerald-400">${sharePct.toFixed(1)}%</td>
@@ -335,7 +341,7 @@ export function buildEscapedGasVerticalHtml(item, env, t) {
     const fm = item.escapedFrostH2OMol;
     activeRows.push(`
       <tr class="border-b border-theme/40 last:border-0 text-sky-400">
-        <td class="py-1 font-semibold">❄️ H₂O(s)</td>
+        <td class="py-1 font-semibold">❄️ H₂O 🧊</td>
         <td class="py-1 text-right font-mono">${(fm * 1000).toFixed(2)} mmol</td>
         <td class="py-1 text-right font-mono">—</td>
         <td class="py-1 text-right font-mono">${t('frostEscapedTag')}</td>
@@ -364,22 +370,21 @@ export function buildEscapedGasVerticalHtml(item, env, t) {
   `;
 }
 
-export function buildLiquidRowsHtml(liqData) {
+export function buildLiquidRowsHtml(liqData, t = null) {
+  const moltenTag = t ? t('moltenStateTag') : '🔥';
   return liqData.rows
-    .map(({ spId, sp, mol, massG, volMl, cM, cPct, layerGroup }) => {
+    .map(({ spId, sp, mol, massG, volMl, cM, cPct, isMolten }) => {
       const molStr = mol >= 0.01 ? `${formatNumber(mol, 4)}` : `${formatNumber(mol * 1000, 3)}m`;
-      const layerBadge =
-        layerGroup === 'organic_heavy'
-          ? ' <span class="text-[10px] text-amber-400">↓</span>'
-          : layerGroup === 'organic_light'
-          ? ' <span class="text-[10px] text-sky-400">↑</span>'
-          : '';
+      const moltenBadge = isMolten
+        ? ` <span id="sp-molten-${spId}" class="text-[10.5px] font-mono text-orange-400 font-semibold">${moltenTag}</span>`
+        : '';
+      const dispFormula = formatSpeciesDisplayFormula(sp || spId, 'liquid');
       const volStr = volMl !== null ? `${formatNumber(volMl, 2)} mL` : '—';
       const cmStr = cM > 0.0005 ? `${cM.toFixed(cM >= 10 ? 1 : 2)} M` : '—';
       const pctStr = cPct > 0.005 ? `${cPct.toFixed(1)}%` : '<0.01%';
       return `
         <tr class="border-b border-theme/50 last:border-0" id="sp-liq-row-${spId}">
-          <td class="py-1 font-semibold">${sp.formula}${layerBadge}</td>
+          <td class="py-1 font-semibold">${dispFormula}${moltenBadge}</td>
           <td class="py-1 text-right font-mono" id="sp-mol-${spId}">${molStr}</td>
           <td class="py-1 text-right font-mono" id="sp-mass-${spId}">${formatNumber(massG, 3)}g</td>
           <td class="py-1 text-right font-mono text-sky-400" id="sp-vol-${spId}">${volStr}</td>
@@ -451,54 +456,57 @@ export function buildContainerLiquidTableCardHtml(item, t, tempK, hideQuant = fa
         </div>
       </div>
       <div id="sp-liq-box">
-        ${
-          liqTabData.rows.length === 0
-            ? `<p class="text-xs text-muted">${item.isBroken ? t('alertToolBreak') : t('emptyLiquidMsg')}</p>`
-            : `<div class="overflow-x-auto max-h-40 overflow-y-auto">
-                <table class="w-full text-[11px]">
-                  <thead>
-                    <tr class="text-muted border-b border-theme text-left">
-                      <th class="pb-1 font-medium">${t('colSpecies')}</th>
-                      <th class="pb-1 font-medium text-right">${t('colMoles')}</th>
-                      <th class="pb-1 font-medium text-right">${t('colMass')}</th>
-                      <th class="pb-1 font-medium text-right">${t('colVolumeMl')}</th>
-                      <th class="pb-1 font-medium text-right">${t('colConc')}</th>
-                    </tr>
-                  </thead>
-                  <tbody id="sp-liq-body">${buildLiquidRowsHtml(liqTabData)}</tbody>
-                </table>
-              </div>`
-        }
+        ${buildLiquidBoxHtml(item, liqTabData, t)}
       </div>
     </div>
   `;
 }
 
-export function updateLiveLiquidContainerSection(container, item, envTempK) {
+export function updateLiveLiquidContainerSection(container, item, envTempK, t = null) {
   if (item?.hideComposition) return;
-  const liqTabData = computeLiquidSpeciesTableData(item.moles || {}, item.tempK ?? envTempK);
+  const liqTabData = computeLiquidSpeciesTableData(item.moles || {}, item.tempK ?? envTempK, null, Boolean(item.isFrozenSolid));
   const rhoEl = container.querySelector('#live-mix-density');
   if (rhoEl) rhoEl.textContent = liqTabData.mixDensity > 0 ? `ρ=${liqTabData.mixDensity.toFixed(3)} g/mL` : '';
-  const bodyEl = container.querySelector('#sp-liq-body');
-  if (bodyEl) bodyEl.innerHTML = buildLiquidRowsHtml(liqTabData);
+  const boxEl = container.querySelector('#sp-liq-box');
+  if (boxEl && t) {
+    boxEl.innerHTML = buildLiquidBoxHtml(item, liqTabData, t);
+  } else {
+    const bodyEl = container.querySelector('#sp-liq-body');
+    if (bodyEl) bodyEl.innerHTML = buildLiquidRowsHtml(liqTabData, t);
+  }
+}
+
+export function getDisplayableSolidEntries(item) {
+  const isVesselFrozen = Boolean(item?.isFrozenSolid);
+  return Object.entries(item?.moles || {})
+    .filter(([spId, n]) => {
+      const sp = SPECIES[spId];
+      if (!sp || !hasDisplayableSpeciesAmount(spId, n)) return false;
+      if (isVesselFrozen) {
+        return sp.phase === 's' || sp.phase === 'l' || sp.phase === 'aq';
+      }
+      return sp.phase === 's' && !isSolidMoltenAtTemp(sp, item.tempK, item.moles);
+    })
+    .sort((a, b) => b[1] - a[1]);
+}
+
+export function countDisplayableSolidSpecies(item) {
+  return getDisplayableSolidEntries(item).length;
 }
 
 export function buildSolidRowsHtml(item, t) {
-  const entries = Object.entries(item.moles || {})
-    .filter(([spId, n]) => SPECIES[spId]?.phase === 's' && hasDisplayableSpeciesAmount(spId, n))
-    .sort((a, b) => b[1] - a[1]);
+  const isVesselFrozen = Boolean(item?.isFrozenSolid);
+  const entries = getDisplayableSolidEntries(item);
   if (entries.length === 0) return '';
   return entries
     .map(([spId, n]) => {
       const sp = SPECIES[spId];
       const massG = n * sp.molarMass;
-      const isMolten = isSolidMoltenAtTemp(sp, item.tempK, item.moles);
-      const isFrozen = spId === 'H2O_s' || spId === 'CH3COOH_s' || spId === 'Br2_s' || Boolean(item.isFrozenSolid);
-      const stateTagHtml = isMolten
-        ? ` <span id="sp-conc-${spId}" class="text-[10.5px] font-mono text-orange-400 font-semibold">${t('moltenStateTag')}</span>`
-        : isFrozen
+      const isFrozen = isVesselFrozen || spId === 'H2O_s' || spId === 'CH3COOH_s' || spId === 'Br2_s' || spId === 'C6H6_s';
+      const stateTagHtml = isFrozen
         ? ` <span id="sp-conc-${spId}" class="text-[10.5px] font-mono text-sky-400 font-semibold">${t('frozenSolidTag')}</span>`
         : '';
+      const dispFormula = formatSpeciesDisplayFormula(sp || spId, 'solid');
       const thermalTitle = [
         sp.meltTempK && !sp.noMelt ? `T_nc: ${kelvinToCelsius(sp.meltTempK).toFixed(0)}°C` : null,
         sp.boilTempK ? `T_s: ${kelvinToCelsius(sp.boilTempK).toFixed(0)}°C` : null,
@@ -509,13 +517,56 @@ export function buildSolidRowsHtml(item, t) {
       const molStr = n >= 0.01 ? `${formatNumber(n, 4)}` : `${formatNumber(n * 1000, 3)}m`;
       return `
         <tr class="border-b border-theme/50 last:border-0" id="sp-sol-row-${spId}" title="${thermalTitle}">
-          <td class="py-1 font-semibold">${sp.formula}${stateTagHtml}</td>
+          <td class="py-1 font-semibold">${dispFormula}${stateTagHtml}</td>
           <td class="py-1 text-right font-mono" id="sp-mol-${spId}">${molStr}</td>
           <td class="py-1 text-right font-mono" id="sp-mass-${spId}">${formatNumber(massG, 3)}g</td>
         </tr>
       `;
     })
     .join('');
+}
+
+export function buildLiquidBoxHtml(item, liqTabData, t) {
+  if (!liqTabData?.rows || liqTabData.rows.length === 0) {
+    return `<p class="text-[11px] text-muted">${item?.isShattered ? t('shatteredEmptyMsg') : item?.isBroken ? t('alertToolBreak') : t('emptyLiquidMsg')}</p>`;
+  }
+  return `
+    <div class="overflow-x-auto max-h-44 overflow-y-auto">
+      <table class="w-full text-[11px]">
+        <thead>
+          <tr class="text-[11px] text-muted border-b border-theme text-left">
+            <th class="pb-1 font-medium">${t('colSpecies')}</th>
+            <th class="pb-1 font-medium text-right">${t('colMoles')}</th>
+            <th class="pb-1 font-medium text-right">${t('colMass')}</th>
+            <th class="pb-1 font-medium text-right">${t('colVolumeMl')}</th>
+            <th class="pb-1 font-medium text-right">${t('colConc')}</th>
+          </tr>
+        </thead>
+        <tbody id="sp-liq-body">${buildLiquidRowsHtml(liqTabData, t)}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+export function buildSolidBoxHtml(item, t) {
+  const solidRowsStr = buildSolidRowsHtml(item, t);
+  if (!solidRowsStr) {
+    return `<p class="text-[11px] text-muted">${t('emptySolidMsg')}</p>`;
+  }
+  return `
+    <div class="overflow-x-auto max-h-40 overflow-y-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-[11px] text-muted border-b border-theme text-left">
+            <th class="pb-1 font-medium">${t('colSpecies')}</th>
+            <th class="pb-1 font-medium text-right">${t('colMoles')}</th>
+            <th class="pb-1 font-medium text-right">${t('colMass')}</th>
+          </tr>
+        </thead>
+        <tbody id="sp-sol-body">${solidRowsStr}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 export function getSyringeCondenseInfo(syr, env, t) {

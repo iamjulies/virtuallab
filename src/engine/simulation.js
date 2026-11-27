@@ -623,6 +623,7 @@ export class LabSimulation {
         voltageV: 6.0,
         rheostatOhm: 2.0,
         powerOn: false,
+        polarityFlipped: false,
         measuredV: 0,
         measuredCurrentA: 0,
         currentDensityADm2: 0,
@@ -803,7 +804,7 @@ export class LabSimulation {
         contactVesselId: null,
         contactLabel: '',
         bufferPH: 6.0,
-        voltageV: 12,
+        voltageV: 0,
         powerOn: false,
         polarityReversed: false,
         ninhydrinDeveloped: false,
@@ -870,6 +871,11 @@ export class LabSimulation {
       item.posElectrodeId = null;
       item.negElectrodeId = null;
     }
+    if (item.kind === 'electrophoresis') {
+      item.connectedPowerId = null;
+      item.powerOn = false;
+      item.voltageV = 0;
+    }
     if (item.kind === 'rubber_stopper' && item.attachedToId) {
       this.detachRubberStopper(item.id, { keepPos: true });
     }
@@ -904,6 +910,11 @@ export class LabSimulation {
       if (other.mountedOverElectrodeId === id) other.mountedOverElectrodeId = null;
       if (other.posElectrodeId === id) other.posElectrodeId = null;
       if (other.negElectrodeId === id) other.negElectrodeId = null;
+      if (other.connectedPowerId === id) {
+        other.connectedPowerId = null;
+        other.powerOn = false;
+        other.voltageV = 0;
+      }
       if (other.vesselAId === id) other.vesselAId = null;
       if (other.vesselBId === id) other.vesselBId = null;
       if (other.restingOnId === id) {
@@ -2271,12 +2282,19 @@ export class LabSimulation {
     if (patch.voltageV !== undefined) s.voltageV = Math.max(0, Math.min(12, Number(patch.voltageV) || 0));
     if (patch.rheostatOhm !== undefined) s.rheostatOhm = Math.max(0.2, Math.min(25, Number(patch.rheostatOhm) || 2.0));
     if (patch.powerOn !== undefined) s.powerOn = Boolean(patch.powerOn);
+    for (const other of this.items) {
+      if (other.kind === 'electrophoresis' && other.connectedPowerId === supplyId) {
+        other.voltageV = s.voltageV;
+        other.powerOn = Boolean(s.powerOn);
+      }
+    }
     this.emitChange();
   }
 
   swapDcPolarity(supplyId) {
     const s = this.getItem(supplyId);
     if (!s || s.kind !== 'dc_power') return;
+    s.polarityFlipped = !Boolean(s.polarityFlipped);
     const prevPos = s.posElectrodeId;
     s.posElectrodeId = s.negElectrodeId;
     s.negElectrodeId = prevPos;
@@ -2285,7 +2303,58 @@ export class LabSimulation {
     const newNeg = this.getItem(s.negElectrodeId);
     if (newPos) newPos.polarityLabel = '+ Anode';
     if (newNeg) newNeg.polarityLabel = '- Cathode';
+    for (const other of this.items) {
+      if (other.kind === 'electrophoresis' && other.connectedPowerId === supplyId) {
+        other.polarityReversed = Boolean(s.polarityFlipped);
+      }
+    }
     this.emitChange();
+  }
+
+  connectElectrophoresisToDc(cellId, supplyId) {
+    const cell = this.getItem(cellId);
+    if (!cell || cell.kind !== 'electrophoresis') return false;
+    if (!supplyId) {
+      cell.connectedPowerId = null;
+      cell.powerOn = false;
+      cell.voltageV = 0;
+      this.emitChange();
+      return true;
+    }
+    const sup = this.getItem(supplyId);
+    if (!sup || sup.kind !== 'dc_power') return false;
+    for (const other of this.items) {
+      if (other.id !== cellId && other.kind === 'electrophoresis' && other.connectedPowerId === supplyId) {
+        other.connectedPowerId = null;
+        other.powerOn = false;
+        other.voltageV = 0;
+      }
+    }
+    sup.posElectrodeId = null;
+    sup.negElectrodeId = null;
+    cell.connectedPowerId = sup.id;
+    cell.powerOn = Boolean(sup.powerOn);
+    cell.voltageV = Math.max(0, Math.min(24, Number(sup.voltageV) || 0));
+    cell.polarityReversed = Boolean(sup.polarityFlipped);
+    this.emitChange();
+    return true;
+  }
+
+  spawnAndConnectDcForElectrophoresis(cellId) {
+    const cell = this.getItem(cellId);
+    if (!cell || cell.kind !== 'electrophoresis') return null;
+    const prevSelected = this.selectedId;
+    const supX = Math.max(85, Math.min(980, cell.x + (cell.x > 640 ? -185 : 185)));
+    const supY = Math.max(120, cell.y - 36);
+    const sup = this.createApparatus('dc_power', supX, supY);
+    if (!sup) return null;
+    sup.voltageV = 12;
+    sup.powerOn = false;
+    this.connectElectrophoresisToDc(cell.id, sup.id);
+    this.selectedId = prevSelected || cell.id;
+    this.selectedIds = new Set([this.selectedId]);
+    this.emitChange();
+    return sup;
   }
 
   setVoltAmmeterState(meterId, patch = {}) {

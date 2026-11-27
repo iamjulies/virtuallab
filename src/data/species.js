@@ -78,6 +78,96 @@ export function isSolidMoltenAtTemp(sp, tempK, moles) {
   return true;
 }
 
+export const SPECIES_DISPLAY_OVERRIDES = {
+  Starch_s: 'Starch',
+  Starch_aq: 'Starch',
+  Cellulose_s: 'Cellulose',
+  Glucose_s: 'C₆H₁₂O₆ (Glc)',
+  Glucose_aq: 'C₆H₁₂O₆ (Glc)',
+  Fructose_s: 'C₆H₁₂O₆ (Frc)',
+  Fructose_aq: 'C₆H₁₂O₆ (Frc)',
+  Sucrose_s: 'C₁₂H₂₂O₁₁ (Suc)',
+  Sucrose_aq: 'C₁₂H₂₂O₁₁ (Suc)',
+  Maltose_s: 'C₁₂H₂₂O₁₁ (Mal)',
+  Maltose_aq: 'C₁₂H₂₂O₁₁ (Mal)',
+  Gly2_s: 'Gly–Gly (Gly₂)',
+  Gly2_aq: 'Gly–Gly (Gly₂)',
+  Gly3_s: 'Gly–Gly–Gly (Gly₃)',
+  Gly3_aq: 'Gly–Gly–Gly (Gly₃)',
+  Ala2_s: 'Ala–Ala (Ala₂)',
+  Ala2_aq: 'Ala–Ala (Ala₂)',
+  Ala3_s: 'Ala–Ala–Ala (Ala₃)',
+  Ala3_aq: 'Ala–Ala–Ala (Ala₃)',
+  Val2_s: 'Val–Val (Val₂)',
+  Val2_aq: 'Val–Val (Val₂)',
+  Val3_s: 'Val–Val–Val (Val₃)',
+  Val3_aq: 'Val–Val–Val (Val₃)',
+  Peptide_s: 'Polypeptide',
+  Peptide_aq: 'Polypeptide',
+  S_s: 'S',
+  S_plastic_s: 'S(dẻo)',
+  P_red_s: 'P(đỏ)',
+  P_white_s: 'P(trắng)',
+  C_s: 'C',
+  H2CO3_aq: 'CO₂ / H₂CO₃',
+  CharN_s: 'C₃N',
+  CharNS_s: 'C₆N₂S',
+  Albumin_s: 'Albumin',
+  Albumin_aq: 'Albumin',
+  AlbuminCoagulated_s: 'Albumin (đông tụ)',
+  AlbuminBrown_s: 'Albumin (biến tính)',
+  AlbuminDenatured_s: 'Albumin (biến tính)',
+  AlbuminXantho_s: 'Albumin–NO₂',
+  Keratin_s: 'Keratin',
+  KeratinBrown_s: 'Keratin (biến tính)',
+  KeratinXantho_s: 'Keratin–NO₂',
+  Amylase_aq: 'α-Amylase',
+  AmylaseDenatured_s: 'α-Amylase (biến tính)',
+  Catalase_aq: 'Catalase',
+  CatalaseDenatured_s: 'Catalase (biến tính)',
+  Valine_g: 'Valine',
+  C4H7NO_g: 'C₄H₇NO',
+  Caprolactam_s: 'C₆H₁₁NO',
+  Nylon6_s: 'Nylon-6',
+  Pyroglutamic_s: 'C₅H₇NO₃',
+};
+
+/**
+ * Unified clean display formatter for species in Liquid, Solid, Gas, Syringe, Report & XLSX tables.
+ * Strips (aq)/(s)/(l)/(g), ↓/↑, color notes; keeps allotrope tags & appends 💨 for condensable vapors.
+ */
+export function formatSpeciesDisplayFormula(spOrId, context = 'table') {
+  const sp = typeof spOrId === 'string' ? SPECIES[spOrId] : spOrId;
+  if (!sp) return typeof spOrId === 'string' ? spOrId : '—';
+  const id = sp.id || '';
+  let base = SPECIES_DISPLAY_OVERRIDES[id];
+  if (!base) {
+    base = String(sp.formula || id)
+      .replace(/[↓↑]/g, '')
+      .replace(/\s*\((aq|s|l|g)\)/gi, '')
+      .replace(/\s*\((vàng(?:\s*nâu|\s*cam)?|trắng|đỏ(?:\s*gạch)?|nâu(?:\s*đỏ)?|xanh|đen|tím|cam|thăng hoa|đậm đặc|sém nâu|muối|tinh thể|Protein[^)]*)\)/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+  if (sp.phase === 'g' && context !== 'raw' && context !== 'noVaporIcon') {
+    const stem = id.replace(/_g$/, '');
+    const isCondensable = Boolean(
+      sp.isCondensableVapor ||
+        sp.liquidSpeciesId ||
+        SPECIES[`${stem}_l`] ||
+        SPECIES[`${stem}_s`] ||
+        id === 'P4_g' ||
+        id === 'S_g' ||
+        id === 'C4H7NO_g' ||
+        id === 'C8H8_g'
+    );
+    if (isCondensable && !base.includes('💨')) {
+      return `${base} 💨`;
+    }
+  }
+  return base;
+}
+
 export const NON_STEAM_GAS_IDS = Object.values(SPECIES)
   .filter((sp) => sp.phase === 'g' && sp.id !== 'H2O_g')
   .sort((a, b) => (a.gasOrder ?? 999) - (b.gasOrder ?? 999))
@@ -90,7 +180,7 @@ export const GAS_DISPLAY_META = Object.values(SPECIES)
   .sort((a, b) => (a.gasOrder ?? 999) - (b.gasOrder ?? 999))
   .map((sp) => ({
     id: sp.id,
-    label: sp.formula,
+    label: formatSpeciesDisplayFormula(sp, 'gas'),
     always: !!sp.gasAlwaysShow,
     relAirDensity: sp.relAirDensity ?? 1.0,
   }));

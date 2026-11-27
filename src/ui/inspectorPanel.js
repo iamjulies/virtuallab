@@ -962,28 +962,35 @@ export class InspectorPanel {
           this.sim.emitChange();
         });
       });
-      this.container.querySelector('#ep-voltage-slider')?.addEventListener('input', (e) => {
-        item.voltageV = Math.max(0, Math.min(24, Number(e.target.value) || 0));
-        item.connectedPowerId = null;
-        this.sim.emitChange();
-      });
       this.container.querySelector('#ins-ep-power')?.addEventListener('click', () => {
         soundEngine.playUiClick();
-        item.powerOn = !item.powerOn;
-        if (item.connectedPowerId) {
-          this.sim.setDcPowerState(item.connectedPowerId, { powerOn: item.powerOn });
-        } else {
-          this.sim.emitChange();
-        }
+        if (!item.connectedPowerId) return;
+        const dc = this.sim.getItem(item.connectedPowerId);
+        if (!dc) return;
+        this.sim.setDcPowerState(dc.id, { powerOn: !dc.powerOn });
       });
       this.container.querySelector('#ins-ep-flip')?.addEventListener('click', () => {
         soundEngine.playUiClick();
-        item.polarityReversed = !item.polarityReversed;
-        this.sim.emitChange();
+        if (item.connectedPowerId) {
+          this.sim.swapDcPolarity(item.connectedPowerId);
+        }
       });
       this.container.querySelector('#ins-ep-power-link')?.addEventListener('change', (e) => {
-        item.connectedPowerId = e.target.value || null;
-        stepAnalyticalInstruments(this.sim, item, 0.01);
+        this.sim.connectElectrophoresisToDc(item.id, e.target.value || null);
+      });
+      this.container.querySelector('#ins-ep-spawn-dc')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        this.sim.spawnAndConnectDcForElectrophoresis(item.id);
+      });
+      this.container.querySelector('#ins-ep-disconnect-dc')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        this.sim.connectElectrophoresisToDc(item.id, null);
+      });
+      this.container.querySelector('#ins-ep-select-dc')?.addEventListener('click', () => {
+        if (!item.connectedPowerId) return;
+        soundEngine.playUiClick();
+        this.sim.selectedId = item.connectedPowerId;
+        this.sim.selectedIds = new Set([item.connectedPowerId]);
         this.sim.emitChange();
       });
       this.container.querySelector('#ins-ep-spot-mix')?.addEventListener('click', () => {
@@ -1031,6 +1038,14 @@ export class InspectorPanel {
       });
       this.container.querySelector('#ins-dc-swap')?.addEventListener('click', () => {
         this.sim.swapDcPolarity(item.id);
+      });
+      this.container.querySelector('#ins-dc-select-ep')?.addEventListener('click', (e) => {
+        const epId = e.currentTarget.dataset.epId;
+        if (!epId) return;
+        soundEngine.playUiClick();
+        this.sim.selectedId = epId;
+        this.sim.selectedIds = new Set([epId]);
+        this.sim.emitChange();
       });
     } else if (item.kind === 'volt_ammeter') {
       this.container.querySelectorAll('.vm-mode-btn').forEach((btn) => {

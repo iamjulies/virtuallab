@@ -932,6 +932,7 @@ export function runOrganicV5Tests(assert) {
       onExternalDrop: (cx, cy, kind, id) => wb73.dropFromShelf(cx, cy, kind, id),
     });
     shelf73.render((k) => I18N.vi[k] || k);
+    shelfHost73.querySelector('[data-shelf-tab="reagents"]')?.click();
 
     // 1) Shelf reagent drag uses GPU translate3d without layout style.left/top & caches canvasRect cleanly
     let rectCalls = 0;
@@ -951,6 +952,7 @@ export function runOrganicV5Tests(assert) {
     }
     const extCoalescedOk = rectCalls === rectCallsDuringExternal; // Cached rect & rAF coalescing prevent repeated layout queries!
     window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true }));
+    localStorage.removeItem('virlab_shelf_tab');
     const ghostOk = ghostTransform.includes('translate3d(') && ghostNoLeftTop && extCoalescedOk && !wb73._canvasRect;
 
     // 2) Canvas item drag caches rect + coalesces burst pointermove + releases cleanly on endDrag
@@ -1145,11 +1147,13 @@ export function runOrganicV5Tests(assert) {
       onExternalDragMove: (cx, cy, kind, id) => wb74.setExternalDropPreview(cx, cy, kind, id),
     });
     shelf74.render((k) => I18N.vi[k] || k);
+    shelfHost74.querySelector('[data-shelf-tab="apparatus"]')?.click();
     const appCard74 = shelfHost74.querySelector('.apparatus-card[data-apparatus-id="beaker_250"]');
     appCard74.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 15, clientY: 15, button: 0, pointerType: 'mouse' }));
     window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: 80, clientY: 80, pointerType: 'mouse' }));
     const hasDragClass = shelfHost74.classList.contains('shelf-dragging-active');
     window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true }));
+    localStorage.removeItem('virlab_shelf_tab');
     const removedDragClass = !shelfHost74.classList.contains('shelf-dragging-active');
 
     // 5) InspectorPanel chart placeholder skips redundant clears when history < 2 & Scale skips when none

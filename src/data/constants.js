@@ -1,7 +1,7 @@
 /**
  * Physical & chemical constants (SI / IUPAC standard units).
  */
-export const APP_VERSION_TAG = 'virlab_beta_v5+build.36';
+export const APP_VERSION_TAG = 'virlab_beta_v5+build.37';
 
 /**
  * Single source of truth for all 10 workbench visual themes.
@@ -46,7 +46,7 @@ export const CONSTANTS = {
   AIR_CO2_FRAC: 0.0004,
   AIR_AR_FRAC: 0.0093,
   AIR_MEAN_MOLAR_MASS: 28.97,
-  MAX_LABS: 10,
+  MAX_LABS: 20,
 
   // Water properties & auto-ionization
   KW_298: 1.0e-14,

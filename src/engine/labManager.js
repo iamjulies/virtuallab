@@ -89,11 +89,11 @@ export function isLabLockedFromExternalStorage(labOrSim) {
 }
 
 /**
- * Orchestrates up to 10 concurrent active lab benches + infinite physical Storage Shelf pages.
+ * Orchestrates up to 20 concurrent active lab benches + infinite physical Storage Shelf pages.
  */
 export class LabManager {
   constructor(hooks = {}) {
-    this.maxLabs = CONSTANTS.MAX_LABS || 10;
+    this.maxLabs = CONSTANTS.MAX_LABS || 20;
     this.hooks = hooks;
     this.labs = [];
     this.activeIndex = 0;

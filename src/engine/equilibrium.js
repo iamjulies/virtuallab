@@ -1,6 +1,6 @@
 import { APPARATUS } from '../data/apparatus.js';
 import { CONSTANTS, waterDensityGPerMl } from '../data/constants.js';
-import { SPECIES } from '../data/species.js';
+import { isSolidMoltenAtTemp, SPECIES } from '../data/species.js';
 
 /**
  * Compute aqueous phase volume in Liters (H2O + water-miscible Ethanol + _aq solutes).
@@ -909,9 +909,20 @@ export const MOLAR_IONIC_CONDUCTIVITY_MS_CM2_MMOL = {
 /**
  * Compute per-species liquid & dissolved solute breakdown (mol, mass g, phase volume mL, CM, C%).
  */
-export function computeLiquidSpeciesTableData(moles, tempK = CONSTANTS.T_STD_K, strat = null) {
+export function computeLiquidSpeciesTableData(moles, tempK = CONSTANTS.T_STD_K, strat = null, isFrozenSolid = false) {
   const s = strat || computePhaseStratification(moles, tempK);
-  const T = Number.isFinite(tempK) ? Math.max(155, Math.min(800, tempK)) : CONSTANTS.T_STD_K;
+  const rawT = Number.isFinite(tempK) ? Math.max(155, Math.min(3500, tempK)) : CONSTANTS.T_STD_K;
+  const T = Math.min(800, rawT);
+  if (isFrozenSolid) {
+    return {
+      rows: [],
+      totalLiqMl: 0,
+      totalLiqMassG: 0,
+      liqDensity: 0,
+      mixDensity: 0,
+      strat: s,
+    };
+  }
   const aqVolL = Math.max(0, s.aqueousMl / 1000);
   const lightVolL = Math.max(0, s.lightOrganicMl / 1000);
   const heavyVolL = Math.max(0, s.heavyOrganicMl / 1000);
@@ -919,28 +930,36 @@ export function computeLiquidSpeciesTableData(moles, tempK = CONSTANTS.T_STD_K, 
   let aqMassG = 0;
   let lightMassG = 0;
   let heavyMassG = 0;
+  let moltenMassG = 0;
+  let moltenVolMl = 0;
   const rawEntries = [];
 
   for (const [spId, n] of Object.entries(moles || {})) {
     if (!Number.isFinite(n) || n <= 0) continue;
     const sp = SPECIES[spId];
-    if (!sp || (sp.phase !== 'l' && sp.phase !== 'aq')) continue;
+    if (!sp) continue;
+    const isMolten = sp.phase === 's' && isSolidMoltenAtTemp(sp, rawT, moles);
+    if (sp.phase !== 'l' && sp.phase !== 'aq' && !isMolten) continue;
     const massG = n * (sp.molarMass || 0);
     if (n < 5e-7 && massG < 5e-4) continue;
-    const lg = sp.phase === 'aq' ? 'aqueous' : sp.liquidGroup || 'aqueous';
-    if (lg === 'organic_light') lightMassG += massG;
+    const lg = isMolten ? 'molten' : sp.phase === 'aq' ? 'aqueous' : sp.liquidGroup || 'aqueous';
+    if (isMolten) {
+      moltenMassG += massG;
+      if (sp.density > 0) moltenVolMl += massG / sp.density;
+    } else if (lg === 'organic_light') lightMassG += massG;
     else if (lg === 'organic_heavy') heavyMassG += massG;
     else aqMassG += massG;
-    rawEntries.push({ spId, sp, n, massG, lg });
+    rawEntries.push({ spId, sp, n, massG, lg, isMolten });
   }
 
+  const totalLiqMassG = aqMassG + lightMassG + heavyMassG + moltenMassG;
   const rows = rawEntries
     .sort((a, b) => b.n - a.n)
-    .map(({ spId, sp, n, massG, lg }) => {
+    .map(({ spId, sp, n, massG, lg, isMolten }) => {
       const rho = spId === 'H2O_l' ? waterDensityGPerMl(T) : sp.density;
-      const volMl = sp.phase === 'l' && rho > 0 ? massG / rho : null;
-      const hostVolL = lg === 'organic_light' ? lightVolL : lg === 'organic_heavy' ? heavyVolL : aqVolL;
-      const hostMassG = lg === 'organic_light' ? lightMassG : lg === 'organic_heavy' ? heavyMassG : aqMassG;
+      const volMl = (sp.phase === 'l' || isMolten) && rho > 0 ? massG / rho : null;
+      const hostVolL = lg === 'organic_light' ? lightVolL : lg === 'organic_heavy' ? heavyVolL : lg === 'molten' ? 0 : aqVolL;
+      const hostMassG = lg === 'organic_light' ? lightMassG : lg === 'organic_heavy' ? heavyMassG : lg === 'molten' ? totalLiqMassG : aqMassG;
       const cM = hostVolL > 1e-7 ? n / hostVolL : 0;
       const cPct = hostMassG > 1e-7 ? (massG / hostMassG) * 100 : 0;
       return {
@@ -952,17 +971,20 @@ export function computeLiquidSpeciesTableData(moles, tempK = CONSTANTS.T_STD_K, 
         cM,
         cPct,
         layerGroup: lg,
+        isMolten,
       };
     });
 
-  const totalLiqMl = s.totalLiqMl;
-  const totalLiqMassG = aqMassG + lightMassG + heavyMassG;
+  const totalLiqMl = s.totalLiqMl + moltenVolMl;
   const solidVolMl = computeSolidVolumeMl(moles);
   let solidMassG = 0;
   for (const [spId, n] of Object.entries(moles || {})) {
-    if (n > 0 && SPECIES[spId]?.phase === 's') solidMassG += n * (SPECIES[spId].molarMass || 0);
+    const sp = SPECIES[spId];
+    if (n > 0 && sp?.phase === 's' && !isSolidMoltenAtTemp(sp, rawT, moles)) {
+      solidMassG += n * (sp.molarMass || 0);
+    }
   }
-  const mixVolMl = totalLiqMl + solidVolMl;
+  const mixVolMl = s.totalLiqMl + solidVolMl;
   const mixDensity = mixVolMl > 1e-6 ? (totalLiqMassG + solidMassG) / mixVolMl : 0;
   const liqDensity = totalLiqMl > 1e-6 ? totalLiqMassG / totalLiqMl : 0;
 
