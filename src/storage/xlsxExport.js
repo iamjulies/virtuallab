@@ -588,6 +588,30 @@ export function extractInstrumentSheetData(item, sim) {
       ],
     };
   }
+  if (item.kind === 'electrophoresis') {
+    const lanes = Array.isArray(item.lanes) ? item.lanes : [];
+    const ph = Number(item.bufferPH ?? 6.0);
+    const polLabel = item.polarityReversed ? 'Left (-) Cathode | Right (+) Anode' : 'Left (+) Anode | Right (-) Cathode';
+    return {
+      sheetName: 'Electrophoresis',
+      rows: [
+        [`Electrophoresis Cell ${item.label || ''}`, `pH ${ph.toFixed(2)}`, `${item.powerOn ? `${Number(item.voltageV || 0).toFixed(1)} V ON` : 'OFF'}`, polLabel, `Ninhydrin: ${item.ninhydrinDeveloped ? 'YES' : 'NO'}`],
+        ['Sample', 'Formula', 'pI', 'q_eff(pH)', 'Migration Target', 'Distance d (mm)'],
+        ...lanes.map((ln) => {
+          const q = Number(ln.qEff ?? 0);
+          const dir = Math.abs(q) < 0.08 ? 'Stationary (pI)' : q < 0 ? 'Anode (+)' : 'Cathode (-)';
+          return [
+            ln.name || ln.shortLabel || ln.id,
+            ln.formula || '',
+            ln.pI != null ? Number(Number(ln.pI).toFixed(2)) : '',
+            Number(q.toFixed(3)),
+            dir,
+            Number((ln.posMm || 0).toFixed(2)),
+          ];
+        }),
+      ],
+    };
+  }
   if (item.kind === 'scale') {
     const netG = Number(item.measuredG ?? item.measuredMassG ?? 0);
     const tareG = Number(item.tareG ?? 0);
@@ -735,6 +759,8 @@ export function buildBenchMultiSheetWorkbook(sim, t = null, labName = 'Lab 1') {
       instRows.push([it.label || it.id, `Spectrometer (${it.spectroMode || 'uvvis_kinetics'})`, `wl=${it.wavelengthNm || 525}nm`, `A=${(it.measuredAbsorbance ?? 0).toFixed(3)}`]);
     } else if (it.kind === 'tlc_plate') {
       instRows.push([it.label || it.id, 'TLC Plate', `Front=${((it.solventFront || 0) * 100).toFixed(0)}%`, `${(it.spots || []).length} spots`]);
+    } else if (it.kind === 'electrophoresis') {
+      instRows.push([it.label || it.id, 'Electrophoresis', `pH=${Number(it.bufferPH ?? 6.0).toFixed(2)} | ${it.powerOn ? `${Number(it.voltageV || 0).toFixed(0)}V` : 'OFF'}`, `${(it.lanes || []).length} lanes`]);
     } else if (it.kind === 'scale') {
       instRows.push([it.label || it.id, 'Scale', 'Net Mass (g)', Number((it.measuredG ?? it.measuredMassG ?? 0).toFixed(4))]);
     }

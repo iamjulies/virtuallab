@@ -158,6 +158,60 @@ export function computeKw(tempK = CONSTANTS.T_STD_K) {
 }
 
 /**
+ * Compute fractional speciation α_0..α_N and average bound protons for an N-protic acid
+ * system given its stepwise pKaList [pKa1, ..., pKaN] and hydronium activity [H+] = h.
+ */
+export function computePolyproticDistribution(pKaList, h) {
+  const n = Array.isArray(pKaList) ? pKaList.length : 0;
+  if (n === 0) return { alpha: [1], avgBound: 0 };
+  const hSafe = Math.max(1e-16, Number(h) || 1e-7);
+  const terms = new Array(n + 1);
+  let beta = 1;
+  let denom = 0;
+  for (let j = 0; j <= n; j++) {
+    if (j > 0) beta *= Math.pow(10, -pKaList[j - 1]);
+    const term = beta * Math.pow(hSafe, n - j);
+    terms[j] = term;
+    denom += term;
+  }
+  const alpha = new Array(n + 1);
+  let avgBound = 0;
+  if (denom > 0 && Number.isFinite(denom)) {
+    for (let j = 0; j <= n; j++) {
+      const a = terms[j] / denom;
+      alpha[j] = a;
+      avgBound += (n - j) * a;
+    }
+  } else {
+    alpha.fill(0);
+    alpha[0] = 1;
+    avgBound = n;
+  }
+  return { alpha, avgBound };
+}
+
+/**
+ * Compute property-driven effective net charge q_eff(pH) for electrophoresis / titration.
+ * Uses electrophoresisPkaList / pKaList and electrophoresisMaxCharge when present;
+ * otherwise falls back to formal ionic charge.
+ */
+export function computeSpeciesEffectiveChargeAtPH(sp, pH = 7.0) {
+  if (!sp) return 0;
+  const pKaList = sp.electrophoresisPkaList || sp.pKaList || sp.pkaValues;
+  if (!Array.isArray(pKaList) || pKaList.length === 0) {
+    return typeof sp.charge === 'number' ? sp.charge : 0;
+  }
+  const h = Math.pow(10, -Math.max(0, Math.min(14, Number(pH) || 7.0)));
+  const { alpha } = computePolyproticDistribution(pKaList, h);
+  const zMax = typeof sp.electrophoresisMaxCharge === 'number' ? sp.electrophoresisMaxCharge : 1;
+  let qEff = 0;
+  for (let j = 0; j < alpha.length; j++) {
+    qEff += alpha[j] * (zMax - j);
+  }
+  return qEff;
+}
+
+/**
  * Universal proton-balance pH solver supporting strong electrolytes, NH3/NH4+,
  * and extensible mono/polyprotic weak-acid buffer species declared via SPECIES[id].bufferFamily.
  * Returns null if vessel contains virtually no aqueous water/protic liquid.
@@ -229,17 +283,9 @@ export function computePH(moles, liquidVolL, tempK = CONSTANTS.T_STD_K) {
       }
       if (polyGroups) {
         for (const grp of polyGroups.values()) {
-          if (grp.pKaList.length === 1) {
-            const ka1 = Math.pow(10, -grp.pKaList[0]);
-            const eqBound = grp.totalConc * (h / (h + ka1));
-            f += eqBound - grp.boundProtonsConc;
-          } else if (grp.pKaList.length === 2) {
-            const k1 = Math.pow(10, -grp.pKaList[0]);
-            const k2 = Math.pow(10, -grp.pKaList[1]);
-            const denom = h * h + k1 * h + k1 * k2;
-            const eqBound = denom > 0 ? grp.totalConc * ((2 * h * h + k1 * h) / denom) : 0;
-            f += eqBound - grp.boundProtonsConc;
-          }
+          const { avgBound } = computePolyproticDistribution(grp.pKaList, h);
+          const eqBound = grp.totalConc * avgBound;
+          f += eqBound - grp.boundProtonsConc;
         }
       }
       if (f > 0) hi = mid;

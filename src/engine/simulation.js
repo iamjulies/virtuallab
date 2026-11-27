@@ -798,6 +798,18 @@ export class LabSimulation {
         isDeveloping: false,
         tiltAngle: 0,
       });
+    } else if (spec.kind === 'electrophoresis') {
+      Object.assign(base, {
+        contactVesselId: null,
+        contactLabel: '',
+        bufferPH: 6.0,
+        voltageV: 12,
+        powerOn: false,
+        polarityReversed: false,
+        ninhydrinDeveloped: false,
+        connectedPowerId: null,
+        lanes: [],
+      });
     }
 
     this.items.push(base);

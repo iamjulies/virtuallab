@@ -34,9 +34,11 @@ import {
 } from '../../engine/gasNetwork.js';
 import { computeWashBottleStreamArc } from '../../engine/apparatusTools.js';
 import {
+  CLASSIC_AMINO_ACID_IDS,
   COLORIMETER_WAVELENGTHS,
   computeIrSpectrum,
   computeUvVisSpectrum,
+  spotElectrophoresisAnalytes,
   stepAnalyticalInstruments,
 } from '../../engine/analyticalTools.js';
 import { computeCaOOptimizationScore } from '../../engine/chemistry.js';
@@ -60,6 +62,43 @@ import {
   syncPrecisionControlLive,
   renderTlcSpotsListHtml,
 } from './inspectorUtils.js';
+
+function renderElectrophoresisLanesHtml(lanes, langCode, polarityReversed, t) {
+  const isEn = langCode === 'en';
+  if (!Array.isArray(lanes) || lanes.length === 0) {
+    return `<div class="p-2.5 rounded-lg border border-dashed border-theme text-center text-muted text-[11px]">${t('epEmptyLanesHint')}</div>`;
+  }
+  return `
+    <div class="rounded-lg border border-theme bg-surface overflow-hidden">
+      <div class="grid grid-cols-12 gap-1 px-2 py-1 text-[10px] font-bold uppercase text-muted border-b border-theme bg-surface-alt/70">
+        <span class="col-span-3">${isEn ? 'Sample' : 'Mẫu'}</span>
+        <span class="col-span-2 text-right">pI</span>
+        <span class="col-span-2 text-right">q_eff</span>
+        <span class="col-span-3 text-center">${isEn ? 'Target' : 'Hướng'}</span>
+        <span class="col-span-2 text-right">d (mm)</span>
+      </div>
+      ${lanes.map((ln) => {
+        const q = Number(ln.qEff ?? 0);
+        const dirBadge =
+          Math.abs(q) < 0.08
+            ? '<span class="text-slate-400 font-semibold">● pI</span>'
+            : q < 0
+              ? `<span class="text-rose-400 font-semibold">${polarityReversed ? '→ (+)' : '← (+)'}</span>`
+              : `<span class="text-sky-400 font-semibold">${polarityReversed ? '← (−)' : '→ (−)'}</span>`;
+        const dStr = `${(ln.posMm || 0) >= 0 ? '+' : ''}${Number(ln.posMm || 0).toFixed(1)}`;
+        return `
+          <div class="grid grid-cols-12 gap-1 px-2 py-1 text-[11px] font-mono border-b border-theme/40 last:border-b-0 items-center">
+            <span class="col-span-3 font-bold truncate" title="${ln.name || ''} (${ln.formula || ''})">${ln.shortLabel || ln.id}</span>
+            <span class="col-span-2 text-right text-muted">${Number(ln.pI || 0).toFixed(2)}</span>
+            <span class="col-span-2 text-right">${q >= 0 ? '+' : ''}${q.toFixed(2)}</span>
+            <span class="col-span-3 text-center text-[10px]">${dirBadge}</span>
+            <span class="col-span-2 text-right font-bold">${dStr}</span>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
 
 export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.lastLangCode || 'vi') {
   let topSection = '';
@@ -999,6 +1038,90 @@ export function renderToolOrEmptyBenchHtml(panel, item, t, langCode = panel.last
           ])}
         </div>
       `;
+    } else if (item.kind === 'electrophoresis') {
+      const lanes = Array.isArray(item.lanes) ? item.lanes : [];
+      const phVal = Number(item.bufferPH ?? 6.0);
+      const voltVal = Number(item.voltageV ?? 12);
+      const rev = Boolean(item.polarityReversed);
+      const nin = Boolean(item.ninhydrinDeveloped);
+      const dcSupplies = panel.sim.items.filter((i) => i.kind === 'dc_power');
+      const phPresets = [1.0, 3.22, 6.0, 9.74, 12.0];
+      const aaQuickButtons = [
+        { id: 'Glycine_aq', label: 'Gly (6.0)' },
+        { id: 'Alanine_aq', label: 'Ala (6.0)' },
+        { id: 'Valine_aq', label: 'Val (6.0)' },
+        { id: 'Lysine_aq', label: 'Lys (9.7)' },
+        { id: 'Glutamic_aq', label: 'Glu (3.2)' },
+      ];
+      topSection = `
+        <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-bold">${t('eq_electrophoresis_cell')} ${item.label}</div>
+              <div class="text-[11px] text-muted">${APPARATUS.electrophoresis_cell.isoStandard}</div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${!hideQuant ? renderXlsxSectionBtnHtml('instrument', t, 'exportXlsxInstrumentTip') : ''}
+              <button type="button" id="ins-delete" title="${t('actionDelete')}" class="px-2 py-1 rounded text-xs text-red-400 border border-theme hover:bg-red-500/10 whitespace-nowrap shrink-0">${t('btnDeleteShort')}</button>
+            </div>
+          </div>
+
+          <div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-2">
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-semibold text-muted">${t('epBufferPhLabel')}</span>
+              <strong class="font-mono text-sm text-sky-400" id="live-ep-ph">pH ${phVal.toFixed(2)}</strong>
+            </div>
+            <input type="range" id="ep-ph-slider" min="1.0" max="14.0" step="0.05" value="${phVal.toFixed(2)}" class="w-full accent-sky-500 cursor-pointer" />
+            <div class="grid grid-cols-5 gap-1">
+              ${phPresets.map((p) => {
+                const active = Math.abs(phVal - p) < 0.08;
+                return `<button type="button" data-ep-ph="${p}" class="ep-ph-preset px-1 py-1 rounded text-[11px] font-mono border ${active ? 'border-sky-500 bg-sky-500/20 text-sky-400 font-bold' : 'border-theme bg-surface-alt hover:border-accent'}">${p}</button>`;
+              }).join('')}
+            </div>
+          </div>
+
+          <div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-2">
+            <div class="flex items-center justify-between text-xs gap-2">
+              <span class="font-semibold text-muted">${t('epElectricFieldLabel')} · <strong class="font-mono" id="live-ep-v">${voltVal.toFixed(0)} V</strong></span>
+              <span class="text-[11px] font-mono ${rev ? 'text-amber-400' : 'text-emerald-400'}" id="live-ep-pol">${rev ? '(−) ◀ ▶ (+)' : '(+) ◀ ▶ (−)'}</span>
+            </div>
+            <input type="range" id="ep-voltage-slider" min="0" max="24" step="1" value="${voltVal.toFixed(0)}" class="w-full accent-emerald-500 cursor-pointer" />
+            <div class="grid grid-cols-2 gap-1.5">
+              <button type="button" id="ins-ep-power" class="py-1.5 px-2 rounded-lg border text-xs font-semibold ${item.powerOn ? 'border-emerald-500 bg-emerald-500/20 text-emerald-400' : 'border-theme bg-surface-alt hover:border-accent'}">${item.powerOn ? t('epPowerPause') : t('epPowerRun')}</button>
+              <button type="button" id="ins-ep-flip" class="py-1.5 px-2 rounded-lg border border-theme bg-surface-alt text-xs font-medium hover:border-accent">${t('epFlipPolarity')}</button>
+            </div>
+            ${dcSupplies.length > 0 ? `
+              <div class="flex items-center justify-between gap-2 text-[11px] pt-1 border-t border-theme/50">
+                <span class="text-muted">${t('epLinkDcPowerLabel')}</span>
+                <select id="ins-ep-power-link" class="px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-[11px]">
+                  <option value="">${t('epBuiltInSupplyOpt')}</option>
+                  ${dcSupplies.map((s) => `<option value="${s.id}" ${item.connectedPowerId === s.id ? 'selected' : ''}>${s.label} (${Number(s.voltageV || 0).toFixed(0)}V ${s.powerOn ? 'ON' : 'OFF'})</option>`).join('')}
+                </select>
+              </div>
+            ` : ''}
+          </div>
+
+          <div class="p-2.5 rounded-lg border border-theme bg-surface flex flex-col gap-2">
+            <div class="flex items-center justify-between gap-1.5">
+              <button type="button" id="ins-ep-spot-mix" class="flex-1 py-1.5 px-2 rounded-lg border border-indigo-500/50 bg-indigo-500/15 text-indigo-300 text-xs font-semibold hover:bg-indigo-500/25">${t('epSpot5MixBtn')}</button>
+              <button type="button" id="ins-ep-ninhydrin" class="py-1.5 px-2.5 rounded-lg border text-xs font-semibold ${nin ? 'border-purple-500 bg-purple-500/25 text-purple-300' : 'border-theme bg-surface-alt hover:border-accent'}">${t('actionToggleNinhydrin')}</button>
+            </div>
+            <div class="flex flex-wrap gap-1">
+              ${aaQuickButtons.map((b) => `<button type="button" data-aa-id="${b.id}" class="ep-spot-btn px-1.5 py-0.5 rounded border border-theme bg-surface-alt text-[11px] font-mono hover:border-accent">+ ${b.label}</button>`).join('')}
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-1 max-h-44 overflow-y-auto text-xs" id="live-ep-lanes">
+            ${renderElectrophoresisLanesHtml(lanes, langCode, rev, t)}
+          </div>
+
+          ${renderExportActionsBarHtml({ idPrefix: 'ep', label: t('exportImageCsvLabel') })}
+          ${renderActionGridHtml([
+            `<button type="button" id="ins-ep-recenter" class="w-full py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1 text-center">${t('epRecenterBtn')}</button>`,
+            `<button type="button" id="ins-ep-reset" class="w-full py-1.5 px-2 rounded-lg border border-theme bg-surface text-xs font-medium hover:border-accent flex items-center justify-center gap-1 text-center">${t('actionResetElectrophoresis')}</button>`,
+          ])}
+        </div>
+      `;
     } else if (item.kind === 'dc_power') {
       topSection = `
         <div class="p-3.5 rounded-xl border border-theme bg-surface-alt flex flex-col gap-3">
@@ -1774,6 +1897,23 @@ export function updateToolLiveNumbers(panel, item, t) {
       if (sfEl) sfEl.textContent = `${((item.solventFront || 0) * 100).toFixed(0)}%`;
       if (spotsEl && (item.spots || []).length > 0) {
         spotsEl.innerHTML = renderTlcSpotsListHtml(item.spots || []);
+      }
+      return;
+    }
+
+    if (item.kind === 'electrophoresis') {
+      const phEl = panel.container.querySelector('#live-ep-ph');
+      const vEl = panel.container.querySelector('#live-ep-v');
+      const lanesEl = panel.container.querySelector('#live-ep-lanes');
+      if (phEl) phEl.textContent = `pH ${Number(item.bufferPH ?? 6.0).toFixed(2)}`;
+      if (vEl) vEl.textContent = `${Number(item.voltageV ?? 0).toFixed(0)} V`;
+      if (lanesEl) {
+        lanesEl.innerHTML = renderElectrophoresisLanesHtml(
+          item.lanes || [],
+          panel.lastLangCode || 'vi',
+          Boolean(item.polarityReversed),
+          t
+        );
       }
       return;
     }

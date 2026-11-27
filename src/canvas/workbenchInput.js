@@ -213,6 +213,15 @@ export function handleCanvasWheelImpl(wb, pt, deltaY, shiftKey = false, ctrlKey 
       });
     }
 
+    if (hit.kind === 'electrophoresis') {
+      if (!shiftKey) return false;
+      return stepDiscrete(`ep-reset:${hit.id}`, deltaY, () => {
+        soundEngine.playUiClick();
+        (hit.lanes || []).forEach((l) => { l.posMm = 0; });
+        wb.sim.emitChange();
+      });
+    }
+
     if (hit.kind === 'stand') {
       if (shiftKey) {
         return stepDiscrete(`stand-flip:${hit.id}`, deltaY, () => {
@@ -1210,7 +1219,12 @@ export function bindWorkbenchEventsImpl(wb) {
         checkIndicatorStripInteractions(wb.sim, item);
       } else if (item.kind === 'thermometer') {
         checkThermometerInteractions(wb.sim, item, 0.08);
-      } else if (item.kind === 'ph_conductometer' || item.kind === 'colorimeter' || item.kind === 'tlc_plate') {
+      } else if (
+        item.kind === 'ph_conductometer' ||
+        item.kind === 'colorimeter' ||
+        item.kind === 'tlc_plate' ||
+        item.kind === 'electrophoresis'
+      ) {
         stepAnalyticalInstruments(wb.sim, item, 0.08);
       } else if (item.kind === 'wash_bottle') {
         const arc = computeWashBottleStreamArc(item, wb.sim.items, BENCH_FLOOR_Y, CONSTANTS.GRAVITY_PX_S2 || 1800);

@@ -850,6 +850,20 @@ export const APPARATUS = {
     height: 112,
     fragilityDropPx: Infinity,
   },
+  electrophoresis_cell: {
+    id: 'electrophoresis_cell',
+    kind: 'electrophoresis',
+    category: 'titration',
+    supportsClamp: false,
+    breakable: false,
+    flippable: false,
+    i18nKey: 'eq_electrophoresis_cell',
+    isoStandard: 'Paper/Agarose Zone Electrophoresis Cell (pH 1–14, 0–24 V)',
+    materialSpec: 'Cellulose Acetate / Agarose Gel Strip + Twin Platinum Buffer Electrodes',
+    width: 210,
+    height: 82,
+    fragilityDropPx: Infinity,
+  },
 
   // --- Group 4: Mechanics & Surface Area ---
   mortar_pestle: {
@@ -1244,6 +1258,7 @@ export const APPARATUS_ORDER = [
   'ph_conductometer',
   'colorimeter',
   'tlc_plate',
+  'electrophoresis_cell',
   'phen_cotton',
   'stir_bar',
   'boiling_chips',

@@ -942,6 +942,123 @@ export function exportTlcPlateAsset({ format, plate, uvLight, t, lang, labName }
   exportCanvasInFormat(canvas, format, buildExportFilename(labName, `tlc-${plate.label}`, format));
 }
 
+export function exportElectrophoresisAsset({ format, cell, t, lang, labName }) {
+  const isEn = lang === 'en';
+  const lanes = Array.isArray(cell?.lanes) ? cell.lanes : [];
+  const ph = Number(cell?.bufferPH ?? 6.0);
+  const v = Number(cell?.voltageV ?? 0);
+  const polText = cell?.polarityReversed ? '(-) | (+)' : '(+) | (-)';
+  if (format === 'csv') {
+    const fn = buildExportFilename(labName, `electrophoresis-${cell.label}`, 'csv');
+    exportCsvFile(
+      ['Sample', 'Formula', 'pI', 'q_eff(pH)', 'Direction', 'Distance (mm)'],
+      lanes.map((ln) => {
+        const q = Number(ln.qEff ?? 0);
+        const dir = Math.abs(q) < 0.08 ? 'pI (0)' : q < 0 ? 'Anode (+)' : 'Cathode (-)';
+        return [
+          ln.name || ln.shortLabel || ln.id,
+          ln.formula || '',
+          ln.pI != null ? +Number(ln.pI).toFixed(2) : '',
+          +q.toFixed(3),
+          dir,
+          +Number(ln.posMm || 0).toFixed(2),
+        ];
+      }),
+      fn
+    );
+    return;
+  }
+
+  const canvas = createHiResReportCanvas(
+    {
+      width: 920,
+      height: 460,
+      scale: 2,
+      title: isEn ? `Zone Electrophoresis Strip — ${cell.label}` : `Điện di Amino Acid — ${cell.label}`,
+      subtitle: `pH ${ph.toFixed(2)} · ${cell?.powerOn ? `${v.toFixed(0)} V ON` : 'OFF'} · ${polText} · Ninhydrin: ${cell?.ninhydrinDeveloped ? 'ON' : 'OFF'}`,
+    },
+    (ctx, box) => {
+      // Top visual strip
+      const sx = box.x + 36;
+      const sw = box.w - 72;
+      const sy = box.y + 18;
+      const sh = 140;
+      const rev = Boolean(cell?.polarityReversed);
+
+      ctx.fillStyle = cell?.ninhydrinDeveloped ? '#faf5ff' : '#f8fafc';
+      ctx.strokeStyle = '#64748b';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(sx, sy, sw, sh, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      // Left / Right chamber polarity labels
+      const leftPos = !rev;
+      ctx.fillStyle = leftPos ? '#dc2626' : '#2563eb';
+      ctx.font = 'bold 14px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(leftPos ? '(+) Anode' : '(−) Cathode', sx + 48, sy + sh / 2);
+      ctx.fillStyle = leftPos ? '#2563eb' : '#dc2626';
+      ctx.fillText(leftPos ? '(−) Cathode' : '(+) Anode', sx + sw - 48, sy + sh / 2);
+
+      const midX = sx + sw / 2;
+      ctx.strokeStyle = '#475569';
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(midX, sy + 8);
+      ctx.lineTo(midX, sy + sh - 8);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const rowStep = sh / Math.max(1, lanes.length);
+      const maxPx = sw * 0.34;
+      lanes.forEach((ln, idx) => {
+        const ly = sy + rowStep * (idx + 0.5);
+        const bx = midX + Math.max(-1, Math.min(1, (ln.posMm || 0) / 76)) * maxPx;
+        ctx.fillStyle = cell?.ninhydrinDeveloped ? ln.color || '#7c3aed' : 'rgba(148,163,184,0.35)';
+        ctx.beginPath();
+        ctx.roundRect(bx - 8, ly - 7, 16, 14, 4);
+        ctx.fill();
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 11px ui-monospace, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${ln.shortLabel} (${Number(ln.posMm || 0).toFixed(1)} mm)`, bx + 12, ly);
+      });
+
+      // Lower table
+      const ty = sy + sh + 26;
+      ctx.fillStyle = '#f1f5f9';
+      ctx.fillRect(sx, ty, sw, 28);
+      ctx.fillStyle = '#0f172a';
+      ctx.font = 'bold 12px system-ui, sans-serif';
+      ctx.fillText(isEn ? 'Amino Acid' : 'Mẫu chất', sx + 12, ty + 14);
+      ctx.fillText('pI', sx + 220, ty + 14);
+      ctx.fillText('q_eff(pH)', sx + 320, ty + 14);
+      ctx.fillText(isEn ? 'Direction' : 'Hướng dịch chuyển', sx + 470, ty + 14);
+      ctx.textAlign = 'right';
+      ctx.fillText('d (mm)', sx + sw - 16, ty + 14);
+
+      lanes.forEach((ln, idx) => {
+        const ry = ty + 30 + idx * 30;
+        const q = Number(ln.qEff ?? 0);
+        const dir = Math.abs(q) < 0.08 ? 'pI (0)' : q < 0 ? '→ (+) Anode' : '→ (−) Cathode';
+        ctx.fillStyle = '#0f172a';
+        ctx.font = '12px ui-monospace, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${ln.name} (${ln.shortLabel})`, sx + 12, ry + 14);
+        ctx.fillText(Number(ln.pI || 0).toFixed(2), sx + 220, ry + 14);
+        ctx.fillText((q >= 0 ? '+' : '') + q.toFixed(2), sx + 320, ry + 14);
+        ctx.fillText(dir, sx + 470, ry + 14);
+        ctx.textAlign = 'right';
+        ctx.fillText(`${Number(ln.posMm || 0).toFixed(1)} mm`, sx + sw - 16, ry + 14);
+      });
+    }
+  );
+  exportCanvasInFormat(canvas, format, buildExportFilename(labName, `electrophoresis-${cell.label}`, format));
+}
+
 export function composeWorkbenchSnapshotCanvas({ workbenchCanvas, isDark, sim, labName, lang }) {
   const isEn = lang === 'en';
   try {

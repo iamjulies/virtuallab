@@ -13,6 +13,7 @@ import {
   computePH,
   computePhaseStratification,
   computePhenolphthaleinAlpha,
+  computeSpeciesEffectiveChargeAtPH,
 } from './equilibrium.js';
 import { ensureMissionTelemetry } from './missionEvaluator.js';
 
@@ -893,5 +894,158 @@ export function stepAnalyticalInstruments(sim, item, dt = 0.05) {
     captureTlcSpots(item, v);
     const speed = 0.22 + (item.eluentStrength || 0.35) * 0.14;
     item.solventFront = Math.min(1.0, (item.solventFront || 0) + speed * Math.max(0.01, dt));
+  } else if (item.kind === 'electrophoresis') {
+    stepElectrophoresisCell(sim, item, dt);
+  }
+}
+
+const ELECTROPHORESIS_FAMILY_DISPLAY = {
+  glycine: { shortLabel: 'Gly', canonicalId: 'Glycine_aq', displayName: 'Glycine', formula: 'H₂N–CH₂–COOH' },
+  alanine: { shortLabel: 'Ala', canonicalId: 'Alanine_aq', displayName: 'Alanine', formula: 'CH₃–CH(NH₂)–COOH' },
+  valine: { shortLabel: 'Val', canonicalId: 'Valine_aq', displayName: 'Valine', formula: '(CH₃)₂CH–CH(NH₂)–COOH' },
+  lysine: { shortLabel: 'Lys', canonicalId: 'Lysine_aq', displayName: 'Lysine', formula: 'H₂N–(CH₂)₄–CH(NH₂)–COOH' },
+  glutamic: { shortLabel: 'Glu', canonicalId: 'Glutamic_aq', displayName: 'Glutamic acid', formula: 'HOOC–(CH₂)₂–CH(NH₂)–COOH' },
+};
+
+export const CLASSIC_AMINO_ACID_IDS = ['Glycine_aq', 'Alanine_aq', 'Valine_aq', 'Lysine_aq', 'Glutamic_aq'];
+
+function resolveElectrophoresisAnalyteMeta(spId) {
+  const sp = SPECIES[spId];
+  if (!sp) return null;
+  const fg = sp.functionalGroups || {};
+  const pKaList = sp.electrophoresisPkaList || sp.pKaList || sp.pkaValues;
+  const isAminoCandidate =
+    Boolean(fg.isAminoAcid || sp.isoelectricPoint != null || sp.electrophoresisPkaList) &&
+    Array.isArray(pKaList) &&
+    pKaList.length > 0;
+  if (!isAminoCandidate) return null;
+
+  const famKey = typeof sp.bufferFamily === 'string' ? sp.bufferFamily : spId;
+  const famInfo = ELECTROPHORESIS_FAMILY_DISPLAY[famKey];
+  const canonicalId = famInfo?.canonicalId || spId;
+  const canonicalSp = SPECIES[canonicalId] || sp;
+  const pI = canonicalSp.isoelectricPoint ?? sp.isoelectricPoint ?? 6.0;
+  const zMax = canonicalSp.electrophoresisMaxCharge ?? sp.electrophoresisMaxCharge ?? 1;
+  const effPka = canonicalSp.electrophoresisPkaList || canonicalSp.pKaList || pKaList;
+
+  return {
+    id: canonicalId,
+    family: famKey,
+    shortLabel: famInfo?.shortLabel || canonicalSp.name?.slice(0, 4) || canonicalId,
+    name: famInfo?.displayName || canonicalSp.name || canonicalId,
+    formula: famInfo?.formula || canonicalSp.formula || canonicalId,
+    pI,
+    pKaList: [...effPka],
+    zMax,
+    color: canonicalSp.electrophoresisColor || canonicalSp.tlcColor || '#6d28d9',
+  };
+}
+
+/**
+ * Spot one or more amino-acid species (by ID list or extracted from a vessel's moles) onto the strip at 0 mm.
+ */
+export function spotElectrophoresisAnalytes(cell, sourceOrIds, bufferPH = cell?.bufferPH ?? 6.0) {
+  if (!cell) return 0;
+  cell.lanes = Array.isArray(cell.lanes) ? cell.lanes : [];
+  const existingIds = new Set(cell.lanes.map((l) => l.id));
+  const candidateIds = Array.isArray(sourceOrIds)
+    ? sourceOrIds
+    : Object.entries(sourceOrIds?.moles || {})
+        .filter(([, n]) => Number.isFinite(n) && n > 1e-6)
+        .map(([id]) => id);
+
+  let added = 0;
+  for (const spId of candidateIds) {
+    if (cell.lanes.length >= 5) break;
+    const meta = resolveElectrophoresisAnalyteMeta(spId);
+    if (!meta || existingIds.has(meta.id)) continue;
+    existingIds.add(meta.id);
+    const sp = SPECIES[meta.id] || SPECIES[spId];
+    const qEff = computeSpeciesEffectiveChargeAtPH(sp, bufferPH);
+    cell.lanes.push({
+      id: meta.id,
+      family: meta.family,
+      shortLabel: meta.shortLabel,
+      name: meta.name,
+      formula: meta.formula,
+      pI: meta.pI,
+      pKaList: meta.pKaList,
+      zMax: meta.zMax,
+      color: meta.color,
+      posMm: 0,
+      qEff,
+    });
+    added++;
+  }
+  return added;
+}
+
+function findElectrophoresisOverlappingVessel(sim, cell) {
+  for (let i = sim.items.length - 1; i >= 0; i--) {
+    const v = sim.items[i];
+    if (v.kind !== 'vessel' || v.isShattered || v.isBroken) continue;
+    const vSpec = APPARATUS[v.typeId];
+    if (!vSpec) continue;
+    const dx = Math.abs(cell.x - v.x);
+    const dy = Math.abs(cell.y - v.y);
+    if (dx <= Math.max(70, vSpec.width * 0.72) && dy <= Math.max(46, vSpec.height * 0.58)) {
+      const strat = computePhaseStratification(v.moles, v.tempK || 298.15, vSpec, 0);
+      if (strat.totalLiqL > 1e-6) return v;
+    }
+  }
+  return null;
+}
+
+export function stepElectrophoresisCell(sim, cell, dt = 0.05) {
+  if (!sim || !cell) return;
+  cell.lanes = Array.isArray(cell.lanes) ? cell.lanes : [];
+  if (cell.bufferPH == null || !Number.isFinite(cell.bufferPH)) cell.bufferPH = 6.0;
+  if (cell.voltageV == null || !Number.isFinite(cell.voltageV)) cell.voltageV = 12;
+
+  // 1. Optional link to a dc_power supply
+  let effPowerOn = Boolean(cell.powerOn);
+  let effVoltageV = Math.max(0, Math.min(24, Number(cell.voltageV) || 0));
+  if (cell.connectedPowerId) {
+    const pwr = sim.getItem?.(cell.connectedPowerId) || sim.items.find((i) => i.id === cell.connectedPowerId);
+    if (pwr && pwr.kind === 'dc_power') {
+      effPowerOn = Boolean(pwr.powerOn);
+      effVoltageV = Math.max(0, Math.min(24, Number(pwr.voltageV) || 0));
+      cell.voltageV = effVoltageV;
+      cell.powerOn = effPowerOn;
+    } else {
+      cell.connectedPowerId = null;
+    }
+  }
+
+  // 2. Contact / dip into a beaker or test tube: spot amino acids OR adopt buffer pH
+  const hitVessel = findElectrophoresisOverlappingVessel(sim, cell);
+  if (hitVessel) {
+    cell.contactVesselId = hitVessel.id;
+    cell.contactLabel = hitVessel.label || hitVessel.typeId;
+    const spottedNow = spotElectrophoresisAnalytes(cell, hitVessel, cell.bufferPH);
+    if (spottedNow === 0) {
+      const liqVolL = computeLiquidVolumeL(hitVessel.moles, hitVessel.tempK);
+      const vPh = liqVolL > 1e-6 ? computePH(hitVessel.moles, liqVolL, hitVessel.tempK) : null;
+      if (vPh != null && Number.isFinite(vPh)) {
+        cell.bufferPH = Math.max(1.0, Math.min(14.0, +vPh.toFixed(2)));
+      }
+    }
+  } else {
+    cell.contactVesselId = null;
+    cell.contactLabel = '';
+  }
+
+  // 3. Recompute q_eff(bufferPH) and migrate lanes when powered
+  const polaritySign = cell.polarityReversed ? -1 : 1;
+  const safeDt = Math.max(0.001, Math.min(0.25, Number(dt) || 0.05));
+  for (const lane of cell.lanes) {
+    const sp = SPECIES[lane.id] || { electrophoresisPkaList: lane.pKaList, electrophoresisMaxCharge: lane.zMax };
+    const qEff = computeSpeciesEffectiveChargeAtPH(sp, cell.bufferPH);
+    lane.qEff = qEff;
+    if (effPowerOn && effVoltageV > 0.05) {
+      // Negative charge migrates toward (+) Anode (-x when default); positive charge toward (-) Cathode (+x)
+      const vMmPerSec = polaritySign * qEff * 0.24 * effVoltageV;
+      lane.posMm = Math.max(-76, Math.min(76, (lane.posMm || 0) + vMmPerSec * safeDt));
+    }
   }
 }

@@ -71,6 +71,7 @@ import {
   renderPhConductometer,
   renderColorimeter,
   renderTlcPlate,
+  renderElectrophoresisCell,
   renderRubberStopper,
   renderSaltBridge,
   renderSeparatoryFunnel,
@@ -487,6 +488,7 @@ export class LabWorkbenchCanvas {
       it.kind === 'ph_conductometer' ||
       it.kind === 'colorimeter' ||
       it.kind === 'tlc_plate' ||
+      it.kind === 'electrophoresis' ||
       it.kind === 'wash_bottle';
 
     const matchItem = (it) => {
@@ -1412,7 +1414,7 @@ export class LabWorkbenchCanvas {
       ...this.sim.items.filter((i) => i.kind === 'vessel'),
       ...this.sim.items.filter((i) => i.kind === 'rubber_stopper' || i.kind === 'phen_cotton'),
       ...this.sim.items.filter((i) => i.kind === 'filter_funnel' || i.kind === 'separatory_funnel' || i.kind === 'electrode' || i.kind === 'salt_bridge' || i.kind === 'stir_bar' || i.kind === 'boiling_chips'),
-      ...this.sim.items.filter((i) => i.kind === 'pipette' || i.kind === 'wash_bottle' || i.kind === 'splint' || i.kind === 'flame_loop' || i.kind === 'indicator_strip' || i.kind === 'spoon' || i.kind === 'thermometer' || i.kind === 'ph_conductometer' || i.kind === 'colorimeter' || i.kind === 'tlc_plate'),
+      ...this.sim.items.filter((i) => i.kind === 'pipette' || i.kind === 'wash_bottle' || i.kind === 'splint' || i.kind === 'flame_loop' || i.kind === 'indicator_strip' || i.kind === 'spoon' || i.kind === 'thermometer' || i.kind === 'ph_conductometer' || i.kind === 'colorimeter' || i.kind === 'tlc_plate' || i.kind === 'electrophoresis'),
     ];
 
     renderDcPowerAndWires(ctx, this.sim.items, this.sim.selectedId, this.isDark);
@@ -1495,6 +1497,8 @@ export class LabWorkbenchCanvas {
         renderColorimeter(ctx, item, isSelected, this.isDark);
       } else if (item.kind === 'tlc_plate') {
         renderTlcPlate(ctx, item, isSelected, this.isDark, Boolean(this.sim.environment?.uvLight));
+      } else if (item.kind === 'electrophoresis') {
+        renderElectrophoresisCell(ctx, item, isSelected, this.isDark, this.langCode);
       }
 
       if (item.clampedToId) {

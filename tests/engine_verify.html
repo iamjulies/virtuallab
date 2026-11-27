@@ -57,8 +57,16 @@
     } from '../src/canvas/vesselRenderer.js';
     import { renderVesselSolids } from '../src/canvas/chemicalVisuals.js';
     import { ParticleSystem } from '../src/canvas/particles.js';
-    import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod, renderTlcPlate } from '../src/canvas/toolRenderer.js';
-    import { resolveTlcUvActive, computeBeerLambertReading, computeUvVisSpectrum, computeIrSpectrum } from '../src/engine/analyticalTools.js';
+    import { renderDiffusionTube, renderElectrodeCollectorTubes, renderElectrodeRod, renderTlcPlate, renderElectrophoresisCell } from '../src/canvas/toolRenderer.js';
+    import {
+      resolveTlcUvActive,
+      computeBeerLambertReading,
+      computeUvVisSpectrum,
+      computeIrSpectrum,
+      CLASSIC_AMINO_ACID_IDS,
+      spotElectrophoresisAnalytes,
+      stepElectrophoresisCell,
+    } from '../src/engine/analyticalTools.js';
     import { buildLabReportBundle, buildPdfBytesFromCanvas, composeWorkbenchSnapshotCanvas, openPrintableLabReport, openLabReportPreviewModal } from '../src/storage/reportExport.js';
     import {
       sanitizeSheetName,
@@ -143,6 +151,8 @@
       computePH,
       computePhaseStratification,
       computePhenolphthaleinAlpha,
+      computePolyproticDistribution,
+      computeSpeciesEffectiveChargeAtPH,
       computeSolidVolumeMl,
       computeSolutionVisuals,
       computeVesselElectrochemicalMetrics,
@@ -2508,7 +2518,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.34';
+      const expectedBuild = 'virlab_beta_v5+build.35';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -2588,10 +2598,11 @@
         Boolean(I18N.vi.stopperModeDualHole && I18N.en.stopperModeDualHole) &&
         Boolean(I18N.vi.eq_ph_conductometer && I18N.en.eq_ph_conductometer) &&
         Boolean(I18N.vi.eq_colorimeter && I18N.en.eq_colorimeter) &&
-        Boolean(I18N.vi.eq_tlc_plate && I18N.en.eq_tlc_plate);
+        Boolean(I18N.vi.eq_tlc_plate && I18N.en.eq_tlc_plate) &&
+        Boolean(I18N.vi.eq_electrophoresis_cell && I18N.en.eq_electrophoresis_cell);
       assert(
-        'Build virlab_beta_v5+build.7 parity: All 43 apparatus & 34 starter reagents translated in VI/EN, Analytical Trio + Organic Ecosystem parity enforced',
-        APPARATUS_ORDER.length === 44 &&
+        'Build virlab_beta_v5+build.7 parity: All 45 apparatus & starter reagents translated in VI/EN, Analytical Quartet + Organic Ecosystem parity enforced',
+        APPARATUS_ORDER.length === 45 &&
           STARTER_REAGENTS.length >= 42 &&
           !APPARATUS.clay_triangle &&
           !APPARATUS.crucible_tongs &&
@@ -11921,6 +11932,103 @@
         'Build 34 invariants (Prompt 94): Complete 25–1500 °C thermal & pyrolysis chains (air vs inert) for NaNO2, Glycerol, Triolein, 5 Carbohydrates (Fructose/Glucose/Sucrose/Starch/Cellulose), Glycine & Albumin + HCN_g + atom conservation',
         naNo2Ok && lipidOk && carbsOk && bioOk,
         `naNo2=${naNo2Ok}, lipid=${lipidOk}, carbs=${carbsOk}, bio=${bioOk}`
+      );
+    }
+
+    // TEST 232: Prompt 95 (virlab_beta_v5+build.35) — 5 THPTQG Amino Acids (Gly/Ala/Val/Lys/Glu), Generalized Polyprotic computePH, & Zone Electrophoresis Cell
+    {
+      // 1. Verify Valine + multi-step Glutamic (3 pKa) & Lysine (3 pKa) aqueous pH via generalized computePH
+      const volL = 0.1;
+      const h2oMol = volL * 55.5;
+      const pHGly = computePH({ H2O_l: h2oMol, Glycine_aq: 0.01 }, volL, 298.15);
+      const pHAla = computePH({ H2O_l: h2oMol, Alanine_aq: 0.01 }, volL, 298.15);
+      const pHVal = computePH({ H2O_l: h2oMol, Valine_aq: 0.01 }, volL, 298.15);
+      const pHGlu = computePH({ H2O_l: h2oMol, Glutamic_aq: 0.005 }, volL, 298.15);
+      const pHLys = computePH({ H2O_l: h2oMol, Lysine_aq: 0.005 }, volL, 298.15);
+      const phOk =
+        pHGly > 5.7 && pHGly < 6.3 &&
+        pHAla > 5.7 && pHAla < 6.3 &&
+        pHVal > 5.7 && pHVal < 6.3 &&
+        pHGlu > 2.9 && pHGlu < 3.6 &&
+        pHLys > 9.3 && pHLys < 10.1;
+
+      // 2. Verify computeSpeciesEffectiveChargeAtPH across pH 1.0, 6.0, 12.0
+      const q6Gly = computeSpeciesEffectiveChargeAtPH(SPECIES.Glycine_aq, 6.0);
+      const q6Ala = computeSpeciesEffectiveChargeAtPH(SPECIES.Alanine_aq, 6.0);
+      const q6Val = computeSpeciesEffectiveChargeAtPH(SPECIES.Valine_aq, 6.0);
+      const q6Glu = computeSpeciesEffectiveChargeAtPH(SPECIES.Glutamic_aq, 6.0);
+      const q6Lys = computeSpeciesEffectiveChargeAtPH(SPECIES.Lysine_aq, 6.0);
+      const q1Lys = computeSpeciesEffectiveChargeAtPH(SPECIES.Lysine_aq, 1.0);
+      const q12Glu = computeSpeciesEffectiveChargeAtPH(SPECIES.Glutamic_aq, 12.0);
+      const chargeOk =
+        Math.abs(q6Gly) < 0.03 &&
+        Math.abs(q6Ala) < 0.03 &&
+        Math.abs(q6Val) < 0.03 &&
+        q6Glu < -0.95 &&
+        q6Lys > 0.99 &&
+        q1Lys > 1.85 &&
+        q12Glu < -1.95;
+
+      // 3. Bench integration: Dissolution of Valine_s, buffer adoption & spotting from vessel, migration at pH 6.0, 1.0, 12.0 & reversed polarity
+      const simEp = new LabSimulation();
+      const ep = simEp.createApparatus('electrophoresis_cell', 300, 320);
+      const bAcid = simEp.createApparatus('beaker_250', 300, 320);
+      bAcid.moles.H2O_l = 5.55;
+      bAcid.moles.H_aq = 0.01;
+      bAcid.moles.Cl_aq = 0.01;
+      stepElectrophoresisCell(simEp, ep, 0.05);
+      const adoptedAcidPh = Math.abs(ep.bufferPH - 1.0) < 0.15;
+
+      // Move off acid beaker, spot all 5 classic amino acids & run at pH = 6.0, 12 V for 8 s
+      bAcid.x = 650;
+      ep.bufferPH = 6.0;
+      ep.voltageV = 12;
+      ep.powerOn = true;
+      spotElectrophoresisAnalytes(ep, CLASSIC_AMINO_ACID_IDS, 6.0);
+      for (let i = 0; i < 80; i++) stepElectrophoresisCell(simEp, ep, 0.1);
+      const byId = Object.fromEntries(ep.lanes.map((l) => [l.id, l]));
+      const migrate6Ok =
+        byId.Glutamic_aq.posMm < -18 &&
+        Math.abs(byId.Glycine_aq.posMm) < 1.5 &&
+        Math.abs(byId.Alanine_aq.posMm) < 1.5 &&
+        Math.abs(byId.Valine_aq.posMm) < 1.5 &&
+        byId.Lysine_aq.posMm > 18;
+
+      // Flip polarity and verify Lysine moves backward toward left (-)
+      const lysBeforeFlip = byId.Lysine_aq.posMm;
+      ep.polarityReversed = true;
+      for (let i = 0; i < 20; i++) stepElectrophoresisCell(simEp, ep, 0.1);
+      const flipOk = byId.Lysine_aq.posMm < lysBeforeFlip - 3.0;
+
+      // Reset to 0 mm and run at pH = 1.0 -> all cationic, Lysine farthest
+      ep.polarityReversed = false;
+      ep.bufferPH = 1.0;
+      ep.lanes.forEach((l) => { l.posMm = 0; });
+      for (let i = 0; i < 40; i++) stepElectrophoresisCell(simEp, ep, 0.1);
+      const migrate1Ok =
+        byId.Lysine_aq.posMm > byId.Glycine_aq.posMm + 5 &&
+        byId.Glycine_aq.posMm > 8 &&
+        byId.Glutamic_aq.posMm > 8;
+
+      // Smoke-check bottle icons + Canvas render + Excel export
+      const newBottles = ['alanine', 'valine', 'lysine', 'glutamic_acid'];
+      const bottlesOk = newBottles.every((bid) => {
+        const reg = STARTER_REAGENTS.find((r) => r.id === bid);
+        if (!reg) return false;
+        const cv = getReagentDragCanvas(bid);
+        return Boolean(cv && cv.width > 0);
+      });
+      const dummyCtx = document.createElement('canvas').getContext('2d');
+      ep.ninhydrinDeveloped = true;
+      renderElectrophoresisCell(dummyCtx, ep, true, true, 'vi');
+      renderElectrophoresisCell(dummyCtx, ep, false, false, 'en');
+      const sheet = extractInstrumentSheetData(ep, simEp);
+      const xlsOk = sheet.sheetName === 'Electrophoresis' && sheet.rows.length === 7;
+
+      assert(
+        'Build 35 invariants (Prompt 95): 5 THPTQG Amino Acids (Gly/Ala/Val/Lys/Glu), N-protic computePH, q_eff(pH) migration, Ninhydrin stain, skeletal bottles & Electrophoresis XLSX export',
+        phOk && chargeOk && adoptedAcidPh && migrate6Ok && flipOk && migrate1Ok && bottlesOk && xlsOk,
+        `phOk=${phOk}(Glu=${pHGlu.toFixed(2)},Lys=${pHLys.toFixed(2)},Val=${pHVal.toFixed(2)}), q=${chargeOk}, acidPh=${adoptedAcidPh}, m6=${migrate6Ok}, flip=${flipOk}, m1=${migrate1Ok}, bot=${bottlesOk}, xls=${xlsOk}`
       );
     }
 

@@ -823,6 +823,8 @@ export function stepFunctionalGroupTests(vessel, strat, liquidVolL, dt, activeRe
       ['Glycinium_aq', 'GlyEthylEster_aq', 'Glycine'],
       ['Alanine_aq', 'AlaEthylEster_aq', 'Alanine'],
       ['Alaninium_aq', 'AlaEthylEster_aq', 'Alanine'],
+      ['Valine_aq', 'ValEthylEster_aq', 'Valine'],
+      ['Valinium_aq', 'ValEthylEster_aq', 'Valine'],
     ]) {
       if ((moles[aaId] || 0) > 1e-9) {
         const dAe = Math.min(moles[aaId], moles.C2H5OH_l, moles.Cl_aq) * (1 - Math.exp(-0.72 * dt));

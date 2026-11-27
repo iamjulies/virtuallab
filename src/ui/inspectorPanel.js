@@ -6,7 +6,12 @@ import { APPARATUS, getStandGeometry } from '../data/apparatus.js';
 import { CONSTANTS, formatNumber, kelvinToCelsius } from '../data/constants.js';
 import { GAS_DISPLAY_META, isSolidMoltenAtTemp, SPECIES } from '../data/species.js';
 import { computeLiquidVolumeL, computePH, computeVesselAroma } from '../engine/equilibrium.js';
-import { COLORIMETER_WAVELENGTHS, stepAnalyticalInstruments } from '../engine/analyticalTools.js';
+import {
+  CLASSIC_AMINO_ACID_IDS,
+  COLORIMETER_WAVELENGTHS,
+  spotElectrophoresisAnalytes,
+  stepAnalyticalInstruments,
+} from '../engine/analyticalTools.js';
 import { computeCaOOptimizationScore } from '../engine/chemistry.js';
 import { soundEngine } from '../audio/soundEngine.js';
 import {
@@ -25,6 +30,7 @@ import {
   exportAnalyticalProbeAsset,
   exportVesselMoleChartAsset,
   exportTlcPlateAsset,
+  exportElectrophoresisAsset,
 } from '../storage/reportExport.js';
 import {
   SPECTRO_CHART_PAD,
@@ -214,6 +220,11 @@ export class InspectorPanel {
     if (item.kind === 'tlc_plate') {
       const spIds = (item.spots || []).map((s) => s.id).join(',');
       return `tlc|${item.id}|${item.clampedToId || ''}|${spIds}|${standCount}|${langCode}|${logLen}`;
+    }
+    if (item.kind === 'electrophoresis') {
+      const lIds = (item.lanes || []).map((l) => l.id).join(',');
+      const dcSig = this.sim.items.filter((i) => i.kind === 'dc_power').map((s) => s.id).join(',');
+      return `ep|${item.id}|${lIds}|${Boolean(item.powerOn)}|${Boolean(item.polarityReversed)}|${Boolean(item.ninhydrinDeveloped)}|${item.connectedPowerId || ''}|${dcSig}|${langCode}|${logLen}`;
     }
     return `other|${isStor}|${asmLen}|${labSig}|${item.id}|${langCode}|${logLen}`;
   }
@@ -456,6 +467,8 @@ export class InspectorPanel {
           }
         } else if (prefix === 'tlc' && item.kind === 'tlc_plate') {
           exportTlcPlateAsset({ format: fmt, plate: item, uvLight: Boolean(this.sim.environment?.uvLight), t, lang, labName: labTitle });
+        } else if (prefix === 'ep' && item.kind === 'electrophoresis') {
+          exportElectrophoresisAsset({ format: fmt, cell: item, t, lang, labName: labTitle });
         }
       });
     });
@@ -933,6 +946,79 @@ export class InspectorPanel {
           this.sim.emitChange();
         });
       }
+    } else if (item.kind === 'electrophoresis') {
+      this.container.querySelector('#ep-ph-slider')?.addEventListener('input', (e) => {
+        item.bufferPH = Math.max(1.0, Math.min(14.0, Number(e.target.value) || 6.0));
+        stepAnalyticalInstruments(this.sim, item, 0.01);
+        this.sim.emitChange();
+      });
+      this.container.querySelectorAll('.ep-ph-preset').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          soundEngine.playUiClick();
+          item.bufferPH = Number(btn.dataset.epPh) || 6.0;
+          const sl = this.container.querySelector('#ep-ph-slider');
+          if (sl) sl.value = String(item.bufferPH);
+          stepAnalyticalInstruments(this.sim, item, 0.01);
+          this.sim.emitChange();
+        });
+      });
+      this.container.querySelector('#ep-voltage-slider')?.addEventListener('input', (e) => {
+        item.voltageV = Math.max(0, Math.min(24, Number(e.target.value) || 0));
+        item.connectedPowerId = null;
+        this.sim.emitChange();
+      });
+      this.container.querySelector('#ins-ep-power')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        item.powerOn = !item.powerOn;
+        if (item.connectedPowerId) {
+          this.sim.setDcPowerState(item.connectedPowerId, { powerOn: item.powerOn });
+        } else {
+          this.sim.emitChange();
+        }
+      });
+      this.container.querySelector('#ins-ep-flip')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        item.polarityReversed = !item.polarityReversed;
+        this.sim.emitChange();
+      });
+      this.container.querySelector('#ins-ep-power-link')?.addEventListener('change', (e) => {
+        item.connectedPowerId = e.target.value || null;
+        stepAnalyticalInstruments(this.sim, item, 0.01);
+        this.sim.emitChange();
+      });
+      this.container.querySelector('#ins-ep-spot-mix')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        spotElectrophoresisAnalytes(item, CLASSIC_AMINO_ACID_IDS, item.bufferPH ?? 6.0);
+        stepAnalyticalInstruments(this.sim, item, 0.01);
+        this.sim.emitChange();
+      });
+      this.container.querySelectorAll('.ep-spot-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const aaId = btn.dataset.aaId;
+          if (!aaId) return;
+          soundEngine.playUiClick();
+          spotElectrophoresisAnalytes(item, [aaId], item.bufferPH ?? 6.0);
+          stepAnalyticalInstruments(this.sim, item, 0.01);
+          this.sim.emitChange();
+        });
+      });
+      this.container.querySelector('#ins-ep-ninhydrin')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        item.ninhydrinDeveloped = !item.ninhydrinDeveloped;
+        this.sim.emitChange();
+      });
+      this.container.querySelector('#ins-ep-recenter')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        (item.lanes || []).forEach((l) => { l.posMm = 0; });
+        this.sim.emitChange();
+      });
+      this.container.querySelector('#ins-ep-reset')?.addEventListener('click', () => {
+        soundEngine.playUiClick();
+        item.lanes = [];
+        item.ninhydrinDeveloped = false;
+        item.powerOn = false;
+        this.sim.emitChange();
+      });
     } else if (item.kind === 'dc_power') {
       this.container.querySelector('#dc-voltage-slider')?.addEventListener('input', (e) => {
         this.sim.setDcPowerState(item.id, { voltageV: Number(e.target.value) });

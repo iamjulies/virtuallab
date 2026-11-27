@@ -2263,6 +2263,173 @@ export function renderTlcPlate(ctx, item, isSelected, isDark, uvLight = false) {
   ctx.restore();
 }
 
+export function renderElectrophoresisCell(ctx, item, isSelected, isDark, langCode = 'vi') {
+  const pal = getThemePalette(isDark);
+  const { x, y } = item;
+  const spec = APPARATUS.electrophoresis_cell || { width: 210, height: 82 };
+  const w = spec.width;
+  const h = spec.height;
+  const left = x - w / 2;
+  const topY = y - h / 2;
+  const wellW = 28;
+  const stripX = left + wellW + 4;
+  const stripW = w - (wellW + 4) * 2;
+  const stripY = topY + 12;
+  const stripH = h - 24;
+  const midX = stripX + stripW / 2;
+  const rev = Boolean(item.polarityReversed);
+  const leftIsPos = !rev;
+  const powerOn = Boolean(item.powerOn);
+  const vVal = Number(item.voltageV || 0);
+  const pH = Number(item.bufferPH ?? 6.0);
+
+  ctx.save();
+
+  // Outer translucent acrylic electrophoresis tank
+  ctx.fillStyle = isDark ? 'rgba(15, 23, 42, 0.86)' : 'rgba(248, 250, 252, 0.94)';
+  ctx.strokeStyle = isSelected ? '#3b82f6' : pal.vesselStroke;
+  ctx.lineWidth = isSelected ? 2.2 : 1.5;
+  ctx.beginPath();
+  ctx.roundRect(left, topY, w, h, 7);
+  strokeSelectionGlow(ctx, isSelected, false, 1.8);
+  ctx.fill();
+  ctx.stroke();
+
+  // Left & Right Buffer Chambers (+ Anode red / - Cathode blue)
+  const chambers = [
+    { cx: left + 3, isPos: leftIsPos },
+    { cx: left + w - wellW - 3, isPos: !leftIsPos },
+  ];
+  for (const ch of chambers) {
+    ctx.fillStyle = ch.isPos ? 'rgba(239, 68, 68, 0.16)' : 'rgba(59, 130, 246, 0.16)';
+    ctx.strokeStyle = ch.isPos ? 'rgba(239, 68, 68, 0.65)' : 'rgba(59, 130, 246, 0.65)';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.roundRect(ch.cx, topY + 5, wellW, h - 10, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    // Pt wire electrode bar inside buffer chamber
+    const wireX = ch.cx + wellW / 2;
+    ctx.strokeStyle = ch.isPos ? '#ef4444' : '#3b82f6';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(wireX, topY + 14);
+    ctx.lineTo(wireX, topY + h - 12);
+    ctx.stroke();
+
+    // (+) / (-) terminal badge
+    ctx.fillStyle = ch.isPos ? '#dc2626' : '#2563eb';
+    ctx.beginPath();
+    ctx.arc(wireX, topY + 9, 6.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 9.5px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ch.isPos ? '+' : '−', wireX, topY + 9.2);
+  }
+
+  // Central paper / agarose gel strip
+  const nin = Boolean(item.ninhydrinDeveloped);
+  ctx.fillStyle = isDark ? (nin ? '#1e1b2e' : '#1e293b') : (nin ? '#faf5ff' : '#ffffff');
+  ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.45)' : 'rgba(100,116,139,0.5)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(stripX, stripY, stripW, stripH, 3);
+  ctx.fill();
+  ctx.stroke();
+
+  // Origin 0 mm dashed line + left/right scale ticks
+  ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.5)' : 'rgba(100,116,139,0.55)';
+  ctx.lineWidth = 0.9;
+  ctx.setLineDash([3, 2]);
+  ctx.beginPath();
+  ctx.moveTo(midX, stripY + 2);
+  ctx.lineTo(midX, stripY + stripH - 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = pal.subText;
+  ctx.font = '600 8px ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText('0 mm', midX, stripY + stripH + 2);
+
+  // Power active indicator LED
+  ctx.fillStyle = powerOn ? '#22c55e' : (isDark ? '#475569' : '#94a3b8');
+  ctx.beginPath();
+  ctx.arc(midX, topY + 6.5, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Lanes (up to 5 horizontal tracks)
+  const lanes = Array.isArray(item.lanes) ? item.lanes : [];
+  if (lanes.length === 0) {
+    ctx.fillStyle = pal.subText;
+    ctx.font = '600 9px system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(langCode === 'en' ? 'Spot amino acid(s)' : 'Chấm mẫu amino acid', midX, stripY + stripH / 2);
+  } else {
+    const rowStep = stripH / Math.max(1, lanes.length);
+    const maxPx = stripW * 0.44;
+    lanes.forEach((lane, idx) => {
+      const ly = stripY + rowStep * (idx + 0.5);
+      const frac = Math.max(-1, Math.min(1, (lane.posMm || 0) / 76));
+      const bx = midX + frac * maxPx;
+
+      // Subtle guide track
+      ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.14)' : 'rgba(100,116,139,0.14)';
+      ctx.lineWidth = 0.7;
+      ctx.beginPath();
+      ctx.moveTo(stripX + 4, ly);
+      ctx.lineTo(stripX + stripW - 4, ly);
+      ctx.stroke();
+
+      // Band rendering: faint colorless before Ninhydrin, vivid Ruhemann's purple after stain
+      if (nin) {
+        ctx.fillStyle = lane.color || '#7c3aed';
+        ctx.shadowColor = '#7c3aed';
+        ctx.shadowBlur = 4;
+        ctx.beginPath();
+        ctx.roundRect(bx - 4.5, ly - 3.6, 9, 7.2, 2.5);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = isDark ? 'rgba(148, 163, 184, 0.25)' : 'rgba(148, 163, 184, 0.30)';
+        ctx.strokeStyle = isDark ? 'rgba(203, 213, 225, 0.45)' : 'rgba(100, 116, 139, 0.45)';
+        ctx.lineWidth = 0.8;
+        ctx.setLineDash([2, 1.5]);
+        ctx.beginPath();
+        ctx.roundRect(bx - 4.2, ly - 3.2, 8.4, 6.4, 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Short label next to band
+      ctx.fillStyle = nin ? (isDark ? '#e9d5ff' : '#4c1d95') : pal.subText;
+      ctx.font = '700 8px ui-monospace, monospace';
+      ctx.textBaseline = 'middle';
+      const labelLeft = frac > 0.45;
+      ctx.textAlign = labelLeft ? 'right' : 'left';
+      ctx.fillText(lane.shortLabel || 'AA', bx + (labelLeft ? -7 : 7), ly);
+    });
+  }
+
+  const statusTxt = powerOn ? `${vVal.toFixed(0)}V` : 'OFF';
+  drawLabelPill(ctx, x, topY - 10, `${item.label} · pH ${pH.toFixed(1)} · ${statusTxt}${nin ? ' · Ninhydrin' : ''}`, {
+    pal,
+    borderColor: isSelected ? '#3b82f6' : nin ? '#8b5cf6' : pal.badgeBorder,
+    font: '700 9.5px ui-monospace, monospace',
+    height: 16,
+    itemId: item.id,
+  });
+  ctx.restore();
+}
+
 export function renderRubberStopper(ctx, item, isSelected, isDark, connectedFromVessel = null) {
   const pal = getThemePalette(isDark);
   const { x, y } = item;
