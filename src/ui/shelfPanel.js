@@ -501,13 +501,16 @@ export class ShelfPanel {
       ? (getMissionById(this.sim.missionState.missionId) || this.sim.missionState)
       : null;
     const hideLocked = Boolean(activeMission && this.onlyAllowed);
-    const baseApparatus =
+    if (this.activeCategory !== 'all' && !APPARATUS_CATEGORIES.some((c) => c.id === this.activeCategory)) {
+      this.activeCategory = 'all';
+    }
+    const baseApparatusPool = hideLocked
+      ? APPARATUS_ORDER.filter((id) => isApparatusAllowedInMission(activeMission, id))
+      : APPARATUS_ORDER;
+    const filteredApparatus =
       this.activeCategory === 'all'
-        ? APPARATUS_ORDER
-        : APPARATUS_ORDER.filter((id) => APPARATUS[id]?.category === this.activeCategory);
-    const filteredApparatus = hideLocked
-      ? baseApparatus.filter((id) => isApparatusAllowedInMission(activeMission, id))
-      : baseApparatus;
+        ? baseApparatusPool
+        : baseApparatusPool.filter((id) => APPARATUS[id]?.category === this.activeCategory);
     const baseReagents =
       this.activeReagentCategory === 'all'
         ? STARTER_REAGENTS
@@ -567,9 +570,13 @@ export class ShelfPanel {
           <div class="flex flex-wrap gap-1 mb-2" id="shelf-cat-tabs">
             ${APPARATUS_CATEGORIES.map((cat) => {
               const active = this.activeCategory === cat.id;
-              return `<button type="button" data-cat-id="${cat.id}" class="shelf-cat-btn px-2 py-0.5 rounded-full text-[11px] font-medium border transition ${
+              const catCount =
+                cat.id === 'all'
+                  ? baseApparatusPool.length
+                  : baseApparatusPool.filter((id) => APPARATUS[id]?.category === cat.id).length;
+              return `<button type="button" data-cat-id="${cat.id}" class="shelf-cat-btn px-2 py-0.5 rounded-full text-[11px] font-medium border transition whitespace-nowrap ${
                 active ? 'border-accent bg-accent/15 text-accent font-semibold' : 'border-theme bg-surface-alt text-muted hover:text-main'
-              }">${t(cat.i18nKey)}</button>`;
+              }">${t(cat.i18nKey)} <span class="opacity-70 text-[10px]">(${catCount})</span></button>`;
             }).join('')}
           </div>
           <div class="grid grid-cols-2 gap-1.5" id="shelf-apparatus-grid">

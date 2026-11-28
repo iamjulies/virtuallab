@@ -34,7 +34,7 @@ import {
   syncDockedToolPositions,
 } from '../engine/apparatusTools.js';
 import { COLORIMETER_WAVELENGTHS, stepAnalyticalInstruments } from '../engine/analyticalTools.js';
-import { ELECTRODE_MATERIALS } from '../engine/electrochemistry.js';
+import { ELECTRODE_MATERIALS, SALT_BRIDGE_ELECTROLYTES } from '../engine/electrochemistry.js';
 import { renderActiveReagentTransfer } from './reagentRenderer.js';
 import { soundEngine } from '../audio/soundEngine.js';
 import { FluidGasOverlay } from './fluidGasOverlay.js';
@@ -213,13 +213,47 @@ export function handleCanvasWheelImpl(wb, pt, deltaY, shiftKey = false, ctrlKey 
       });
     }
 
-    if (hit.kind === 'electrophoresis') {
-      if (!shiftKey) return false;
-      return stepDiscrete(`ep-reset:${hit.id}`, deltaY, () => {
+    if (hit.kind === 'salt_bridge') {
+      return stepDiscrete(`sb-elec:${hit.id}`, deltaY, (dir) => {
+        const order = Object.keys(SALT_BRIDGE_ELECTROLYTES);
+        const curIdx = Math.max(0, order.indexOf(hit.electrolyteId || 'KNO3'));
+        const nextId = order[(curIdx + (dir < 0 ? 1 : order.length - 1)) % order.length];
         soundEngine.playUiClick();
-        (hit.lanes || []).forEach((l) => { l.posMm = 0; });
-        wb.sim.emitChange();
+        wb.sim.setSaltBridgeElectrolyte(hit.id, nextId);
+        const formula = SALT_BRIDGE_ELECTROLYTES[nextId]?.formula || nextId;
+        wb.callbacks?.onNotify?.(`🧂 ${hit.label}: ${formula}`);
       });
+    }
+
+    if (hit.kind === 'electrophoresis') {
+      if (shiftKey) {
+        return stepDiscrete(`ep-reset:${hit.id}`, deltaY, () => {
+          soundEngine.playUiClick();
+          (hit.lanes || []).forEach((l) => { l.posMm = 0; });
+          wb.sim.emitChange();
+          wb.callbacks?.onNotify?.(`⌖ ${hit.label}: 0 mm`);
+        });
+      }
+      if (ctrlKey) {
+        return stepDiscrete(`ep-ph-preset:${hit.id}`, deltaY, (dir) => {
+          const presets = [1.0, 3.22, 6.0, 9.74, 12.0];
+          const cur = Number(hit.bufferPH ?? 6.0);
+          let idx = presets.reduce((best, v, i) => (Math.abs(v - cur) < Math.abs(presets[best] - cur) ? i : best), 0);
+          const nextIdx = clamp(0, presets.length - 1, idx + (dir < 0 ? 1 : -1));
+          hit.bufferPH = presets[nextIdx];
+          soundEngine.playUiClick();
+          stepAnalyticalInstruments(wb.sim, hit, 0.01);
+          wb.sim.emitChange();
+          wb.callbacks?.onNotify?.(`🧬 ${hit.label}: pH ${hit.bufferPH.toFixed(2)}`);
+        });
+      }
+      const curPh = Number(hit.bufferPH ?? 6.0);
+      const nextPh = Math.round(clamp(1.0, 14.0, curPh + (deltaY < 0 ? 0.2 : -0.2)) * 100) / 100;
+      hit.bufferPH = nextPh;
+      stepAnalyticalInstruments(wb.sim, hit, 0.01);
+      wb.sim.emitChange();
+      wb.callbacks?.onNotify?.(`🧬 ${hit.label}: pH ${nextPh.toFixed(2)}`);
+      return true;
     }
 
     if (hit.kind === 'stand') {

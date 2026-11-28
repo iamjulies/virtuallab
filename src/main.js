@@ -421,6 +421,7 @@ function isOverShelfDiscardZone(clientX, clientY) {
 
 let lastSelectedKind = null;
 workbench = new LabWorkbenchCanvas(canvasEl, sim, particles, {
+  onNotify: (msg) => showToast(msg),
   onSelect: (selectedItem) => {
     shortcutTarget = 'canvas';
     contextUI.closeMenu();

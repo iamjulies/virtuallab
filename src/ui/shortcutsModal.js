@@ -1,33 +1,33 @@
 const SHORTCUTS_STORAGE_KEY = 'chemlab_custom_shortcuts_v1';
 
 export const DEFAULT_SHORTCUTS = [
-  { id: 'empty_item', defaultCombo: 'Q', labelKey: 'scEmptyItem' },
-  { id: 'cycle_optics', defaultCombo: 'E', labelKey: 'scCycleOptics' },
-  { id: 'toggle_cabinet', defaultCombo: 'B', labelKey: 'scToggleCabinet' },
-  { id: 'toggle_uv', defaultCombo: 'L', labelKey: 'scToggleUv' },
-  { id: 'toggle_atmosphere', defaultCombo: 'A', labelKey: 'scToggleAtm' },
-  { id: 'theme_key', defaultCombo: 'Z', labelKey: 'scThemeKey' },
-  { id: 'hold_presets', defaultCombo: 'F', labelKey: 'scHoldPresets' },
-  { id: 'new_bench', defaultCombo: 'N', labelKey: 'scNewBench' },
-  { id: 'toggle_sound', defaultCombo: 'M', labelKey: 'scToggleSound' },
-  { id: 'toggle_lang', defaultCombo: 'K', labelKey: 'scToggleLang' },
-  { id: 'temp_up', defaultCombo: 'T', labelKey: 'scTempUp' },
-  { id: 'temp_down', defaultCombo: 'Y', labelKey: 'scTempDown' },
-  { id: 'press_up', defaultCombo: 'G', labelKey: 'scPressUp' },
-  { id: 'press_down', defaultCombo: 'H', labelKey: 'scPressDown' },
-  { id: 'speed_up', defaultCombo: 'W', labelKey: 'scSpeedUp' },
-  { id: 'speed_down', defaultCombo: 'S', labelKey: 'scSpeedDown' },
-  { id: 'reset_bench', defaultCombo: 'R', labelKey: 'scResetBench' },
-  { id: 'toggle_pause', defaultCombo: 'Space', labelKey: 'scTogglePause' },
-  { id: 'export_vlab', defaultCombo: 'Ctrl+E', labelKey: 'scExportVlab' },
-  { id: 'import_vlab', defaultCombo: 'Shift+E', labelKey: 'scImportVlab' },
-  { id: 'undo', defaultCombo: 'Ctrl+Z', labelKey: 'scUndo' },
-  { id: 'redo', defaultCombo: 'Ctrl+Shift+Z', labelKey: 'scRedo' },
-  { id: 'select_all', defaultCombo: 'Ctrl+A', labelKey: 'scSelectAll' },
-  { id: 'copy', defaultCombo: 'Ctrl+C', labelKey: 'scCopy' },
-  { id: 'cut', defaultCombo: 'Ctrl+X', labelKey: 'scCut' },
-  { id: 'paste', defaultCombo: 'Ctrl+V', labelKey: 'scPaste' },
-  { id: 'save', defaultCombo: 'Ctrl+S', labelKey: 'scSave' },
+  { id: 'empty_item', defaultCombo: 'Q', labelKey: 'scEmptyItem', group: 'lab' },
+  { id: 'cycle_optics', defaultCombo: 'E', labelKey: 'scCycleOptics', group: 'lab' },
+  { id: 'toggle_cabinet', defaultCombo: 'B', labelKey: 'scToggleCabinet', group: 'lab' },
+  { id: 'toggle_uv', defaultCombo: 'L', labelKey: 'scToggleUv', group: 'lab' },
+  { id: 'toggle_atmosphere', defaultCombo: 'A', labelKey: 'scToggleAtm', group: 'lab' },
+  { id: 'theme_key', defaultCombo: 'Z', labelKey: 'scThemeKey', group: 'lab' },
+  { id: 'hold_presets', defaultCombo: 'F', labelKey: 'scHoldPresets', group: 'lab' },
+  { id: 'new_bench', defaultCombo: 'N', labelKey: 'scNewBench', group: 'lab' },
+  { id: 'toggle_sound', defaultCombo: 'M', labelKey: 'scToggleSound', group: 'lab' },
+  { id: 'toggle_lang', defaultCombo: 'K', labelKey: 'scToggleLang', group: 'lab' },
+  { id: 'temp_up', defaultCombo: 'T', labelKey: 'scTempUp', group: 'lab' },
+  { id: 'temp_down', defaultCombo: 'Y', labelKey: 'scTempDown', group: 'lab' },
+  { id: 'press_up', defaultCombo: 'G', labelKey: 'scPressUp', group: 'lab' },
+  { id: 'press_down', defaultCombo: 'H', labelKey: 'scPressDown', group: 'lab' },
+  { id: 'speed_up', defaultCombo: 'W', labelKey: 'scSpeedUp', group: 'lab' },
+  { id: 'speed_down', defaultCombo: 'S', labelKey: 'scSpeedDown', group: 'lab' },
+  { id: 'reset_bench', defaultCombo: 'R', labelKey: 'scResetBench', group: 'lab' },
+  { id: 'toggle_pause', defaultCombo: 'Space', labelKey: 'scTogglePause', group: 'lab' },
+  { id: 'export_vlab', defaultCombo: 'Ctrl+E', labelKey: 'scExportVlab', group: 'edit' },
+  { id: 'import_vlab', defaultCombo: 'Shift+E', labelKey: 'scImportVlab', group: 'edit' },
+  { id: 'undo', defaultCombo: 'Ctrl+Z', labelKey: 'scUndo', group: 'edit' },
+  { id: 'redo', defaultCombo: 'Ctrl+Shift+Z', labelKey: 'scRedo', group: 'edit' },
+  { id: 'select_all', defaultCombo: 'Ctrl+A', labelKey: 'scSelectAll', group: 'edit' },
+  { id: 'copy', defaultCombo: 'Ctrl+C', labelKey: 'scCopy', group: 'edit' },
+  { id: 'cut', defaultCombo: 'Ctrl+X', labelKey: 'scCut', group: 'edit' },
+  { id: 'paste', defaultCombo: 'Ctrl+V', labelKey: 'scPaste', group: 'edit' },
+  { id: 'save', defaultCombo: 'Ctrl+S', labelKey: 'scSave', group: 'edit' },
 ];
 
 export const BUILTIN_SHORTCUT_ROWS = [
@@ -35,6 +35,19 @@ export const BUILTIN_SHORTCUT_ROWS = [
   { combo: 'F2', labelKey: 'scRenameTab' },
   { combo: 'Del / Backspace', labelKey: 'scDeleteSel' },
   { combo: 'Esc', labelKey: 'scCloseOverlay' },
+];
+
+export const WHEEL_TOOL_ROWS = [
+  { combo: 'Scroll', labelKey: 'scWheelVessel' },
+  { combo: 'Scroll', labelKey: 'scWheelPipette' },
+  { combo: 'Scroll / Shift', labelKey: 'scWheelBurner' },
+  { combo: 'Scroll', labelKey: 'scWheelBurette' },
+  { combo: 'Scroll / Shift', labelKey: 'scWheelStirBar' },
+  { combo: 'Scroll', labelKey: 'scWheelSaltBridge' },
+  { combo: 'Scroll / Ctrl / Shift', labelKey: 'scWheelElectrophoresis' },
+  { combo: 'Scroll', labelKey: 'scWheelIceBath' },
+  { combo: 'Scroll / Shift / Ctrl', labelKey: 'scWheelDcPower' },
+  { combo: 'Scroll / Shift', labelKey: 'scWheelOtherTools' },
 ];
 
 // Reserved shortcuts across Chrome, Edge, Firefox & Safari that web apps must NEVER collide with
@@ -216,6 +229,8 @@ export class ShortcutsModal {
     this.isOpen = false;
     this.capturingId = null;
     this.errorMsg = '';
+    this.searchQuery = '';
+    this.activeFilter = 'all';
     this.rootEl = null;
     this._onCaptureKeyDown = this._onCaptureKeyDown.bind(this);
   }
@@ -237,6 +252,8 @@ export class ShortcutsModal {
     this.isOpen = true;
     this.capturingId = null;
     this.errorMsg = '';
+    this.searchQuery = '';
+    this.activeFilter = 'all';
     this.rootEl.classList.remove('hidden');
     window.addEventListener('keydown', this._onCaptureKeyDown, true);
     this.render();
@@ -279,77 +296,239 @@ export class ShortcutsModal {
     this.render();
   }
 
-  render() {
-    if (!this.rootEl || !this.isOpen) return;
-    const t = this.getTranslator();
-    const bindings = this.getBindings();
-
-    const rowsHtml = DEFAULT_SHORTCUTS.map((sc) => {
-      const combo = bindings[sc.id] || sc.defaultCombo;
-      const isCap = this.capturingId === sc.id;
-      return `
-        <tr class="border-b border-theme/50 last:border-0">
-          <td class="py-1.5 pr-2 text-xs text-main">${t(sc.labelKey)}</td>
-          <td class="py-1.5 px-2 text-center">
-            <kbd class="px-2 py-0.5 rounded border border-theme bg-surface text-xs font-mono font-bold text-accent">${isCap ? '...' : combo}</kbd>
-          </td>
-          <td class="py-1.5 pl-2 text-right">
-            <button type="button" class="sc-rebind-btn px-2 py-0.5 rounded border text-[11px] font-semibold ${
+  _renderShortcutRowHtml(sc, bindings, t) {
+    const combo = bindings[sc.id] || sc.defaultCombo;
+    const isModified = combo !== sc.defaultCombo;
+    const isCap = this.capturingId === sc.id;
+    return `
+      <tr class="border-b border-theme/40 last:border-b-0">
+        <td class="py-2 pr-3 text-xs text-main">${t(sc.labelKey)}</td>
+        <td class="py-2 px-2">
+          <div class="flex flex-wrap items-center gap-1.5 justify-center">
+            <kbd class="sc-kbd ${isModified ? 'sc-kbd--modified' : ''}">${isCap ? '...' : combo}</kbd>
+            ${
+              isModified
+                ? `<span class="inline-flex items-center gap-1 text-[10.5px] text-muted whitespace-nowrap">
+                     <span class="px-1.5 py-0.5 rounded bg-accent/15 text-accent font-semibold">${t('shortcutsModifiedTag')}</span>
+                     <span>${t('shortcutsDefaultPrefix')}</span>
+                     <kbd class="sc-kbd sc-kbd--default">${sc.defaultCombo}</kbd>
+                   </span>`
+                : ''
+            }
+          </div>
+        </td>
+        <td class="py-2 pl-2 text-right whitespace-nowrap">
+          <div class="inline-flex items-center gap-1 justify-end">
+            ${
+              isModified
+                ? `<button type="button" class="sc-row-reset-btn px-2 py-1 rounded border border-theme bg-surface hover:border-accent text-[11px] font-bold text-main" data-sc-id="${sc.id}" title="${t('shortcutsBtnResetRow')}">↺</button>`
+                : ''
+            }
+            <button type="button" class="sc-rebind-btn px-2.5 py-1 rounded border text-[11px] font-semibold ${
               isCap
                 ? 'border-amber-500 bg-amber-500/20 text-amber-300'
                 : 'border-theme bg-surface hover:border-accent text-main'
             }" data-sc-id="${sc.id}">
               ${isCap ? t('shortcutsListeningBtn') : t('shortcutsBtnRebind')}
             </button>
-          </td>
-        </tr>`;
-    }).join('');
+          </div>
+        </td>
+      </tr>`;
+  }
 
-    const builtInHtml = BUILTIN_SHORTCUT_ROWS.map(
-      (b) => `
-      <div class="flex items-center justify-between gap-2 py-1 text-[11px]">
-        <span class="text-muted">${t(b.labelKey)}</span>
-        <kbd class="px-1.5 py-0.5 rounded border border-theme bg-surface font-mono font-semibold text-muted">${b.combo}</kbd>
-      </div>`
-    ).join('');
+  _buildBodyHtml(t, bindings) {
+    const q = (this.searchQuery || '').trim().toLowerCase();
+    const matchesSearch = (label, combo, defCombo = '') => {
+      if (!q) return true;
+      return `${label} ${combo} ${defCombo}`.toLowerCase().includes(q);
+    };
+    const showRebindable = this.activeFilter !== 'builtin';
+    const showBuiltin = this.activeFilter === 'all' || this.activeFilter === 'builtin';
+
+    const sections = [
+      { id: 'lab', title: t('shortcutsFilterLab') },
+      { id: 'edit', title: t('shortcutsFilterEdit') },
+    ];
+    let rebindHtml = '';
+    if (showRebindable) {
+      for (const sec of sections) {
+        if (this.activeFilter !== 'all' && this.activeFilter !== sec.id) continue;
+        const items = DEFAULT_SHORTCUTS.filter((sc) => {
+          if (sc.group !== sec.id) return false;
+          const combo = bindings[sc.id] || sc.defaultCombo;
+          return matchesSearch(t(sc.labelKey), combo, sc.defaultCombo);
+        });
+        if (items.length === 0) continue;
+        rebindHtml += `
+          <div class="rounded-xl border border-theme bg-surface-alt/70 overflow-hidden">
+            <div class="px-3 py-2 border-b border-theme text-[11px] font-bold uppercase tracking-wider text-muted flex items-center justify-between">
+              <span>${sec.title}</span>
+              <span class="font-mono text-[10px]">(${items.length})</span>
+            </div>
+            <div class="px-3 overflow-x-auto">
+              <table class="w-full text-xs border-collapse">
+                <thead>
+                  <tr class="text-muted border-b border-theme text-left">
+                    <th class="py-1.5 font-semibold">${t('shortcutsColAction')}</th>
+                    <th class="py-1.5 font-semibold text-center">${t('shortcutsColKey')}</th>
+                    <th class="py-1.5 font-semibold text-right">${t('shortcutsColEdit')}</th>
+                  </tr>
+                </thead>
+                <tbody>${items.map((sc) => this._renderShortcutRowHtml(sc, bindings, t)).join('')}</tbody>
+              </table>
+            </div>
+          </div>`;
+      }
+    }
+
+    let builtinHtml = '';
+    if (showBuiltin) {
+      const fixedItems = BUILTIN_SHORTCUT_ROWS.filter((b) => matchesSearch(t(b.labelKey), b.combo));
+      const wheelItems = WHEEL_TOOL_ROWS.filter((w) => matchesSearch(t(w.labelKey), w.combo));
+      if (fixedItems.length > 0 || wheelItems.length > 0) {
+        builtinHtml = `
+          <div class="rounded-xl border border-theme bg-surface-alt/70 p-3 flex flex-col gap-3">
+            ${
+              fixedItems.length > 0
+                ? `<div>
+                    <div class="text-[11px] font-bold uppercase tracking-wider text-muted mb-2">${t('shortcutsBuiltInHeader')}</div>
+                    <div class="sc-wheel-grid">
+                      ${fixedItems
+                        .map(
+                          (b) => `
+                        <div class="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-theme/60 bg-surface text-[11.5px]">
+                          <span class="text-main leading-snug">${t(b.labelKey)}</span>
+                          <kbd class="sc-kbd shrink-0">${b.combo}</kbd>
+                        </div>`
+                        )
+                        .join('')}
+                    </div>
+                  </div>`
+                : ''
+            }
+            ${
+              wheelItems.length > 0
+                ? `<div>
+                    <div class="text-[11px] font-bold uppercase tracking-wider text-muted mb-2">🖱️ ${t('shortcutsWheelHeader')}</div>
+                    <div class="sc-wheel-grid">
+                      ${wheelItems
+                        .map(
+                          (w) => `
+                        <div class="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-theme/60 bg-surface text-[11.5px]">
+                          <span class="text-main leading-snug">${t(w.labelKey)}</span>
+                          <kbd class="sc-kbd shrink-0">${w.combo}</kbd>
+                        </div>`
+                        )
+                        .join('')}
+                    </div>
+                  </div>`
+                : ''
+            }
+          </div>`;
+      }
+    }
+
+    if (!rebindHtml && !builtinHtml) {
+      return `<div class="p-6 text-center text-xs text-muted border border-dashed border-theme rounded-xl">${t('shortcutsNoMatches')}</div>`;
+    }
+    return rebindHtml + builtinHtml;
+  }
+
+  _bindBodyListeners(t) {
+    this.rootEl?.querySelectorAll('.sc-rebind-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.scId;
+        this.capturingId = this.capturingId === id ? null : id;
+        this.errorMsg = '';
+        this.render();
+      });
+    });
+    this.rootEl?.querySelectorAll('.sc-row-reset-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.scId;
+        const sc = DEFAULT_SHORTCUTS.find((s) => s.id === id);
+        if (!sc) return;
+        const cur = this.getBindings();
+        const res = validateShortcutRebind(id, sc.defaultCombo, cur, t);
+        if (!res.ok) {
+          this.errorMsg = res.reason;
+          this.render();
+          return;
+        }
+        const next = { ...cur, [id]: sc.defaultCombo };
+        saveCustomShortcuts(next);
+        this.callbacks.onUpdateBindings?.(next);
+        this.callbacks.onNotify?.(`↺ ${t('shortcutsSavedToast').replace('{combo}', sc.defaultCombo)}`);
+        this.capturingId = null;
+        this.errorMsg = '';
+        this.render();
+      });
+    });
+  }
+
+  _updateBodyOnly() {
+    if (!this.rootEl) return;
+    const t = this.getTranslator();
+    const bindings = this.getBindings();
+    const bodyEl = this.rootEl.querySelector('#shortcuts-modal-body');
+    if (bodyEl) {
+      bodyEl.innerHTML = this._buildBodyHtml(t, bindings);
+      this._bindBodyListeners(t);
+    }
+  }
+
+  render() {
+    if (!this.rootEl || !this.isOpen) return;
+    const t = this.getTranslator();
+    const bindings = this.getBindings();
+    const filters = [
+      { id: 'all', label: t('shortcutsFilterAll') },
+      { id: 'lab', label: t('shortcutsFilterLab') },
+      { id: 'edit', label: t('shortcutsFilterEdit') },
+      { id: 'builtin', label: t('shortcutsFilterBuiltin') },
+    ];
 
     this.rootEl.innerHTML = `
-      <div class="storage-modal-card" style="max-width:660px;max-height:86vh;display:flex;flex-direction:column;">
-        <div class="flex items-center justify-between gap-2 pb-2.5 border-b border-theme">
-          <div>
-            <h2 class="text-sm font-bold">⌨️ ${t('shortcutsModalTitle')}</h2>
-            <p class="text-[11px] text-muted mt-0.5">${t('shortcutsModalSubtitle')}</p>
+      <div class="shortcuts-modal-card">
+        <div class="shortcuts-modal-header">
+          <div class="min-w-0">
+            <h2 class="text-sm font-bold flex items-center gap-1.5">⌨️ ${t('shortcutsModalTitle')}</h2>
+            <p class="text-[11px] text-muted mt-0.5 leading-snug">${t('shortcutsModalSubtitle')}</p>
           </div>
-          <div class="flex items-center gap-1.5">
-            <button type="button" id="sc-reset-defaults" class="px-2.5 py-1 rounded-lg border border-theme bg-surface-alt text-xs font-semibold hover:border-accent">${t('shortcutsBtnReset')}</button>
-            <button type="button" id="sc-modal-close" class="px-2.5 py-1 rounded-lg border border-theme bg-surface-alt text-xs font-bold hover:border-accent">✕</button>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button type="button" id="sc-reset-defaults" class="px-2.5 py-1 rounded-lg border border-theme bg-surface text-xs font-semibold hover:border-accent text-main whitespace-nowrap">${t('shortcutsBtnReset')}</button>
+            <button type="button" id="sc-modal-close" class="px-2.5 py-1 rounded-lg border border-theme bg-surface text-xs font-bold hover:border-accent text-main">✕</button>
           </div>
         </div>
 
-        ${
-          this.errorMsg
-            ? `<div id="sc-conflict-error" class="mt-2 px-3 py-2 rounded-lg border border-red-500/50 bg-red-500/15 text-red-300 text-xs font-semibold">⚠️ ${this.errorMsg}</div>`
-            : this.capturingId
-            ? `<div class="mt-2 px-3 py-2 rounded-lg border border-amber-500/50 bg-amber-500/15 text-amber-300 text-xs font-semibold">🎹 ${t('shortcutsListeningPrompt')}</div>`
-            : ''
-        }
-
-        <div class="overflow-y-auto mt-2 pr-1 flex-1">
-          <table class="w-full text-xs">
-            <thead>
-              <tr class="text-muted border-b border-theme text-left">
-                <th class="pb-1.5 font-semibold">${t('shortcutsColAction')}</th>
-                <th class="pb-1.5 font-semibold text-center">${t('shortcutsColKey')}</th>
-                <th class="pb-1.5 font-semibold text-right">${t('shortcutsColEdit')}</th>
-              </tr>
-            </thead>
-            <tbody>${rowsHtml}</tbody>
-          </table>
-
-          <div class="mt-3 p-2.5 rounded-xl border border-theme bg-surface-alt">
-            <div class="text-[11px] font-bold uppercase tracking-wider text-muted mb-1">${t('shortcutsBuiltInHeader')}</div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4">${builtInHtml}</div>
+        <div class="shortcuts-toolbar">
+          <div class="flex flex-wrap items-center gap-2">
+            <input
+              type="search"
+              id="sc-search-input"
+              value="${String(this.searchQuery || '').replace(/"/g, '&quot;')}"
+              placeholder="🔍 ${t('shortcutsSearchPlaceholder')}"
+              class="flex-1 min-w-[180px] px-2.5 py-1.5 rounded-lg border border-theme bg-surface-alt text-xs text-main focus:outline-none focus:border-accent"
+            />
+            <div class="flex flex-wrap items-center gap-1.5" id="sc-filter-bar">
+              ${filters
+                .map(
+                  (f) => `<button type="button" class="sc-cat-pill ${this.activeFilter === f.id ? 'is-active' : ''}" data-sc-filter="${f.id}">${f.label}</button>`
+                )
+                .join('')}
+            </div>
           </div>
+          ${
+            this.errorMsg
+              ? `<div id="sc-conflict-error" class="px-3 py-2 rounded-lg border border-red-500/50 bg-red-500/15 text-red-400 text-xs font-semibold">⚠️ ${this.errorMsg}</div>`
+              : this.capturingId
+              ? `<div class="px-3 py-2 rounded-lg border border-amber-500/50 bg-amber-500/15 text-amber-400 text-xs font-semibold">🎹 ${t('shortcutsListeningPrompt')}</div>`
+              : ''
+          }
+        </div>
+
+        <div class="shortcuts-body" id="shortcuts-modal-body">
+          ${this._buildBodyHtml(t, bindings)}
         </div>
       </div>
     `;
@@ -363,13 +542,16 @@ export class ShortcutsModal {
       this.callbacks.onNotify?.(`🔄 ${t('shortcutsResetDone')}`);
       this.render();
     });
-    this.rootEl.querySelectorAll('.sc-rebind-btn').forEach((btn) => {
+    this.rootEl.querySelector('#sc-search-input')?.addEventListener('input', (e) => {
+      this.searchQuery = e.target.value || '';
+      this._updateBodyOnly();
+    });
+    this.rootEl.querySelectorAll('.sc-cat-pill').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const id = btn.dataset.scId;
-        this.capturingId = this.capturingId === id ? null : id;
-        this.errorMsg = '';
+        this.activeFilter = btn.dataset.scFilter || 'all';
         this.render();
       });
     });
+    this._bindBodyListeners(t);
   }
 }

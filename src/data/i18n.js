@@ -72,8 +72,12 @@ const APPARATUS_USAGE_GUIDES = {
     en: 'Dock onto a vessel rim, select electrode material (Graphite C, Cu, Zn, Fe, Pt, Ag) in the Inspector, then wire to DC Power Supply or Multimeter.',
   },
   salt_bridge: {
-    vi: 'Đặt giữa 2 bình nửa pin điện hóa và chọn Bình A / Bình B để khép kín mạch ion KNO₃/KCl mà không trộn lẫn dung dịch 2 cốc.',
-    en: 'Bridge two half-cell vessels and assign Vessel A / Vessel B to complete the ionic circuit via KNO₃/KCl without bulk mixing.',
+    vi: 'Đặt giữa 2 bình nửa pin điện hóa và chọn Bình A / Bình B để khép kín mạch ion KNO₃/KCl mà không trộn lẫn dung dịch 2 cốc. Cuộn chuột trực tiếp lên cầu muối để đổi nhanh 6 chất điện li.',
+    en: 'Bridge two half-cell vessels and assign Vessel A / Vessel B to complete the ionic circuit via KNO₃/KCl without bulk mixing. Scroll mouse wheel over the bridge to cycle 6 electrolytes.',
+  },
+  electrophoresis_cell: {
+    vi: 'Chấm 5 Amino Acid (Gly, Ala, Val, Lys, Glu) hoặc nhúng vào cốc chứa AA, sau đó nối với Nguồn điện DC ngoài để chạy điện di theo pH đệm & pI. Cuộn chuột chỉnh pH mượt (±0.20), Ctrl+Cuộn nhảy 5 mốc pH chuẩn, Shift+Cuộn đưa về 0 mm.',
+    en: 'Spot 5 Amino Acids (Gly, Ala, Val, Lys, Glu) or dip into an AA vessel, then wire an external DC Power Supply to separate by buffer pH & pI. Scroll to adjust buffer pH (±0.20), Ctrl+Scroll to step 5 preset pHs, Shift+Scroll to reset lanes to 0 mm.',
   },
   retort_stand: {
     vi: 'Kéo bình cầu, ống nghiệm, buret, phễu chiết, ống sinh hàn hoặc đầu dò tới gần cột giá để kẹp cố định; kéo thanh trượt chiều cao để nâng/hạ cả cụm.',

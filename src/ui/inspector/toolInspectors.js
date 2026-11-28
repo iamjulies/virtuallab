@@ -63,40 +63,55 @@ import {
   renderTlcSpotsListHtml,
 } from './inspectorUtils.js';
 
-function renderElectrophoresisLanesHtml(lanes, langCode, polarityReversed, t) {
+export function formatElectrophoresisNum(val, decimals = 2, eps = 0.005) {
+  const n = Number(val || 0);
+  const clean = Math.abs(n) < eps ? 0 : n;
+  const prefix = clean > 0 ? '+' : '';
+  return `${prefix}${clean.toFixed(decimals)}`;
+}
+
+export function renderElectrophoresisLanesHtml(lanes, langCode, polarityReversed, t) {
   const isEn = langCode === 'en';
   if (!Array.isArray(lanes) || lanes.length === 0) {
     return `<div class="p-2.5 rounded-lg border border-dashed border-theme text-center text-muted text-[11px]">${t('epEmptyLanesHint')}</div>`;
   }
   return `
-    <div class="rounded-lg border border-theme bg-surface overflow-hidden">
-      <div class="grid grid-cols-12 gap-1 px-2 py-1 text-[10px] font-bold uppercase text-muted border-b border-theme bg-surface-alt/70">
-        <span class="col-span-3">${isEn ? 'Sample' : 'Mẫu'}</span>
-        <span class="col-span-2 text-right">pI</span>
-        <span class="col-span-2 text-right">q_eff</span>
-        <span class="col-span-3 text-center">${isEn ? 'Target' : 'Hướng'}</span>
-        <span class="col-span-2 text-right">d (mm)</span>
-      </div>
-      ${lanes.map((ln) => {
-        const q = Number(ln.qEff ?? 0);
-        const dirBadge =
-          Math.abs(q) < 0.08
-            ? '<span class="text-slate-400 font-semibold">● pI</span>'
-            : q < 0
-              ? `<span class="text-rose-400 font-semibold">${polarityReversed ? '→ (+)' : '← (+)'}</span>`
-              : `<span class="text-sky-400 font-semibold">${polarityReversed ? '← (−)' : '→ (−)'}</span>`;
-        const dStr = `${(ln.posMm || 0) >= 0 ? '+' : ''}${Number(ln.posMm || 0).toFixed(1)}`;
-        const dispFormula = formatSpeciesDisplayFormula(SPECIES[ln.id] || ln.formula || ln.shortLabel, 'table');
-        return `
-          <div class="grid grid-cols-12 gap-1 px-2 py-1 text-[11px] font-mono border-b border-theme/40 last:border-b-0 items-center">
-            <span class="col-span-3 font-bold truncate" title="${ln.name || ''} (${dispFormula})">${ln.shortLabel || ln.id}</span>
-            <span class="col-span-2 text-right text-muted">${Number(ln.pI || 0).toFixed(2)}</span>
-            <span class="col-span-2 text-right">${q >= 0 ? '+' : ''}${q.toFixed(2)}</span>
-            <span class="col-span-3 text-center text-[10px]">${dirBadge}</span>
-            <span class="col-span-2 text-right font-bold">${dStr}</span>
-          </div>
-        `;
-      }).join('')}
+    <div class="rounded-lg border border-theme bg-surface overflow-x-auto">
+      <table class="w-full text-[11px] font-mono border-collapse">
+        <thead>
+          <tr class="text-[10px] font-bold uppercase text-muted border-b border-theme bg-surface-alt/70">
+            <th class="py-1.5 px-2 text-left whitespace-nowrap">${isEn ? 'Sample' : 'Mẫu'}</th>
+            <th class="py-1.5 px-1.5 text-right whitespace-nowrap">pI</th>
+            <th class="py-1.5 px-1.5 text-right whitespace-nowrap">q_eff</th>
+            <th class="py-1.5 px-1.5 text-center whitespace-nowrap">${isEn ? 'Target' : 'Hướng'}</th>
+            <th class="py-1.5 px-2 text-right whitespace-nowrap">d (mm)</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lanes.map((ln) => {
+            const qRaw = Number(ln.qEff ?? 0);
+            const qClean = Math.abs(qRaw) < 0.005 ? 0 : qRaw;
+            const qStr = formatElectrophoresisNum(qClean, 2, 0.005);
+            const dStr = formatElectrophoresisNum(ln.posMm || 0, 1, 0.05);
+            const dirBadge =
+              qClean === 0
+                ? '<span class="text-slate-400 font-semibold">● pI</span>'
+                : qClean < 0
+                  ? `<span class="text-rose-400 font-semibold">${polarityReversed ? '→ (+)' : '← (+)'}</span>`
+                  : `<span class="text-sky-400 font-semibold">${polarityReversed ? '← (−)' : '→ (−)'}</span>`;
+            const dispFormula = formatSpeciesDisplayFormula(SPECIES[ln.id] || ln.formula || ln.shortLabel, 'table');
+            return `
+              <tr class="border-b border-theme/40 last:border-b-0">
+                <td class="py-1 px-2 text-left font-bold whitespace-nowrap" title="${ln.name || ''} (${dispFormula})">${ln.shortLabel || ln.id}</td>
+                <td class="py-1 px-1.5 text-right text-muted whitespace-nowrap">${Number(ln.pI || 0).toFixed(2)}</td>
+                <td class="py-1 px-1.5 text-right whitespace-nowrap">${qStr}</td>
+                <td class="py-1 px-1.5 text-center text-[10px] whitespace-nowrap">${dirBadge}</td>
+                <td class="py-1 px-2 text-right font-bold whitespace-nowrap">${dStr}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
     </div>
   `;
 }

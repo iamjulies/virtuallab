@@ -20,6 +20,7 @@
     import { CONSTANTS, THEME_REGISTRY, isThemeDark, calcCaCO3EqPressureAtm, nonVolatileSoluteMoles, solutionBoilingPointK, waterBoilingPointK } from '../src/data/constants.js';
     import {
       APPARATUS,
+      APPARATUS_CATEGORIES,
       APPARATUS_ORDER,
       clampItemToStandY,
       getClampNeckOffsetY,
@@ -134,7 +135,7 @@
     import { LabSimulation } from '../src/engine/simulation.js';
     import { STORAGE_SHELF_Y_LEVELS } from '../src/engine/simSnapshot.js';
     import { classifyStorageItemFilter, itemMatchesStorageSearch } from '../src/ui/storageCabinetModal.js';
-    import { computeVesselRedoxAndCellMetrics, ELECTRODE_MATERIALS, stepElectrochemistry } from '../src/engine/electrochemistry.js';
+    import { computeVesselRedoxAndCellMetrics, ELECTRODE_MATERIALS, SALT_BRIDGE_ELECTROLYTES, stepElectrochemistry } from '../src/engine/electrochemistry.js';
     import { checkThermometerInteractions, computeWashBottleStreamArc, syncDockedToolPositions } from '../src/engine/apparatusTools.js';
     import { calcEvaporationRateMol, computeHeatCapacityJK, computeSteamOpacity, stepVesselThermodynamics } from '../src/engine/thermodynamics.js';
     import {
@@ -163,6 +164,9 @@
     } from '../src/engine/equilibrium.js';
     import { EnvironmentBar } from '../src/ui/environmentBar.js';
     import { ShelfPanel, apparatusSvg, shelfMotifSvg } from '../src/ui/shelfPanel.js';
+    import { ShortcutsModal } from '../src/ui/shortcutsModal.js';
+    import { renderElectrophoresisLanesHtml, formatElectrophoresisNum } from '../src/ui/inspector/toolInspectors.js';
+    import { handleCanvasWheelImpl } from '../src/canvas/workbenchInput.js';
     import { buildLiquidBoxHtml, buildSolidBoxHtml, countDisplayableSolidSpecies, formatGasSummaryHtml } from '../src/ui/inspector/inspectorUtils.js';
     import { InspectorPanel } from '../src/ui/inspectorPanel.js';
     import { LabWorkbenchCanvas } from '../src/canvas/workbench.js';
@@ -2522,7 +2526,7 @@
         const key = APPARATUS[id]?.i18nKey;
         return Boolean(key && I18N.vi[key] && I18N.en[key]);
       });
-      const expectedBuild = 'virlab_beta_v5+build.37';
+      const expectedBuild = 'virlab_beta_v5+build.38';
       const newKeysPresent =
         Boolean(I18N.vi.benchTelemetryTitle && I18N.en.benchTelemetryTitle) &&
         Boolean(I18N.vi.groupThermoPhysics && I18N.en.groupThermoPhysics) &&
@@ -12345,6 +12349,99 @@
         'Build 37 invariants (Prompt 97): Clean Formulas, Molten/Frozen Split, 100% Apparatus & AA Motif SVGs, Dipeptide/Tripeptide Biuret >= 2 Rule, Physical DC Electrophoresis & MAX_LABS=20',
         fmtOk && moltenOk && frozenOk && shelfSvgOk && biuretRuleOk && stepHydOk && stepCondOk && epDcOk,
         `fmt=${fmtOk}, molten=${moltenOk}, frozen=${frozenOk}, svg=${shelfSvgOk}, biuret=${biuretRuleOk}, hyd=${stepHydOk}, cond=${stepCondOk}, epDc=${epDcOk}`
+      );
+    }
+
+    // TEST 235: Prompt 98 (virlab_beta_v5+build.38) — Electrophoresis Table & Zero-Clamp, 7 Balanced Apparatus Categories, Salt Bridge / Electrophoresis Wheel Controls, & Redesigned ShortcutsModal
+    {
+      const tVi = (k) => I18N.vi[k] || k;
+      const tEn = (k) => I18N.en[k] || k;
+
+      // 1. Electrophoresis semantic <table> & zero-clamp (-0.00003 -> 0.00)
+      const zeroClampOk =
+        formatElectrophoresisNum(-0.00003, 2, 0.005) === '0.00' &&
+        formatElectrophoresisNum(-0.004, 2, 0.005) === '0.00' &&
+        formatElectrophoresisNum(0.01, 2, 0.005) === '+0.01' &&
+        formatElectrophoresisNum(-0.02, 1, 0.05) === '0.0';
+      const tblHtml = renderElectrophoresisLanesHtml(
+        [{ id: 'Glycine_aq', shortLabel: 'Gly', name: 'Glycine', formula: 'Gly', pI: 5.97, qEff: -0.00003, posMm: -0.02 }],
+        'vi',
+        false,
+        tVi
+      );
+      const epTableOk =
+        zeroClampOk &&
+        tblHtml.includes('<table') &&
+        !tblHtml.includes('grid-cols-12') &&
+        !tblHtml.includes('-0.00') &&
+        !tblHtml.includes('-0.0');
+
+      // 2. Balanced 7 Apparatus Categories + 45 Apparatus Coverage + Stale Category Fallback
+      const catIds = APPARATUS_CATEGORIES.map((c) => c.id);
+      const nonAllCats = catIds.filter((id) => id !== 'all');
+      const allCatsTranslated = APPARATUS_CATEGORIES.every((c) => Boolean(I18N.vi[c.i18nKey] && I18N.en[c.i18nKey]));
+      const catCounts = Object.fromEntries(nonAllCats.map((id) => [id, APPARATUS_ORDER.filter((aid) => APPARATUS[aid]?.category === id).length]));
+      const everyItemMapped = APPARATUS_ORDER.every((aid) => nonAllCats.includes(APPARATUS[aid]?.category));
+      const balancedCatsOk = nonAllCats.length === 7 && Object.values(catCounts).every((n) => n >= 4);
+
+      const simSh = new LabSimulation();
+      const shelfDiv = document.createElement('div');
+      const shelf98 = new ShelfPanel(shelfDiv, simSh, () => tVi, {});
+      shelf98.activeCategory = 'legacy_nonexistent_cat';
+      shelf98.render(tVi, true);
+      const shelfFallbackOk = shelf98.activeCategory === 'all' && shelfDiv.querySelectorAll('#shelf-cat-tabs button').length === 8;
+
+      // 3. Wheel controls for salt_bridge & electrophoresis_cell
+      const simW = new LabSimulation();
+      simW.setupPreset('clean');
+      const sbW = simW.createApparatus('salt_bridge', 300, 320);
+      const epW = simW.createApparatus('electrophoresis_cell', 600, 360);
+      spotElectrophoresisAnalytes(epW, CLASSIC_AMINO_ACID_IDS, 6.0);
+      epW.lanes.forEach((l) => { l.posMm = 12.5; });
+      const fakeWb = {
+        sim: simW,
+        dragState: null,
+        _wheelAccum: { key: null, sum: 0 },
+        _wheelTiltVesselId: null,
+        callbacks: {},
+        hitTestItem: (x) => (x < 450 ? sbW : epW),
+        resetWheelTiltedVessel: () => {},
+      };
+      const seenElecs = new Set([sbW.electrolyteId]);
+      const expectedCount = Object.keys(SALT_BRIDGE_ELECTROLYTES).length;
+      for (let i = 0; i < expectedCount; i++) {
+        handleCanvasWheelImpl(fakeWb, { x: sbW.x, y: sbW.y }, -120, false, false);
+        seenElecs.add(sbW.electrolyteId);
+      }
+      const sbWheelOk = seenElecs.size === expectedCount;
+
+      epW.bufferPH = 6.0;
+      handleCanvasWheelImpl(fakeWb, { x: epW.x, y: epW.y }, -120, false, false);
+      const epSmoothOk = Math.abs(epW.bufferPH - 6.2) < 1e-6;
+      handleCanvasWheelImpl(fakeWb, { x: epW.x, y: epW.y }, -120, false, true);
+      const epCtrlPresetOk = Math.abs(epW.bufferPH - 9.74) < 1e-6;
+      handleCanvasWheelImpl(fakeWb, { x: epW.x, y: epW.y }, 120, true, false);
+      const epShiftResetOk = epW.lanes.every((l) => l.posMm === 0);
+
+      // 4. Redesigned ShortcutsModal UI: padding card, search, modified key + default badge + per-row reset
+      let scBindings = { empty_item: 'U' };
+      const scModal = new ShortcutsModal(() => tVi, () => scBindings, { onUpdateBindings: (b) => { scBindings = b; } });
+      scModal.open();
+      const scRoot = document.getElementById('chemlab-shortcuts-modal');
+      const hasCard = Boolean(scRoot?.querySelector('.shortcuts-modal-card') && scRoot.querySelector('#sc-search-input'));
+      const showsModAndDefault =
+        Boolean(scRoot?.querySelector('.sc-kbd--modified')?.textContent?.trim() === 'U') &&
+        Boolean(scRoot?.querySelector('.sc-kbd--default')?.textContent?.trim() === 'Q') &&
+        Boolean(scRoot?.querySelector('.sc-row-reset-btn[data-sc-id="empty_item"]'));
+      scRoot?.querySelector('.sc-row-reset-btn[data-sc-id="empty_item"]')?.click();
+      const singleResetOk = scBindings.empty_item === 'Q' && !scRoot?.querySelector('.sc-kbd--modified');
+      scModal.close();
+      scRoot?.remove();
+
+      assert(
+        'Build 38 invariants (Prompt 98): Electrophoresis <table> & zero-clamp, 7 balanced Apparatus categories (45 items), Salt Bridge / Electrophoresis Wheel controls, & ShortcutsModal Default+Reset UI',
+        epTableOk && allCatsTranslated && everyItemMapped && balancedCatsOk && shelfFallbackOk && sbWheelOk && epSmoothOk && epCtrlPresetOk && epShiftResetOk && hasCard && showsModAndDefault && singleResetOk,
+        `epTbl=${epTableOk}, cats=${balancedCatsOk}(${JSON.stringify(catCounts)}), fb=${shelfFallbackOk}, sbWh=${sbWheelOk}, epWh=${epSmoothOk}/${epCtrlPresetOk}/${epShiftResetOk}, sc=${hasCard}/${showsModAndDefault}/${singleResetOk}`
       );
     }
 
